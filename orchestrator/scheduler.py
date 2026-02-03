@@ -344,7 +344,7 @@ def spawn_agent(agent_name: str, agent_id: int, role: str, agent_config: dict) -
     env.update(port_vars)
 
     # Determine the role module to run
-    role_module = f"orchestrator.orchestrator.roles.{role}"
+    role_module = f"orchestrator.roles.{role}"
 
     debug_log(f"Spawning agent {agent_name}: module={role_module}, cwd={worktree_path}")
     debug_log(f"Agent env: AGENT_FOCUS={env.get('AGENT_FOCUS', 'N/A')}, ports={port_vars}")
