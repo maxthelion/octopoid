@@ -482,7 +482,8 @@ orchestrator/
 │   └── curator.md
 ├── setup.py
 ├── requirements.txt
-└── README.md
+├── README.md
+└── octopoid-dash.py      # Dashboard UI
 ```
 
 ### Parent Project
