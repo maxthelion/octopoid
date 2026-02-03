@@ -247,9 +247,19 @@ Create domain-specific prompts in `.orchestrator/prompts/`:
 
 Example templates are in `orchestrator/templates/`.
 
-## Gatekeeper System
+## Gatekeeper System (Optional)
 
-Gatekeepers automatically review PRs before they're ready for human review.
+Gatekeepers are an **optional** add-on that automatically review PRs before they're ready for human review. You can run the orchestrator without gatekeepers - they're useful if you want automated quality checks on PRs created by agents.
+
+**When to use gatekeepers:**
+- You want automated lint/test/style checks on agent PRs
+- You want to catch issues before human review
+- You have specific quality standards to enforce
+
+**When to skip gatekeepers:**
+- You prefer to review all PRs manually
+- Your CI/CD already handles these checks
+- You're just getting started (add them later)
 
 ### Overview
 
@@ -272,7 +282,7 @@ PR opened → Coordinator detects → Gatekeepers review → Pass/Fail
 
 ### Configuration
 
-Enable gatekeepers in `agents.yaml`:
+Gatekeepers are **disabled by default**. To enable them, add to `agents.yaml`:
 
 ```yaml
 gatekeeper:
