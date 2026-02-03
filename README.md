@@ -11,75 +11,14 @@ This orchestrator manages multiple autonomous Claude Code agents that work on ta
 - **Tester** - Runs tests and adds test coverage
 - **Reviewer** - Reviews code for bugs and security issues
 
-## Installation
-
-### As a Git Submodule
+## Quick Start
 
 ```bash
 cd your-project
-git submodule add https://github.com/your-org/orchestrator.git orchestrator
-cd orchestrator
-pip install -e .
+git submodule add https://github.com/maxthelion/octopoid.git orchestrator
 ```
 
-### Initialize in Your Project
-
-```bash
-python orchestrator/orchestrator/init.py
-```
-
-The init script is interactive by default. You can also use flags:
-
-```bash
-# Accept all defaults (non-interactive)
-python orchestrator/orchestrator/init.py -y
-
-# Skip skill installation
-python orchestrator/orchestrator/init.py --no-skills
-
-# Explicitly control options
-python orchestrator/orchestrator/init.py --skills --gitignore
-python orchestrator/orchestrator/init.py --no-skills --no-gitignore
-```
-
-**Flags:**
-| Flag | Description |
-|------|-------------|
-| `-y, --yes` | Non-interactive mode, accept all defaults |
-| `--skills` | Install management skills to `.claude/commands/` |
-| `--no-skills` | Skip skill installation |
-| `--gitignore` | Update `.gitignore` with orchestrator entries |
-| `--no-gitignore` | Skip `.gitignore` update |
-
-**What gets created:**
-
-```
-.orchestrator/
-├── agents.yaml           # Agent configuration
-├── commands/             # Custom skill overrides (empty)
-├── agents/               # Runtime state (gitignored)
-├── messages/             # Agent-to-human messages (gitignored)
-└── shared/
-    └── queue/
-        ├── incoming/     # New tasks
-        ├── claimed/      # Tasks being worked on
-        ├── done/         # Completed tasks
-        └── failed/       # Failed tasks
-```
-
-If `--skills` is used, also creates:
-```
-.claude/
-└── commands/
-    ├── enqueue.md
-    ├── queue-status.md
-    ├── agent-status.md
-    ├── add-agent.md
-    ├── pause-agent.md
-    ├── retry-failed.md
-    ├── tune-backpressure.md
-    └── tune-intervals.md
-```
+Then ask Claude to read the orchestrator README and help you set it up.
 
 ## Configuration
 
@@ -368,6 +307,65 @@ clear_messages(older_than_hours=24)
 
 # Clear only info messages
 clear_messages(message_type="info")
+```
+
+## Setup Details
+
+### init.py
+
+The init script sets up the orchestrator in your project:
+
+```bash
+python orchestrator/orchestrator/init.py
+```
+
+**Flags:**
+| Flag | Description |
+|------|-------------|
+| `-y, --yes` | Non-interactive mode, accept all defaults |
+| `--skills` | Install management skills to `.claude/commands/` |
+| `--no-skills` | Skip skill installation |
+| `--gitignore` | Update `.gitignore` with orchestrator entries |
+| `--no-gitignore` | Skip `.gitignore` update |
+
+**What gets created:**
+
+```
+.orchestrator/
+├── agents.yaml           # Agent configuration
+├── commands/             # Custom skill overrides (empty)
+├── agents/               # Runtime state (gitignored)
+├── messages/             # Agent-to-human messages (gitignored)
+└── shared/
+    └── queue/
+        ├── incoming/     # New tasks
+        ├── claimed/      # Tasks being worked on
+        ├── done/         # Completed tasks
+        └── failed/       # Failed tasks
+```
+
+If skills are installed, also creates:
+```
+.claude/commands/
+├── enqueue.md
+├── queue-status.md
+├── agent-status.md
+├── add-agent.md
+├── pause-agent.md
+├── retry-failed.md
+├── tune-backpressure.md
+└── tune-intervals.md
+```
+
+### Dependencies
+
+```bash
+pip install -e orchestrator/
+```
+
+Or just install pyyaml:
+```bash
+pip install pyyaml
 ```
 
 ## Troubleshooting
