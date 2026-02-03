@@ -126,28 +126,34 @@ None - this is a standalone improvement.
 
 After analyzing the codebase, create the proposal by writing a markdown file directly.
 
-### Step 1: Generate a unique ID
+### Step 1: Generate filename with timestamp
 
-Generate an 8-character hex ID for the proposal:
+Generate a timestamped filename for the proposal:
 
 ```bash
-PROP_ID="PROP-$(openssl rand -hex 4)"
-echo $PROP_ID
+TIMESTAMP=$(date +%Y-%m-%d-%H%M)
+FILENAME="${TIMESTAMP}-refactor-proposal.md"
+echo $FILENAME
 ```
+
+Use appropriate suffix based on proposal type:
+- `-refactor-proposal.md` for refactoring
+- `-implementation-proposal.md` for new features
+- `-question.md` for questions needing user input
+- `-decision.md` for architectural decisions
 
 ### Step 2: Write the proposal file
 
-Write the proposal to `.orchestrator/shared/proposals/active/{PROP_ID}.md`:
+Write the proposal to `project-management/human-inbox/{FILENAME}`:
 
 ```bash
 # Ensure the directory exists
-mkdir -p .orchestrator/shared/proposals/active
+mkdir -p project-management/human-inbox
 
 # Write the proposal (replace with your content)
-cat > .orchestrator/shared/proposals/active/PROP-a1b2c3d4.md << 'EOF'
+cat > project-management/human-inbox/2024-01-15-1030-refactor-proposal.md << 'EOF'
 # Proposal: Add retry logic to API client
 
-**ID:** PROP-a1b2c3d4
 **Proposer:** architect
 **Category:** refactor
 **Complexity:** M
@@ -174,12 +180,12 @@ EOF
 
 - Use your agent name from the `AGENT_NAME` environment variable as the Proposer
 - Use the current timestamp in ISO8601 format for Created
-- The file must be placed in `.orchestrator/shared/proposals/active/`
-- The filename must match the ID in the file (e.g., `PROP-a1b2c3d4.md`)
+- The file must be placed in `project-management/human-inbox/`
+- The filename format is `{YYYY-MM-DD-HHMM}-{type}-proposal.md`
 
 ## After Creation
 
 The proposal will be:
-1. Placed in `.orchestrator/shared/proposals/active/`
-2. Evaluated by the curator on their next run
-3. Promoted to a task, deferred, or rejected with feedback
+1. Placed in `project-management/human-inbox/`
+2. Reviewed by the user via their `/human-inbox` command
+3. Approved (moved to docs/ and/or tasks created) or rejected with feedback
