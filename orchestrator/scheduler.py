@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Main scheduler - runs on 1-minute ticks to evaluate and spawn agents."""
 
+import argparse
 import os
 import shutil
 import subprocess
@@ -30,6 +31,34 @@ from .state_utils import (
     mark_started,
     save_state,
 )
+
+# Global debug flag
+DEBUG = False
+_log_file: Path | None = None
+
+
+def setup_scheduler_debug() -> None:
+    """Set up debug logging for the scheduler."""
+    global _log_file
+    logs_dir = get_orchestrator_dir() / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    _log_file = logs_dir / f"scheduler-{date_str}.log"
+
+
+def debug_log(message: str) -> None:
+    """Write a debug message to the scheduler log."""
+    if not DEBUG or not _log_file:
+        return
+
+    timestamp = datetime.now().isoformat()
+    log_line = f"[{timestamp}] [SCHEDULER] {message}\n"
+
+    try:
+        with open(_log_file, "a") as f:
+            f.write(log_line)
+    except OSError:
+        pass
 
 
 def get_scheduler_lock_path() -> Path:
@@ -180,6 +209,23 @@ def get_role_constraints(role: str) -> str:
 - Escalate conflicts to the project owner
 - Do not explore the codebase directly
 """,
+        # Gatekeeper system
+        "gatekeeper": """
+- You may read any files in the repository
+- You may NOT modify code files
+- Review the PR diff from your specialized perspective
+- Be thorough but fair in your assessment
+- Provide specific, actionable feedback for any issues
+- Record your check result using the /record-check skill
+""",
+        "gatekeeper_coordinator": """
+- You may read any files in the repository
+- You may NOT modify code files
+- Monitor PRs and coordinate gatekeeper checks
+- Aggregate check results
+- Create fix tasks when checks fail
+- Approve PRs when all checks pass
+""",
         # Execution layer (both models)
         "implementer": """
 - You may read and modify code files
@@ -238,9 +284,13 @@ def write_agent_env(agent_name: str, agent_id: int, role: str, agent_config: dic
         f"export ORCHESTRATOR_DIR='{get_orchestrator_dir()}'",
     ]
 
-    # Add focus for proposers
-    if agent_config and role == "proposer" and "focus" in agent_config:
+    # Add focus for proposers and gatekeepers (specialists)
+    if agent_config and role in ("proposer", "gatekeeper") and "focus" in agent_config:
         lines.append(f"export AGENT_FOCUS='{agent_config['focus']}'")
+
+    # Pass debug mode
+    if DEBUG:
+        lines.append("export ORCHESTRATOR_DEBUG='1'")
 
     for key, value in port_vars.items():
         lines.append(f"export {key}='{value}'")
@@ -273,15 +323,22 @@ def spawn_agent(agent_name: str, agent_id: int, role: str, agent_config: dict) -
     env["SHARED_DIR"] = str(get_orchestrator_dir() / "shared")
     env["ORCHESTRATOR_DIR"] = str(get_orchestrator_dir())
 
-    # Pass focus for proposers
-    if role == "proposer" and "focus" in agent_config:
+    # Pass focus for proposers and gatekeepers (specialists)
+    if role in ("proposer", "gatekeeper") and "focus" in agent_config:
         env["AGENT_FOCUS"] = agent_config["focus"]
+
+    # Pass debug mode to agents
+    if DEBUG:
+        env["ORCHESTRATOR_DEBUG"] = "1"
 
     port_vars = get_port_env_vars(agent_id)
     env.update(port_vars)
 
     # Determine the role module to run
     role_module = f"orchestrator.orchestrator.roles.{role}"
+
+    debug_log(f"Spawning agent {agent_name}: module={role_module}, cwd={worktree_path}")
+    debug_log(f"Agent env: AGENT_FOCUS={env.get('AGENT_FOCUS', 'N/A')}, ports={port_vars}")
 
     # Spawn the role as a subprocess
     process = subprocess.Popen(
@@ -293,6 +350,7 @@ def spawn_agent(agent_name: str, agent_id: int, role: str, agent_config: dict) -
         start_new_session=True,  # Detach from parent
     )
 
+    debug_log(f"Agent {agent_name} spawned with PID {process.pid}")
     return process.pid
 
 
@@ -323,6 +381,7 @@ def check_and_update_finished_agents() -> None:
 def run_scheduler() -> None:
     """Main scheduler loop - evaluate and spawn agents."""
     print(f"[{datetime.now().isoformat()}] Scheduler starting")
+    debug_log("Scheduler tick starting")
 
     # Check for finished agents first
     check_and_update_finished_agents()
@@ -330,12 +389,15 @@ def run_scheduler() -> None:
     # Load agent configuration
     try:
         agents = get_agents()
+        debug_log(f"Loaded {len(agents)} agents from config")
     except FileNotFoundError as e:
         print(f"Error: {e}")
+        debug_log(f"Failed to load agents config: {e}")
         sys.exit(1)
 
     if not agents:
         print("No agents configured in agents.yaml")
+        debug_log("No agents configured")
         return
 
     for agent_id, agent_config in enumerate(agents):
@@ -346,11 +408,15 @@ def run_scheduler() -> None:
 
         if not agent_name or not role:
             print(f"Skipping invalid agent config: {agent_config}")
+            debug_log(f"Invalid agent config: {agent_config}")
             continue
 
         if paused:
             print(f"Agent {agent_name} is paused, skipping")
+            debug_log(f"Agent {agent_name} is paused")
             continue
+
+        debug_log(f"Evaluating agent {agent_name}: role={role}, interval={interval}s")
 
         # Try to acquire agent lock
         agent_lock_path = get_agent_lock_path(agent_name)
@@ -358,40 +424,50 @@ def run_scheduler() -> None:
         with locked_or_skip(agent_lock_path) as acquired:
             if not acquired:
                 print(f"Agent {agent_name} is locked (another instance running?)")
+                debug_log(f"Agent {agent_name} lock not acquired")
                 continue
 
             # Load agent state
             state_path = get_agent_state_path(agent_name)
             state = load_state(state_path)
+            debug_log(f"Agent {agent_name} state: running={state.running}, pid={state.pid}, last_finished={state.last_finished}")
 
             # Check if still running
             if state.running and state.pid and is_process_running(state.pid):
                 print(f"Agent {agent_name} is still running (PID {state.pid})")
+                debug_log(f"Agent {agent_name} still running (PID {state.pid})")
                 continue
 
             # If was marked running but process died, update state
             if state.running:
+                debug_log(f"Agent {agent_name} was marked running but process died, marking as crashed")
                 state = mark_finished(state, 1)  # Assume crashed
                 save_state(state, state_path)
 
             # Check if overdue
             if not is_overdue(state, interval):
                 print(f"Agent {agent_name} is not due yet")
+                debug_log(f"Agent {agent_name} not due yet")
                 continue
 
             print(f"[{datetime.now().isoformat()}] Starting agent {agent_name} (role: {role})")
+            debug_log(f"Starting agent {agent_name} (role: {role})")
 
             # Ensure worktree exists
             base_branch = agent_config.get("base_branch", "main")
+            debug_log(f"Ensuring worktree for {agent_name} on branch {base_branch}")
             ensure_worktree(agent_name, base_branch)
 
             # Setup commands in worktree
+            debug_log(f"Setting up commands for {agent_name}")
             setup_agent_commands(agent_name, role)
 
             # Generate agent instructions
+            debug_log(f"Generating instructions for {agent_name}")
             generate_agent_instructions(agent_name, role, agent_config)
 
             # Write env file
+            debug_log(f"Writing env file for {agent_name}")
             write_agent_env(agent_name, agent_id, role, agent_config)
 
             # Spawn agent
@@ -404,17 +480,41 @@ def run_scheduler() -> None:
             print(f"Agent {agent_name} started with PID {pid}")
 
     print(f"[{datetime.now().isoformat()}] Scheduler tick complete")
+    debug_log("Scheduler tick complete")
 
 
 def main() -> None:
     """Entry point for scheduler."""
+    global DEBUG
+
+    parser = argparse.ArgumentParser(description="Run the orchestrator scheduler")
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug logging to .orchestrator/logs/",
+    )
+    parser.add_argument(
+        "--once",
+        action="store_true",
+        help="Run once and exit (don't wait for lock)",
+    )
+    args = parser.parse_args()
+
+    DEBUG = args.debug
+    if DEBUG:
+        setup_scheduler_debug()
+        debug_log("Scheduler starting with debug mode enabled")
+        print("Debug mode enabled - logs in .orchestrator/logs/")
+
     scheduler_lock_path = get_scheduler_lock_path()
 
     with locked_or_skip(scheduler_lock_path) as acquired:
         if not acquired:
             print("Another scheduler instance is running, exiting")
+            debug_log("Scheduler lock not acquired - another instance running")
             sys.exit(0)
 
+        debug_log("Scheduler lock acquired")
         run_scheduler()
 
 

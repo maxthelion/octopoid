@@ -1,47 +1,26 @@
 """Proposer role - specialized agents that propose work for the curator."""
 
-import sys
-from pathlib import Path
-
-from ..config import get_prompts_dir, get_proposal_limits
+from ..config import get_proposal_limits
 from ..proposal_utils import can_create_proposal, get_rejected_proposals
-from .base import BaseRole, main_entry
+from .base import main_entry
+from .specialist import SpecialistRole
 
 
-class ProposerRole(BaseRole):
+class ProposerRole(SpecialistRole):
     """Proposer that analyzes the codebase and creates proposals.
 
     Proposers are specialized agents with a specific focus area (tests,
     architecture, features, plans). They run infrequently and create
     proposals that the curator will evaluate.
+
+    Inherits from SpecialistRole which provides:
+    - focus area configuration
+    - domain-specific prompt loading
     """
 
     def __init__(self):
         super().__init__()
-        # Get focus from environment (set by scheduler based on agent config)
-        import os
-
-        self.focus = os.environ.get("AGENT_FOCUS", "general")
-        self.proposer_type = os.environ.get("AGENT_NAME", "proposer")
-
-    def get_proposer_prompt(self) -> str:
-        """Load the domain-specific prompt for this proposer.
-
-        Returns:
-            Prompt content or empty string if not found
-        """
-        prompts_dir = get_prompts_dir()
-        prompt_file = prompts_dir / f"{self.proposer_type}.md"
-
-        if prompt_file.exists():
-            return prompt_file.read_text()
-
-        # Fallback to focus-based prompt
-        focus_prompt = prompts_dir / f"{self.focus}.md"
-        if focus_prompt.exists():
-            return focus_prompt.read_text()
-
-        return ""
+        self.proposer_type = self.agent_name
 
     def format_rejections_for_review(self, rejections: list[dict]) -> str:
         """Format rejected proposals for the proposer to review.
@@ -89,13 +68,16 @@ class ProposerRole(BaseRole):
         rejections = get_rejected_proposals(self.proposer_type)
         rejections_text = self.format_rejections_for_review(rejections)
 
-        # Load domain-specific prompt
-        domain_prompt = self.get_proposer_prompt()
+        # Load domain-specific prompt (from SpecialistRole)
+        domain_prompt = self.get_focus_prompt()
+        focus_description = self.get_focus_description()
 
         # Build prompt for Claude
         instructions = self.read_instructions()
 
-        prompt = f"""You are a proposer agent with focus area: {self.focus}
+        prompt = f"""You are a proposer agent.
+
+**Focus Area:** {focus_description}
 
 {instructions}
 
@@ -112,7 +94,7 @@ For each proposal you want to create, use the /create-proposal skill.
 ### Guidelines
 
 1. **Review rejections first** - Don't repeat mistakes from rejected proposals
-2. **Stay focused** - Only propose work within your focus area ({self.focus})
+2. **Stay focused** - Only propose work within your focus area
 3. **Be specific** - Proposals should be actionable and well-scoped
 4. **Consider dependencies** - Note what must happen first
 5. **Explain value** - Why does this matter? What does it unblock?

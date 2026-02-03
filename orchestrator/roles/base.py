@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 from abc import ABC, abstractmethod
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -31,9 +32,54 @@ class BaseRole(ABC):
         # Current task (set by subclasses when working on a task)
         self.current_task_id: str | None = None
 
+        # Debug mode
+        self.debug = os.environ.get("ORCHESTRATOR_DEBUG", "").lower() in ("1", "true", "yes")
+        self._log_file: Path | None = None
+        if self.debug:
+            self._setup_debug_logging()
+
+    def _setup_debug_logging(self) -> None:
+        """Set up debug logging to a file."""
+        logs_dir = self.orchestrator_dir / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+
+        # Log file per agent per day
+        date_str = datetime.now().strftime("%Y-%m-%d")
+        self._log_file = logs_dir / f"{self.agent_name}-{date_str}.log"
+
+    def _write_debug(self, level: str, message: str) -> None:
+        """Write a debug message to the log file.
+
+        Args:
+            level: Log level (DEBUG, INFO, WARN, ERROR)
+            message: Message to log
+        """
+        if not self._log_file:
+            return
+
+        timestamp = datetime.now().isoformat()
+        log_line = f"[{timestamp}] [{level}] [{self.agent_name}] {message}\n"
+
+        try:
+            with open(self._log_file, "a") as f:
+                f.write(log_line)
+        except OSError:
+            pass  # Don't fail if we can't write logs
+
+    def debug_log(self, message: str) -> None:
+        """Log a debug message (only when debug mode is enabled).
+
+        Args:
+            message: Message to log
+        """
+        if self.debug:
+            self._write_debug("DEBUG", message)
+
     def log(self, message: str) -> None:
         """Log a message with agent prefix."""
         print(f"[{self.agent_name}] {message}", file=sys.stderr)
+        if self.debug:
+            self._write_debug("INFO", message)
 
     # Message helpers for agent-to-human communication
     def send_info(self, title: str, body: str) -> Path:
@@ -82,6 +128,11 @@ class BaseRole(ABC):
             cmd.extend(["--output-format", output_format])
 
         self.log(f"Invoking Claude: {' '.join(cmd[:5])}...")
+        self.debug_log(f"Full command: {cmd}")
+        self.debug_log(f"Working directory: {self.worktree}")
+        self.debug_log(f"Allowed tools: {allowed_tools}")
+        self.debug_log(f"Max turns: {max_turns}")
+        self.debug_log(f"Prompt length: {len(prompt)} chars")
 
         result = subprocess.run(
             cmd,
@@ -90,6 +141,12 @@ class BaseRole(ABC):
             text=True,
             timeout=600,  # 10 minute timeout
         )
+
+        self.debug_log(f"Claude exit code: {result.returncode}")
+        self.debug_log(f"Stdout length: {len(result.stdout)} chars")
+        self.debug_log(f"Stderr length: {len(result.stderr)} chars")
+        if result.returncode != 0:
+            self.debug_log(f"Stderr: {result.stderr[:1000]}")
 
         return result.returncode, result.stdout, result.stderr
 
@@ -132,16 +189,28 @@ class BaseRole(ABC):
         """
         try:
             self.log(f"Starting {self.agent_role} role")
+            self.debug_log(f"Agent ID: {self.agent_id}")
+            self.debug_log(f"Parent project: {self.parent_project}")
+            self.debug_log(f"Worktree: {self.worktree}")
+            self.debug_log(f"Shared dir: {self.shared_dir}")
+            self.debug_log(f"Ports: dev={self.dev_port}, mcp={self.mcp_port}, pw={self.pw_ws_port}")
+
             exit_code = self.run()
+
             self.log(f"Completed with exit code {exit_code}")
+            self.debug_log(f"Role execution finished: exit_code={exit_code}")
             return exit_code
         except KeyboardInterrupt:
             self.log("Interrupted")
+            self.debug_log("Role interrupted by keyboard")
             return 130
         except Exception as e:
             self.log(f"Error: {e}")
+            self.debug_log(f"Role exception: {type(e).__name__}: {e}")
             import traceback
 
+            tb_str = traceback.format_exc()
+            self.debug_log(f"Traceback:\n{tb_str}")
             traceback.print_exc()
             return 1
 

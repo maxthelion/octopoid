@@ -41,6 +41,14 @@ DEFAULT_CURATOR_SCORING = {
     "voice_weight": 0.15,
 }
 
+# Default gatekeeper configuration
+DEFAULT_GATEKEEPER_CONFIG = {
+    "enabled": False,
+    "auto_approve": False,  # Auto-approve PR if all checks pass?
+    "required_checks": ["lint", "tests"],
+    "optional_checks": ["style", "architecture"],
+}
+
 ModelType = Literal["task", "proposal"]
 
 
@@ -91,6 +99,11 @@ def get_queue_dir() -> Path:
 def get_proposals_dir() -> Path:
     """Get the shared proposals directory."""
     return get_orchestrator_dir() / "shared" / "proposals"
+
+
+def get_prs_dir() -> Path:
+    """Get the shared PRs directory for gatekeeper checks."""
+    return get_orchestrator_dir() / "shared" / "prs"
 
 
 def get_prompts_dir() -> Path:
@@ -251,3 +264,39 @@ def get_commands_dir() -> Path:
 def get_templates_dir() -> Path:
     """Get the templates directory in the orchestrator submodule."""
     return get_orchestrator_submodule_path() / "templates"
+
+
+def get_gatekeeper_config() -> dict[str, Any]:
+    """Get gatekeeper configuration.
+
+    Returns:
+        Dictionary with enabled, auto_approve, required_checks, optional_checks
+    """
+    try:
+        config = load_agents_config()
+        gk_config = config.get("gatekeeper", {})
+        return {
+            "enabled": gk_config.get("enabled", DEFAULT_GATEKEEPER_CONFIG["enabled"]),
+            "auto_approve": gk_config.get("auto_approve", DEFAULT_GATEKEEPER_CONFIG["auto_approve"]),
+            "required_checks": gk_config.get("required_checks", DEFAULT_GATEKEEPER_CONFIG["required_checks"]),
+            "optional_checks": gk_config.get("optional_checks", DEFAULT_GATEKEEPER_CONFIG["optional_checks"]),
+        }
+    except FileNotFoundError:
+        return DEFAULT_GATEKEEPER_CONFIG.copy()
+
+
+def is_gatekeeper_enabled() -> bool:
+    """Check if gatekeeper system is enabled."""
+    return get_gatekeeper_config()["enabled"]
+
+
+def get_gatekeepers() -> list[dict[str, Any]]:
+    """Get list of configured gatekeeper agents."""
+    agents = get_agents()
+    return [a for a in agents if a.get("role") == "gatekeeper"]
+
+
+def get_gatekeeper_coordinators() -> list[dict[str, Any]]:
+    """Get list of configured gatekeeper coordinator agents."""
+    agents = get_agents()
+    return [a for a in agents if a.get("role") == "gatekeeper_coordinator"]

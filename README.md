@@ -247,6 +247,83 @@ Create domain-specific prompts in `.orchestrator/prompts/`:
 
 Example templates are in `orchestrator/templates/`.
 
+## Gatekeeper System
+
+Gatekeepers automatically review PRs before they're ready for human review.
+
+### Overview
+
+```
+PR opened → Coordinator detects → Gatekeepers review → Pass/Fail
+                                        ↓
+                              Failed: Create fix task with feedback
+                              Passed: Mark ready for human review
+```
+
+### Gatekeeper Roles
+
+| Role | Focus | What It Checks |
+|------|-------|----------------|
+| `lint` | Code quality | Lint errors, type issues, formatting |
+| `tests` | Test coverage | Test pass/fail, coverage, test quality |
+| `style` | Conventions | Naming, organization, documentation |
+| `architecture` | Structure | Boundaries, patterns, dependencies |
+| `security` | Vulnerabilities | OWASP Top 10, secrets, auth |
+
+### Configuration
+
+Enable gatekeepers in `agents.yaml`:
+
+```yaml
+gatekeeper:
+  enabled: true
+  auto_approve: false  # Auto-approve if all checks pass?
+  required_checks: [lint, tests]
+  optional_checks: [style, architecture]
+
+agents:
+  - name: gatekeeper-coordinator
+    role: gatekeeper_coordinator
+    interval_seconds: 300
+
+  - name: lint-checker
+    role: gatekeeper
+    focus: lint
+    interval_seconds: 600
+
+  - name: test-checker
+    role: gatekeeper
+    focus: tests
+    interval_seconds: 600
+```
+
+### Gatekeeper Prompts
+
+Create domain-specific prompts in `.orchestrator/prompts/`:
+
+```
+.orchestrator/prompts/
+├── lint.md          # Lint gatekeeper guidelines
+├── tests.md         # Test gatekeeper guidelines
+├── architecture.md  # Architecture gatekeeper guidelines
+└── security.md      # Security gatekeeper guidelines
+```
+
+Templates are provided in `orchestrator/templates/gatekeeper-*.md`.
+
+### Blocking vs Passing
+
+When a gatekeeper check fails:
+1. A fix task is created with detailed feedback
+2. The task includes specific issues and file:line references
+3. The PR is marked as blocked
+4. Once fixes are pushed, checks re-run automatically
+
+When all checks pass:
+1. PR is marked as approved for human review
+2. A comment is added summarizing check results
+3. Human reviewers can focus on higher-level concerns
+
 ## Running the Scheduler
 
 ### Manual Run
@@ -255,6 +332,29 @@ Example templates are in `orchestrator/templates/`.
 cd your-project
 python orchestrator/orchestrator/scheduler.py
 ```
+
+### Debug Mode
+
+Enable debug logging to troubleshoot issues:
+
+```bash
+python orchestrator/orchestrator/scheduler.py --debug
+```
+
+This creates detailed logs in `.orchestrator/logs/`:
+- `scheduler-YYYY-MM-DD.log` - Scheduler decisions and agent spawning
+- `{agent-name}-YYYY-MM-DD.log` - Per-agent activity logs
+
+Debug logs include:
+- Agent evaluation decisions (why agents were/weren't run)
+- State changes and lock acquisitions
+- Claude invocations with prompt sizes
+- Environment configuration
+
+Logs are useful for:
+- Understanding why an agent didn't run
+- Debugging agent failures
+- Tracking agent activity over time
 
 ### Cron (Every Minute)
 
