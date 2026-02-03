@@ -62,6 +62,57 @@ def debug_log(message: str) -> None:
         pass
 
 
+def run_pre_check(agent_name: str, agent_config: dict) -> bool:
+    """Run the agent's pre-check command to see if there's work available.
+
+    Args:
+        agent_name: Name of the agent
+        agent_config: Agent configuration dict
+
+    Returns:
+        True if agent should be spawned (work available or no pre-check configured)
+        False if pre-check indicates no work available
+    """
+    pre_check_cmd = agent_config.get("pre_check")
+    if not pre_check_cmd:
+        # No pre-check configured, always spawn
+        return True
+
+    trigger = agent_config.get("pre_check_trigger", "non_empty")
+    debug_log(f"Running pre-check for {agent_name}: {pre_check_cmd}")
+
+    try:
+        # Run from the parent project directory
+        result = subprocess.run(
+            pre_check_cmd,
+            shell=True,
+            cwd=find_parent_project(),
+            capture_output=True,
+            text=True,
+            timeout=10,  # Pre-checks should be fast
+        )
+
+        if trigger == "non_empty":
+            has_work = bool(result.stdout.strip())
+        elif trigger == "exit_zero":
+            has_work = result.returncode == 0
+        elif trigger == "exit_nonzero":
+            has_work = result.returncode != 0
+        else:
+            debug_log(f"Unknown pre_check_trigger: {trigger}, defaulting to spawn")
+            has_work = True
+
+        debug_log(f"Pre-check for {agent_name}: has_work={has_work} (stdout={result.stdout.strip()!r})")
+        return has_work
+
+    except subprocess.TimeoutExpired:
+        debug_log(f"Pre-check for {agent_name} timed out, spawning anyway")
+        return True
+    except Exception as e:
+        debug_log(f"Pre-check for {agent_name} failed: {e}, spawning anyway")
+        return True
+
+
 def get_scheduler_lock_path() -> Path:
     """Get path to the global scheduler lock file."""
     return get_orchestrator_dir() / "scheduler.lock"
@@ -493,6 +544,12 @@ def run_scheduler() -> None:
             if not is_overdue(state, interval):
                 print(f"Agent {agent_name} is not due yet")
                 debug_log(f"Agent {agent_name} not due yet")
+                continue
+
+            # Run pre-check if configured (cheap check for work availability)
+            if not run_pre_check(agent_name, agent_config):
+                print(f"Agent {agent_name} pre-check: no work available")
+                debug_log(f"Agent {agent_name} pre-check returned no work")
                 continue
 
             print(f"[{datetime.now().isoformat()}] Starting agent {agent_name} (role: {role})")

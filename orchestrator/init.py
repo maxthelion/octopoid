@@ -76,6 +76,7 @@ def init_orchestrator(
         orchestrator_dir / "shared" / "queue" / "claimed",
         orchestrator_dir / "shared" / "queue" / "done",
         orchestrator_dir / "shared" / "queue" / "failed",
+        orchestrator_dir / "shared" / "queue" / "rejected",
         # Proposal queue (for proposal model)
         orchestrator_dir / "shared" / "proposals" / "active",
         orchestrator_dir / "shared" / "proposals" / "promoted",

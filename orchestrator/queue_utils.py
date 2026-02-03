@@ -265,6 +265,47 @@ def fail_task(task_path: Path | str, error: str) -> Path:
     return dest
 
 
+def reject_task(
+    task_path: Path | str,
+    reason: str,
+    details: str | None = None,
+    rejected_by: str | None = None,
+) -> Path:
+    """Reject a task and move it to the rejected queue.
+
+    Use this when a task cannot or should not be completed, for example:
+    - Functionality already exists (already_implemented)
+    - Task is blocked by unmet dependencies (blocked)
+    - Task doesn't make sense or is invalid (invalid_task)
+    - Task duplicates another task (duplicate)
+    - Task is out of scope for the agent (out_of_scope)
+
+    Args:
+        task_path: Path to the claimed task file
+        reason: Rejection reason code (already_implemented, blocked, invalid_task, duplicate, out_of_scope)
+        details: Detailed explanation of why the task is being rejected
+        rejected_by: Name of the agent rejecting the task
+
+    Returns:
+        New path in rejected queue
+    """
+    task_path = Path(task_path)
+    rejected_dir = get_queue_subdir("rejected")
+    dest = rejected_dir / task_path.name
+
+    # Append rejection info
+    with open(task_path, "a") as f:
+        f.write(f"\nREJECTED_AT: {datetime.now().isoformat()}\n")
+        f.write(f"REJECTION_REASON: {reason}\n")
+        if rejected_by:
+            f.write(f"REJECTED_BY: {rejected_by}\n")
+        if details:
+            f.write(f"\n## Rejection Details\n{details}\n")
+
+    os.rename(task_path, dest)
+    return dest
+
+
 def retry_task(task_path: Path | str) -> Path:
     """Move a task from failed back to incoming queue.
 
@@ -358,6 +399,10 @@ def get_queue_status() -> dict[str, Any]:
         "failed": {
             "count": count_queue("failed"),
             "tasks": list_tasks("failed"),
+        },
+        "rejected": {
+            "count": count_queue("rejected"),
+            "tasks": list_tasks("rejected")[-10:],  # Last 10 only
         },
         "limits": get_queue_limits(),
         "open_prs": count_open_prs(),
