@@ -36,6 +36,21 @@ This creates:
 
 ## Configuration
 
+### Claude Instructions
+
+The orchestrator uses your project's existing `claude.md` file. You just need to add one line to it:
+
+```markdown
+If .agent-instructions.md exists in this directory, read and follow those instructions.
+```
+
+When agents run, the scheduler generates a `.agent-instructions.md` file in each agent's worktree containing:
+- Agent identity and role
+- Current task details
+- Role-specific constraints
+
+This file is gitignored and regenerated each run. Your existing `claude.md` project instructions apply to all agents automatically.
+
 ### agents.yaml
 
 ```yaml
@@ -64,21 +79,9 @@ agents:
     interval_seconds: 300
 ```
 
-### global-instructions.md
+### global-instructions.md (Optional)
 
-Add project-specific instructions that all agents should follow:
-
-```markdown
-# Global Agent Instructions
-
-## Project Context
-This is a Python web application using FastAPI...
-
-## Code Standards
-- Use type hints
-- Follow PEP 8
-...
-```
+If you need agent-specific instructions beyond your `claude.md`, you can add them to `.orchestrator/global-instructions.md`. Most projects won't need this.
 
 ## Running the Scheduler
 
@@ -205,16 +208,17 @@ orchestrator/
 
 ```
 your-project/
+├── claude.md               # Your existing project instructions
 ├── orchestrator/           # Submodule
 ├── .orchestrator/          # Runtime directory
-│   ├── agents.yaml         # Configuration (committed)
-│   ├── global-instructions.md  # Instructions (committed)
-│   ├── commands/           # Custom skills (committed)
+│   ├── agents.yaml         # Agent configuration (committed)
+│   ├── commands/           # Custom skill overrides (committed)
 │   ├── agents/             # Runtime state (gitignored)
 │   │   └── <agent>/
 │   │       ├── state.json
 │   │       ├── lock
 │   │       └── worktree/
+│   │           └── .agent-instructions.md  # Generated (gitignored)
 │   └── shared/
 │       └── queue/
 │           ├── incoming/   # New tasks
