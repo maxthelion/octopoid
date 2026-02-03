@@ -54,10 +54,12 @@ def ensure_worktree(agent_name: str, base_branch: str = "main") -> Path:
     Returns:
         Path to the worktree
     """
+    import shutil
+
     parent_repo = find_parent_project()
     worktree_path = get_worktree_path(agent_name)
 
-    # Check if worktree already exists
+    # Check if worktree already exists and is valid
     if worktree_path.exists() and (worktree_path / ".git").exists():
         # Update existing worktree
         try:
@@ -66,7 +68,18 @@ def ensure_worktree(agent_name: str, base_branch: str = "main") -> Path:
             pass  # Fetch may fail if offline, that's ok
         return worktree_path
 
-    # Create worktree directory
+    # Directory exists but is not a valid worktree - remove it
+    if worktree_path.exists():
+        # First try to remove it from git worktree list (if registered but broken)
+        try:
+            run_git(["worktree", "remove", "--force", str(worktree_path)], cwd=parent_repo, check=False)
+        except subprocess.CalledProcessError:
+            pass
+        # Then remove the directory itself
+        if worktree_path.exists():
+            shutil.rmtree(worktree_path)
+
+    # Create parent directory
     worktree_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Fetch latest from origin first
