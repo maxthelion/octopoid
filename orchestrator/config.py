@@ -239,6 +239,19 @@ def get_agents() -> list[dict[str, Any]]:
     return config.get("agents", [])
 
 
+def is_system_paused() -> bool:
+    """Check if the entire orchestrator system is paused.
+
+    Returns:
+        True if the system-level 'paused' flag is set in agents.yaml
+    """
+    try:
+        config = load_agents_config()
+        return config.get("paused", False)
+    except FileNotFoundError:
+        return False
+
+
 def get_proposers() -> list[dict[str, Any]]:
     """Get list of configured proposer agents."""
     agents = get_agents()

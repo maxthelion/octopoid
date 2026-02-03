@@ -18,6 +18,7 @@ from .config import (
     get_global_instructions_path,
     get_orchestrator_dir,
     get_templates_dir,
+    is_system_paused,
 )
 from .git_utils import ensure_worktree, get_worktree_path
 from .lock_utils import locked_or_skip
@@ -420,6 +421,12 @@ def run_scheduler() -> None:
     """Main scheduler loop - evaluate and spawn agents."""
     print(f"[{datetime.now().isoformat()}] Scheduler starting")
     debug_log("Scheduler tick starting")
+
+    # Check global pause flag
+    if is_system_paused():
+        print("System is paused (set 'paused: false' in agents.yaml to resume)")
+        debug_log("System is paused globally")
+        return
 
     # Check for finished agents first
     check_and_update_finished_agents()
