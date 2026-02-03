@@ -155,6 +155,7 @@ def get_role_constraints(role: str) -> str:
         Markdown string with constraints
     """
     constraints = {
+        # Task model (v1)
         "product_manager": """
 - You may read any files in the repository
 - You may NOT modify code files
@@ -162,6 +163,24 @@ def get_role_constraints(role: str) -> str:
 - Focus on high-value, well-scoped tasks
 - Consider existing PRs and in-progress work
 """,
+        # Proposal model (v2)
+        "proposer": """
+- You may read any files in the repository
+- You may NOT modify code files
+- Your output is proposal files
+- Stay focused on your designated area
+- Review your rejected proposals before creating new ones
+- Create well-scoped, actionable proposals
+""",
+        "curator": """
+- You may read any files in the repository
+- You may NOT modify code files
+- Evaluate proposals based on project priorities
+- Provide constructive feedback when rejecting
+- Escalate conflicts to the project owner
+- Do not explore the codebase directly
+""",
+        # Execution layer (both models)
         "implementer": """
 - You may read and modify code files
 - Create focused, atomic commits
@@ -187,13 +206,14 @@ def get_role_constraints(role: str) -> str:
     return constraints.get(role, "- Follow standard development practices")
 
 
-def write_agent_env(agent_name: str, agent_id: int, role: str) -> Path:
+def write_agent_env(agent_name: str, agent_id: int, role: str, agent_config: dict | None = None) -> Path:
     """Write environment variables file for an agent.
 
     Args:
         agent_name: Name of the agent
         agent_id: Numeric ID of the agent
         role: Agent role
+        agent_config: Optional agent configuration for extra vars
 
     Returns:
         Path to env.sh file
@@ -217,6 +237,10 @@ def write_agent_env(agent_name: str, agent_id: int, role: str) -> Path:
         f"export SHARED_DIR='{shared_dir}'",
         f"export ORCHESTRATOR_DIR='{get_orchestrator_dir()}'",
     ]
+
+    # Add focus for proposers
+    if agent_config and role == "proposer" and "focus" in agent_config:
+        lines.append(f"export AGENT_FOCUS='{agent_config['focus']}'")
 
     for key, value in port_vars.items():
         lines.append(f"export {key}='{value}'")
@@ -248,6 +272,10 @@ def spawn_agent(agent_name: str, agent_id: int, role: str, agent_config: dict) -
     env["WORKTREE"] = str(worktree_path)
     env["SHARED_DIR"] = str(get_orchestrator_dir() / "shared")
     env["ORCHESTRATOR_DIR"] = str(get_orchestrator_dir())
+
+    # Pass focus for proposers
+    if role == "proposer" and "focus" in agent_config:
+        env["AGENT_FOCUS"] = agent_config["focus"]
 
     port_vars = get_port_env_vars(agent_id)
     env.update(port_vars)
@@ -364,7 +392,7 @@ def run_scheduler() -> None:
             generate_agent_instructions(agent_name, role, agent_config)
 
             # Write env file
-            write_agent_env(agent_name, agent_id, role)
+            write_agent_env(agent_name, agent_id, role, agent_config)
 
             # Spawn agent
             pid = spawn_agent(agent_name, agent_id, role, agent_config)

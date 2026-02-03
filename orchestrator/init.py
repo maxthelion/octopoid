@@ -70,10 +70,17 @@ def init_orchestrator(
         orchestrator_dir / "commands",
         orchestrator_dir / "agents",
         orchestrator_dir / "messages",
+        orchestrator_dir / "prompts",  # For proposer prompts
+        # Task queue
         orchestrator_dir / "shared" / "queue" / "incoming",
         orchestrator_dir / "shared" / "queue" / "claimed",
         orchestrator_dir / "shared" / "queue" / "done",
         orchestrator_dir / "shared" / "queue" / "failed",
+        # Proposal queue (for proposal model)
+        orchestrator_dir / "shared" / "proposals" / "active",
+        orchestrator_dir / "shared" / "proposals" / "promoted",
+        orchestrator_dir / "shared" / "proposals" / "deferred",
+        orchestrator_dir / "shared" / "proposals" / "rejected",
     ]
 
     print("Creating directory structure...")
@@ -183,14 +190,44 @@ def init_orchestrator(
 EXAMPLE_AGENTS_YAML = """# Orchestrator Agent Configuration
 # See orchestrator/README.md for documentation
 
+# Model: "task" (v1) or "proposal" (v2)
+# - task: PM creates tasks directly
+# - proposal: Proposers create proposals, curator promotes to tasks
+model: task
+
 # Queue limits for backpressure control
 queue_limits:
   max_incoming: 20   # Max tasks in incoming + claimed
   max_claimed: 5     # Max tasks being worked on simultaneously
   max_open_prs: 10   # Max open pull requests
 
+# Proposal limits (for proposal model)
+# proposal_limits:
+#   test-checker:
+#     max_active: 5      # Max proposals in queue
+#     max_per_run: 2     # Max proposals per invocation
+#   architect:
+#     max_active: 3
+#     max_per_run: 1
+
+# Voice weights - proposer trust levels (for proposal model)
+# voice_weights:
+#   plan-reader: 1.5    # Executing plans is priority
+#   architect: 1.2      # Simplification multiplies velocity
+#   test-checker: 1.0   # Important but often not urgent
+#   app-designer: 0.8   # Features after stability
+
+# Curator scoring weights (for proposal model)
+# curator_scoring:
+#   priority_alignment: 0.30
+#   complexity_reduction: 0.25
+#   risk: 0.15
+#   dependencies_met: 0.15
+#   voice_weight: 0.15
+
 # Agent definitions
 agents:
+  # --- Task Model (v1) ---
   - name: pm-agent
     role: product_manager
     interval_seconds: 600  # 10 minutes
@@ -199,7 +236,24 @@ agents:
     role: implementer
     interval_seconds: 180  # 3 minutes
 
-  # Uncomment to add more agents:
+  # --- Proposal Model (v2) - uncomment to use ---
+  # Proposers - specialized agents that propose work
+  # - name: test-checker
+  #   role: proposer
+  #   focus: test_quality
+  #   interval_seconds: 86400  # Daily
+
+  # - name: architect
+  #   role: proposer
+  #   focus: code_structure
+  #   interval_seconds: 86400  # Daily
+
+  # Curator - evaluates proposals
+  # - name: curator
+  #   role: curator
+  #   interval_seconds: 600  # Every 10 min
+
+  # --- Execution layer (both models) ---
   # - name: impl-agent-2
   #   role: implementer
   #   interval_seconds: 180
@@ -219,6 +273,7 @@ GITIGNORE_ADDITIONS = """
 .orchestrator/messages/
 .orchestrator/shared/queue/claimed/
 .orchestrator/shared/queue/failed/
+.orchestrator/shared/proposals/
 .orchestrator/scheduler.lock
 .agent-instructions.md
 """

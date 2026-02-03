@@ -4,9 +4,32 @@ A file-driven orchestrator that runs on 1-minute ticks, evaluates configured age
 
 ## Overview
 
-This orchestrator manages multiple autonomous Claude Code agents that work on tasks in parallel. Each agent has a specific role:
+This orchestrator manages multiple autonomous Claude Code agents that work on tasks in parallel. It supports two models:
 
-- **Product Manager** - Analyzes the codebase and creates tasks
+### Task Model (v1)
+The PM explores the codebase and creates tasks directly.
+
+```
+PM explores codebase → Creates tasks → Executors implement
+```
+
+### Proposal Model (v2)
+Specialized proposers suggest work, a curator promotes the best proposals to tasks.
+
+```
+Proposers (specialists) → Proposals → Curator → Tasks → Executors
+```
+
+## Agent Roles
+
+**Task Model:**
+- **Product Manager** - Analyzes codebase, creates tasks directly
+
+**Proposal Model:**
+- **Proposers** - Specialists who propose work in their focus area
+- **Curator** - Evaluates proposals, promotes to tasks, rejects with feedback
+
+**Execution Layer (both models):**
 - **Implementer** - Claims tasks, implements features, creates PRs
 - **Tester** - Runs tests and adds test coverage
 - **Reviewer** - Reviews code for bugs and security issues
@@ -70,6 +93,159 @@ agents:
 ### global-instructions.md (Optional)
 
 If you need agent-specific instructions beyond your `claude.md`, you can add them to `.orchestrator/global-instructions.md`. Most projects won't need this.
+
+## Proposal Model (v2)
+
+The proposal model separates concerns into three layers:
+
+### 1. Proposal Layer - Specialists Propose Work
+
+Proposers are specialized agents with a specific focus area:
+
+| Proposer | Focus | Typical Proposals |
+|----------|-------|-------------------|
+| test-checker | Test quality | Fix flaky tests, add coverage |
+| architect | Code structure | Refactoring, simplification |
+| app-designer | Features | New functionality, UX |
+| plan-reader | Project plans | Tasks from documented plans |
+
+Configure proposers in `agents.yaml`:
+
+```yaml
+- name: test-checker
+  role: proposer
+  focus: test_quality
+  interval_seconds: 86400  # Daily
+```
+
+Each proposer has independent backpressure:
+
+```yaml
+proposal_limits:
+  test-checker:
+    max_active: 5
+    max_per_run: 2
+```
+
+### 2. Curation Layer - PM Evaluates Proposals
+
+The curator (PM) does NOT explore the codebase directly. Instead:
+
+- **Scores** proposals based on configurable weights
+- **Promotes** good proposals to the task queue
+- **Rejects** proposals with feedback (so proposers can learn)
+- **Defers** proposals that aren't right for now
+- **Escalates** conflicts to the project owner
+
+Voice weights control proposer trust levels:
+
+```yaml
+voice_weights:
+  plan-reader: 1.5    # Executing plans is priority
+  architect: 1.2      # Simplification multiplies velocity
+  test-checker: 1.0   # Important but often not urgent
+  app-designer: 0.8   # Features after stability
+```
+
+### 3. Execution Layer - Same as Task Model
+
+Implementers, testers, and reviewers work the same way in both models.
+
+### Proposal Lifecycle
+
+```
+┌─────────┐     ┌─────────┐     ┌─────────┐
+│ active  │────▶│promoted │────▶│  task   │
+└─────────┘     └─────────┘     └─────────┘
+     │
+     ├─────────▶ deferred (revisit later)
+     │
+     └─────────▶ rejected (with feedback)
+```
+
+### Rejection Feedback Loop
+
+When the curator rejects a proposal:
+1. Rejection includes written feedback
+2. Before proposing again, proposers review their rejections
+3. This prevents spamming the same bad ideas
+
+### Conflict Handling
+
+When proposals conflict:
+1. Curator does NOT resolve autonomously
+2. Both proposals are deferred
+3. A message is sent to the project owner with trade-offs
+4. Human decides which approach to take
+
+### Proposal Format
+
+```markdown
+# Proposal: {Title}
+
+**ID:** PROP-{uuid8}
+**Proposer:** test-checker
+**Category:** test | refactor | feature | debt | plan-task
+**Complexity:** S | M | L | XL
+**Created:** {ISO8601}
+
+## Summary
+One-line description.
+
+## Rationale
+Why this matters.
+
+## Acceptance Criteria
+- [ ] Criterion 1
+- [ ] Criterion 2
+
+## Relevant Files
+- path/to/file.ts
+```
+
+### Enabling the Proposal Model
+
+Set `model: proposal` in `agents.yaml`:
+
+```yaml
+model: proposal
+
+proposal_limits:
+  test-checker:
+    max_active: 5
+    max_per_run: 2
+
+voice_weights:
+  plan-reader: 1.5
+  architect: 1.2
+
+agents:
+  - name: test-checker
+    role: proposer
+    focus: test_quality
+    interval_seconds: 86400
+
+  - name: curator
+    role: curator
+    interval_seconds: 600
+
+  - name: impl-agent-1
+    role: implementer
+    interval_seconds: 180
+```
+
+### Proposer Prompts
+
+Create domain-specific prompts in `.orchestrator/prompts/`:
+
+```
+.orchestrator/prompts/
+├── test-checker.md    # What test-checker should look for
+├── architect.md       # What architect should look for
+└── curator.md         # How curator should evaluate
+```
+
+Example templates are in `orchestrator/templates/`.
 
 ## Running the Scheduler
 
@@ -174,12 +350,15 @@ orchestrator/
 │   ├── lock_utils.py       # File locking
 │   ├── state_utils.py      # State management
 │   ├── git_utils.py        # Git operations
-│   ├── queue_utils.py      # Queue operations
+│   ├── queue_utils.py      # Task queue operations
+│   ├── proposal_utils.py   # Proposal queue operations
 │   ├── port_utils.py       # Port allocation
 │   ├── message_utils.py    # Agent-to-human messaging
 │   └── roles/              # Agent roles
 │       ├── base.py
-│       ├── product_manager.py
+│       ├── product_manager.py  # Task model
+│       ├── proposer.py         # Proposal model
+│       ├── curator.py          # Proposal model
 │       ├── implementer.py
 │       ├── tester.py
 │       └── reviewer.py
@@ -187,7 +366,10 @@ orchestrator/
 │   ├── agent/              # Skills for agents
 │   └── management/         # Skills for humans
 ├── templates/
-│   └── agent_instructions.md.tmpl
+│   ├── agent_instructions.md.tmpl
+│   ├── proposer-test-checker.md
+│   ├── proposer-architect.md
+│   └── curator.md
 ├── setup.py
 ├── requirements.txt
 └── README.md
@@ -202,6 +384,10 @@ your-project/
 ├── .orchestrator/          # Runtime directory
 │   ├── agents.yaml         # Agent configuration (committed)
 │   ├── commands/           # Custom skill overrides (committed)
+│   ├── prompts/            # Proposer prompts (committed, proposal model)
+│   │   ├── test-checker.md
+│   │   ├── architect.md
+│   │   └── curator.md
 │   ├── agents/             # Runtime state (gitignored)
 │   │   └── <agent>/
 │   │       ├── state.json
@@ -211,11 +397,16 @@ your-project/
 │   ├── messages/           # Agent messages (gitignored)
 │   │   └── warning-20240115-143000-test-failures.md
 │   └── shared/
-│       └── queue/
-│           ├── incoming/   # New tasks
-│           ├── claimed/    # Being worked
-│           ├── done/       # Completed
-│           └── failed/     # Failed
+│       ├── proposals/      # Proposal queue (proposal model)
+│       │   ├── active/
+│       │   ├── promoted/
+│       │   ├── deferred/
+│       │   └── rejected/
+│       └── queue/          # Task queue
+│           ├── incoming/
+│           ├── claimed/
+│           ├── done/
+│           └── failed/
 └── ...
 ```
 
