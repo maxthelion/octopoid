@@ -157,6 +157,11 @@ def parse_task_file(task_path: Path) -> dict[str, Any] | None:
     created_match = re.search(r"^CREATED:\s*(.+)$", content, re.MULTILINE)
     created_by_match = re.search(r"^CREATED_BY:\s*(.+)$", content, re.MULTILINE)
 
+    # Continuation-related fields
+    wip_branch_match = re.search(r"^WIP_BRANCH:\s*(.+)$", content, re.MULTILINE)
+    last_agent_match = re.search(r"^LAST_AGENT:\s*(.+)$", content, re.MULTILINE)
+    continuation_reason_match = re.search(r"^CONTINUATION_REASON:\s*(.+)$", content, re.MULTILINE)
+
     return {
         "path": task_path,
         "id": task_id,
@@ -166,6 +171,9 @@ def parse_task_file(task_path: Path) -> dict[str, Any] | None:
         "branch": branch_match.group(1).strip() if branch_match else "main",
         "created": created_match.group(1).strip() if created_match else None,
         "created_by": created_by_match.group(1).strip() if created_by_match else None,
+        "wip_branch": wip_branch_match.group(1).strip() if wip_branch_match else None,
+        "last_agent": last_agent_match.group(1).strip() if last_agent_match else None,
+        "continuation_reason": continuation_reason_match.group(1).strip() if continuation_reason_match else None,
         "content": content,
     }
 
@@ -327,6 +335,112 @@ def retry_task(task_path: Path | str) -> Path:
     return dest
 
 
+def mark_needs_continuation(
+    task_path: Path | str,
+    reason: str,
+    branch_name: str | None = None,
+    agent_name: str | None = None,
+) -> Path:
+    """Mark a task as needing continuation and move to needs_continuation queue.
+
+    Use this when an agent exits before completing work (e.g., max turns reached).
+    The task can be resumed by the same or another agent.
+
+    Args:
+        task_path: Path to the claimed task file
+        reason: Why continuation is needed (e.g., "max_turns_reached", "uncommitted_changes")
+        branch_name: Branch where work-in-progress exists
+        agent_name: Agent that was working on the task
+
+    Returns:
+        New path in needs_continuation queue
+    """
+    task_path = Path(task_path)
+    continuation_dir = get_queue_subdir("needs_continuation")
+    dest = continuation_dir / task_path.name
+
+    # Append continuation info
+    with open(task_path, "a") as f:
+        f.write(f"\nNEEDS_CONTINUATION_AT: {datetime.now().isoformat()}\n")
+        f.write(f"CONTINUATION_REASON: {reason}\n")
+        if branch_name:
+            f.write(f"WIP_BRANCH: {branch_name}\n")
+        if agent_name:
+            f.write(f"LAST_AGENT: {agent_name}\n")
+
+    os.rename(task_path, dest)
+    return dest
+
+
+def resume_task(task_path: Path | str, agent_name: str | None = None) -> Path:
+    """Move a task from needs_continuation back to claimed for resumption.
+
+    Args:
+        task_path: Path to the needs_continuation task file
+        agent_name: Agent resuming the task
+
+    Returns:
+        New path in claimed queue
+    """
+    task_path = Path(task_path)
+    claimed_dir = get_queue_subdir("claimed")
+    dest = claimed_dir / task_path.name
+
+    # Append resume info
+    with open(task_path, "a") as f:
+        f.write(f"\nRESUMED_AT: {datetime.now().isoformat()}\n")
+        if agent_name:
+            f.write(f"RESUMED_BY: {agent_name}\n")
+
+    os.rename(task_path, dest)
+    return dest
+
+
+def find_task_by_id(task_id: str, subdirs: list[str] | None = None) -> dict[str, Any] | None:
+    """Find a task by its ID across queue subdirectories.
+
+    Args:
+        task_id: Task ID to find (e.g., "9f5cda4b")
+        subdirs: List of subdirs to search (default: all)
+
+    Returns:
+        Task info dict or None if not found
+    """
+    if subdirs is None:
+        subdirs = ["incoming", "claimed", "needs_continuation", "done", "failed", "rejected"]
+
+    for subdir in subdirs:
+        tasks = list_tasks(subdir)
+        for task in tasks:
+            if task.get("id") == task_id:
+                return task
+
+    return None
+
+
+def get_continuation_tasks(agent_name: str | None = None) -> list[dict[str, Any]]:
+    """Get tasks that need continuation, optionally filtered by agent.
+
+    Args:
+        agent_name: Filter to tasks last worked on by this agent
+
+    Returns:
+        List of tasks needing continuation
+    """
+    tasks = list_tasks("needs_continuation")
+
+    if agent_name:
+        # Filter to tasks that were being worked on by this agent
+        filtered = []
+        for task in tasks:
+            content = task.get("content", "")
+            if f"LAST_AGENT: {agent_name}" in content or f"CLAIMED_BY: {agent_name}" in content:
+                filtered.append(task)
+        return filtered
+
+    return tasks
+
+
 def create_task(
     title: str,
     role: str,
@@ -391,6 +505,10 @@ def get_queue_status() -> dict[str, Any]:
         "claimed": {
             "count": count_queue("claimed"),
             "tasks": list_tasks("claimed"),
+        },
+        "needs_continuation": {
+            "count": count_queue("needs_continuation"),
+            "tasks": list_tasks("needs_continuation"),
         },
         "done": {
             "count": count_queue("done"),

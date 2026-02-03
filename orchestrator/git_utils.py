@@ -153,6 +153,63 @@ def get_current_branch(worktree_path: Path) -> str:
     return result.stdout.strip()
 
 
+def extract_task_id_from_branch(branch_name: str) -> str | None:
+    """Extract task ID from an agent branch name.
+
+    Agent branches follow the pattern: agent/{task_id}-{timestamp}
+    Example: agent/9f5cda4b-20260203-214422 -> 9f5cda4b
+
+    Args:
+        branch_name: Name of the branch
+
+    Returns:
+        Task ID or None if not an agent branch
+    """
+    if not branch_name.startswith("agent/"):
+        return None
+
+    # Remove 'agent/' prefix
+    suffix = branch_name[6:]
+
+    # Task ID is everything before the timestamp (YYYYMMDD-HHMMSS)
+    # Pattern: {task_id}-YYYYMMDD-HHMMSS
+    import re
+    match = re.match(r"^(.+)-\d{8}-\d{6}$", suffix)
+    if match:
+        return match.group(1)
+
+    # Fallback: just take everything before the first dash-digit sequence
+    parts = suffix.split("-")
+    if parts:
+        return parts[0]
+
+    return None
+
+
+def has_commits_ahead_of_base(worktree_path: Path, base_branch: str = "main") -> bool:
+    """Check if current branch has commits ahead of base branch.
+
+    Args:
+        worktree_path: Path to the worktree
+        base_branch: Branch to compare against
+
+    Returns:
+        True if there are commits on current branch not in base
+    """
+    try:
+        result = run_git(
+            ["rev-list", "--count", f"{base_branch}..HEAD"],
+            cwd=worktree_path,
+            check=False,
+        )
+        if result.returncode != 0:
+            return False
+        count = int(result.stdout.strip())
+        return count > 0
+    except (ValueError, subprocess.CalledProcessError):
+        return False
+
+
 def has_uncommitted_changes(worktree_path: Path) -> bool:
     """Check if worktree has uncommitted changes.
 
