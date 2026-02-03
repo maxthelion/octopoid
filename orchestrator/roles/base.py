@@ -181,12 +181,27 @@ class BaseRole(ABC):
         """
         pass
 
+    def _write_exit_code(self, exit_code: int) -> None:
+        """Write exit code to a file for the scheduler to read.
+
+        Args:
+            exit_code: The exit code to write
+        """
+        exit_code_path = self.orchestrator_dir / "agents" / self.agent_name / "exit_code"
+        try:
+            exit_code_path.parent.mkdir(parents=True, exist_ok=True)
+            exit_code_path.write_text(str(exit_code))
+            self.debug_log(f"Wrote exit code {exit_code} to {exit_code_path}")
+        except OSError as e:
+            self.debug_log(f"Failed to write exit code: {e}")
+
     def execute(self) -> int:
         """Execute the role with error handling.
 
         Returns:
             Exit code
         """
+        exit_code = 1  # Default to failure
         try:
             self.log(f"Starting {self.agent_role} role")
             self.debug_log(f"Agent ID: {self.agent_id}")
@@ -199,11 +214,10 @@ class BaseRole(ABC):
 
             self.log(f"Completed with exit code {exit_code}")
             self.debug_log(f"Role execution finished: exit_code={exit_code}")
-            return exit_code
         except KeyboardInterrupt:
             self.log("Interrupted")
             self.debug_log("Role interrupted by keyboard")
-            return 130
+            exit_code = 130
         except Exception as e:
             self.log(f"Error: {e}")
             self.debug_log(f"Role exception: {type(e).__name__}: {e}")
@@ -212,7 +226,12 @@ class BaseRole(ABC):
             tb_str = traceback.format_exc()
             self.debug_log(f"Traceback:\n{tb_str}")
             traceback.print_exc()
-            return 1
+            exit_code = 1
+        finally:
+            # Always write exit code for scheduler to read
+            self._write_exit_code(exit_code)
+
+        return exit_code
 
 
 def main_entry(role_class: type[BaseRole]) -> None:

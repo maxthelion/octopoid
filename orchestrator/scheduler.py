@@ -363,6 +363,29 @@ def spawn_agent(agent_name: str, agent_id: int, role: str, agent_config: dict) -
     return process.pid
 
 
+def read_agent_exit_code(agent_name: str) -> int | None:
+    """Read the exit code written by an agent.
+
+    Args:
+        agent_name: Name of the agent
+
+    Returns:
+        Exit code or None if not found
+    """
+    exit_code_path = get_agents_runtime_dir() / agent_name / "exit_code"
+    if not exit_code_path.exists():
+        return None
+
+    try:
+        content = exit_code_path.read_text().strip()
+        exit_code = int(content)
+        # Clean up the file after reading
+        exit_code_path.unlink()
+        return exit_code
+    except (ValueError, OSError):
+        return None
+
+
 def check_and_update_finished_agents() -> None:
     """Check for agents that have finished and update their state."""
     agents_dir = get_agents_runtime_dir()
@@ -379,12 +402,18 @@ def check_and_update_finished_agents() -> None:
 
         if state.running and state.pid:
             if not is_process_running(state.pid):
-                # Process has finished, update state
-                # We don't know the exit code without waiting, assume success
-                # In production, you'd use a different mechanism
-                new_state = mark_finished(state, 0)
+                # Process has finished, read exit code from file
+                exit_code = read_agent_exit_code(agent_name)
+                if exit_code is None:
+                    # No exit code file - assume crashed
+                    exit_code = 1
+                    debug_log(f"Agent {agent_name} finished without exit code file, assuming crash")
+                else:
+                    debug_log(f"Agent {agent_name} finished with exit code {exit_code}")
+
+                new_state = mark_finished(state, exit_code)
                 save_state(new_state, state_path)
-                print(f"[{datetime.now().isoformat()}] Agent {agent_name} finished")
+                print(f"[{datetime.now().isoformat()}] Agent {agent_name} finished (exit code: {exit_code})")
 
 
 def run_scheduler() -> None:
