@@ -271,7 +271,7 @@ def create_pull_request(
     title: str,
     body: str,
 ) -> str:
-    """Create a pull request using gh CLI.
+    """Create a pull request using gh CLI, or return existing PR URL.
 
     Args:
         worktree_path: Path to the worktree
@@ -281,12 +281,26 @@ def create_pull_request(
         body: PR body/description
 
     Returns:
-        URL of the created PR
+        URL of the created or existing PR
     """
     # Push branch first
     push_branch(worktree_path, branch_name)
 
-    # Create PR using gh
+    # Check if PR already exists for this branch
+    existing_pr = subprocess.run(
+        ["gh", "pr", "view", branch_name, "--json", "url", "-q", ".url"],
+        cwd=worktree_path,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+
+    if existing_pr.returncode == 0 and existing_pr.stdout.strip():
+        # PR already exists, return its URL
+        return existing_pr.stdout.strip()
+
+    # Create new PR using gh
     result = subprocess.run(
         [
             "gh",
