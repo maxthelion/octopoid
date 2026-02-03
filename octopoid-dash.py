@@ -454,9 +454,9 @@ def draw_progress_bar(win, y: int, x: int, width: int, progress: float, color: i
     try:
         win.addstr(y, x, "[")
         win.attron(curses.color_pair(color))
-        win.addstr(y, x + 1, "█" * filled)
+        win.addstr(y, x + 1, "=" * filled)
         win.attroff(curses.color_pair(color))
-        win.addstr(y, x + 1 + filled, "░" * (bar_width - filled))
+        win.addstr(y, x + 1 + filled, "-" * (bar_width - filled))
         win.addstr(y, x + width - 1, "]")
     except curses.error:
         pass
