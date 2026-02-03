@@ -7,6 +7,8 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
 
+from .. import message_utils
+
 
 class BaseRole(ABC):
     """Abstract base class for agent roles."""
@@ -26,9 +28,29 @@ class BaseRole(ABC):
         self.mcp_port = int(os.environ.get("AGENT_MCP_PORT", "41001"))
         self.pw_ws_port = int(os.environ.get("AGENT_PW_WS_PORT", "41002"))
 
+        # Current task (set by subclasses when working on a task)
+        self.current_task_id: str | None = None
+
     def log(self, message: str) -> None:
         """Log a message with agent prefix."""
         print(f"[{self.agent_name}] {message}", file=sys.stderr)
+
+    # Message helpers for agent-to-human communication
+    def send_info(self, title: str, body: str) -> Path:
+        """Send an info message to the user."""
+        return message_utils.info(title, body, self.agent_name, self.current_task_id)
+
+    def send_warning(self, title: str, body: str) -> Path:
+        """Send a warning message to the user."""
+        return message_utils.warning(title, body, self.agent_name, self.current_task_id)
+
+    def send_error(self, title: str, body: str) -> Path:
+        """Send an error message to the user."""
+        return message_utils.error(title, body, self.agent_name, self.current_task_id)
+
+    def send_question(self, title: str, body: str) -> Path:
+        """Send a question to the user (agent needs human input)."""
+        return message_utils.question(title, body, self.agent_name, self.current_task_id)
 
     def invoke_claude(
         self,

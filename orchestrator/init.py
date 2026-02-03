@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """One-time setup for parent project to use the orchestrator."""
 
+import argparse
 import shutil
+import sys
 from pathlib import Path
 
 
@@ -29,12 +31,37 @@ def get_orchestrator_submodule() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
-def init_orchestrator() -> None:
-    """Initialize orchestrator in the parent project."""
+def ask_yes_no(prompt: str, default: bool = True) -> bool:
+    """Ask a yes/no question and return the answer."""
+    suffix = " [Y/n] " if default else " [y/N] "
+    while True:
+        response = input(prompt + suffix).strip().lower()
+        if response == "":
+            return default
+        if response in ("y", "yes"):
+            return True
+        if response in ("n", "no"):
+            return False
+        print("Please answer 'y' or 'n'")
+
+
+def init_orchestrator(
+    install_skills: bool | None = None,
+    update_gitignore: bool | None = None,
+    non_interactive: bool = False,
+) -> None:
+    """Initialize orchestrator in the parent project.
+
+    Args:
+        install_skills: Install management skills (None = ask)
+        update_gitignore: Update .gitignore (None = ask)
+        non_interactive: If True, use defaults instead of asking
+    """
     parent = find_parent_project()
     submodule = get_orchestrator_submodule()
 
     print(f"Initializing orchestrator in: {parent}")
+    print()
 
     # Create .orchestrator directory structure
     orchestrator_dir = parent / ".orchestrator"
@@ -42,15 +69,17 @@ def init_orchestrator() -> None:
         orchestrator_dir,
         orchestrator_dir / "commands",
         orchestrator_dir / "agents",
+        orchestrator_dir / "messages",
         orchestrator_dir / "shared" / "queue" / "incoming",
         orchestrator_dir / "shared" / "queue" / "claimed",
         orchestrator_dir / "shared" / "queue" / "done",
         orchestrator_dir / "shared" / "queue" / "failed",
     ]
 
+    print("Creating directory structure...")
     for d in dirs_to_create:
         d.mkdir(parents=True, exist_ok=True)
-        print(f"  Created: {d.relative_to(parent)}")
+        print(f"  {d.relative_to(parent)}/")
 
     # Copy example agents.yaml if not exists
     agents_yaml = orchestrator_dir / "agents.yaml"
@@ -60,42 +89,65 @@ def init_orchestrator() -> None:
     else:
         print(f"  Exists:  {agents_yaml.relative_to(parent)}")
 
-    # Copy global-instructions.md if not exists
-    global_instructions = orchestrator_dir / "global-instructions.md"
-    if not global_instructions.exists():
-        global_instructions.write_text(EXAMPLE_GLOBAL_INSTRUCTIONS)
-        print(f"  Created: {global_instructions.relative_to(parent)}")
+    print()
+
+    # Determine whether to install skills
+    if install_skills is None:
+        if non_interactive:
+            install_skills = True
+        else:
+            install_skills = ask_yes_no(
+                "Install management skills to .claude/commands/? "
+                "(enqueue, queue-status, agent-status, etc.)"
+            )
+
+    if install_skills:
+        claude_commands = parent / ".claude" / "commands"
+        claude_commands.mkdir(parents=True, exist_ok=True)
+
+        management_commands = submodule / "commands" / "management"
+        if management_commands.exists():
+            print("Installing management skills...")
+            for cmd_file in management_commands.glob("*.md"):
+                dest = claude_commands / cmd_file.name
+                shutil.copy2(cmd_file, dest)
+                print(f"  .claude/commands/{cmd_file.name}")
     else:
-        print(f"  Exists:  {global_instructions.relative_to(parent)}")
+        print("Skipping skill installation.")
+        print("  You can manually copy from orchestrator/commands/management/ later.")
 
-    # Copy management commands to .claude/commands/
-    claude_commands = parent / ".claude" / "commands"
-    claude_commands.mkdir(parents=True, exist_ok=True)
+    print()
 
-    management_commands = submodule / "commands" / "management"
-    if management_commands.exists():
-        for cmd_file in management_commands.glob("*.md"):
-            dest = claude_commands / cmd_file.name
-            shutil.copy2(cmd_file, dest)
-            print(f"  Copied:  .claude/commands/{cmd_file.name}")
+    # Determine whether to update gitignore
+    if update_gitignore is None:
+        if non_interactive:
+            update_gitignore = True
+        else:
+            update_gitignore = ask_yes_no("Update .gitignore with orchestrator entries?")
 
-    # Update .gitignore
-    gitignore = parent / ".gitignore"
-    gitignore_additions = GITIGNORE_ADDITIONS.strip().split("\n")
+    if update_gitignore:
+        gitignore = parent / ".gitignore"
+        gitignore_additions = GITIGNORE_ADDITIONS.strip().split("\n")
 
-    existing_ignores = set()
-    if gitignore.exists():
-        existing_ignores = set(gitignore.read_text().strip().split("\n"))
+        existing_ignores = set()
+        if gitignore.exists():
+            existing_ignores = set(gitignore.read_text().strip().split("\n"))
 
-    new_ignores = [line for line in gitignore_additions if line not in existing_ignores]
-    if new_ignores:
-        with open(gitignore, "a") as f:
-            f.write("\n# Orchestrator\n")
-            for line in new_ignores:
-                f.write(f"{line}\n")
-        print(f"  Updated: .gitignore")
+        new_ignores = [line for line in gitignore_additions if line not in existing_ignores]
+        if new_ignores:
+            with open(gitignore, "a") as f:
+                f.write("\n# Orchestrator\n")
+                for line in new_ignores:
+                    f.write(f"{line}\n")
+            print("Updated .gitignore")
+        else:
+            print("Gitignore entries already present")
     else:
-        print(f"  Exists:  .gitignore entries")
+        print("Skipping .gitignore update.")
+        print("  Recommended entries:")
+        for line in GITIGNORE_ADDITIONS.strip().split("\n"):
+            if line:
+                print(f"    {line}")
 
     # Print instructions
     print()
@@ -105,10 +157,15 @@ def init_orchestrator() -> None:
     print()
     print("Next steps:")
     print()
-    print("1. Add this line to your claude.md (or create one):")
+    print("1. Add these lines to your claude.md (or create one):")
     print()
-    print('   If .agent-instructions.md exists in this directory,')
-    print('   read and follow those instructions.')
+    print("   ---")
+    print("   If .agent-instructions.md exists in this directory,")
+    print("   read and follow those instructions.")
+    print()
+    print("   Check .orchestrator/messages/ for any agent messages")
+    print("   and inform the user of warnings or questions.")
+    print("   ---")
     print()
     print("2. Configure agents in .orchestrator/agents.yaml")
     print()
@@ -156,34 +213,10 @@ agents:
   #   interval_seconds: 300
 """
 
-EXAMPLE_GLOBAL_INSTRUCTIONS = """# Global Agent Instructions
-
-These instructions apply to all orchestrator agents working on this project.
-
-## Project Context
-
-[Describe your project here - what it does, key technologies, etc.]
-
-## Code Standards
-
-- Follow existing patterns in the codebase
-- Write clear, self-documenting code
-- Add tests for new functionality
-
-## Git Workflow
-
-- Create atomic commits with clear messages
-- Base feature branches on `main` unless specified otherwise
-- Keep pull requests focused and reviewable
-
-## Important Notes
-
-[Add project-specific guidelines here]
-"""
-
 GITIGNORE_ADDITIONS = """
 # Orchestrator runtime files
 .orchestrator/agents/
+.orchestrator/messages/
 .orchestrator/shared/queue/claimed/
 .orchestrator/shared/queue/failed/
 .orchestrator/scheduler.lock
@@ -191,5 +224,69 @@ GITIGNORE_ADDITIONS = """
 """
 
 
+def main():
+    parser = argparse.ArgumentParser(
+        description="Initialize orchestrator in the parent project",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python init.py                     # Interactive mode
+  python init.py -y                  # Accept all defaults
+  python init.py --no-skills         # Skip skill installation
+  python init.py --skills --gitignore  # Install skills and update gitignore
+""",
+    )
+
+    parser.add_argument(
+        "-y", "--yes",
+        action="store_true",
+        help="Non-interactive mode, accept all defaults",
+    )
+    parser.add_argument(
+        "--skills",
+        action="store_true",
+        default=None,
+        help="Install management skills to .claude/commands/",
+    )
+    parser.add_argument(
+        "--no-skills",
+        action="store_true",
+        help="Do not install management skills",
+    )
+    parser.add_argument(
+        "--gitignore",
+        action="store_true",
+        default=None,
+        help="Update .gitignore with orchestrator entries",
+    )
+    parser.add_argument(
+        "--no-gitignore",
+        action="store_true",
+        help="Do not update .gitignore",
+    )
+
+    args = parser.parse_args()
+
+    # Resolve skill flags
+    install_skills = None
+    if args.skills:
+        install_skills = True
+    elif args.no_skills:
+        install_skills = False
+
+    # Resolve gitignore flags
+    update_gitignore = None
+    if args.gitignore:
+        update_gitignore = True
+    elif args.no_gitignore:
+        update_gitignore = False
+
+    init_orchestrator(
+        install_skills=install_skills,
+        update_gitignore=update_gitignore,
+        non_interactive=args.yes,
+    )
+
+
 if __name__ == "__main__":
-    init_orchestrator()
+    main()

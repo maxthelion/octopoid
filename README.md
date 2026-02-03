@@ -28,20 +28,69 @@ pip install -e .
 python orchestrator/orchestrator/init.py
 ```
 
-This creates:
-- `.orchestrator/` directory structure
-- Example `agents.yaml` configuration
-- Management commands in `.claude/commands/`
-- Required `.gitignore` entries
+The init script is interactive by default. You can also use flags:
+
+```bash
+# Accept all defaults (non-interactive)
+python orchestrator/orchestrator/init.py -y
+
+# Skip skill installation
+python orchestrator/orchestrator/init.py --no-skills
+
+# Explicitly control options
+python orchestrator/orchestrator/init.py --skills --gitignore
+python orchestrator/orchestrator/init.py --no-skills --no-gitignore
+```
+
+**Flags:**
+| Flag | Description |
+|------|-------------|
+| `-y, --yes` | Non-interactive mode, accept all defaults |
+| `--skills` | Install management skills to `.claude/commands/` |
+| `--no-skills` | Skip skill installation |
+| `--gitignore` | Update `.gitignore` with orchestrator entries |
+| `--no-gitignore` | Skip `.gitignore` update |
+
+**What gets created:**
+
+```
+.orchestrator/
+├── agents.yaml           # Agent configuration
+├── commands/             # Custom skill overrides (empty)
+├── agents/               # Runtime state (gitignored)
+├── messages/             # Agent-to-human messages (gitignored)
+└── shared/
+    └── queue/
+        ├── incoming/     # New tasks
+        ├── claimed/      # Tasks being worked on
+        ├── done/         # Completed tasks
+        └── failed/       # Failed tasks
+```
+
+If `--skills` is used, also creates:
+```
+.claude/
+└── commands/
+    ├── enqueue.md
+    ├── queue-status.md
+    ├── agent-status.md
+    ├── add-agent.md
+    ├── pause-agent.md
+    ├── retry-failed.md
+    ├── tune-backpressure.md
+    └── tune-intervals.md
+```
 
 ## Configuration
 
 ### Claude Instructions
 
-The orchestrator uses your project's existing `claude.md` file. You just need to add one line to it:
+The orchestrator uses your project's existing `claude.md` file. Add these lines to it:
 
 ```markdown
 If .agent-instructions.md exists in this directory, read and follow those instructions.
+
+Check .orchestrator/messages/ for any agent messages and inform the user of warnings or questions.
 ```
 
 When agents run, the scheduler generates a `.agent-instructions.md` file in each agent's worktree containing:
@@ -188,6 +237,7 @@ orchestrator/
 │   ├── git_utils.py        # Git operations
 │   ├── queue_utils.py      # Queue operations
 │   ├── port_utils.py       # Port allocation
+│   ├── message_utils.py    # Agent-to-human messaging
 │   └── roles/              # Agent roles
 │       ├── base.py
 │       ├── product_manager.py
@@ -219,6 +269,8 @@ your-project/
 │   │       ├── lock
 │   │       └── worktree/
 │   │           └── .agent-instructions.md  # Generated (gitignored)
+│   ├── messages/           # Agent messages (gitignored)
+│   │   └── warning-20240115-143000-test-failures.md
 │   └── shared/
 │       └── queue/
 │           ├── incoming/   # New tasks
@@ -248,6 +300,75 @@ The system prevents overwhelming by checking limits before:
 
 1. **Creating tasks**: incoming + claimed < max_incoming
 2. **Claiming tasks**: claimed < max_claimed AND open_prs < max_open_prs
+
+## Agent Messages
+
+Agents can send messages to humans via the `.orchestrator/messages/` directory. This enables asynchronous communication when agents encounter issues or need input.
+
+### Message Types
+
+| Type | Emoji | Use Case |
+|------|-------|----------|
+| `info` | ℹ️ | Status updates, completed work summaries |
+| `warning` | ⚠️ | Something needs attention but isn't blocking |
+| `error` | ❌ | Something failed, may need intervention |
+| `question` | ❓ | Agent is blocked and needs human input |
+
+### Message Format
+
+Messages are markdown files with metadata:
+
+```markdown
+# ⚠️ Test failures in auth module
+
+**Type:** warning
+**Time:** 2024-01-15T14:30:00
+**From:** test-agent
+**Task:** TASK-abc123
+
+---
+
+Found 3 failing tests in the authentication module:
+
+- test_login_invalid_password
+- test_session_expiry
+- test_token_refresh
+
+These may be related to recent changes in PR #42.
+```
+
+### Using Messages in Roles
+
+Agents can send messages using helper methods:
+
+```python
+class MyRole(BaseRole):
+    def run(self):
+        # Send different message types
+        self.send_info("Task completed", "Successfully implemented feature X")
+        self.send_warning("Flaky test detected", "test_foo failed intermittently")
+        self.send_error("Build failed", "Compilation error in module Y")
+        self.send_question("Clarification needed", "Should this handle case Z?")
+```
+
+### Checking Messages
+
+Add to your `claude.md`:
+```
+Check .orchestrator/messages/ for any agent messages and inform the user of warnings or questions.
+```
+
+Messages are gitignored by default. Clear old messages periodically or use:
+
+```python
+from orchestrator.orchestrator.message_utils import clear_messages
+
+# Clear all messages older than 24 hours
+clear_messages(older_than_hours=24)
+
+# Clear only info messages
+clear_messages(message_type="info")
+```
 
 ## Troubleshooting
 
