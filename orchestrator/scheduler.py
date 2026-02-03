@@ -401,17 +401,25 @@ def spawn_agent(agent_name: str, agent_id: int, role: str, agent_config: dict) -
     debug_log(f"Spawning agent {agent_name}: module={role_module}, cwd={worktree_path}")
     debug_log(f"Agent env: AGENT_FOCUS={env.get('AGENT_FOCUS', 'N/A')}, ports={port_vars}")
 
-    # Spawn the role as a subprocess
-    process = subprocess.Popen(
-        [sys.executable, "-m", role_module],
-        cwd=worktree_path,
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        start_new_session=True,  # Detach from parent
-    )
+    # Create log files for agent stdout/stderr
+    # Using files instead of PIPE prevents blocking when buffer fills
+    agent_dir = get_agents_runtime_dir() / agent_name
+    stdout_path = agent_dir / "stdout.log"
+    stderr_path = agent_dir / "stderr.log"
 
-    debug_log(f"Agent {agent_name} spawned with PID {process.pid}")
+    with open(stdout_path, "w") as stdout_log, open(stderr_path, "w") as stderr_log:
+        # Spawn the role as a subprocess
+        # File handles are inherited by child and remain open after parent closes them
+        process = subprocess.Popen(
+            [sys.executable, "-m", role_module],
+            cwd=worktree_path,
+            env=env,
+            stdout=stdout_log,
+            stderr=stderr_log,
+            start_new_session=True,  # Detach from parent
+        )
+
+    debug_log(f"Agent {agent_name} spawned with PID {process.pid}, logs: {agent_dir}")
     return process.pid
 
 

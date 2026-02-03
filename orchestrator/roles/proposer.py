@@ -118,9 +118,10 @@ Start by exploring the codebase relevant to your focus, then create proposals.
         # Invoke Claude with appropriate tools
         allowed_tools = [
             "Read",
+            "Write",  # For creating summaries, proposals, etc.
             "Glob",
             "Grep",
-            "Bash",  # For git commands
+            "Bash",  # For git commands, moving files
             "Skill",  # For /create-proposal
         ]
 
