@@ -71,13 +71,27 @@ Deferring until an implementer becomes available.
 
 ## Implementation
 
-```python
-from orchestrator.orchestrator.proposal_utils import defer_proposal
+```bash
+PROP_ID="PROP-abc12345"
+TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-defer_proposal(
-    proposal_path=proposal['path'],
-    reason="Task queue at capacity. Will reconsider when queue clears."
-)
+# Move to deferred directory
+mkdir -p .orchestrator/shared/proposals/deferred
+mv ".orchestrator/shared/proposals/active/${PROP_ID}.md" \
+   ".orchestrator/shared/proposals/deferred/${PROP_ID}.md"
+
+# Append deferral info
+cat >> ".orchestrator/shared/proposals/deferred/${PROP_ID}.md" << EOF
+
+---
+## Deferral
+
+**Deferred:** ${TIMESTAMP}
+
+### Reason
+
+Task queue at capacity. Will reconsider when queue clears.
+EOF
 ```
 
 ## After Deferral
@@ -90,10 +104,11 @@ defer_proposal(
 
 To move a deferred proposal back to active:
 
-```python
-from orchestrator.orchestrator.proposal_utils import reactivate_proposal
+```bash
+PROP_ID="PROP-abc12345"
 
-reactivate_proposal(proposal_path)
+mv ".orchestrator/shared/proposals/deferred/${PROP_ID}.md" \
+   ".orchestrator/shared/proposals/active/${PROP_ID}.md"
 ```
 
 This moves it back to `proposals/active/` for re-evaluation.

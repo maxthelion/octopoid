@@ -83,26 +83,47 @@ Related: Issue #42
 
 ## Creating the Task
 
-After gathering requirements, create the task file:
+### Step 1: Generate a unique ID
 
-```python
-from orchestrator.orchestrator.queue_utils import create_task
-
-create_task(
-    title="Add input validation to user registration",
-    role="implement",
-    context="The user registration endpoint...",
-    acceptance_criteria=[
-        "Email addresses are validated for proper format",
-        "Passwords require minimum 8 characters...",
-    ],
-    priority="P1",
-    branch="main",
-    created_by="pm-agent"
-)
-```
-
-Or write directly to the queue:
 ```bash
-# File: .orchestrator/shared/queue/incoming/TASK-{uuid}.md
+TASK_ID="TASK-$(openssl rand -hex 4)"
+TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+echo "Creating ${TASK_ID}"
 ```
+
+### Step 2: Write the task file
+
+```bash
+mkdir -p .orchestrator/shared/queue/incoming
+
+cat > ".orchestrator/shared/queue/incoming/${TASK_ID}.md" << EOF
+# [${TASK_ID}] Add input validation to user registration
+
+ROLE: implement
+PRIORITY: P1
+BRANCH: main
+CREATED: ${TIMESTAMP}
+CREATED_BY: ${AGENT_NAME}
+
+## Context
+
+The user registration endpoint currently accepts any input without validation.
+This could lead to invalid data in the database and potential security issues.
+Related: Issue #42
+
+## Acceptance Criteria
+- [ ] Email addresses are validated for proper format
+- [ ] Passwords require minimum 8 characters, 1 number, 1 special char
+- [ ] Username is alphanumeric, 3-20 characters
+- [ ] Validation errors return 400 with specific error messages
+- [ ] Unit tests cover all validation rules
+EOF
+```
+
+## After Creation
+
+The task will be:
+1. Placed in `.orchestrator/shared/queue/incoming/`
+2. Available for claiming by agents with matching roles
+3. Moved to `claimed/` when an agent picks it up
+4. Moved to `done/` or `failed/` when complete

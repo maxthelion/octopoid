@@ -26,16 +26,21 @@ Rejected proposals include feedback from the curator:
 
 ...original proposal content...
 
-**Rejected By:** pm-agent
-**Rejected At:** 2024-01-11T14:20:00Z
-**Rejection Reason:** |
-  This proposal is too broad. "Comprehensive logging" could mean many things.
-  Consider:
-  1. Split into smaller, focused proposals (error logging, audit logging, etc.)
-  2. Start with one specific area that has the highest impact
-  3. Specify what logging framework to use
+---
+## Rejection
 
-  Also, we're currently focused on stability - new features should wait.
+**Rejected:** 2024-01-11T14:20:00Z
+**Rejected By:** curator
+
+### Reason
+
+This proposal is too broad. "Comprehensive logging" could mean many things.
+Consider:
+1. Split into smaller, focused proposals (error logging, audit logging, etc.)
+2. Start with one specific area that has the highest impact
+3. Specify what logging framework to use
+
+Also, we're currently focused on stability - new features should wait.
 ```
 
 ## Using the Feedback
@@ -74,19 +79,24 @@ If you want to re-submit a similar idea:
 
 ## Implementation
 
-To get your rejected proposals:
+To review your rejected proposals, list the files in the rejected directory:
 
-```python
-from orchestrator.orchestrator.proposal_utils import get_rejected_proposals
+```bash
+# List rejected proposals for your proposer type
+PROPOSER="${AGENT_NAME}"
+ls -la .orchestrator/shared/proposals/rejected/ 2>/dev/null | grep "${PROPOSER}" || echo "No rejections found"
 
-# Get rejections for your proposer type
-rejections = get_rejected_proposals("architect")
+# Or list all rejected proposals
+ls -la .orchestrator/shared/proposals/rejected/
 
-for rej in rejections:
-    print(f"Proposal: {rej['title']}")
-    print(f"Rejected: {rej.get('rejected_at', 'unknown')}")
-    print(f"Reason: {rej.get('rejection_reason', 'no reason given')}")
-    print()
+# Read a specific rejection
+cat ".orchestrator/shared/proposals/rejected/PROP-abc12345.md"
+```
+
+To find rejections mentioning your proposer name:
+
+```bash
+grep -l "Proposer.*${AGENT_NAME}" .orchestrator/shared/proposals/rejected/*.md 2>/dev/null
 ```
 
 ## Best Practices

@@ -41,19 +41,19 @@ Reject a proposal when:
 The proposer will use your feedback to improve. Be:
 
 ### Specific
-❌ "This is too vague"
-✅ "The acceptance criteria don't specify what error handling is needed"
+- "This is too vague"
+- "The acceptance criteria don't specify what error handling is needed"
 
 ### Constructive
-❌ "This won't work"
-✅ "This approach won't work because X. Consider Y instead."
+- "This won't work"
+- "This approach won't work because X. Consider Y instead."
 
 ### Actionable
-❌ "Not aligned with priorities"
-✅ "We're currently focused on stability. Resubmit after the v2.0 release."
+- "Not aligned with priorities"
+- "We're currently focused on stability. Resubmit after the v2.0 release."
 
 ### Encouraging when appropriate
-✅ "Good observation about the flaky tests. Consider splitting this into separate proposals for each test file."
+- "Good observation about the flaky tests. Consider splitting this into separate proposals for each test file."
 
 ## Example Rejections
 
@@ -81,29 +81,36 @@ This is already being addressed in PR #142 which adds the same functionality.
 Check open PRs before proposing to avoid duplicates.
 ```
 
-### Wrong Timing
-```
-This is a good observation, but we're in a feature freeze for the next release.
-Please resubmit after 2024-02-01 when we start the next planning cycle.
-```
-
 ## Implementation
 
-```python
-from orchestrator.orchestrator.proposal_utils import reject_proposal
+```bash
+PROP_ID="PROP-abc12345"
+TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+REJECTED_BY="${AGENT_NAME}"
 
-reject_proposal(
-    proposal_path=proposal['path'],
-    rejected_by="pm-agent",
-    reason="""
-    This proposal is too broad. "Comprehensive logging" could mean many things.
+# Move to rejected directory
+mkdir -p .orchestrator/shared/proposals/rejected
+mv ".orchestrator/shared/proposals/active/${PROP_ID}.md" \
+   ".orchestrator/shared/proposals/rejected/${PROP_ID}.md"
 
-    Consider:
-    1. Split into smaller, focused proposals
-    2. Start with error logging specifically
-    3. Specify the logging framework to use
-    """
-)
+# Append rejection info
+cat >> ".orchestrator/shared/proposals/rejected/${PROP_ID}.md" << EOF
+
+---
+## Rejection
+
+**Rejected:** ${TIMESTAMP}
+**Rejected By:** ${REJECTED_BY}
+
+### Reason
+
+This proposal is too broad. "Comprehensive logging" could mean many things.
+
+Consider:
+1. Split into smaller, focused proposals
+2. Start with error logging specifically
+3. Specify the logging framework to use
+EOF
 ```
 
 ## After Rejection

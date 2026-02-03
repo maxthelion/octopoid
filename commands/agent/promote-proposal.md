@@ -46,26 +46,61 @@ Before promoting, verify:
 
 ## Implementation
 
-```python
-from orchestrator.orchestrator.proposal_utils import promote_proposal
-from orchestrator.orchestrator.queue_utils import create_task
+### Step 1: Read the proposal and generate task ID
 
-# First, create the task
-task_path = create_task(
-    title=proposal['title'],
-    role="implement",  # or "test", "review"
-    context=proposal['rationale'],
-    acceptance_criteria=proposal['acceptance_criteria'],
-    priority="P1",
-    branch="main",
-    created_by="pm-agent",
-)
+```bash
+PROP_ID="PROP-abc12345"
+TASK_ID="TASK-$(openssl rand -hex 4)"
+TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+```
 
-# Extract task ID from path
-task_id = task_path.stem  # e.g., "TASK-abc12345"
+### Step 2: Create the task file
 
-# Then promote the proposal
-promote_proposal(proposal['path'], task_id=task_id)
+```bash
+mkdir -p .orchestrator/shared/queue/incoming
+
+cat > ".orchestrator/shared/queue/incoming/${TASK_ID}.md" << 'EOF'
+# [TASK-abc12345] Add retry logic to API client
+
+ROLE: implement
+PRIORITY: P1
+BRANCH: main
+CREATED: 2024-01-15T10:30:00Z
+CREATED_BY: curator
+FROM_PROPOSAL: PROP-abc12345
+
+## Context
+
+Add exponential backoff retry logic to all external API calls.
+
+Currently, transient network failures cause immediate errors. Adding retry
+logic will improve reliability.
+
+## Acceptance Criteria
+- [ ] All external API calls use retry wrapper
+- [ ] Exponential backoff with jitter
+- [ ] Unit tests cover retry behavior
+
+## Relevant Files
+- src/api/client.ts
+- src/services/external-service.ts
+EOF
+```
+
+### Step 3: Move proposal to promoted
+
+```bash
+mkdir -p .orchestrator/shared/proposals/promoted
+mv ".orchestrator/shared/proposals/active/${PROP_ID}.md" \
+   ".orchestrator/shared/proposals/promoted/${PROP_ID}.md"
+
+# Append promotion info
+cat >> ".orchestrator/shared/proposals/promoted/${PROP_ID}.md" << EOF
+
+---
+**Promoted:** ${TIMESTAMP}
+**Task:** ${TASK_ID}
+EOF
 ```
 
 ## Task Mapping

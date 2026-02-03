@@ -124,28 +124,58 @@ None - this is a standalone improvement.
 
 ## Creating the Proposal
 
-After analyzing the codebase, create the proposal:
+After analyzing the codebase, create the proposal by writing a markdown file directly.
 
-```python
-from orchestrator.orchestrator.proposal_utils import create_proposal
+### Step 1: Generate a unique ID
 
-create_proposal(
-    title="Add retry logic to API client",
-    proposer="architect",
-    category="refactor",
-    complexity="M",
-    summary="Add exponential backoff retry logic to all external API calls.",
-    rationale="Currently, transient network failures cause immediate errors...",
-    acceptance_criteria=[
-        "All external API calls use retry wrapper",
-        "Exponential backoff with jitter",
-        "Unit tests cover retry behavior",
-    ],
-    relevant_files=["src/api/client.ts", "src/services/external-service.ts"],
-    complexity_reduction="Will allow us to remove ad-hoc retry logic...",
-    enables="Unblocks the batch processing feature...",
-)
+Generate an 8-character hex ID for the proposal:
+
+```bash
+PROP_ID="PROP-$(openssl rand -hex 4)"
+echo $PROP_ID
 ```
+
+### Step 2: Write the proposal file
+
+Write the proposal to `.orchestrator/shared/proposals/active/{PROP_ID}.md`:
+
+```bash
+# Ensure the directory exists
+mkdir -p .orchestrator/shared/proposals/active
+
+# Write the proposal (replace with your content)
+cat > .orchestrator/shared/proposals/active/PROP-a1b2c3d4.md << 'EOF'
+# Proposal: Add retry logic to API client
+
+**ID:** PROP-a1b2c3d4
+**Proposer:** architect
+**Category:** refactor
+**Complexity:** M
+**Created:** 2024-01-15T10:30:00Z
+
+## Summary
+Add exponential backoff retry logic to all external API calls.
+
+## Rationale
+Currently, transient network failures cause immediate errors...
+
+## Acceptance Criteria
+- [ ] All external API calls use retry wrapper
+- [ ] Exponential backoff with jitter
+- [ ] Unit tests cover retry behavior
+
+## Relevant Files
+- src/api/client.ts
+- src/services/external-service.ts
+EOF
+```
+
+### Important Notes
+
+- Use your agent name from the `AGENT_NAME` environment variable as the Proposer
+- Use the current timestamp in ISO8601 format for Created
+- The file must be placed in `.orchestrator/shared/proposals/active/`
+- The filename must match the ID in the file (e.g., `PROP-a1b2c3d4.md`)
 
 ## After Creation
 

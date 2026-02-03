@@ -4,7 +4,7 @@ Record the result of a gatekeeper check on a PR.
 
 ## Usage
 
-After completing your review of the PR, use this skill to record your findings.
+After completing your review of the PR, use this skill to record your findings by writing a markdown file.
 
 ## Check Statuses
 
@@ -12,22 +12,34 @@ After completing your review of the PR, use this skill to record your findings.
 - `failed` - PR has issues that must be fixed before merging
 - `warning` - PR has minor issues but can proceed with caution
 
-## Result Format
+## Recording a Check Result
 
-```python
-from orchestrator.orchestrator.pr_utils import record_check_result
+### Step 1: Get PR number and check name
 
-# Get PR number from environment
-import os
-pr_number = int(os.environ.get("PR_NUMBER"))
+The PR number is in the `PR_NUMBER` environment variable.
+Your focus area (check name) is in the `AGENT_FOCUS` environment variable.
 
-record_check_result(
-    pr_number=pr_number,
-    check_name="lint",  # Your focus area
-    status="passed",    # or "failed" or "warning"
-    summary="All lint checks pass, no style issues found.",
-    details="""
-## Detailed Report
+### Step 2: Write the check result file
+
+Write the result to `.orchestrator/shared/prs/PR-{number}/checks/{check_name}.md`:
+
+```bash
+# Get values from environment
+PR_NUMBER="${PR_NUMBER}"
+CHECK_NAME="${AGENT_FOCUS}"
+
+# Ensure the directory exists
+mkdir -p ".orchestrator/shared/prs/PR-${PR_NUMBER}/checks"
+
+# Write the check result
+cat > ".orchestrator/shared/prs/PR-${PR_NUMBER}/checks/${CHECK_NAME}.md" << 'EOF'
+# ✅ Lint Check
+
+**Status:** passed
+**Time:** 2024-01-15T10:30:00Z
+**Summary:** All lint checks pass, no style issues found.
+
+## Details
 
 Analyzed 15 modified files for lint and style issues.
 
@@ -35,37 +47,32 @@ Analyzed 15 modified files for lint and style issues.
 - No ESLint errors
 - No TypeScript type issues
 - Formatting matches project standards
-""",
-    issues=[  # Optional: list of specific issues
-        {
-            "file": "src/api/client.ts",
-            "line": 42,
-            "message": "Consider extracting magic number to constant",
-            "severity": "warning"
-        }
-    ]
-)
+EOF
 ```
 
-## Fields
+## Check File Format
 
-### Required
-- `pr_number` - The PR being checked (from PR_NUMBER env var)
-- `check_name` - Your focus area (lint, tests, style, architecture, etc.)
-- `status` - passed | failed | warning
-- `summary` - One-line summary of result
+```markdown
+# {emoji} {Check Name} Check
 
-### Optional
-- `details` - Full markdown report with findings
-- `issues` - List of specific issues found
+**Status:** passed | failed | warning
+**Time:** {ISO8601_timestamp}
+**Summary:** {one-line summary}
 
-## Issue Format
+## Details
 
-Each issue in the `issues` list should have:
-- `file` - Path to the file
-- `line` - Line number (optional)
-- `message` - Description of the issue
-- `severity` - error | warning | info
+{detailed markdown report}
+
+## Issues
+
+- **{severity}** `{file}:{line}`: {message}
+- **{severity}** `{file}:{line}`: {message}
+```
+
+### Status Emojis
+- `✅` for passed
+- `❌` for failed
+- `⚠️` for warning
 
 ## Guidelines
 
@@ -86,13 +93,16 @@ Each issue in the `issues` list should have:
 
 ## Example: Failed Check
 
-```python
-record_check_result(
-    pr_number=pr_number,
-    check_name="tests",
-    status="failed",
-    summary="2 test failures in auth module",
-    details="""
+```bash
+cat > ".orchestrator/shared/prs/PR-${PR_NUMBER}/checks/tests.md" << 'EOF'
+# ❌ Tests Check
+
+**Status:** failed
+**Time:** 2024-01-15T10:30:00Z
+**Summary:** 2 test failures in auth module
+
+## Details
+
 ## Test Results
 
 **Total:** 127 tests
@@ -106,34 +116,25 @@ record_check_result(
 
 ### Recommendation
 The test expectations need to be updated to match the new behavior.
-""",
-    issues=[
-        {
-            "file": "tests/auth/test_login.py",
-            "line": 45,
-            "message": "Expected error message 'Invalid password' but got 'Incorrect password'",
-            "severity": "error"
-        },
-        {
-            "file": "tests/auth/test_session.py",
-            "line": 78,
-            "message": "Session expiry assertion failed: expected 3600, got 3601",
-            "severity": "error"
-        }
-    ]
-)
+
+## Issues
+
+- **error** `tests/auth/test_login.py:45`: Expected error message 'Invalid password' but got 'Incorrect password'
+- **error** `tests/auth/test_session.py:78`: Session expiry assertion failed: expected 3600, got 3601
+EOF
 ```
 
 ## Example: Passed with Notes
 
-```python
-record_check_result(
-    pr_number=pr_number,
-    check_name="architecture",
-    status="passed",
-    summary="Architecture changes are well-structured",
-    details="""
-## Architecture Review
+```bash
+cat > ".orchestrator/shared/prs/PR-${PR_NUMBER}/checks/architecture.md" << 'EOF'
+# ✅ Architecture Check
+
+**Status:** passed
+**Time:** 2024-01-15T10:30:00Z
+**Summary:** Architecture changes are well-structured
+
+## Details
 
 ### Changes Reviewed
 - New service layer for user management
@@ -147,8 +148,7 @@ The new UserService correctly implements the Repository pattern.
 ### Recommendations (Non-blocking)
 - Consider adding interface documentation for the new service
 - The service could benefit from caching in future iterations
-"""
-)
+EOF
 ```
 
 ## After Recording

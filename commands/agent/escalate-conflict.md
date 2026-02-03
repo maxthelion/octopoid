@@ -64,55 +64,56 @@ Need to decide: feature first then refactor, or refactor first?
 
 ## Implementation
 
-```python
-from orchestrator.orchestrator.proposal_utils import defer_proposal
-from orchestrator.orchestrator.message_utils import warning
+### Step 1: Defer both proposals
 
-# Defer both proposals
-defer_proposal(proposal1['path'], "Deferred pending conflict resolution")
-defer_proposal(proposal2['path'], "Deferred pending conflict resolution")
+```bash
+PROP1="PROP-abc12345"
+PROP2="PROP-def67890"
+TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-# Create escalation message
-body = f"""
-Two proposals appear to conflict:
+# Defer proposal 1
+mkdir -p .orchestrator/shared/proposals/deferred
+mv ".orchestrator/shared/proposals/active/${PROP1}.md" \
+   ".orchestrator/shared/proposals/deferred/${PROP1}.md"
+cat >> ".orchestrator/shared/proposals/deferred/${PROP1}.md" << EOF
 
-## Proposal 1: {proposal1['title']}
-ID: {proposal1['id']}
-Category: {proposal1['category']}
+---
+## Deferral
 
-## Proposal 2: {proposal2['title']}
-ID: {proposal2['id']}
-Category: {proposal2['category']}
+**Deferred:** ${TIMESTAMP}
 
-## Conflict
-{conflict_description}
+### Reason
 
-## Options
-1. Approve proposal 1, reject proposal 2
-2. Approve proposal 2, reject proposal 1
-3. Combine into a single approach
-4. Sequence them (specify order)
+Deferred pending conflict resolution with ${PROP2}.
+EOF
 
-Both proposals have been deferred pending your decision.
-"""
+# Defer proposal 2
+mv ".orchestrator/shared/proposals/active/${PROP2}.md" \
+   ".orchestrator/shared/proposals/deferred/${PROP2}.md"
+cat >> ".orchestrator/shared/proposals/deferred/${PROP2}.md" << EOF
 
-warning(
-    f"Conflict: {proposal1['id']} vs {proposal2['id']}",
-    body,
-    agent_name="pm-agent"
-)
+---
+## Deferral
+
+**Deferred:** ${TIMESTAMP}
+
+### Reason
+
+Deferred pending conflict resolution with ${PROP1}.
+EOF
 ```
 
-## Message Format
+### Step 2: Create escalation message
 
-The project owner will see:
+```bash
+mkdir -p .orchestrator/messages
 
-```markdown
+cat > ".orchestrator/messages/warning-$(date +%Y%m%d-%H%M%S)-conflict.md" << 'EOF'
 # ⚠️ Conflict: PROP-abc12345 vs PROP-def67890
 
 **Type:** warning
 **Time:** 2024-01-15T14:30:00
-**From:** pm-agent
+**From:** curator
 
 ---
 
@@ -127,6 +128,7 @@ ID: PROP-def67890
 Category: refactor
 
 ## Conflict
+
 Both proposals modify src/api/client.ts in incompatible ways.
 
 ## Options
@@ -136,6 +138,7 @@ Both proposals modify src/api/client.ts in incompatible ways.
 4. Sequence them (specify order)
 
 Both proposals have been deferred pending your decision.
+EOF
 ```
 
 ## After Escalation

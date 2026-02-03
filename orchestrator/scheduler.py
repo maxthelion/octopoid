@@ -323,6 +323,15 @@ def spawn_agent(agent_name: str, agent_id: int, role: str, agent_config: dict) -
     env["SHARED_DIR"] = str(get_orchestrator_dir() / "shared")
     env["ORCHESTRATOR_DIR"] = str(get_orchestrator_dir())
 
+    # Set PYTHONPATH to include the orchestrator submodule
+    # This allows `import orchestrator.orchestrator...` to work
+    orchestrator_submodule = find_parent_project() / "orchestrator"
+    existing_pythonpath = env.get("PYTHONPATH", "")
+    if existing_pythonpath:
+        env["PYTHONPATH"] = f"{orchestrator_submodule}:{existing_pythonpath}"
+    else:
+        env["PYTHONPATH"] = str(orchestrator_submodule)
+
     # Pass focus for proposers and gatekeepers (specialists)
     if role in ("proposer", "gatekeeper") and "focus" in agent_config:
         env["AGENT_FOCUS"] = agent_config["focus"]
