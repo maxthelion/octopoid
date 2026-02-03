@@ -18,7 +18,9 @@ When paused:
 - Existing work continues if running
 - State is preserved
 
-## Example
+## Examples
+
+### Pause an Implementer
 
 Before:
 ```yaml
@@ -37,6 +39,28 @@ agents:
     paused: true
 ```
 
+### Pause a Proposer
+
+```yaml
+agents:
+  - name: test-checker
+    role: proposer
+    focus: test_quality
+    interval_seconds: 86400
+    paused: true  # Won't create new proposals
+```
+
+### Pause a Gatekeeper
+
+```yaml
+agents:
+  - name: lint-checker
+    role: gatekeeper
+    focus: lint
+    interval_seconds: 600
+    paused: true  # Won't check PRs
+```
+
 ## Resuming an Agent
 
 Run the command again to toggle, or manually edit:
@@ -50,6 +74,8 @@ Run the command again to toggle, or manually edit:
 - **Maintenance** - Stop processing during updates
 - **Resource management** - Reduce load temporarily
 - **Manual intervention** - Take over a task manually
+- **Proposer control** - Temporarily stop a proposer from creating new proposals
+- **Gatekeeper control** - Pause PR checks (e.g., during major refactoring)
 
 ## Checking Status
 
