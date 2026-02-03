@@ -28,6 +28,16 @@ DEMO_MODE = False
 # ═══════════════════════════════════════════════════════════════════════════════
 
 @dataclass
+class AgentStatus:
+    """Current work status reported by the agent."""
+    task_id: str
+    task_title: str
+    current_subtask: str
+    progress_percent: int
+    last_updated: str
+
+
+@dataclass
 class AgentState:
     name: str
     role: str
@@ -43,6 +53,7 @@ class AgentState:
     total_successes: int
     total_failures: int
     current_task: Optional[str]
+    status: Optional[AgentStatus] = None
 
 
 @dataclass
@@ -86,6 +97,25 @@ def load_agent_state(agent_name: str) -> Optional[dict]:
         return None
 
 
+def load_agent_status(agent_name: str) -> Optional[AgentStatus]:
+    """Load agent's current work status from status.json."""
+    status_path = get_orchestrator_dir() / "agents" / agent_name / "status.json"
+    if not status_path.exists():
+        return None
+    try:
+        with open(status_path) as f:
+            data = json.load(f)
+        return AgentStatus(
+            task_id=data.get("task_id", ""),
+            task_title=data.get("task_title", ""),
+            current_subtask=data.get("current_subtask", ""),
+            progress_percent=data.get("progress_percent", 0),
+            last_updated=data.get("last_updated", ""),
+        )
+    except (json.JSONDecodeError, IOError):
+        return None
+
+
 def get_all_agents() -> list[AgentState]:
     """Get all agents with their current states."""
     if DEMO_MODE:
@@ -95,6 +125,7 @@ def get_all_agents() -> list[AgentState]:
     for config in load_agents_config():
         name = config.get("name", "unknown")
         state = load_agent_state(name) or {}
+        status = load_agent_status(name)
         agents.append(AgentState(
             name=name,
             role=config.get("role", "unknown"),
@@ -110,6 +141,7 @@ def get_all_agents() -> list[AgentState]:
             total_successes=state.get("total_successes", 0),
             total_failures=state.get("total_failures", 0),
             current_task=state.get("current_task"),
+            status=status,
         ))
     return agents
 
@@ -301,12 +333,29 @@ def get_demo_agents() -> list[AgentState]:
                         state["running"] = True
                         state["last_started"] = now.isoformat()
 
-        # Determine current task
+        # Determine current task and status
         current_task = None
+        status = None
         if state["running"] and config["role"] in ["implementer", "tester", "reviewer"]:
             claimed_tasks = DEMO_TASKS.get("claimed", [])
             if claimed_tasks:
-                current_task = claimed_tasks[i % len(claimed_tasks)][0]
+                task_info = claimed_tasks[i % len(claimed_tasks)]
+                current_task = task_info[0]
+                # Generate demo status
+                subtasks = [
+                    "Reading codebase",
+                    "Analyzing requirements",
+                    "Writing implementation",
+                    "Adding tests",
+                    "Committing changes",
+                ]
+                status = AgentStatus(
+                    task_id=task_info[0],
+                    task_title=task_info[1],
+                    current_subtask=subtasks[tick % len(subtasks)],
+                    progress_percent=min(95, (tick * 7) % 100),
+                    last_updated=datetime.now().isoformat(),
+                )
 
         agents.append(AgentState(
             name=name,
@@ -323,6 +372,7 @@ def get_demo_agents() -> list[AgentState]:
             total_successes=state["total_successes"],
             total_failures=state["total_failures"],
             current_task=current_task,
+            status=status,
         ))
 
     return agents
@@ -556,12 +606,23 @@ def render_agents_panel(win, y: int, x: int, height: int, width: int, agents: li
 
             # Progress bar (if space permits)
             if row_y + 1 < y + height - 1 and inner_width > 20:
-                bar_width = min(30, inner_width - 2)
-                bar_color = Colors.RUNNING if agent.running else Colors.SUCCESS if not agent.paused else Colors.PAUSED
-                draw_progress_bar(win, row_y + 1, inner_x, bar_width, progress, bar_color)
+                # Use status progress if available, otherwise use interval progress
+                if agent.status and agent.running:
+                    bar_progress = agent.status.progress_percent / 100.0
+                    bar_color = Colors.RUNNING
+                else:
+                    bar_progress = progress
+                    bar_color = Colors.RUNNING if agent.running else Colors.SUCCESS if not agent.paused else Colors.PAUSED
 
-                # Current task if running
-                if agent.running and agent.current_task and inner_width > 35:
+                bar_width = min(30, inner_width - 2)
+                draw_progress_bar(win, row_y + 1, inner_x, bar_width, bar_progress, bar_color)
+
+                # Show status subtask if available, else current task
+                if agent.status and agent.running and inner_width > 35:
+                    # Show progress % and current subtask
+                    status_display = f" {agent.status.progress_percent}%: {agent.status.current_subtask}"
+                    win.addnstr(row_y + 1, inner_x + bar_width + 1, status_display, inner_width - bar_width - 2)
+                elif agent.running and agent.current_task and inner_width > 35:
                     task_display = f" → {agent.current_task}"
                     win.addnstr(row_y + 1, inner_x + bar_width + 1, task_display, inner_width - bar_width - 2)
         except curses.error:
