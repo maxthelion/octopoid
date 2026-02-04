@@ -464,8 +464,16 @@ def init_colors():
     """Initialize color pairs."""
     curses.start_color()
     curses.use_default_colors()
+
+    # Try to use bright green (color 10) for RUNNING if 256 colors are supported
+    # Color 10 is "bright green" in 256-color terminals, making RUNNING more prominent
+    if curses.COLORS >= 256:
+        bright_green = 10  # Bright green in 256-color palette
+    else:
+        bright_green = curses.COLOR_GREEN
+
     curses.init_pair(Colors.HEADER, curses.COLOR_CYAN, -1)
-    curses.init_pair(Colors.RUNNING, curses.COLOR_GREEN, -1)
+    curses.init_pair(Colors.RUNNING, bright_green, -1)
     curses.init_pair(Colors.SUCCESS, curses.COLOR_GREEN, -1)
     curses.init_pair(Colors.FAILURE, curses.COLOR_RED, -1)
     curses.init_pair(Colors.WARNING, curses.COLOR_YELLOW, -1)
