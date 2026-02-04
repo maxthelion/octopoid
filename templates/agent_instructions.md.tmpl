@@ -47,6 +47,50 @@ When you need user approval before proceeding (implementation plans, architectur
 - Follow the project's established patterns
 - If unsure, document the uncertainty rather than guessing
 
+## Plan Documentation (Implementer Role)
+
+For implementer agents, create a plan document at the start of each task to track progress and enable resumption.
+
+### Plan Location
+
+`.orchestrator/agents/{agent-name}/plan.md` (in your worktree)
+
+### Plan Format
+
+```markdown
+# Plan: [TASK-ID]
+
+## Approach
+[High-level strategy - 1-3 sentences describing your approach]
+
+## Steps
+- [ ] Step 1: Description of first step
+- [ ] Step 2: Description of second step
+- [ ] Step 3: Description of third step
+[Add more steps as needed - typically 5-10 steps]
+
+## Files to Modify
+- path/to/file.ts - reason for change
+- path/to/other.ts - reason for change
+
+## Progress Log
+- [timestamp] Started task
+```
+
+### Maintaining the Plan
+
+1. **At task start**: Create the plan document with your approach and steps
+2. **As you work**: Check off completed steps with `[x]` and add progress log entries
+3. **Progress percentage**: Calculate from `(completed steps / total steps) * 100`
+4. **Update status.json**: Use the plan completion percentage for `progress_percent`
+
+### Example Progress Update
+
+After completing step 3 of 6:
+- Check off: `- [x] Step 3: Description`
+- Add to log: `- [timestamp] Completed step 3`
+- Update status.json: `"progress_percent": 50` (3/6 = 50%)
+
 ## Important Notes
 
 - Always commit your changes with clear, descriptive messages
