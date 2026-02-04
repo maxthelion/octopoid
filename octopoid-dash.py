@@ -117,8 +117,18 @@ def load_agent_status(agent_name: str) -> Optional[AgentStatus]:
         return None
 
 
+def get_agent_status_key(agent: AgentState) -> int:
+    """Get sort key for agent status: RUNNING=0, IDLE=1, PAUSED=2."""
+    if agent.running:
+        return 0
+    elif agent.paused:
+        return 2
+    else:
+        return 1  # IDLE
+
+
 def get_all_agents() -> list[AgentState]:
-    """Get all agents with their current states."""
+    """Get all agents with their current states, sorted by status."""
     if DEMO_MODE:
         return get_demo_agents()
 
@@ -144,6 +154,10 @@ def get_all_agents() -> list[AgentState]:
             current_task=state.get("current_task"),
             status=status,
         ))
+
+    # Sort: RUNNING first, then IDLE, then PAUSED
+    agents.sort(key=get_agent_status_key)
+
     return agents
 
 
@@ -383,6 +397,9 @@ def get_demo_agents() -> list[AgentState]:
             status=status,
         ))
 
+    # Sort: RUNNING first, then IDLE, then PAUSED
+    agents.sort(key=get_agent_status_key)
+
     return agents
 
 
@@ -604,13 +621,17 @@ def render_agents_panel(win, y: int, x: int, height: int, width: int, agents: li
 
         try:
             # Agent info line
-            win.attron(curses.color_pair(color))
+            # Use BOLD for RUNNING status to make it more prominent
+            attr = curses.color_pair(color)
+            if agent.running:
+                attr |= curses.A_BOLD
+            win.attron(attr)
             name_display = agent.name[:16].ljust(16)
             role_display = agent.role[:12].ljust(12)
             status_display = status[:10].ljust(10)
             info_line = f"{name_display} {role_display} {status_display} {time_str:<12}"
             win.addnstr(row_y, inner_x, info_line, inner_width)
-            win.attroff(curses.color_pair(color))
+            win.attroff(attr)
 
             # Progress bar (if space permits)
             if row_y + 1 < y + height - 1 and inner_width > 20:
