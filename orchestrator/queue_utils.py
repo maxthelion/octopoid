@@ -9,6 +9,7 @@ from typing import Any
 from uuid import uuid4
 
 from .config import get_queue_dir, get_queue_limits
+from .lock_utils import locked
 
 
 def get_queue_subdir(subdir: str) -> Path:
@@ -181,7 +182,7 @@ def parse_task_file(task_path: Path) -> dict[str, Any] | None:
 def claim_task(role_filter: str | None = None, agent_name: str | None = None) -> dict[str, Any] | None:
     """Atomically claim a task from incoming queue.
 
-    Uses os.rename which is atomic on POSIX to prevent race conditions.
+    Uses file locking + os.rename for robust race condition prevention.
 
     Args:
         role_filter: Only claim tasks with this role (e.g., 'implement', 'test')
@@ -193,6 +194,9 @@ def claim_task(role_filter: str | None = None, agent_name: str | None = None) ->
     incoming_dir = get_queue_subdir("incoming")
     claimed_dir = get_queue_subdir("claimed")
 
+    # Use a global claim lock to prevent race conditions
+    lock_file = get_queue_dir() / ".claim.lock"
+
     tasks = list_tasks("incoming")
 
     for task in tasks:
@@ -203,25 +207,35 @@ def claim_task(role_filter: str | None = None, agent_name: str | None = None) ->
         source = task["path"]
         dest = claimed_dir / source.name
 
-        try:
-            # Atomic rename - will fail if file was already claimed
-            os.rename(source, dest)
+        # Try to acquire lock (non-blocking)
+        with locked(lock_file, blocking=False) as acquired:
+            if not acquired:
+                # Another agent is claiming, skip this task
+                continue
 
-            # Add claim metadata to file
-            if agent_name:
-                with open(dest, "a") as f:
-                    f.write(f"\nCLAIMED_BY: {agent_name}\n")
-                    f.write(f"CLAIMED_AT: {datetime.now().isoformat()}\n")
+            try:
+                # Double-check file still exists (another agent might have claimed it)
+                if not source.exists():
+                    continue
 
-            task["path"] = dest
-            return task
+                # Atomic rename - will fail if file was already claimed
+                os.rename(source, dest)
 
-        except FileNotFoundError:
-            # Task was claimed by another agent, try next
-            continue
-        except OSError:
-            # Other error, try next
-            continue
+                # Add claim metadata to file
+                if agent_name:
+                    with open(dest, "a") as f:
+                        f.write(f"\nCLAIMED_BY: {agent_name}\n")
+                        f.write(f"CLAIMED_AT: {datetime.now().isoformat()}\n")
+
+                task["path"] = dest
+                return task
+
+            except FileNotFoundError:
+                # Task was claimed by another agent, try next
+                continue
+            except OSError:
+                # Other error, try next
+                continue
 
     return None
 
@@ -489,6 +503,75 @@ CREATED_BY: {created_by}
 
     task_path.write_text(content)
     return task_path
+
+
+def write_task_marker(worktree: Path, task_id: str, task_path: Path) -> None:
+    """Write a task marker file in the worktree.
+
+    This links the worktree state to a specific task, allowing detection
+    of stale resume attempts (task completed but worktree not reset).
+
+    Args:
+        worktree: Path to the agent's worktree
+        task_id: Task ID being worked on
+        task_path: Path to the task file
+    """
+    marker_path = worktree / ".current_task"
+    marker_data = {
+        "task_id": task_id,
+        "task_path": str(task_path),
+        "started_at": datetime.now().isoformat(),
+    }
+    import json
+    marker_path.write_text(json.dumps(marker_data, indent=2))
+
+
+def read_task_marker(worktree: Path) -> dict[str, Any] | None:
+    """Read the task marker file from worktree.
+
+    Args:
+        worktree: Path to the agent's worktree
+
+    Returns:
+        Task marker data or None if not present
+    """
+    marker_path = worktree / ".current_task"
+    if not marker_path.exists():
+        return None
+
+    try:
+        import json
+        return json.loads(marker_path.read_text())
+    except (IOError, json.JSONDecodeError):
+        return None
+
+
+def clear_task_marker(worktree: Path) -> None:
+    """Clear the task marker file from worktree.
+
+    Args:
+        worktree: Path to the agent's worktree
+    """
+    marker_path = worktree / ".current_task"
+    if marker_path.exists():
+        marker_path.unlink()
+
+
+def is_task_still_valid(task_id: str) -> bool:
+    """Check if a task is still valid to work on.
+
+    A task is valid if it exists in 'claimed' or 'needs_continuation'.
+    If it's in 'done', 'failed', or 'rejected', it should not be resumed.
+
+    Args:
+        task_id: Task ID to check
+
+    Returns:
+        True if task can still be worked on
+    """
+    # Check if task exists in active queues
+    task = find_task_by_id(task_id, subdirs=["claimed", "needs_continuation"])
+    return task is not None
 
 
 def get_queue_status() -> dict[str, Any]:

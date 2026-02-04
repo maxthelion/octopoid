@@ -1,5 +1,6 @@
 """Base class for agent roles."""
 
+import json
 import os
 import subprocess
 import sys
@@ -195,6 +196,53 @@ class BaseRole(ABC):
         except OSError as e:
             self.debug_log(f"Failed to write exit code: {e}")
 
+    def _get_state_file_path(self) -> Path:
+        """Get path to this agent's state file."""
+        return self.orchestrator_dir / "agents" / self.agent_name / "state.json"
+
+    def _update_state(self, **kwargs) -> None:
+        """Update agent state file with given values.
+
+        This allows the agent to update its own state, rather than relying
+        solely on the scheduler. Useful for setting running=false on exit.
+
+        Args:
+            **kwargs: Fields to update in state.json
+        """
+        state_path = self._get_state_file_path()
+        try:
+            # Read existing state
+            if state_path.exists():
+                state = json.loads(state_path.read_text())
+            else:
+                state = {}
+
+            # Update with new values
+            state.update(kwargs)
+
+            # Write back
+            state_path.parent.mkdir(parents=True, exist_ok=True)
+            state_path.write_text(json.dumps(state, indent=2))
+            self.debug_log(f"Updated state: {kwargs}")
+        except (IOError, json.JSONDecodeError) as e:
+            self.debug_log(f"Failed to update state: {e}")
+
+    def _mark_stopped(self, exit_code: int) -> None:
+        """Mark agent as stopped in state file.
+
+        Called on exit to ensure state.json shows running=false,
+        preventing stale state issues.
+
+        Args:
+            exit_code: The exit code of the agent
+        """
+        self._update_state(
+            running=False,
+            pid=None,
+            last_finished=datetime.now().isoformat(),
+            last_exit_code=exit_code,
+        )
+
     def execute(self) -> int:
         """Execute the role with error handling.
 
@@ -228,7 +276,11 @@ class BaseRole(ABC):
             traceback.print_exc()
             exit_code = 1
         finally:
-            # Always write exit code for scheduler to read
+            # Agent-owned cleanup: mark ourselves as stopped
+            # This ensures state.json is accurate even if scheduler doesn't tick
+            self._mark_stopped(exit_code)
+
+            # Also write exit code for backward compatibility
             self._write_exit_code(exit_code)
 
         return exit_code

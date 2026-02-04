@@ -20,12 +20,16 @@ from ..git_utils import (
 from ..queue_utils import (
     can_claim_task,
     claim_task,
+    clear_task_marker,
     complete_task,
     fail_task,
     find_task_by_id,
     get_continuation_tasks,
+    is_task_still_valid,
     mark_needs_continuation,
+    read_task_marker,
     resume_task,
+    write_task_marker,
 )
 from .base import BaseRole, main_entry
 
@@ -78,29 +82,56 @@ class ImplementerRole(BaseRole):
         """Check if there's continuation work to resume.
 
         Checks:
-        1. Tasks in needs_continuation queue for this agent
-        2. Uncommitted work in worktree on an agent branch
+        1. Task marker file in worktree (most reliable)
+        2. Tasks in needs_continuation queue for this agent
+        3. Uncommitted work in worktree on an agent branch (with validation)
 
         Returns:
             Task info dict if continuation work found, None otherwise
         """
+        # Check task marker file first - this is the source of truth
+        marker = read_task_marker(self.worktree)
+        if marker:
+            task_id = marker.get("task_id")
+            # Validate the task is still active (not in done/failed)
+            if task_id and is_task_still_valid(task_id):
+                task = find_task_by_id(task_id, subdirs=["claimed", "needs_continuation"])
+                if task:
+                    self.log(f"Found task marker for {task_id} - resuming")
+                    task["wip_branch"] = get_current_branch(self.worktree)
+                    task["has_uncommitted"] = has_uncommitted_changes(self.worktree)
+                    task["has_commits"] = has_commits_ahead_of_base(self.worktree, "main")
+                    return task
+            else:
+                # Task marker exists but task is done/failed - clean up
+                self.log(f"Task {task_id} is no longer active - clearing marker and resetting worktree")
+                clear_task_marker(self.worktree)
+                self._reset_worktree()
+                return None
+
         # Check for tasks explicitly marked for continuation
         continuation_tasks = get_continuation_tasks(agent_name=self.agent_name)
         if continuation_tasks:
             return continuation_tasks[0]  # Take highest priority
 
-        # Check if worktree has work-in-progress
+        # Check if worktree has work-in-progress on an agent branch
         current_branch = get_current_branch(self.worktree)
         task_id = extract_task_id_from_branch(current_branch)
 
         if task_id:
+            # Validate the task is still active before resuming
+            if not is_task_still_valid(task_id):
+                self.log(f"Task {task_id} from branch is no longer active - resetting worktree")
+                self._reset_worktree()
+                return None
+
             # We're on an agent branch - check for uncommitted work
             has_changes = has_uncommitted_changes(self.worktree)
             has_commits = has_commits_ahead_of_base(self.worktree, "main")
 
             if has_changes or has_commits:
-                # Find the task in any queue
-                task = find_task_by_id(task_id)
+                # Find the task in active queues only
+                task = find_task_by_id(task_id, subdirs=["claimed", "needs_continuation"])
                 if task:
                     self.log(f"Found work-in-progress for task {task_id} on branch {current_branch}")
                     task["wip_branch"] = current_branch
@@ -109,6 +140,51 @@ class ImplementerRole(BaseRole):
                     return task
 
         return None
+
+    def _reset_worktree(self) -> None:
+        """Reset worktree to clean state on main branch."""
+        import subprocess
+
+        self.log("Resetting worktree to main")
+        try:
+            # Detach HEAD first to allow checking out main
+            subprocess.run(
+                ["git", "checkout", "--detach", "HEAD"],
+                cwd=self.worktree,
+                capture_output=True,
+                check=False,
+            )
+            # Clean untracked files
+            subprocess.run(
+                ["git", "clean", "-fd"],
+                cwd=self.worktree,
+                capture_output=True,
+                check=False,
+            )
+            # Discard any changes
+            subprocess.run(
+                ["git", "checkout", "."],
+                cwd=self.worktree,
+                capture_output=True,
+                check=False,
+            )
+            # Fetch latest
+            subprocess.run(
+                ["git", "fetch", "origin"],
+                cwd=self.worktree,
+                capture_output=True,
+                check=False,
+            )
+            # Reset to origin/main
+            subprocess.run(
+                ["git", "reset", "--hard", "origin/main"],
+                cwd=self.worktree,
+                capture_output=True,
+                check=True,
+            )
+            self.log("Worktree reset complete")
+        except subprocess.CalledProcessError as e:
+            self.log(f"Warning: worktree reset failed: {e}")
 
     def _resume_task(self, task: dict) -> int:
         """Resume a task that was previously interrupted.
@@ -139,6 +215,9 @@ class ImplementerRole(BaseRole):
         if "needs_continuation" in str(task_path):
             task_path = resume_task(task_path, agent_name=self.agent_name)
             task["path"] = task_path
+
+        # Write/update task marker
+        write_task_marker(self.worktree, task_id, task_path)
 
         try:
             # Build prompt for continuation
@@ -282,6 +361,8 @@ Update this whenever you start a new subtask or make significant progress (every
             self.log("No changes made - task may need different approach")
             fail_task(task_path, "Claude completed without making any changes")
             self.clear_status()  # Task failed
+            clear_task_marker(self.worktree)  # Clear marker so we don't resume
+            self._reset_worktree()  # Reset for next task
             return 0
 
         # Handle submodule changes before creating PR
@@ -331,6 +412,8 @@ Generated by orchestrator agent: {self.agent_name}
             self.log(f"Created PR: {pr_url}")
             complete_task(task_path, f"PR created: {pr_url}")
             self.clear_status()  # Task complete
+            clear_task_marker(self.worktree)  # Clear marker
+            self._reset_worktree()  # Reset for next task
             return 0
 
         except Exception as e:
@@ -388,6 +471,9 @@ Generated by orchestrator agent: {self.agent_name}
         task_path = task["path"]
 
         self.log(f"Claimed task {task_id}: {task_title}")
+
+        # Write task marker to link worktree state to this task
+        write_task_marker(self.worktree, task_id, task_path)
 
         try:
             # Create feature branch
