@@ -12,7 +12,10 @@ from ..git_utils import (
     extract_task_id_from_branch,
     get_current_branch,
     has_commits_ahead_of_base,
+    has_submodule_changes,
     has_uncommitted_changes,
+    push_submodule_to_main,
+    stage_submodule_pointer,
 )
 from ..queue_utils import (
     can_claim_task,
@@ -280,6 +283,26 @@ Update this whenever you start a new subtask or make significant progress (every
             fail_task(task_path, "Claude completed without making any changes")
             self.clear_status()  # Task failed
             return 0
+
+        # Handle submodule changes before creating PR
+        # Submodule commits must be pushed to the submodule remote first,
+        # otherwise the boxen PR will reference commits that don't exist remotely
+        if has_submodule_changes(self.worktree, "orchestrator"):
+            self.log("Detected orchestrator submodule changes - pushing to submodule main")
+            success, msg = push_submodule_to_main(
+                self.worktree,
+                "orchestrator",
+                commit_message=f"[{task_id}] {task_title}",
+            )
+            if success:
+                self.log(f"Submodule push: {msg}")
+                # Stage the submodule pointer update in the parent repo
+                stage_submodule_pointer(self.worktree, "orchestrator")
+                # Commit the submodule pointer change
+                commit_changes(self.worktree, f"Update orchestrator submodule for [{task_id}]")
+            else:
+                self.log(f"Warning: Failed to push submodule changes: {msg}")
+                # Continue anyway - the PR might fail but we'll log the issue
 
         # Try to create PR
         try:

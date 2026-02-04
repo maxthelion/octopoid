@@ -409,3 +409,145 @@ def cleanup_merged_branches(worktree_path: Path) -> list[str]:
                 pass
 
     return deleted
+
+
+def has_submodule_changes(worktree_path: Path, submodule_name: str = "orchestrator") -> bool:
+    """Check if changes include a specific submodule.
+
+    Submodule changes appear in git status as:
+    - " M orchestrator" (modified submodule - new commits)
+    - "?? orchestrator/" (untracked changes inside - shouldn't happen normally)
+
+    Args:
+        worktree_path: Path to the worktree
+        submodule_name: Name of the submodule to check
+
+    Returns:
+        True if the submodule has uncommitted changes
+    """
+    result = run_git(["status", "--porcelain"], cwd=worktree_path, check=False)
+    if result.returncode != 0:
+        return False
+
+    # Check if submodule appears in status output
+    for line in result.stdout.strip().split("\n"):
+        if line and submodule_name in line:
+            return True
+    return False
+
+
+def has_uncommitted_submodule_changes(worktree_path: Path, submodule_name: str = "orchestrator") -> bool:
+    """Check if the submodule itself has uncommitted changes.
+
+    This checks inside the submodule for uncommitted work, not just
+    whether the submodule pointer has changed in the parent.
+
+    Args:
+        worktree_path: Path to the worktree
+        submodule_name: Name of the submodule
+
+    Returns:
+        True if there are uncommitted changes inside the submodule
+    """
+    submodule_path = worktree_path / submodule_name
+    if not submodule_path.exists():
+        return False
+
+    return has_uncommitted_changes(submodule_path)
+
+
+def get_submodule_unpushed_commits(worktree_path: Path, submodule_name: str = "orchestrator") -> list[str]:
+    """Get list of unpushed commits in the submodule.
+
+    Args:
+        worktree_path: Path to the worktree
+        submodule_name: Name of the submodule
+
+    Returns:
+        List of commit hashes that haven't been pushed to origin/main
+    """
+    submodule_path = worktree_path / submodule_name
+    if not submodule_path.exists():
+        return []
+
+    # Fetch to make sure we have latest remote state
+    run_git(["fetch", "origin"], cwd=submodule_path, check=False)
+
+    # Get commits that are in HEAD but not in origin/main
+    result = run_git(
+        ["rev-list", "origin/main..HEAD"],
+        cwd=submodule_path,
+        check=False,
+    )
+    if result.returncode != 0:
+        return []
+
+    commits = result.stdout.strip().split("\n")
+    return [c for c in commits if c]  # Filter empty strings
+
+
+def push_submodule_to_main(
+    worktree_path: Path,
+    submodule_name: str = "orchestrator",
+    commit_message: str | None = None,
+) -> tuple[bool, str]:
+    """Push submodule changes directly to the submodule's main branch.
+
+    This commits any uncommitted changes in the submodule and pushes
+    directly to origin/main. Use this for internal tooling submodules
+    that don't need PR review.
+
+    Args:
+        worktree_path: Path to the worktree
+        submodule_name: Name of the submodule
+        commit_message: Optional commit message (auto-generated if not provided)
+
+    Returns:
+        Tuple of (success: bool, message: str)
+    """
+    submodule_path = worktree_path / submodule_name
+    if not submodule_path.exists():
+        return False, f"Submodule path does not exist: {submodule_path}"
+
+    # Check if there are uncommitted changes to commit
+    if has_uncommitted_changes(submodule_path):
+        if not commit_message:
+            commit_message = "Agent changes (auto-pushed)"
+
+        run_git(["add", "-A"], cwd=submodule_path)
+        run_git(["commit", "-m", commit_message], cwd=submodule_path)
+
+    # Check if there are commits to push
+    unpushed = get_submodule_unpushed_commits(worktree_path, submodule_name)
+    if not unpushed:
+        return True, "No commits to push"
+
+    # Push to main
+    try:
+        result = run_git(
+            ["push", "origin", "HEAD:main"],
+            cwd=submodule_path,
+        )
+        return True, f"Pushed {len(unpushed)} commit(s) to {submodule_name} main"
+    except subprocess.CalledProcessError as e:
+        return False, f"Failed to push submodule: {e.stderr}"
+
+
+def stage_submodule_pointer(worktree_path: Path, submodule_name: str = "orchestrator") -> bool:
+    """Stage the submodule pointer change in the parent repo.
+
+    After pushing submodule changes, call this to update the parent repo's
+    reference to the new submodule commit.
+
+    Args:
+        worktree_path: Path to the worktree
+        submodule_name: Name of the submodule
+
+    Returns:
+        True if the submodule was staged
+    """
+    try:
+        run_git(["add", submodule_name], cwd=worktree_path)
+        return True
+    except subprocess.CalledProcessError:
+        return False
