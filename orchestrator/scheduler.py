@@ -278,6 +278,13 @@ def get_role_constraints(role: str) -> str:
 - Create fix tasks when checks fail
 - Approve PRs when all checks pass
 """,
+        "pr_coordinator": """
+- You may read any files in the repository
+- You may NOT modify code files
+- Watch for open PRs that need review
+- Create review tasks for agent-created PRs
+- Avoid creating duplicate review tasks
+""",
         # Execution layer (both models)
         "implementer": """
 - You may read and modify code files

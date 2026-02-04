@@ -5,6 +5,7 @@ from .curator import CuratorRole
 from .gatekeeper import GatekeeperRole
 from .gatekeeper_coordinator import GatekeeperCoordinatorRole
 from .implementer import ImplementerRole
+from .pr_coordinator import PRCoordinatorRole
 from .product_manager import ProductManagerRole
 from .proposer import ProposerRole
 from .reviewer import ReviewerRole
@@ -22,6 +23,8 @@ __all__ = [
     # Gatekeeper system
     "GatekeeperRole",
     "GatekeeperCoordinatorRole",
+    # PR coordination
+    "PRCoordinatorRole",
     # Execution layer (both models)
     "ImplementerRole",
     "TesterRole",
