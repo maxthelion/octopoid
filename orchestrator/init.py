@@ -202,6 +202,17 @@ queue_limits:
   max_claimed: 5     # Max tasks being worked on simultaneously
   max_open_prs: 10   # Max open pull requests
 
+# SQLite database backend (optional, replaces file-based queues)
+# database:
+#   enabled: false     # Set to true to use SQLite
+#   path: state.db     # Path relative to .orchestrator/
+
+# Validation settings (requires database enabled and validator agent)
+# validation:
+#   require_commits: true           # Reject tasks with no commits
+#   max_attempts_before_planning: 3 # Escalate to planning after N failures
+#   claim_timeout_minutes: 60       # Reset stuck claimed tasks after N minutes
+
 # Proposal limits (for proposal model)
 # proposal_limits:
 #   test-checker:
@@ -266,6 +277,12 @@ agents:
   # - name: review-agent
   #   role: reviewer
   #   interval_seconds: 300
+
+  # --- Validation layer (requires database enabled) ---
+  # - name: validator
+  #   role: validator
+  #   interval_seconds: 60    # Check provisional queue frequently
+  #   lightweight: true       # No worktree needed
 """
 
 GITIGNORE_ADDITIONS = """

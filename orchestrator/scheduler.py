@@ -18,6 +18,7 @@ from .config import (
     get_global_instructions_path,
     get_orchestrator_dir,
     get_templates_dir,
+    is_db_enabled,
     is_system_paused,
 )
 from .git_utils import ensure_worktree, get_worktree_path
@@ -300,6 +301,16 @@ def get_role_constraints(role: str) -> str:
 - Approve or request changes via PR review
 - Do not modify code directly
 """,
+        # Validation layer
+        "validator": """
+- You do NOT need a worktree (lightweight agent)
+- Check provisional tasks for commits
+- Accept tasks with valid commits
+- Reject tasks without commits (increment retry count)
+- Escalate to planning after max retries
+- Reset stuck claimed tasks
+- This role runs without Claude invocation
+""",
     }
     return constraints.get(role, "- Follow standard development practices")
 
@@ -363,7 +374,14 @@ def spawn_agent(agent_name: str, agent_id: int, role: str, agent_config: dict) -
     Returns:
         Process ID of spawned agent
     """
-    worktree_path = get_worktree_path(agent_name)
+    # Determine working directory - lightweight agents use parent project
+    is_lightweight = agent_config.get("lightweight", False)
+    if is_lightweight:
+        cwd = find_parent_project()
+        worktree_path = cwd  # For env var
+    else:
+        worktree_path = get_worktree_path(agent_name)
+        cwd = worktree_path
 
     # Build environment
     env = os.environ.copy()
@@ -398,13 +416,13 @@ def spawn_agent(agent_name: str, agent_id: int, role: str, agent_config: dict) -
     # Determine the role module to run
     role_module = f"orchestrator.roles.{role}"
 
-    debug_log(f"Spawning agent {agent_name}: module={role_module}, cwd={worktree_path}")
+    debug_log(f"Spawning agent {agent_name}: module={role_module}, cwd={cwd}, lightweight={is_lightweight}")
     debug_log(f"Agent env: AGENT_FOCUS={env.get('AGENT_FOCUS', 'N/A')}, ports={port_vars}")
 
     # Spawn the role as a subprocess
     process = subprocess.Popen(
         [sys.executable, "-m", role_module],
-        cwd=worktree_path,
+        cwd=cwd,
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -465,6 +483,15 @@ def check_and_update_finished_agents() -> None:
 
                 new_state = mark_finished(state, exit_code)
                 save_state(new_state, state_path)
+
+                # Also update DB if enabled
+                if is_db_enabled():
+                    try:
+                        from . import db
+                        db.mark_agent_finished(agent_name)
+                    except Exception as e:
+                        debug_log(f"Failed to update agent {agent_name} in DB: {e}")
+
                 print(f"[{datetime.now().isoformat()}] Agent {agent_name} finished (exit code: {exit_code})")
 
 
@@ -555,18 +582,24 @@ def run_scheduler() -> None:
             print(f"[{datetime.now().isoformat()}] Starting agent {agent_name} (role: {role})")
             debug_log(f"Starting agent {agent_name} (role: {role})")
 
-            # Ensure worktree exists
-            base_branch = agent_config.get("base_branch", "main")
-            debug_log(f"Ensuring worktree for {agent_name} on branch {base_branch}")
-            ensure_worktree(agent_name, base_branch)
+            # Check if this is a lightweight agent (no worktree needed)
+            is_lightweight = agent_config.get("lightweight", False)
 
-            # Setup commands in worktree
-            debug_log(f"Setting up commands for {agent_name}")
-            setup_agent_commands(agent_name, role)
+            if not is_lightweight:
+                # Ensure worktree exists for normal agents
+                base_branch = agent_config.get("base_branch", "main")
+                debug_log(f"Ensuring worktree for {agent_name} on branch {base_branch}")
+                ensure_worktree(agent_name, base_branch)
 
-            # Generate agent instructions
-            debug_log(f"Generating instructions for {agent_name}")
-            generate_agent_instructions(agent_name, role, agent_config)
+                # Setup commands in worktree
+                debug_log(f"Setting up commands for {agent_name}")
+                setup_agent_commands(agent_name, role)
+
+                # Generate agent instructions
+                debug_log(f"Generating instructions for {agent_name}")
+                generate_agent_instructions(agent_name, role, agent_config)
+            else:
+                debug_log(f"Agent {agent_name} is lightweight, skipping worktree setup")
 
             # Write env file
             debug_log(f"Writing env file for {agent_name}")
@@ -575,9 +608,18 @@ def run_scheduler() -> None:
             # Spawn agent
             pid = spawn_agent(agent_name, agent_id, role, agent_config)
 
-            # Update state
+            # Update JSON state
             new_state = mark_started(state, pid)
             save_state(new_state, state_path)
+
+            # Also update DB if enabled
+            if is_db_enabled():
+                try:
+                    from . import db
+                    db.upsert_agent(agent_name, role=role, running=True, pid=pid)
+                    db.mark_agent_started(agent_name, pid)
+                except Exception as e:
+                    debug_log(f"Failed to update agent {agent_name} in DB: {e}")
 
             print(f"Agent {agent_name} started with PID {pid}")
 

@@ -17,6 +17,7 @@ setup(
         "console_scripts": [
             "orchestrator-scheduler=orchestrator.scheduler:main",
             "orchestrator-init=orchestrator.init:init_orchestrator",
+            "orchestrator-migrate=orchestrator.migrate:main",
         ],
     },
     classifiers=[

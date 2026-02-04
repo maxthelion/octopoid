@@ -313,3 +313,80 @@ def get_gatekeeper_coordinators() -> list[dict[str, Any]]:
     """Get list of configured gatekeeper coordinator agents."""
     agents = get_agents()
     return [a for a in agents if a.get("role") == "gatekeeper_coordinator"]
+
+
+# =============================================================================
+# Database Configuration
+# =============================================================================
+
+# Default database settings
+DEFAULT_DATABASE_CONFIG = {
+    "enabled": False,
+    "path": "state.db",  # Relative to .orchestrator/
+}
+
+# Default validation settings
+DEFAULT_VALIDATION_CONFIG = {
+    "require_commits": True,
+    "max_attempts_before_planning": 3,
+    "claim_timeout_minutes": 60,
+}
+
+
+def get_database_config() -> dict[str, Any]:
+    """Get database configuration.
+
+    Returns:
+        Dictionary with enabled, path settings
+    """
+    try:
+        config = load_agents_config()
+        db_config = config.get("database", {})
+        return {
+            "enabled": db_config.get("enabled", DEFAULT_DATABASE_CONFIG["enabled"]),
+            "path": db_config.get("path", DEFAULT_DATABASE_CONFIG["path"]),
+        }
+    except FileNotFoundError:
+        return DEFAULT_DATABASE_CONFIG.copy()
+
+
+def get_validation_config() -> dict[str, Any]:
+    """Get validation configuration for the validator role.
+
+    Returns:
+        Dictionary with require_commits, max_attempts_before_planning, claim_timeout_minutes
+    """
+    try:
+        config = load_agents_config()
+        val_config = config.get("validation", {})
+        return {
+            "require_commits": val_config.get(
+                "require_commits",
+                DEFAULT_VALIDATION_CONFIG["require_commits"]
+            ),
+            "max_attempts_before_planning": val_config.get(
+                "max_attempts_before_planning",
+                DEFAULT_VALIDATION_CONFIG["max_attempts_before_planning"]
+            ),
+            "claim_timeout_minutes": val_config.get(
+                "claim_timeout_minutes",
+                DEFAULT_VALIDATION_CONFIG["claim_timeout_minutes"]
+            ),
+        }
+    except FileNotFoundError:
+        return DEFAULT_VALIDATION_CONFIG.copy()
+
+
+def is_db_enabled() -> bool:
+    """Check if SQLite database mode is enabled.
+
+    Returns:
+        True if database mode is enabled in configuration
+    """
+    return get_database_config()["enabled"]
+
+
+def get_validators() -> list[dict[str, Any]]:
+    """Get list of configured validator agents."""
+    agents = get_agents()
+    return [a for a in agents if a.get("role") == "validator"]

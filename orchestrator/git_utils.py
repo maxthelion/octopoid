@@ -325,3 +325,52 @@ def cleanup_merged_branches(worktree_path: Path) -> list[str]:
                 pass
 
     return deleted
+
+
+def get_commit_count(worktree_path: Path, since_ref: str | None = None) -> int:
+    """Count commits in the current branch.
+
+    Args:
+        worktree_path: Path to the worktree
+        since_ref: Optional ref to count commits since (e.g., 'main', 'HEAD~5')
+                   If None, counts commits since the branch diverged from main
+
+    Returns:
+        Number of commits
+    """
+    try:
+        if since_ref:
+            # Count commits since the given ref
+            result = run_git(
+                ["rev-list", "--count", f"{since_ref}..HEAD"],
+                cwd=worktree_path,
+                check=False,
+            )
+        else:
+            # Count commits since diverging from main
+            # First find the merge base
+            merge_base_result = run_git(
+                ["merge-base", "HEAD", "main"],
+                cwd=worktree_path,
+                check=False,
+            )
+            if merge_base_result.returncode != 0:
+                # No common ancestor, count all commits
+                result = run_git(
+                    ["rev-list", "--count", "HEAD"],
+                    cwd=worktree_path,
+                    check=False,
+                )
+            else:
+                merge_base = merge_base_result.stdout.strip()
+                result = run_git(
+                    ["rev-list", "--count", f"{merge_base}..HEAD"],
+                    cwd=worktree_path,
+                    check=False,
+                )
+
+        if result.returncode == 0:
+            return int(result.stdout.strip())
+        return 0
+    except (subprocess.CalledProcessError, ValueError):
+        return 0

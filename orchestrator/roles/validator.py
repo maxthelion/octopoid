@@ -1,0 +1,142 @@
+"""Validator role - validates provisional task completions.
+
+The validator checks tasks in the provisional queue and either:
+- Accepts them (moves to done) if they have valid commits
+- Rejects them (moves back to incoming) if they lack commits
+- Escalates them to planning if they've failed too many times
+
+This role is lightweight - it doesn't need a worktree or invoke Claude.
+"""
+
+from pathlib import Path
+
+from ..config import get_validation_config, is_db_enabled
+from ..queue_utils import (
+    accept_completion,
+    escalate_to_planning,
+    list_tasks,
+    reject_completion,
+)
+from .base import BaseRole, main_entry
+
+
+class ValidatorRole(BaseRole):
+    """Validator that checks provisional completions."""
+
+    def run(self) -> int:
+        """Validate provisional tasks.
+
+        Returns:
+            Exit code (0 for success)
+        """
+        if not is_db_enabled():
+            self.log("Validator requires database mode to be enabled")
+            return 0
+
+        validation_config = get_validation_config()
+        require_commits = validation_config["require_commits"]
+        max_attempts = validation_config["max_attempts_before_planning"]
+        claim_timeout = validation_config["claim_timeout_minutes"]
+
+        # Process provisional tasks
+        provisional_tasks = list_tasks("provisional")
+        self.log(f"Found {len(provisional_tasks)} provisional tasks")
+
+        for task in provisional_tasks:
+            task_id = task["id"]
+            task_path = task["path"]
+            commits_count = task.get("commits_count", 0)
+            attempt_count = task.get("attempt_count", 0)
+
+            self.debug_log(f"Validating {task_id}: commits={commits_count}, attempts={attempt_count}")
+
+            # Check if task has commits
+            if require_commits and commits_count == 0:
+                self.log(f"Rejecting {task_id}: no commits")
+
+                # Check if we should escalate
+                if attempt_count >= max_attempts:
+                    self._escalate_task(task_id, task_path, attempt_count)
+                else:
+                    reject_completion(
+                        task_path,
+                        reason="no_commits",
+                        validator=self.agent_name,
+                    )
+                    self.log(f"Task {task_id} rejected (attempt {attempt_count + 1})")
+            else:
+                # Accept the task
+                accept_completion(task_path, validator=self.agent_name)
+                self.log(f"Accepted {task_id} ({commits_count} commits)")
+
+        # Reset stuck claimed tasks
+        self._reset_stuck_claimed(claim_timeout)
+
+        # Check for unblocked tasks
+        self._check_unblocked_tasks()
+
+        return 0
+
+    def _escalate_task(self, task_id: str, task_path: Path, attempt_count: int) -> None:
+        """Escalate a task to planning after too many failed attempts.
+
+        Args:
+            task_id: Task identifier
+            task_path: Path to the task file
+            attempt_count: Number of attempts made
+        """
+        from ..planning import create_planning_task
+
+        self.log(f"Escalating {task_id} to planning (after {attempt_count} attempts)")
+
+        try:
+            plan_id = create_planning_task(task_id, task_path)
+            escalate_to_planning(task_path, plan_id)
+            self.log(f"Created planning task {plan_id} for {task_id}")
+        except Exception as e:
+            self.log(f"Failed to escalate {task_id}: {e}")
+            # Fall back to rejection
+            reject_completion(
+                task_path,
+                reason="escalation_failed",
+                validator=self.agent_name,
+            )
+
+    def _reset_stuck_claimed(self, timeout_minutes: int) -> None:
+        """Reset tasks that have been claimed too long.
+
+        Args:
+            timeout_minutes: How long a task can be claimed before reset
+        """
+        from .. import db
+
+        reset_ids = db.reset_stuck_claimed(timeout_minutes)
+        if reset_ids:
+            self.log(f"Reset {len(reset_ids)} stuck claimed tasks: {reset_ids}")
+
+    def _check_unblocked_tasks(self) -> None:
+        """Check if any tasks have been unblocked by completed dependencies."""
+        from .. import db
+
+        # Get tasks that might be blocked
+        tasks = db.list_tasks(queue="incoming", include_blocked=True)
+        unblocked_count = 0
+
+        for task in tasks:
+            if task.get("blocked_by"):
+                if db.check_dependencies_resolved(task["id"]):
+                    # Dependencies are resolved, clear the blocked_by field
+                    db.update_task(task["id"], blocked_by=None)
+                    unblocked_count += 1
+                    self.debug_log(f"Unblocked task {task['id']}")
+
+        if unblocked_count > 0:
+            self.log(f"Unblocked {unblocked_count} tasks")
+
+
+def main():
+    main_entry(ValidatorRole)
+
+
+if __name__ == "__main__":
+    main()
