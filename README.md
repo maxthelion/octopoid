@@ -670,6 +670,49 @@ Or just install pyyaml:
 pip install pyyaml
 ```
 
+## Agent Management Scripts
+
+Scripts for managing agent processes and cleaning up stale state.
+
+### Kill a Specific Agent
+
+```bash
+./orchestrator/scripts/kill-agent.sh <agent-name>
+```
+
+This script:
+- Kills the claude process for the named agent
+- Removes `current_task.json` (prevents task resumption)
+- Removes the worktree directory
+- Prunes git worktrees
+- Resets `state.json` (sets running=false, pid=null, current_task=null)
+
+Example:
+```bash
+./orchestrator/scripts/kill-agent.sh impl-agent-1
+```
+
+### Kill All Agents
+
+```bash
+./orchestrator/scripts/kill-all-agents.sh
+```
+
+This script:
+- Kills all claude agent processes
+- Cleans up all agent directories (task markers, worktrees, state)
+- Prunes git worktrees
+- Moves claimed tasks back to incoming queue
+
+Use this when:
+- Agents are stuck on stale tasks
+- You need to do a full reset of the orchestrator
+- Agents are resuming work they shouldn't be
+
+### Environment Variables
+
+Both scripts use `BOXEN_DIR` to locate the project root. If not set, they default to the directory containing `.orchestrator/`.
+
 ## Troubleshooting
 
 ### Agent not running
