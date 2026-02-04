@@ -61,15 +61,36 @@ def count_queue(subdir: str) -> int:
     return len(list(path.glob("*.md")))
 
 
-def count_open_prs(author: str | None = None) -> int:
-    """Count open pull requests via gh CLI.
+def _get_pr_cache_path() -> Path:
+    """Get path to PR count cache file."""
+    return get_queue_dir() / ".pr_cache.json"
+
+
+def count_open_prs(author: str | None = None, cache_seconds: int = 60) -> int:
+    """Count open pull requests via gh CLI with file-based caching.
 
     Args:
         author: Optional author to filter by (e.g., '@me' or username)
+        cache_seconds: How long to cache the result (default 60s)
 
     Returns:
         Number of open PRs (0 if gh command fails)
     """
+    import json
+
+    cache_path = _get_pr_cache_path()
+
+    # Check cache
+    try:
+        if cache_path.exists():
+            cache_data = json.loads(cache_path.read_text())
+            cached_time = datetime.fromisoformat(cache_data.get("timestamp", ""))
+            if (datetime.now() - cached_time).total_seconds() < cache_seconds:
+                return cache_data.get("count", 0)
+    except (json.JSONDecodeError, ValueError, KeyError):
+        pass  # Cache invalid, fetch fresh
+
+    # Fetch from GitHub
     try:
         cmd = ["gh", "pr", "list", "--state", "open", "--json", "number"]
         if author:
@@ -80,10 +101,16 @@ def count_open_prs(author: str | None = None) -> int:
         if result.returncode != 0:
             return 0
 
-        import json
-
         prs = json.loads(result.stdout)
-        return len(prs)
+        count = len(prs)
+
+        # Update cache
+        cache_path.write_text(json.dumps({
+            "timestamp": datetime.now().isoformat(),
+            "count": count,
+        }))
+
+        return count
     except (subprocess.TimeoutExpired, subprocess.SubprocessError, json.JSONDecodeError):
         return 0
 
