@@ -146,9 +146,13 @@ def list_tasks(subdir: str) -> list[dict[str, Any]]:
         if task_info:
             tasks.append(task_info)
 
-    # Sort by priority (P0 first) then by created time
-    priority_order = {"P0": 0, "P1": 1, "P2": 2}
-    tasks.sort(key=lambda t: (priority_order.get(t.get("priority", "P2"), 2), t.get("created", "")))
+    # Sort by: 1) expedite flag (expedited first), 2) priority (P0 first), 3) created time
+    priority_order = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
+    tasks.sort(key=lambda t: (
+        0 if t.get("expedite") else 1,  # Expedited tasks first
+        priority_order.get(t.get("priority", "P2"), 2),
+        t.get("created") or "",
+    ))
 
     return tasks
 
@@ -179,10 +183,21 @@ def parse_task_file(task_path: Path) -> dict[str, Any] | None:
     created_match = re.search(r"^CREATED:\s*(.+)$", content, re.MULTILINE)
     created_by_match = re.search(r"^CREATED_BY:\s*(.+)$", content, re.MULTILINE)
 
+    # Task options
+    skip_pr_match = re.search(r"^SKIP_PR:\s*(.+)$", content, re.MULTILINE)
+    expedite_match = re.search(r"^EXPEDITE:\s*(.+)$", content, re.MULTILINE)
+
     # Continuation-related fields
     wip_branch_match = re.search(r"^WIP_BRANCH:\s*(.+)$", content, re.MULTILINE)
     last_agent_match = re.search(r"^LAST_AGENT:\s*(.+)$", content, re.MULTILINE)
     continuation_reason_match = re.search(r"^CONTINUATION_REASON:\s*(.+)$", content, re.MULTILINE)
+
+    # Parse boolean fields (true/yes/1 are truthy)
+    def parse_bool(match):
+        if not match:
+            return False
+        val = match.group(1).strip().lower()
+        return val in ("true", "yes", "1")
 
     return {
         "path": task_path,
@@ -193,6 +208,8 @@ def parse_task_file(task_path: Path) -> dict[str, Any] | None:
         "branch": branch_match.group(1).strip() if branch_match else "main",
         "created": created_match.group(1).strip() if created_match else None,
         "created_by": created_by_match.group(1).strip() if created_by_match else None,
+        "skip_pr": parse_bool(skip_pr_match),
+        "expedite": parse_bool(expedite_match),
         "wip_branch": wip_branch_match.group(1).strip() if wip_branch_match else None,
         "last_agent": last_agent_match.group(1).strip() if last_agent_match else None,
         "continuation_reason": continuation_reason_match.group(1).strip() if continuation_reason_match else None,

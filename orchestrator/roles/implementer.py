@@ -309,6 +309,7 @@ Update this whenever you start a new subtask or make significant progress (every
                 exit_code=exit_code,
                 stdout=stdout,
                 stderr=stderr,
+                skip_pr=task.get("skip_pr", False),
             )
 
         except Exception as e:
@@ -326,13 +327,17 @@ Update this whenever you start a new subtask or make significant progress (every
         exit_code: int,
         stdout: str,
         stderr: str,
+        skip_pr: bool = False,
     ) -> int:
         """Handle the result of a Claude implementation session.
 
         Decides whether to:
-        - Mark task as complete (PR created)
+        - Mark task as complete (PR created, or merged directly if skip_pr)
         - Mark task as needs_continuation (uncommitted work remains)
         - Mark task as failed (error occurred)
+
+        Args:
+            skip_pr: If True, skip PR creation and merge directly to main
 
         Returns:
             Exit code
@@ -384,6 +389,47 @@ Update this whenever you start a new subtask or make significant progress (every
             else:
                 self.log(f"Warning: Failed to push submodule changes: {msg}")
                 # Continue anyway - the PR might fail but we'll log the issue
+
+        # Handle completion: either skip PR and merge directly, or create PR
+        if skip_pr:
+            # Skip PR creation - merge directly to base branch
+            try:
+                import subprocess
+
+                # Checkout base branch and merge the feature branch
+                subprocess.run(
+                    ["git", "checkout", base_branch],
+                    cwd=self.worktree,
+                    check=True,
+                    capture_output=True,
+                )
+                subprocess.run(
+                    ["git", "merge", branch_name, "--no-ff", "-m", f"[{task_id}] {task_title}"],
+                    cwd=self.worktree,
+                    check=True,
+                    capture_output=True,
+                )
+                subprocess.run(
+                    ["git", "push", "origin", base_branch],
+                    cwd=self.worktree,
+                    check=True,
+                    capture_output=True,
+                )
+                self.log(f"Merged directly to {base_branch} (skip_pr=true)")
+                complete_task(task_path, f"Merged directly to {base_branch}")
+                self.clear_status()
+                clear_task_marker()
+                self._reset_worktree()
+                return 0
+            except subprocess.CalledProcessError as e:
+                self.log(f"Failed to merge directly: {e}")
+                mark_needs_continuation(
+                    task_path,
+                    reason=f"direct_merge_failed: {e}",
+                    branch_name=branch_name,
+                    agent_name=self.agent_name,
+                )
+                return 0
 
         # Try to create PR
         try:
@@ -563,6 +609,7 @@ Update this whenever you start a new subtask or make significant progress (every
                 exit_code=exit_code,
                 stdout=stdout,
                 stderr=stderr,
+                skip_pr=task.get("skip_pr", False),
             )
 
         except Exception as e:
