@@ -88,17 +88,18 @@ def ensure_worktree(agent_name: str, base_branch: str = "main") -> Path:
     except subprocess.CalledProcessError:
         pass  # May fail if offline
 
-    # Create the worktree
+    # Create the worktree in detached HEAD mode
+    # This prevents blocking the branch from being checked out elsewhere
     try:
         run_git(
-            ["worktree", "add", str(worktree_path), base_branch],
+            ["worktree", "add", "--detach", str(worktree_path), base_branch],
             cwd=parent_repo,
         )
     except subprocess.CalledProcessError as e:
         # If branch doesn't exist locally, try with origin/branch
         if "invalid reference" in e.stderr or "not a valid" in e.stderr:
             run_git(
-                ["worktree", "add", str(worktree_path), f"origin/{base_branch}"],
+                ["worktree", "add", "--detach", str(worktree_path), f"origin/{base_branch}"],
                 cwd=parent_repo,
             )
 
