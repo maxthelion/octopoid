@@ -12,6 +12,7 @@ import curses
 import json
 import os
 import random
+import re
 import sys
 import time
 from dataclasses import dataclass
@@ -172,7 +173,14 @@ def get_tasks_by_status() -> dict[str, list[Task]]:
                 priority = "P2"
                 for line in content.split("\n"):
                     if line.startswith("# "):
-                        title = line[2:].strip()
+                        raw_title = line[2:].strip()
+                        # Extract title after [TASK-xxx] prefix if present
+                        match = re.match(r"\[TASK-[^\]]+\]\s*(.+)", raw_title)
+                        if match:
+                            title = match.group(1).strip()
+                        else:
+                            title = raw_title
+                        break
                     elif line.startswith("ROLE:"):
                         role = line.split(":", 1)[1].strip()
                     elif line.startswith("PRIORITY:"):
