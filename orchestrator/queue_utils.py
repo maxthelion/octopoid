@@ -1,4 +1,12 @@
-"""Queue management with atomic operations and backpressure."""
+"""Queue management with atomic operations and backpressure.
+
+IMPORTANT: Queue operations always happen in the MAIN REPO, not in agent worktrees.
+This ensures queue state is centralized and not affected by git operations in worktrees.
+
+The queue directory is determined by:
+1. ORCHESTRATOR_DIR environment variable (set by scheduler for agents)
+2. Fallback to find_parent_project() for scheduler itself
+"""
 
 import os
 import re
@@ -8,8 +16,21 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from .config import get_queue_dir, get_queue_limits
+from .config import get_queue_dir as _config_get_queue_dir, get_queue_limits
 from .lock_utils import locked
+
+
+def get_queue_dir() -> Path:
+    """Get the shared queue directory in the MAIN REPO.
+
+    Always returns the main repo's queue, not a worktree's.
+    Uses ORCHESTRATOR_DIR env var if set (agents), otherwise falls back
+    to config's find_parent_project (scheduler).
+    """
+    orchestrator_dir = os.environ.get("ORCHESTRATOR_DIR")
+    if orchestrator_dir:
+        return Path(orchestrator_dir) / "shared" / "queue"
+    return _config_get_queue_dir()
 
 
 def get_queue_subdir(subdir: str) -> Path:
@@ -505,37 +526,57 @@ CREATED_BY: {created_by}
     return task_path
 
 
-def write_task_marker(worktree: Path, task_id: str, task_path: Path) -> None:
-    """Write a task marker file in the worktree.
+def _get_agent_state_dir() -> Path | None:
+    """Get the agent's state directory (outside worktree).
 
-    This links the worktree state to a specific task, allowing detection
+    Returns None if not running as an agent (e.g., scheduler context).
+    """
+    orchestrator_dir = os.environ.get("ORCHESTRATOR_DIR")
+    agent_name = os.environ.get("AGENT_NAME")
+    if orchestrator_dir and agent_name:
+        return Path(orchestrator_dir) / "agents" / agent_name
+    return None
+
+
+def write_task_marker(task_id: str, task_path: Path) -> None:
+    """Write a task marker file in the agent's state directory.
+
+    This links the agent to a specific task, allowing detection
     of stale resume attempts (task completed but worktree not reset).
 
+    The marker is stored OUTSIDE the worktree so it's not affected
+    by git operations (reset, checkout, etc.).
+
     Args:
-        worktree: Path to the agent's worktree
         task_id: Task ID being worked on
         task_path: Path to the task file
     """
-    marker_path = worktree / ".current_task"
+    state_dir = _get_agent_state_dir()
+    if not state_dir:
+        return  # Not running as agent
+
+    marker_path = state_dir / "current_task.json"
     marker_data = {
         "task_id": task_id,
         "task_path": str(task_path),
         "started_at": datetime.now().isoformat(),
     }
     import json
+    state_dir.mkdir(parents=True, exist_ok=True)
     marker_path.write_text(json.dumps(marker_data, indent=2))
 
 
-def read_task_marker(worktree: Path) -> dict[str, Any] | None:
-    """Read the task marker file from worktree.
-
-    Args:
-        worktree: Path to the agent's worktree
+def read_task_marker() -> dict[str, Any] | None:
+    """Read the task marker file from agent's state directory.
 
     Returns:
         Task marker data or None if not present
     """
-    marker_path = worktree / ".current_task"
+    state_dir = _get_agent_state_dir()
+    if not state_dir:
+        return None
+
+    marker_path = state_dir / "current_task.json"
     if not marker_path.exists():
         return None
 
@@ -546,13 +587,13 @@ def read_task_marker(worktree: Path) -> dict[str, Any] | None:
         return None
 
 
-def clear_task_marker(worktree: Path) -> None:
-    """Clear the task marker file from worktree.
+def clear_task_marker() -> None:
+    """Clear the task marker file from agent's state directory."""
+    state_dir = _get_agent_state_dir()
+    if not state_dir:
+        return
 
-    Args:
-        worktree: Path to the agent's worktree
-    """
-    marker_path = worktree / ".current_task"
+    marker_path = state_dir / "current_task.json"
     if marker_path.exists():
         marker_path.unlink()
 
