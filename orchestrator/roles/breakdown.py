@@ -69,9 +69,7 @@ Branch: {project.get('branch', 'N/A')}
 All tasks created should be linked to this project.
 """
 
-            prompt = f"""You are a breakdown agent. Your job is to decompose work into right-sized implementation tasks.
-
-{instructions}
+            prompt = f"""Decompose this work into implementation tasks. Output ONLY a JSON array.
 
 {rules}
 
@@ -81,60 +79,28 @@ All tasks created should be linked to this project.
 
 {task_content}
 
-## Instructions
-
-1. Analyze the work described above
-2. Break it down into discrete, implementable tasks
-3. Output your breakdown in the JSON format specified below
-4. Each task should be completable in <30 Claude turns
-5. Always include a testing strategy task FIRST
-6. Map dependencies using task numbers (e.g., task 2 depends on task 1)
-
 ## Output Format
 
-Output ONLY a JSON array of tasks, nothing else:
+Output a JSON array. Keep context fields SHORT (1-2 sentences). Example:
 
 ```json
 [
-  {{
-    "title": "Define testing strategy for feature",
-    "role": "implement",
-    "priority": "P1",
-    "context": "Detailed description of what to test and how...",
-    "acceptance_criteria": [
-      "Unit tests for core functions",
-      "Integration test for workflow"
-    ],
-    "depends_on": []
-  }},
-  {{
-    "title": "Implement core data schema",
-    "role": "implement",
-    "priority": "P1",
-    "context": "Description of schema changes...",
-    "acceptance_criteria": [
-      "Types defined",
-      "Validation added"
-    ],
-    "depends_on": [1]
-  }}
+  {{"title": "Define testing strategy", "role": "implement", "priority": "P1", "context": "Plan test scenarios.", "acceptance_criteria": ["List scenarios", "Identify edge cases"], "depends_on": []}},
+  {{"title": "Add types", "role": "implement", "priority": "P1", "context": "Add TypeScript types.", "acceptance_criteria": ["Types defined"], "depends_on": [1]}}
 ]
 ```
 
-Remember:
-- Task numbers in depends_on are 1-indexed (first task is 1)
-- Testing strategy should be task 1 with no dependencies
-- Keep tasks focused and atomic
-- Include clear acceptance criteria
+Rules:
+- Testing strategy task FIRST (depends_on: [])
+- depends_on uses 1-indexed task numbers
+- Keep it concise - short context, 2-4 criteria per task
+- 3-6 tasks total
+
+Output ONLY the JSON array, no explanation:
 """
 
-            # Invoke Claude with limited tools (read-only exploration)
-            allowed_tools = [
-                "Read",
-                "Glob",
-                "Grep",
-                "Task",
-            ]
+            # Invoke Claude with no tools - just output JSON
+            allowed_tools: list[str] = []
 
             exit_code, stdout, stderr = self.invoke_claude(
                 prompt,

@@ -36,8 +36,8 @@ def main():
 
     if result.get('type') == 'project':
         print(f"Created project: {result['project_id']}")
-        print(f"Branch: {result['branch']}")
-        print(f"Breakdown task: {Path(result['breakdown_task']).name}")
+        print(f"Branch: {result.get('branch', 'N/A')}")
+        print(f"Breakdown task: {Path(result.get('breakdown_task', '')).name if result.get('breakdown_task') else 'N/A'}")
         print()
         print("Next steps:")
         print("  1. Run breakdown agent: python -m orchestrator.orchestrator.roles.breakdown")
