@@ -16,7 +16,12 @@ from .base import BaseRole, main_entry
 
 
 class BreakdownRole(BaseRole):
-    """Breakdown agent that decomposes work into right-sized tasks."""
+    """Breakdown agent that decomposes work into right-sized tasks.
+
+    Uses a two-phase approach:
+    1. Exploration phase: Investigate codebase with tools to understand patterns
+    2. Decomposition phase: Output structured JSON based on findings
+    """
 
     def run(self) -> int:
         """Claim a breakdown task and decompose it.
@@ -51,70 +56,136 @@ class BreakdownRole(BaseRole):
         try:
             # Load breakdown rules from prompts
             rules = self._load_breakdown_rules()
-
-            # Build prompt for Claude
-            instructions = self.read_instructions()
             task_content = task.get("content", "")
 
             project_context = ""
             if project:
                 project_context = f"""
-## Project Context
-
-This breakdown is for project: {project['id']}
+Project: {project['id']}
 Title: {project['title']}
-Description: {project.get('description', 'N/A')}
 Branch: {project.get('branch', 'N/A')}
-
-All tasks created should be linked to this project.
 """
 
-            prompt = f"""Decompose this work into implementation tasks. Output ONLY a JSON array.
+            # ===== PHASE 1: EXPLORATION =====
+            self.log("Phase 1: Exploring codebase...")
 
-{rules}
+            exploration_prompt = f"""You are analyzing a codebase to plan implementation tasks.
 
-{project_context}
-
-## Work to Break Down
+## Work to Implement
 
 {task_content}
 
+{project_context}
+
+## Your Task
+
+Explore the codebase to understand:
+
+1. **Testing patterns**: How are tests structured? Find example test files. Note the testing framework and patterns used (describe/it, test fixtures, etc.)
+
+2. **Relevant files**: Which files will need to be modified? List specific file paths.
+
+3. **Existing patterns**: Find similar existing code that this work should follow. Note any conventions.
+
+4. **Integration points**: Where does this feature connect to existing systems?
+
 ## Output Format
 
-Output a JSON array. Keep context fields SHORT (1-2 sentences). Example:
+Output your findings as markdown with these sections:
+
+### Testing Approach
+- Testing framework used
+- Example test file to follow
+- Test patterns to use
+
+### Files to Modify
+- List specific file paths
+- Brief note on what changes each file needs
+
+### Patterns to Follow
+- Existing similar code to reference
+- Conventions observed
+
+### Integration Points
+- How this connects to existing code
+- Dependencies to be aware of
+
+Be specific - include file paths, line numbers where helpful, and concrete examples.
+"""
+
+            exploration_tools = ["Read", "Glob", "Grep", "Task"]
+
+            exit_code, exploration_output, stderr = self.invoke_claude(
+                exploration_prompt,
+                allowed_tools=exploration_tools,
+                max_turns=15,
+            )
+
+            if exit_code != 0:
+                self.log(f"Exploration phase failed: {stderr}")
+                fail_task(task_path, f"Exploration failed: {stderr[:500]}")
+                return exit_code
+
+            self.log("Phase 1 complete. Findings captured.")
+
+            # ===== PHASE 2: DECOMPOSITION =====
+            self.log("Phase 2: Generating task breakdown...")
+
+            decomposition_prompt = f"""Based on the exploration findings below, create a task breakdown.
+
+## Original Requirements
+
+{task_content}
+
+## Exploration Findings
+
+{exploration_output}
+
+## Breakdown Rules
+
+{rules}
+
+## Output Format
+
+Output ONLY a JSON array. Each task should include specific file paths and follow patterns identified in exploration.
 
 ```json
 [
-  {{"title": "Define testing strategy", "role": "implement", "priority": "P1", "context": "Plan test scenarios.", "acceptance_criteria": ["List scenarios", "Identify edge cases"], "depends_on": []}},
-  {{"title": "Add types", "role": "implement", "priority": "P1", "context": "Add TypeScript types.", "acceptance_criteria": ["Types defined"], "depends_on": [1]}}
+  {{
+    "title": "Short task title",
+    "role": "implement",
+    "priority": "P1",
+    "context": "Specific instructions including file paths to modify. Reference patterns found.",
+    "acceptance_criteria": ["Specific, checkable criterion"],
+    "depends_on": []
+  }}
 ]
 ```
 
 Rules:
 - Testing strategy task FIRST (depends_on: [])
+- Reference specific files discovered in exploration
+- Include test file paths in testing tasks
 - depends_on uses 1-indexed task numbers
-- Keep it concise - short context, 2-4 criteria per task
-- 3-6 tasks total
+- 4-8 tasks total
 
-Output ONLY the JSON array, no explanation:
+Output ONLY the JSON array:
 """
 
-            # Invoke Claude with no tools - just output JSON
-            allowed_tools: list[str] = []
-
-            exit_code, stdout, stderr = self.invoke_claude(
-                prompt,
-                allowed_tools=allowed_tools,
-                max_turns=20,
+            # No tools for decomposition - just structured output
+            exit_code, decomposition_output, stderr = self.invoke_claude(
+                decomposition_prompt,
+                allowed_tools=[],
+                max_turns=5,
             )
 
             if exit_code != 0:
-                self.log(f"Breakdown failed: {stderr}")
-                fail_task(task_path, f"Claude invocation failed: {stderr[:500]}")
+                self.log(f"Decomposition phase failed: {stderr}")
+                fail_task(task_path, f"Decomposition failed: {stderr[:500]}")
                 return exit_code
 
             # Parse the JSON output
-            subtasks = self._parse_subtasks(stdout)
+            subtasks = self._parse_subtasks(decomposition_output)
 
             if not subtasks:
                 self.log("Failed to parse subtasks from output")
@@ -123,16 +194,17 @@ Output ONLY the JSON array, no explanation:
 
             self.log(f"Parsed {len(subtasks)} subtasks")
 
-            # Write breakdown file for human review (instead of creating tasks directly)
+            # Write breakdown file for human review
             breakdown_file = self._write_breakdown_file(
                 subtasks=subtasks,
                 project_id=project_id,
                 project=project,
                 task_title=task_title,
                 branch=task.get("branch"),
+                exploration_findings=exploration_output,
             )
 
-            # Complete the breakdown task with reference to the breakdown file
+            # Complete the breakdown task
             complete_task(
                 task_path,
                 f"Breakdown ready for review: {breakdown_file.name}\n"
@@ -160,28 +232,22 @@ Output ONLY the JSON array, no explanation:
             return rules_path.read_text()
 
         # Default rules if file doesn't exist
-        return """## Task Breakdown Rules
-
-### Sizing
+        return """### Sizing
 - Tasks should be completable in <30 Claude turns
 - If unsure, err toward smaller tasks
 - One clear objective per task
 
 ### Ordering
-1. Testing strategy task FIRST (what to test, how)
-2. Schema/type changes early (others depend on them)
+1. Testing strategy task FIRST
+2. Schema/type changes early
 3. Core logic before UI wiring
-4. Integration tests after implementation
+4. Integration tests last
 
-### Dependencies
-- Use depends_on to specify which tasks must complete first
-- Minimize dependency chains (parallelize where possible)
-- Shared utilities should be scheduled first
-
-### Acceptance Criteria
-- Each task gets clear, checkable criteria
-- Include specific requirements, not vague goals
-- Flag tasks needing human input
+### Task Context Should Include
+- Specific file paths to modify
+- Line numbers or function names when known
+- Patterns to follow (reference exploration findings)
+- Test file locations for test tasks
 """
 
     def _parse_subtasks(self, output: str) -> list[dict]:
@@ -222,6 +288,7 @@ Output ONLY the JSON array, no explanation:
         project: dict | None,
         task_title: str,
         branch: str | None,
+        exploration_findings: str = "",
     ) -> Path:
         """Write breakdown to a markdown file for human review.
 
@@ -231,6 +298,7 @@ Output ONLY the JSON array, no explanation:
             project: Project dict if applicable
             task_title: Original breakdown task title
             branch: Branch to use for tasks
+            exploration_findings: Output from exploration phase
 
         Returns:
             Path to the created breakdown file
@@ -265,6 +333,16 @@ Output ONLY the JSON array, no explanation:
         lines.append(f"**Created:** {datetime.now().isoformat()}")
         lines.append(f"**Status:** pending_review")
         lines.append("")
+
+        # Exploration findings (collapsible)
+        if exploration_findings:
+            lines.append("<details>")
+            lines.append("<summary><strong>Exploration Findings</strong> (click to expand)</summary>")
+            lines.append("")
+            lines.append(exploration_findings)
+            lines.append("")
+            lines.append("</details>")
+            lines.append("")
 
         # Tasks
         for i, subtask in enumerate(subtasks, start=1):
@@ -312,10 +390,11 @@ Output ONLY the JSON array, no explanation:
         lines.append("## Review Instructions")
         lines.append("")
         lines.append("1. Review the tasks above for completeness and accuracy")
-        lines.append("2. Edit any tasks as needed (adjust criteria, context, dependencies)")
-        lines.append("3. Remove tasks that aren't needed")
-        lines.append("4. Add any missing tasks")
-        lines.append(f"5. When ready, run: `/approve-breakdown {project_id or breakdown_path.stem}`")
+        lines.append("2. Check that file paths and patterns are correct")
+        lines.append("3. Edit any tasks as needed (adjust criteria, context, dependencies)")
+        lines.append("4. Remove tasks that aren't needed")
+        lines.append("5. Add any missing tasks")
+        lines.append(f"6. When ready, run: `/approve-breakdown {project_id or breakdown_path.stem}`")
         lines.append("")
 
         # Write file
