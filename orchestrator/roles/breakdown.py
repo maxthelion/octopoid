@@ -151,7 +151,7 @@ Be specific - include file paths, line numbers where helpful, and concrete examp
             exit_code, exploration_output, stderr = self.invoke_claude(
                 exploration_prompt,
                 allowed_tools=exploration_tools,
-                max_turns=15,
+                max_turns=30,
             )
 
             if exit_code != 0:
@@ -209,7 +209,7 @@ Output ONLY the JSON array:
             exit_code, decomposition_output, stderr = self.invoke_claude(
                 decomposition_prompt,
                 allowed_tools=[],
-                max_turns=5,
+                max_turns=10,
             )
 
             if exit_code != 0:
