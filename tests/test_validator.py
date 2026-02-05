@@ -161,10 +161,9 @@ class TestValidatorRole:
 
                                         assert result == 0
 
-                                        # Task should be escalated
+                                        # Task should be recycled (new behavior: recycle before escalate)
                                         task = get_task("escalate")
-                                        assert task["queue"] == "escalated"
-                                        assert task["has_plan"] == 1  # SQLite stores booleans as 0/1
+                                        assert task["queue"] == "recycled"
 
     def test_validator_accepts_without_commit_requirement(self, mock_config, initialized_db):
         """Test that validator accepts tasks when require_commits is False."""

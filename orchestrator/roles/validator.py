@@ -14,7 +14,9 @@ from ..config import get_validation_config, is_db_enabled
 from ..queue_utils import (
     accept_completion,
     escalate_to_planning,
+    is_burned_out,
     list_tasks,
+    recycle_to_breakdown,
     reject_completion,
 )
 from .base import BaseRole, main_entry
@@ -46,17 +48,19 @@ class ValidatorRole(BaseRole):
             task_id = task["id"]
             task_path = task["path"]
             commits_count = task.get("commits_count", 0)
+            turns_used = task.get("turns_used", 0)
             attempt_count = task.get("attempt_count", 0)
 
-            self.debug_log(f"Validating {task_id}: commits={commits_count}, attempts={attempt_count}")
+            self.debug_log(f"Validating {task_id}: commits={commits_count}, turns={turns_used}, attempts={attempt_count}")
 
             # Check if task has commits
             if require_commits and commits_count == 0:
-                self.log(f"Rejecting {task_id}: no commits")
-
-                # Check if we should escalate
-                if attempt_count >= max_attempts:
-                    self._escalate_task(task_id, task_path, attempt_count)
+                # Immediate catch: burned out (0 commits, high turns) -> recycle
+                if is_burned_out(commits_count=commits_count, turns_used=turns_used):
+                    self._recycle_task(task_id, task_path, turns_used)
+                # Cumulative catch: too many failed attempts -> recycle for project tasks, escalate otherwise
+                elif attempt_count >= max_attempts:
+                    self._recycle_or_escalate_task(task_id, task_path, attempt_count)
                 else:
                     reject_completion(
                         task_path,
@@ -76,6 +80,57 @@ class ValidatorRole(BaseRole):
         self._check_unblocked_tasks()
 
         return 0
+
+    def _recycle_task(self, task_id: str, task_path: Path, turns_used: int) -> None:
+        """Recycle a burned-out task to re-breakdown.
+
+        Args:
+            task_id: Task identifier
+            task_path: Path to the task file
+            turns_used: Number of turns used
+        """
+        self.log(f"Recycling {task_id}: burned out (0 commits, {turns_used} turns)")
+
+        try:
+            result = recycle_to_breakdown(task_path)
+            if result and result.get("action") == "recycled":
+                self.log(f"Recycled {task_id} -> breakdown task {result['breakdown_task_id']}")
+            elif result is None:
+                # Depth cap reached - accept with warning for human review
+                self.log(f"Depth cap reached for {task_id}, accepting for human review")
+                accept_completion(task_path, validator=self.agent_name)
+        except Exception as e:
+            self.log(f"Failed to recycle {task_id}: {e}")
+            reject_completion(
+                task_path,
+                reason="recycle_failed",
+                validator=self.agent_name,
+            )
+
+    def _recycle_or_escalate_task(self, task_id: str, task_path: Path, attempt_count: int) -> None:
+        """Recycle a task with too many failed attempts, or escalate if no project.
+
+        For project tasks, recycling to breakdown is preferred over planning escalation.
+        For standalone tasks, falls back to the existing planning escalation.
+
+        Args:
+            task_id: Task identifier
+            task_path: Path to the task file
+            attempt_count: Number of attempts made
+        """
+        # Try recycling first (works for project tasks)
+        self.log(f"Task {task_id} failed {attempt_count} times, attempting recycle")
+
+        try:
+            result = recycle_to_breakdown(task_path, reason="cumulative_failures")
+            if result and result.get("action") == "recycled":
+                self.log(f"Recycled {task_id} -> breakdown task {result['breakdown_task_id']}")
+                return
+        except Exception:
+            pass
+
+        # Fall back to planning escalation
+        self._escalate_task(task_id, task_path, attempt_count)
 
     def _escalate_task(self, task_id: str, task_path: Path, attempt_count: int) -> None:
         """Escalate a task to planning after too many failed attempts.
