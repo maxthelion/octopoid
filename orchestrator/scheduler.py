@@ -115,6 +115,44 @@ def run_pre_check(agent_name: str, agent_config: dict) -> bool:
         return True
 
 
+def peek_task_branch(role: str) -> str | None:
+    """Peek at the next task for a role and return its branch.
+
+    Used by the scheduler to create worktrees on the correct branch.
+    For breakdown agents, this peeks at the breakdown queue.
+    For implement agents, this peeks at incoming queue.
+
+    Args:
+        role: Agent role (breakdown, implement, etc.)
+
+    Returns:
+        Branch name if a task is available, None otherwise
+    """
+    if not is_db_enabled():
+        return None
+
+    from . import db
+
+    # Map roles to the queues they pull from
+    role_queues = {
+        "breakdown": "breakdown",
+        "implement": "incoming",
+        "test": "incoming",
+    }
+
+    queue = role_queues.get(role)
+    if not queue:
+        return None
+
+    tasks = db.list_tasks(queue=queue)
+    if not tasks:
+        return None
+
+    # Return the branch of the first (highest priority) task
+    branch = tasks[0].get("branch")
+    return branch if branch and branch != "main" else None
+
+
 def get_scheduler_lock_path() -> Path:
     """Get path to the global scheduler lock file."""
     return get_orchestrator_dir() / "scheduler.lock"
@@ -655,8 +693,16 @@ def run_scheduler() -> None:
             is_lightweight = agent_config.get("lightweight", False)
 
             if not is_lightweight:
-                # Ensure worktree exists for normal agents
+                # Determine base branch for worktree
                 base_branch = agent_config.get("base_branch", "main")
+
+                # For agents that work on specific queues, peek at the next task's branch
+                # This avoids agents wasting turns on git checkout
+                task_branch = peek_task_branch(role)
+                if task_branch:
+                    debug_log(f"Peeked task branch for {agent_name}: {task_branch}")
+                    base_branch = task_branch
+
                 debug_log(f"Ensuring worktree for {agent_name} on branch {base_branch}")
                 ensure_worktree(agent_name, base_branch)
 
