@@ -1140,6 +1140,10 @@ def approve_breakdown(identifier: str) -> dict[str, Any]:
     if status != "pending_review":
         raise ValueError(f"Breakdown is not pending review (status: {status})")
 
+    # Create feature branch if not main
+    if branch and branch != "main":
+        _create_and_push_branch(branch)
+
     # Parse tasks
     tasks = _parse_breakdown_tasks(content)
 
@@ -1200,6 +1204,69 @@ def approve_breakdown(identifier: str) -> dict[str, Any]:
         "tasks_created": len(created_ids),
         "task_ids": created_ids,
     }
+
+
+def _create_and_push_branch(branch: str, base_branch: str = "main") -> bool:
+    """Create a feature branch and push it to origin.
+
+    Called during breakdown approval to ensure the branch exists
+    before agents try to check it out.
+
+    Args:
+        branch: Name of the feature branch to create
+        base_branch: Branch to create from (default: main)
+
+    Returns:
+        True if branch was created or already exists, False on error
+    """
+    try:
+        # First, fetch to make sure we have latest
+        subprocess.run(
+            ["git", "fetch", "origin"],
+            capture_output=True,
+            check=False,
+        )
+
+        # Check if branch already exists on origin
+        result = subprocess.run(
+            ["git", "ls-remote", "--heads", "origin", branch],
+            capture_output=True,
+            text=True,
+        )
+        if result.stdout.strip():
+            # Branch already exists on origin
+            return True
+
+        # Check if branch exists locally
+        result = subprocess.run(
+            ["git", "rev-parse", "--verify", branch],
+            capture_output=True,
+            text=True,
+        )
+        branch_exists_locally = result.returncode == 0
+
+        if not branch_exists_locally:
+            # Create the branch from base_branch
+            subprocess.run(
+                ["git", "branch", branch, f"origin/{base_branch}"],
+                capture_output=True,
+                check=True,
+            )
+
+        # Push to origin
+        subprocess.run(
+            ["git", "push", "-u", "origin", branch],
+            capture_output=True,
+            check=True,
+        )
+
+        return True
+
+    except subprocess.CalledProcessError as e:
+        # Log but don't fail - agents will report the error if branch is missing
+        import sys
+        print(f"Warning: Failed to create/push branch {branch}: {e}", file=sys.stderr)
+        return False
 
 
 def _parse_breakdown_tasks(content: str) -> list[dict]:
