@@ -552,8 +552,8 @@ def submit_completion(
 ) -> dict[str, Any] | None:
     """Submit a task for validation (move to provisional queue).
 
-    The task stays in provisional until a validator accepts or rejects it.
-    If auto_accept is True (on task or its project), goes straight to done.
+    The task stays in provisional until the scheduler processes it.
+    If auto_accept is enabled, the scheduler will move it to done.
 
     Args:
         task_id: Task identifier
@@ -565,44 +565,26 @@ def submit_completion(
     """
     now = datetime.now().isoformat()
 
-    # Check if auto_accept is enabled (on task or project)
-    task = get_task(task_id)
-    if not task:
-        return None
-
-    auto_accept = task.get("auto_accept", False)
-    if not auto_accept and task.get("project_id"):
-        project = get_project(task["project_id"])
-        if project:
-            auto_accept = project.get("auto_accept", False)
-
-    target_queue = "done" if auto_accept else "provisional"
-    event = "auto_accepted" if auto_accept else "submitted"
-
     with get_connection() as conn:
         conn.execute(
             """
             UPDATE tasks
-            SET queue = ?,
+            SET queue = 'provisional',
                 commits_count = ?,
                 turns_used = ?,
                 updated_at = ?
             WHERE id = ?
             """,
-            (target_queue, commits_count, turns_used, now, task_id),
+            (commits_count, turns_used, now, task_id),
         )
 
         conn.execute(
             """
             INSERT INTO task_history (task_id, event, details)
-            VALUES (?, ?, ?)
+            VALUES (?, 'submitted', ?)
             """,
-            (task_id, event, f"commits={commits_count}, turns={turns_used}"),
+            (task_id, f"commits={commits_count}, turns={turns_used}"),
         )
-
-        # If auto-accepted, unblock dependent tasks
-        if auto_accept:
-            _unblock_dependent_tasks(conn, task_id)
 
     return get_task(task_id)
 

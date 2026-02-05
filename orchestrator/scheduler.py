@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from string import Template
 
+from .backpressure import check_backpressure_for_role
 from .config import (
     find_parent_project,
     get_agents,
@@ -419,17 +420,31 @@ def spawn_agent(agent_name: str, agent_id: int, role: str, agent_config: dict) -
     debug_log(f"Spawning agent {agent_name}: module={role_module}, cwd={cwd}, lightweight={is_lightweight}")
     debug_log(f"Agent env: AGENT_FOCUS={env.get('AGENT_FOCUS', 'N/A')}, ports={port_vars}")
 
+    # Set up log files for agent output
+    agent_dir = get_agents_runtime_dir() / agent_name
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    stdout_log = agent_dir / "stdout.log"
+    stderr_log = agent_dir / "stderr.log"
+
+    # Open log files (truncate on each run to keep them manageable)
+    stdout_file = open(stdout_log, "w")
+    stderr_file = open(stderr_log, "w")
+
     # Spawn the role as a subprocess
     process = subprocess.Popen(
         [sys.executable, "-m", role_module],
         cwd=cwd,
         env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stdout=stdout_file,
+        stderr=stderr_file,
         start_new_session=True,  # Detach from parent
     )
 
-    debug_log(f"Agent {agent_name} spawned with PID {process.pid}")
+    # Note: We don't close the files here - the subprocess will write to them
+    # and they'll be closed when the subprocess exits. The file descriptors
+    # are inherited by the child process.
+
+    debug_log(f"Agent {agent_name} spawned with PID {process.pid}, logs: {stderr_log}")
     return process.pid
 
 
@@ -454,6 +469,40 @@ def read_agent_exit_code(agent_name: str) -> int | None:
         return exit_code
     except (ValueError, OSError):
         return None
+
+
+def process_auto_accept_tasks() -> None:
+    """Process provisional tasks that have auto_accept enabled.
+
+    Moves tasks from provisional to done if auto_accept is true
+    (either on the task itself or its parent project).
+    """
+    if not is_db_enabled():
+        return
+
+    try:
+        from . import db
+
+        # Get all provisional tasks
+        provisional_tasks = db.list_tasks(queue="provisional")
+
+        for task in provisional_tasks:
+            task_id = task["id"]
+            auto_accept = task.get("auto_accept", False)
+
+            # Check project-level auto_accept if task doesn't have it
+            if not auto_accept and task.get("project_id"):
+                project = db.get_project(task["project_id"])
+                if project:
+                    auto_accept = project.get("auto_accept", False)
+
+            if auto_accept:
+                debug_log(f"Auto-accepting task {task_id}")
+                db.accept_completion(task_id, validator="scheduler")
+                print(f"[{datetime.now().isoformat()}] Auto-accepted task {task_id}")
+
+    except Exception as e:
+        debug_log(f"Error processing auto-accept tasks: {e}")
 
 
 def check_and_update_finished_agents() -> None:
@@ -508,6 +557,9 @@ def run_scheduler() -> None:
 
     # Check for finished agents first
     check_and_update_finished_agents()
+
+    # Process auto-accept tasks in provisional queue
+    process_auto_accept_tasks()
 
     # Load agent configuration
     try:
@@ -573,7 +625,24 @@ def run_scheduler() -> None:
                 debug_log(f"Agent {agent_name} not due yet")
                 continue
 
-            # Run pre-check if configured (cheap check for work availability)
+            # Check role-based backpressure (runs before spawning any process)
+            can_proceed, blocked_reason = check_backpressure_for_role(role)
+            if not can_proceed:
+                print(f"Agent {agent_name} blocked: {blocked_reason}")
+                debug_log(f"Agent {agent_name} blocked by backpressure: {blocked_reason}")
+                # Update state to track blocked status
+                state.extra["blocked_reason"] = blocked_reason
+                state.extra["blocked_at"] = datetime.now().isoformat()
+                save_state(state, state_path)
+                continue
+
+            # Clear any previous blocked status
+            if "blocked_reason" in state.extra:
+                del state.extra["blocked_reason"]
+            if "blocked_at" in state.extra:
+                del state.extra["blocked_at"]
+
+            # Run pre-check if configured (additional cheap check for work availability)
             if not run_pre_check(agent_name, agent_config):
                 print(f"Agent {agent_name} pre-check: no work available")
                 debug_log(f"Agent {agent_name} pre-check returned no work")
