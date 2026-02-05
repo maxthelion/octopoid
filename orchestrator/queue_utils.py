@@ -12,7 +12,9 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from .config import get_queue_dir, get_queue_limits, is_db_enabled
+import yaml
+
+from .config import get_queue_dir, get_queue_limits, is_db_enabled, get_orchestrator_dir
 
 
 def get_queue_subdir(subdir: str) -> Path:
@@ -28,6 +30,17 @@ def get_queue_subdir(subdir: str) -> Path:
     path = queue_dir / subdir
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def get_projects_dir() -> Path:
+    """Get the projects directory.
+
+    Returns:
+        Path to .orchestrator/shared/projects/
+    """
+    projects_dir = get_orchestrator_dir() / "shared" / "projects"
+    projects_dir.mkdir(parents=True, exist_ok=True)
+    return projects_dir
 
 
 def count_queue(subdir: str) -> int:
@@ -611,18 +624,22 @@ def create_task(
     branch: str = "main",
     created_by: str = "human",
     blocked_by: str | None = None,
+    project_id: str | None = None,
+    queue: str = "incoming",
 ) -> Path:
-    """Create a new task file in the incoming queue.
+    """Create a new task file in the specified queue.
 
     Args:
         title: Task title
-        role: Target role (implement, test, review)
+        role: Target role (implement, test, review, breakdown)
         context: Background/context section content
         acceptance_criteria: List of acceptance criteria
         priority: P0, P1, or P2
         branch: Base branch to work from
         created_by: Who created the task
         blocked_by: Comma-separated list of task IDs that block this task
+        project_id: Optional parent project ID
+        queue: Queue to create in (default: incoming, can be 'breakdown')
 
     Returns:
         Path to created task file
@@ -633,6 +650,14 @@ def create_task(
     criteria_md = "\n".join(f"- [ ] {c}" for c in acceptance_criteria)
 
     blocked_by_line = f"BLOCKED_BY: {blocked_by}\n" if blocked_by else ""
+    project_line = f"PROJECT: {project_id}\n" if project_id else ""
+
+    # If task belongs to a project, inherit branch from project
+    if project_id and branch == "main" and is_db_enabled():
+        from . import db
+        project = db.get_project(project_id)
+        if project and project.get("branch"):
+            branch = project["branch"]
 
     content = f"""# [TASK-{task_id}] {title}
 
@@ -641,7 +666,7 @@ PRIORITY: {priority}
 BRANCH: {branch}
 CREATED: {datetime.now().isoformat()}
 CREATED_BY: {created_by}
-{blocked_by_line}
+{project_line}{blocked_by_line}
 ## Context
 {context}
 
@@ -649,8 +674,8 @@ CREATED_BY: {created_by}
 {criteria_md}
 """
 
-    incoming_dir = get_queue_subdir("incoming")
-    task_path = incoming_dir / filename
+    queue_dir = get_queue_subdir(queue)
+    task_path = queue_dir / filename
 
     task_path.write_text(content)
 
@@ -664,7 +689,11 @@ CREATED_BY: {created_by}
             role=role,
             branch=branch,
             blocked_by=blocked_by,
+            project_id=project_id,
         )
+        # Set queue status if not incoming
+        if queue != "incoming":
+            db.update_task(task_id, queue=queue)
 
     return task_path
 
@@ -677,7 +706,7 @@ def get_queue_status() -> dict[str, Any]:
     """
     queues = ["incoming", "claimed", "done", "failed", "rejected"]
     if is_db_enabled():
-        queues.extend(["provisional", "escalated"])
+        queues.extend(["breakdown", "provisional", "escalated"])
 
     result = {}
     for q in queues:
@@ -690,6 +719,16 @@ def get_queue_status() -> dict[str, Any]:
     result["limits"] = get_queue_limits()
     result["open_prs"] = count_open_prs()
     result["db_enabled"] = is_db_enabled()
+
+    # Add project counts if DB enabled
+    if is_db_enabled():
+        from . import db
+        result["projects"] = {
+            "draft": len(db.list_projects("draft")),
+            "active": len(db.list_projects("active")),
+            "ready-for-pr": len(db.list_projects("ready-for-pr")),
+            "complete": len(db.list_projects("complete")),
+        }
 
     return result
 
@@ -719,3 +758,287 @@ def get_task_by_id(task_id: str) -> dict[str, Any] | None:
                 return task_info
 
     return None
+
+
+# =============================================================================
+# Project Operations
+# =============================================================================
+
+
+def create_project(
+    title: str,
+    description: str,
+    created_by: str = "human",
+    base_branch: str = "main",
+    branch: str | None = None,
+) -> dict[str, Any]:
+    """Create a new project with both DB record and YAML file.
+
+    Args:
+        title: Project title
+        description: Project description
+        created_by: Who created the project
+        base_branch: Base branch to create feature branch from
+        branch: Feature branch name (auto-generated if not provided)
+
+    Returns:
+        Created project as dictionary
+    """
+    if not is_db_enabled():
+        raise RuntimeError("Projects require database mode to be enabled")
+
+    from . import db
+
+    # Generate project ID
+    project_id = f"PROJ-{uuid4().hex[:8]}"
+
+    # Create in database
+    project = db.create_project(
+        project_id=project_id,
+        title=title,
+        description=description,
+        branch=branch,
+        base_branch=base_branch,
+        created_by=created_by,
+    )
+
+    # Write YAML file for visibility
+    _write_project_file(project)
+
+    return project
+
+
+def _write_project_file(project: dict[str, Any]) -> Path:
+    """Write project data to YAML file.
+
+    Args:
+        project: Project dictionary
+
+    Returns:
+        Path to the YAML file
+    """
+    projects_dir = get_projects_dir()
+    file_path = projects_dir / f"{project['id']}.yaml"
+
+    # Convert to YAML-friendly format
+    data = {
+        "id": project["id"],
+        "title": project["title"],
+        "description": project.get("description"),
+        "status": project.get("status", "draft"),
+        "branch": project.get("branch"),
+        "base_branch": project.get("base_branch", "main"),
+        "created_at": project.get("created_at"),
+        "created_by": project.get("created_by"),
+        "completed_at": project.get("completed_at"),
+    }
+
+    with open(file_path, "w") as f:
+        yaml.dump(data, f, default_flow_style=False, allow_unicode=True)
+
+    return file_path
+
+
+def get_project(project_id: str) -> dict[str, Any] | None:
+    """Get a project by ID.
+
+    Args:
+        project_id: Project identifier
+
+    Returns:
+        Project as dictionary or None if not found
+    """
+    if not is_db_enabled():
+        return None
+
+    from . import db
+    return db.get_project(project_id)
+
+
+def list_projects(status: str | None = None) -> list[dict[str, Any]]:
+    """List projects, optionally filtered by status.
+
+    Args:
+        status: Filter by status (draft, active, complete, abandoned)
+
+    Returns:
+        List of project dictionaries
+    """
+    if not is_db_enabled():
+        return []
+
+    from . import db
+    return db.list_projects(status=status)
+
+
+def activate_project(project_id: str, create_branch: bool = True) -> dict[str, Any] | None:
+    """Activate a project and optionally create its feature branch.
+
+    Args:
+        project_id: Project identifier
+        create_branch: Whether to create the git branch
+
+    Returns:
+        Updated project or None if not found
+    """
+    if not is_db_enabled():
+        return None
+
+    from . import db
+
+    project = db.get_project(project_id)
+    if not project:
+        return None
+
+    # Create git branch if requested
+    if create_branch and project.get("branch"):
+        base = project.get("base_branch", "main")
+        branch = project["branch"]
+        try:
+            subprocess.run(
+                ["git", "checkout", "-b", branch, base],
+                capture_output=True,
+                check=True,
+            )
+            # Switch back to base branch
+            subprocess.run(["git", "checkout", base], capture_output=True)
+        except subprocess.CalledProcessError:
+            pass  # Branch may already exist
+
+    # Update status
+    project = db.activate_project(project_id)
+    _write_project_file(project)
+
+    return project
+
+
+def get_project_tasks(project_id: str) -> list[dict[str, Any]]:
+    """Get all tasks belonging to a project.
+
+    Args:
+        project_id: Project identifier
+
+    Returns:
+        List of task dictionaries
+    """
+    if not is_db_enabled():
+        return []
+
+    from . import db
+    return db.get_project_tasks(project_id)
+
+
+def get_project_status(project_id: str) -> dict[str, Any] | None:
+    """Get detailed project status including task breakdown.
+
+    Args:
+        project_id: Project identifier
+
+    Returns:
+        Status dictionary or None if project not found
+    """
+    if not is_db_enabled():
+        return None
+
+    from . import db
+
+    project = db.get_project(project_id)
+    if not project:
+        return None
+
+    tasks = db.get_project_tasks(project_id)
+
+    # Count tasks by queue
+    queue_counts = {}
+    for task in tasks:
+        queue = task.get("queue", "unknown")
+        queue_counts[queue] = queue_counts.get(queue, 0) + 1
+
+    # Check for blocked tasks
+    blocked_tasks = [t for t in tasks if t.get("blocked_by")]
+
+    return {
+        "project": project,
+        "task_count": len(tasks),
+        "tasks_by_queue": queue_counts,
+        "blocked_count": len(blocked_tasks),
+        "tasks": tasks,
+    }
+
+
+def send_to_breakdown(
+    title: str,
+    description: str,
+    context: str,
+    created_by: str = "human",
+    as_project: bool = True,
+) -> dict[str, Any]:
+    """Send work to the breakdown queue for decomposition.
+
+    This is the main entry point for async work handoff.
+
+    Args:
+        title: Title of the work
+        description: Description of what needs to be done
+        context: Additional context/background
+        created_by: Who created this
+        as_project: If True, creates a project; if False, creates a single task
+
+    Returns:
+        Dictionary with project_id or task_id and file paths
+    """
+    if not is_db_enabled():
+        raise RuntimeError("Breakdown queue requires database mode to be enabled")
+
+    from . import db
+
+    if as_project:
+        # Create project
+        project = create_project(
+            title=title,
+            description=description,
+            created_by=created_by,
+        )
+
+        # Create initial breakdown task for the project
+        task_path = create_task(
+            title=f"Break down: {title}",
+            role="breakdown",
+            context=f"{description}\n\n{context}",
+            acceptance_criteria=[
+                "Decompose into right-sized tasks",
+                "Create testing strategy task first",
+                "Map dependencies between tasks",
+                "Each task completable in <30 turns",
+            ],
+            priority="P1",
+            created_by=created_by,
+            project_id=project["id"],
+            queue="breakdown",
+        )
+
+        return {
+            "type": "project",
+            "project_id": project["id"],
+            "project": project,
+            "breakdown_task": str(task_path),
+        }
+    else:
+        # Create single task in breakdown queue
+        task_path = create_task(
+            title=title,
+            role="breakdown",
+            context=f"{description}\n\n{context}",
+            acceptance_criteria=[
+                "Break down into smaller tasks if needed",
+                "Ensure clear acceptance criteria",
+            ],
+            priority="P1",
+            created_by=created_by,
+            queue="breakdown",
+        )
+
+        return {
+            "type": "task",
+            "task_path": str(task_path),
+        }
