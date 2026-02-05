@@ -1,0 +1,31 @@
+#!/usr/bin/env python3
+"""List pending breakdown files awaiting review."""
+
+import sys
+from pathlib import Path
+
+# Add parent to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from orchestrator.queue_utils import list_pending_breakdowns
+
+
+def main():
+    breakdowns = list_pending_breakdowns()
+
+    if not breakdowns:
+        print("No pending breakdowns.")
+        return
+
+    print(f"Pending breakdowns ({len(breakdowns)}):\n")
+    for b in breakdowns:
+        project = b['project_id'] or '(no project)'
+        print(f"  {project}")
+        print(f"    Title: {b['title']}")
+        print(f"    Tasks: {b['task_count']}")
+        print(f"    File:  {b['path'].name}")
+        print()
+
+
+if __name__ == "__main__":
+    main()

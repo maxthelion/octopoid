@@ -1,0 +1,42 @@
+#!/usr/bin/env python3
+"""Run the breakdown agent to process pending breakdown tasks."""
+
+import subprocess
+import sys
+from pathlib import Path
+
+# Add parent to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from orchestrator.queue_utils import list_tasks
+
+
+def main():
+    # Check if there's work to do
+    breakdown_tasks = list_tasks('breakdown')
+    if not breakdown_tasks:
+        print("No tasks in breakdown queue.")
+        return
+
+    print(f"Found {len(breakdown_tasks)} task(s) in breakdown queue:")
+    for t in breakdown_tasks:
+        task_id = t.get('id', t.get('path', Path()).stem.replace('TASK-', ''))[:8]
+        title = t.get('title', 'Unknown')
+        print(f"  {task_id}: {title}")
+    print()
+
+    # Run the breakdown agent
+    print("Running breakdown agent...")
+    print("-" * 60)
+
+    result = subprocess.run(
+        [sys.executable, "-m", "orchestrator.orchestrator.roles.breakdown",
+         "--agent-name", "breakdown-agent"],
+        cwd=Path(__file__).parent.parent.parent,  # boxen root
+    )
+
+    sys.exit(result.returncode)
+
+
+if __name__ == "__main__":
+    main()

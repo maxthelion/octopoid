@@ -1,0 +1,69 @@
+#!/usr/bin/env python3
+"""View a task's details."""
+
+import sys
+from pathlib import Path
+
+# Add parent to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from orchestrator.db import get_connection, get_task
+from orchestrator.config import is_db_enabled, get_orchestrator_dir
+
+
+def main():
+    if len(sys.argv) < 2:
+        print("Usage: view-task <task-id>")
+        sys.exit(1)
+
+    task_id = sys.argv[1]
+
+    if is_db_enabled():
+        with get_connection() as conn:
+            # Find task by prefix
+            cursor = conn.execute(
+                "SELECT id FROM tasks WHERE id LIKE ?",
+                (f"{task_id}%",)
+            )
+            row = cursor.fetchone()
+            if row:
+                task_id = row['id']
+
+        task = get_task(task_id)
+        if task:
+            print(f"Task: TASK-{task['id']}")
+            print(f"Title: {task['title']}")
+            print(f"Queue: {task['queue']}")
+            print(f"Role: {task.get('role', 'N/A')}")
+            print(f"Priority: {task.get('priority', 'N/A')}")
+            print(f"Project: {task.get('project_id', 'N/A')}")
+            print(f"Branch: {task.get('branch', 'N/A')}")
+            print(f"Created: {task.get('created_at', 'N/A')}")
+            if task.get('claimed_by'):
+                print(f"Claimed by: {task['claimed_by']} at {task.get('claimed_at', 'N/A')}")
+            if task.get('blocked_by'):
+                print(f"Blocked by: {task['blocked_by']}")
+            print()
+
+            # Show file content
+            file_path = task.get('file_path')
+            if file_path and Path(file_path).exists():
+                print("--- File Content ---")
+                print(Path(file_path).read_text())
+            return
+
+    # Fallback to file search
+    queue_dir = get_orchestrator_dir() / "shared" / "queue"
+    for subdir in ['incoming', 'claimed', 'done', 'failed', 'breakdown', 'provisional']:
+        for f in (queue_dir / subdir).glob(f"TASK-{task_id}*.md"):
+            print(f"Found: {f}")
+            print()
+            print(f.read_text())
+            return
+
+    print(f"Task not found: {task_id}")
+    sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

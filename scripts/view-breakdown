@@ -1,0 +1,51 @@
+#!/usr/bin/env python3
+"""View a breakdown file."""
+
+import sys
+from pathlib import Path
+
+# Add parent to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from orchestrator.config import get_orchestrator_dir
+from orchestrator.queue_utils import list_pending_breakdowns
+
+
+def main():
+    breakdowns_dir = get_orchestrator_dir() / "shared" / "breakdowns"
+
+    if len(sys.argv) < 2:
+        # List available breakdowns
+        print("Available breakdowns:")
+        print()
+        for f in sorted(breakdowns_dir.glob("*.md")):
+            print(f"  {f.stem}")
+        print()
+        print("Usage: view-breakdown <project-id or filename>")
+        return
+
+    identifier = sys.argv[1]
+
+    # Find the file
+    if identifier.startswith("PROJ-"):
+        path = breakdowns_dir / f"{identifier}-breakdown.md"
+    else:
+        path = breakdowns_dir / f"{identifier}.md"
+        if not path.exists():
+            path = breakdowns_dir / f"{identifier}-breakdown.md"
+        if not path.exists():
+            path = breakdowns_dir / identifier
+
+    if not path.exists():
+        print(f"Breakdown not found: {identifier}")
+        print()
+        print("Available:")
+        for f in sorted(breakdowns_dir.glob("*.md")):
+            print(f"  {f.stem}")
+        sys.exit(1)
+
+    print(path.read_text())
+
+
+if __name__ == "__main__":
+    main()

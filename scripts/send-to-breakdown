@@ -1,0 +1,51 @@
+#!/usr/bin/env python3
+"""Send work to the breakdown queue for decomposition."""
+
+import argparse
+import sys
+from pathlib import Path
+
+# Add parent to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from orchestrator.queue_utils import send_to_breakdown
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Send work to breakdown queue')
+    parser.add_argument('title', help='Title for the work')
+    parser.add_argument('--description', '-d', default='', help='Brief description')
+    parser.add_argument('--context', '-c', default='', help='Detailed context')
+    parser.add_argument('--context-file', '-f', help='Read context from file')
+    parser.add_argument('--task', '-t', action='store_true',
+                        help='Create as single task (not project)')
+    args = parser.parse_args()
+
+    # Read context from file if specified
+    context = args.context
+    if args.context_file:
+        context = Path(args.context_file).read_text()
+
+    result = send_to_breakdown(
+        title=args.title,
+        description=args.description or args.title,
+        context=context,
+        created_by="human",
+        as_project=not args.task,
+    )
+
+    if result.get('type') == 'project':
+        print(f"Created project: {result['project_id']}")
+        print(f"Branch: {result['branch']}")
+        print(f"Breakdown task: {Path(result['breakdown_task']).name}")
+        print()
+        print("Next steps:")
+        print("  1. Run breakdown agent: python -m orchestrator.orchestrator.roles.breakdown")
+        print(f"  2. Review breakdown: cat .orchestrator/shared/breakdowns/{result['project_id']}-breakdown.md")
+        print(f"  3. Approve: ./scripts/approve-breakdown {result['project_id']}")
+    else:
+        print(f"Created task: {Path(result['task_path']).name}")
+
+
+if __name__ == "__main__":
+    main()

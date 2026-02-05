@@ -1,0 +1,54 @@
+#!/usr/bin/env python3
+"""List tasks in the queue system."""
+
+import argparse
+import sys
+from pathlib import Path
+
+# Add parent to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from orchestrator.queue_utils import list_tasks
+from orchestrator.config import is_db_enabled
+
+
+def main():
+    parser = argparse.ArgumentParser(description='List tasks in queues')
+    parser.add_argument('queue', nargs='?', default=None,
+                        help='Queue to list (incoming, claimed, done, failed, breakdown)')
+    parser.add_argument('--project', '-p', help='Filter by project ID')
+    parser.add_argument('--all', '-a', action='store_true', help='Show all queues')
+    args = parser.parse_args()
+
+    if args.all:
+        queues = ['incoming', 'claimed', 'breakdown', 'provisional', 'done', 'failed']
+    elif args.queue:
+        queues = [args.queue]
+    else:
+        queues = ['incoming', 'claimed', 'breakdown']
+
+    for queue in queues:
+        tasks = list_tasks(queue)
+
+        # Filter by project if specified
+        if args.project:
+            tasks = [t for t in tasks if t.get('project_id') == args.project]
+
+        if not tasks:
+            continue
+
+        print(f"\n{queue.upper()} ({len(tasks)}):")
+        print("-" * 60)
+
+        for t in tasks:
+            task_id = t.get('id', t.get('path', Path()).stem.replace('TASK-', ''))[:8]
+            title = t.get('title', 'Unknown')[:45]
+            project = t.get('project_id', '')
+            priority = t.get('priority', 'P2')
+
+            project_str = f" [{project}]" if project else ""
+            print(f"  {task_id}: {title}{project_str} ({priority})")
+
+
+if __name__ == "__main__":
+    main()
