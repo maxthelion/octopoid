@@ -405,6 +405,7 @@ def accept_completion(
     """Accept a provisional task and move it to done.
 
     Called by the validator when a task passes validation.
+    If the task belongs to a project, checks for project completion.
 
     Args:
         task_path: Path to the provisional task file
@@ -414,12 +415,14 @@ def accept_completion(
         New path in done queue
     """
     task_path = Path(task_path)
+    project_id = None
 
     if is_db_enabled():
         from . import db
         db_task = db.get_task_by_path(str(task_path))
         if db_task:
             db.accept_completion(db_task["id"], validator=validator)
+            project_id = db_task.get("project_id")
 
     done_dir = get_queue_subdir("done")
     dest = done_dir / task_path.name
@@ -431,6 +434,13 @@ def accept_completion(
             f.write(f"ACCEPTED_BY: {validator}\n")
 
     os.rename(task_path, dest)
+
+    # Check for project completion
+    if project_id and is_db_enabled():
+        from . import db
+        if db.check_project_completion(project_id):
+            _write_project_file(db.get_project(project_id))
+
     return dest
 
 
