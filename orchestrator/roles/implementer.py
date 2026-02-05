@@ -5,6 +5,7 @@ from ..git_utils import (
     create_feature_branch,
     create_pull_request,
     get_commit_count,
+    get_head_ref,
     has_uncommitted_changes,
 )
 from ..queue_utils import (
@@ -46,9 +47,9 @@ class ImplementerRole(BaseRole):
             branch_name = create_feature_branch(self.worktree, task_id, base_branch)
             self.log(f"Created branch: {branch_name}")
 
-            # Get initial commit count (before implementation)
-            initial_commits = get_commit_count(self.worktree)
-            self.debug_log(f"Initial commit count: {initial_commits}")
+            # Snapshot HEAD before implementation so we count only NEW commits
+            head_before = get_head_ref(self.worktree)
+            self.debug_log(f"HEAD before implementation: {head_before[:8]}")
 
             # Build prompt for Claude
             instructions = self.read_instructions()
@@ -96,10 +97,12 @@ Remember:
                 max_turns=50,  # Allow more turns for implementation
             )
 
-            # Get final commit count
-            final_commits = get_commit_count(self.worktree)
-            commits_made = final_commits - initial_commits
-            self.debug_log(f"Final commit count: {final_commits}, commits made: {commits_made}")
+            # Count commits made during this session only
+            if head_before:
+                commits_made = get_commit_count(self.worktree, since_ref=head_before)
+            else:
+                commits_made = get_commit_count(self.worktree)
+            self.debug_log(f"Commits made this session: {commits_made}")
 
             if exit_code != 0:
                 self.log(f"Implementation failed: {stderr}")

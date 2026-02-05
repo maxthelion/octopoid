@@ -374,3 +374,21 @@ def get_commit_count(worktree_path: Path, since_ref: str | None = None) -> int:
         return 0
     except (subprocess.CalledProcessError, ValueError):
         return 0
+
+
+def get_head_ref(worktree_path: Path) -> str:
+    """Get the current HEAD commit SHA.
+
+    Args:
+        worktree_path: Path to the worktree
+
+    Returns:
+        SHA of HEAD, or empty string on error
+    """
+    try:
+        result = run_git(["rev-parse", "HEAD"], cwd=worktree_path, check=False)
+        if result.returncode == 0:
+            return result.stdout.strip()
+        return ""
+    except subprocess.CalledProcessError:
+        return ""
