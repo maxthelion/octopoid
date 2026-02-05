@@ -15,7 +15,7 @@ from .config import get_orchestrator_dir
 
 
 # Schema version for migrations
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def get_database_path() -> Path:
@@ -82,6 +82,7 @@ def init_schema() -> None:
                 has_plan BOOLEAN DEFAULT FALSE,
                 plan_id TEXT,
                 project_id TEXT,
+                auto_accept BOOLEAN DEFAULT FALSE,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (project_id) REFERENCES projects(id)
@@ -111,6 +112,7 @@ def init_schema() -> None:
                 status TEXT DEFAULT 'draft',
                 branch TEXT,
                 base_branch TEXT DEFAULT 'main',
+                auto_accept BOOLEAN DEFAULT FALSE,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 created_by TEXT,
                 completed_at DATETIME
@@ -231,6 +233,17 @@ def migrate_schema() -> bool:
                 CREATE INDEX IF NOT EXISTS idx_tasks_project_id ON tasks(project_id)
             """)
 
+        # Migration from v2 to v3: Add auto_accept column
+        if current < 3:
+            try:
+                conn.execute("ALTER TABLE tasks ADD COLUMN auto_accept BOOLEAN DEFAULT FALSE")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+            try:
+                conn.execute("ALTER TABLE projects ADD COLUMN auto_accept BOOLEAN DEFAULT FALSE")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+
         # Update schema version
         conn.execute(
             "INSERT OR REPLACE INTO schema_info (key, value) VALUES (?, ?)",
@@ -254,6 +267,7 @@ def create_task(
     complexity: str | None = None,
     blocked_by: str | None = None,
     project_id: str | None = None,
+    auto_accept: bool | None = None,
 ) -> dict[str, Any]:
     """Create a new task in the database.
 
@@ -266,23 +280,30 @@ def create_task(
         complexity: Estimated complexity
         blocked_by: Comma-separated list of blocking task IDs
         project_id: Optional parent project ID
+        auto_accept: Skip provisional queue, go straight to done (inherits from project if None)
 
     Returns:
         Created task as dictionary
     """
-    # If task belongs to a project, inherit branch from project if not specified
-    if project_id and branch == "main":
+    # If task belongs to a project, inherit branch and auto_accept from project if not specified
+    if project_id:
         project = get_project(project_id)
-        if project and project.get("branch"):
-            branch = project["branch"]
+        if project:
+            if branch == "main" and project.get("branch"):
+                branch = project["branch"]
+            if auto_accept is None:
+                auto_accept = project.get("auto_accept", False)
+
+    if auto_accept is None:
+        auto_accept = False
 
     with get_connection() as conn:
         conn.execute(
             """
-            INSERT INTO tasks (id, file_path, priority, role, branch, complexity, blocked_by, project_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO tasks (id, file_path, priority, role, branch, complexity, blocked_by, project_id, auto_accept)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (task_id, file_path, priority, role, branch, complexity, blocked_by, project_id),
+            (task_id, file_path, priority, role, branch, complexity, blocked_by, project_id, auto_accept),
         )
 
         # Log creation event
@@ -532,6 +553,7 @@ def submit_completion(
     """Submit a task for validation (move to provisional queue).
 
     The task stays in provisional until a validator accepts or rejects it.
+    If auto_accept is True (on task or its project), goes straight to done.
 
     Args:
         task_id: Task identifier
@@ -543,26 +565,44 @@ def submit_completion(
     """
     now = datetime.now().isoformat()
 
+    # Check if auto_accept is enabled (on task or project)
+    task = get_task(task_id)
+    if not task:
+        return None
+
+    auto_accept = task.get("auto_accept", False)
+    if not auto_accept and task.get("project_id"):
+        project = get_project(task["project_id"])
+        if project:
+            auto_accept = project.get("auto_accept", False)
+
+    target_queue = "done" if auto_accept else "provisional"
+    event = "auto_accepted" if auto_accept else "submitted"
+
     with get_connection() as conn:
         conn.execute(
             """
             UPDATE tasks
-            SET queue = 'provisional',
+            SET queue = ?,
                 commits_count = ?,
                 turns_used = ?,
                 updated_at = ?
             WHERE id = ?
             """,
-            (commits_count, turns_used, now, task_id),
+            (target_queue, commits_count, turns_used, now, task_id),
         )
 
         conn.execute(
             """
             INSERT INTO task_history (task_id, event, details)
-            VALUES (?, 'submitted', ?)
+            VALUES (?, ?, ?)
             """,
-            (task_id, f"commits={commits_count}, turns={turns_used}"),
+            (task_id, event, f"commits={commits_count}, turns={turns_used}"),
         )
+
+        # If auto-accepted, unblock dependent tasks
+        if auto_accept:
+            _unblock_dependent_tasks(conn, task_id)
 
     return get_task(task_id)
 
