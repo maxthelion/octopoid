@@ -199,7 +199,9 @@ def _db_task_to_file_format(db_task: dict[str, Any]) -> dict[str, Any]:
         "claimed_by": db_task.get("claimed_by"),
         "attempt_count": db_task.get("attempt_count", 0),
         "commits_count": db_task.get("commits_count", 0),
+        "turns_used": db_task.get("turns_used", 0),
         "has_plan": db_task.get("has_plan", False),
+        "project_id": db_task.get("project_id"),
     }
 
 
@@ -1340,3 +1342,201 @@ def _parse_breakdown_tasks(content: str) -> list[dict]:
         })
 
     return tasks
+
+
+# =============================================================================
+# Task Recycling
+# =============================================================================
+
+
+BURNED_OUT_TURN_THRESHOLD = 40
+
+
+def is_burned_out(commits_count: int, turns_used: int) -> bool:
+    """Check if a task is burned out (used many turns without producing commits).
+
+    A task is considered burned out when it has zero commits and has used
+    a significant number of turns, indicating the task scope is too large
+    for a single agent session.
+
+    Args:
+        commits_count: Number of commits the agent made
+        turns_used: Number of turns the agent used
+
+    Returns:
+        True if the task appears burned out
+    """
+    return commits_count == 0 and (turns_used or 0) >= BURNED_OUT_TURN_THRESHOLD
+
+
+def recycle_to_breakdown(task_path, reason="too_large") -> dict | None:
+    """Recycle a failed/burned-out task back to the breakdown queue.
+
+    Builds rich context from the project state (completed siblings, branch info)
+    and creates a new breakdown task. The original task is moved to a 'recycled'
+    state and any tasks blocked by it are rewired to depend on the new breakdown task.
+
+    Args:
+        task_path: Path to the burned-out task file
+        reason: Why the task is being recycled
+
+    Returns:
+        Dictionary with breakdown_task info, or None if recycling is not appropriate
+        (e.g., depth cap exceeded)
+    """
+    if not is_db_enabled():
+        raise RuntimeError("Task recycling requires database mode to be enabled")
+
+    from . import db
+
+    task_path = Path(task_path)
+
+    # Look up task in DB by path
+    db_task = db.get_task_by_path(str(task_path))
+    if not db_task:
+        # Try to extract task ID from filename
+        match = re.match(r"TASK-(.+)\.md", task_path.name)
+        if match:
+            task_id = match.group(1)
+            db_task = db.get_task(task_id)
+
+    if not db_task:
+        return None
+
+    task_id = db_task["id"]
+
+    # Read the original task content
+    task_content = task_path.read_text() if task_path.exists() else ""
+
+    # Check depth cap - don't recycle tasks that are already re-breakdowns
+    depth_match = re.search(r"RE_BREAKDOWN_DEPTH:\s*(\d+)", task_content)
+    current_depth = int(depth_match.group(1)) if depth_match else 0
+    if current_depth >= 1:
+        return None  # Escalate to human instead
+
+    # Gather project context
+    project_id = db_task.get("project_id")
+    project = None
+    sibling_tasks = []
+    project_context = ""
+
+    if project_id:
+        project = db.get_project(project_id)
+        all_project_tasks = db.get_project_tasks(project_id)
+        sibling_tasks = [t for t in all_project_tasks if t["id"] != task_id]
+
+        if project:
+            project_context = (
+                f"## Project Context\n\n"
+                f"**Project:** {project_id}\n"
+                f"**Title:** {project.get('title', 'Unknown')}\n"
+                f"**Branch:** {project.get('branch', 'main')}\n\n"
+            )
+
+        # Build completed siblings summary
+        done_tasks = [t for t in sibling_tasks if t.get("queue") == "done"]
+        if done_tasks:
+            project_context += "### Completed Tasks\n\n"
+            for t in done_tasks:
+                commits = t.get("commits_count", 0)
+                commit_label = f"{commits} commit{'s' if commits != 1 else ''}"
+                project_context += f"- **{t['id']}** ({commit_label})\n"
+            project_context += "\n"
+
+    # Build the breakdown task content
+    new_depth = current_depth + 1
+    breakdown_context = (
+        f"{project_context}"
+        f"## Recycled Task\n\n"
+        f"The following task burned out (0 commits after max turns) and needs "
+        f"to be re-broken-down into smaller subtasks.\n\n"
+        f"### Original Task: {task_id}\n\n"
+        f"```\n{task_content}\n```\n\n"
+        f"## Instructions\n\n"
+        f"1. Check out the project branch and examine the current state of the code\n"
+        f"2. Identify what work from the original task has NOT been completed\n"
+        f"3. Break the remaining work into smaller, focused subtasks\n"
+        f"4. Each subtask should be completable in <30 agent turns\n"
+    )
+
+    # Create the breakdown task
+    breakdown_task_path = create_task(
+        title=f"Re-breakdown: {task_id}",
+        role="breakdown",
+        context=breakdown_context,
+        acceptance_criteria=[
+            "Examine branch state to identify completed vs remaining work",
+            "Decompose remaining work into right-sized tasks (<30 turns each)",
+            "Map dependencies between new subtasks",
+            "Include RE_BREAKDOWN_DEPTH in new subtasks",
+        ],
+        priority="P1",
+        branch=project.get("branch", "main") if project else db_task.get("branch", "main"),
+        created_by="recycler",
+        project_id=project_id,
+        queue="breakdown",
+    )
+
+    # Extract the new breakdown task ID from filename
+    breakdown_match = re.match(r"TASK-(.+)\.md", breakdown_task_path.name)
+    breakdown_task_id = breakdown_match.group(1) if breakdown_match else None
+
+    # Add RE_BREAKDOWN_DEPTH to the breakdown task file
+    if breakdown_task_path.exists():
+        content = breakdown_task_path.read_text()
+        # Insert after CREATED_BY line
+        content = content.replace(
+            "CREATED_BY: recycler\n",
+            f"CREATED_BY: recycler\nRE_BREAKDOWN_DEPTH: {new_depth}\n",
+        )
+        breakdown_task_path.write_text(content)
+
+    # Move original task to recycled state
+    recycled_dir = get_queue_subdir("recycled")
+    recycled_dir.mkdir(parents=True, exist_ok=True)
+    recycled_path = recycled_dir / task_path.name
+
+    if task_path.exists():
+        task_path.rename(recycled_path)
+
+    db.update_task(task_id, queue="recycled", file_path=str(recycled_path))
+    db.add_history_event(task_id, "recycled", details=f"reason={reason}, breakdown_task={breakdown_task_id}")
+
+    # Rewire dependencies: tasks blocked by the original now depend on the breakdown
+    if breakdown_task_id:
+        _rewire_dependencies(task_id, breakdown_task_id)
+
+    return {
+        "breakdown_task": str(breakdown_task_path),
+        "breakdown_task_id": breakdown_task_id,
+        "original_task_id": task_id,
+        "action": "recycled",
+    }
+
+
+def _rewire_dependencies(old_task_id: str, new_task_id: str) -> None:
+    """Rewire tasks blocked by old_task_id to depend on new_task_id instead.
+
+    Args:
+        old_task_id: The task ID being replaced
+        new_task_id: The new task ID to depend on
+    """
+    from . import db
+
+    with db.get_connection() as conn:
+        cursor = conn.execute(
+            "SELECT id, blocked_by FROM tasks WHERE blocked_by LIKE ?",
+            (f"%{old_task_id}%",),
+        )
+
+        for row in cursor.fetchall():
+            blocked_by = row["blocked_by"] or ""
+            blockers = [b.strip() for b in blocked_by.split(",") if b.strip()]
+            # Replace old with new
+            blockers = [new_task_id if b == old_task_id else b for b in blockers]
+            new_blocked_by = ",".join(blockers) if blockers else None
+
+            conn.execute(
+                "UPDATE tasks SET blocked_by = ?, updated_at = ? WHERE id = ?",
+                (new_blocked_by, datetime.now().isoformat(), row["id"]),
+            )

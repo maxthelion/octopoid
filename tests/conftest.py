@@ -108,6 +108,86 @@ This task requires implementing feature X.
 
 
 @pytest.fixture
+def sample_project_with_tasks(mock_orchestrator_dir, initialized_db):
+    """Create a project with tasks at various stages.
+
+    - Project PROJ-test1 with branch feature/test1
+    - 3 completed tasks (done queue, with commit counts)
+    - 1 burned-out task (provisional, 0 commits, 50 turns)
+    - 1 task blocked by the burned-out task
+    """
+    from orchestrator.db import (
+        create_project,
+        create_task,
+        claim_task as db_claim,
+        submit_completion as db_submit,
+        accept_completion as db_accept,
+        update_task,
+        get_database_path,
+    )
+
+    project = create_project(
+        project_id="PROJ-test1",
+        title="Test project for recycling",
+        description="A test project with various task states",
+        branch="feature/test1",
+    )
+
+    # Create queue directories
+    done_dir = mock_orchestrator_dir / "shared" / "queue" / "done"
+    prov_dir = mock_orchestrator_dir / "shared" / "queue" / "provisional"
+    incoming_dir = mock_orchestrator_dir / "shared" / "queue" / "incoming"
+    done_dir.mkdir(parents=True, exist_ok=True)
+    prov_dir.mkdir(parents=True, exist_ok=True)
+    incoming_dir.mkdir(parents=True, exist_ok=True)
+
+    # 3 completed tasks
+    completed_tasks = []
+    for i, (tid, title, commits) in enumerate([
+        ("done0001", "First completed task", 1),
+        ("done0002", "Second completed task", 2),
+        ("done0003", "Third completed task", 1),
+    ]):
+        file_path = done_dir / f"TASK-{tid}.md"
+        file_path.write_text(f"# [TASK-{tid}] {title}\n\nROLE: implement\nPRIORITY: P1\nBRANCH: feature/test1\nPROJECT: PROJ-test1\n\n## Context\nTask {i+1} context.\n\n## Acceptance Criteria\n- [ ] Done\n")
+        create_task(task_id=tid, file_path=str(file_path), project_id="PROJ-test1", role="implement")
+        update_task(tid, queue="done", commits_count=commits, turns_used=20)
+        completed_tasks.append({"id": tid, "title": title, "commits": commits, "path": file_path})
+
+    # 1 burned-out task (provisional, 0 commits, 50 turns)
+    burned_id = "burn0001"
+    burned_path = prov_dir / f"TASK-{burned_id}.md"
+    burned_path.write_text(
+        f"# [TASK-{burned_id}] Verify tests and add edge cases\n\n"
+        f"ROLE: implement\nPRIORITY: P1\nBRANCH: feature/test1\nPROJECT: PROJ-test1\n\n"
+        f"## Context\nRun the tests, debug failures, add edge case coverage.\n\n"
+        f"## Acceptance Criteria\n- [ ] All tests pass\n- [ ] Edge cases added\n"
+    )
+    create_task(task_id=burned_id, file_path=str(burned_path), project_id="PROJ-test1", role="implement")
+    update_task(burned_id, queue="provisional", commits_count=0, turns_used=50)
+
+    # 1 task blocked by the burned-out task
+    blocked_id = "block001"
+    blocked_path = incoming_dir / f"TASK-{blocked_id}.md"
+    blocked_path.write_text(
+        f"# [TASK-{blocked_id}] Final cleanup\n\n"
+        f"ROLE: implement\nPRIORITY: P1\nBRANCH: feature/test1\nPROJECT: PROJ-test1\n"
+        f"BLOCKED_BY: {burned_id}\n\n"
+        f"## Context\nFinal cleanup after tests pass.\n\n"
+        f"## Acceptance Criteria\n- [ ] Cleanup done\n"
+    )
+    create_task(task_id=blocked_id, file_path=str(blocked_path), project_id="PROJ-test1", role="implement", blocked_by=burned_id)
+
+    yield {
+        "project": project,
+        "project_id": "PROJ-test1",
+        "completed_tasks": completed_tasks,
+        "burned_task": {"id": burned_id, "path": burned_path},
+        "blocked_task": {"id": blocked_id, "path": blocked_path},
+    }
+
+
+@pytest.fixture
 def sample_task_with_dependencies(mock_orchestrator_dir):
     """Create sample task files with dependencies."""
     incoming_dir = mock_orchestrator_dir / "shared" / "queue" / "incoming"
