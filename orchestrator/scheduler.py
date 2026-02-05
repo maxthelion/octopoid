@@ -350,6 +350,13 @@ def get_role_constraints(role: str) -> str:
 - Reset stuck claimed tasks
 - This role runs without Claude invocation
 """,
+        "recycler": """
+- You do NOT need a worktree (lightweight agent)
+- Poll provisional queue for burned-out tasks (0 commits, high turns)
+- Recycle burned-out tasks to the breakdown queue with project context
+- Accept depth-capped tasks for human review
+- This role runs without Claude invocation
+""",
     }
     return constraints.get(role, "- Follow standard development practices")
 
