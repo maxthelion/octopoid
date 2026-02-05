@@ -43,6 +43,7 @@ class AgentState:
     total_successes: int
     total_failures: int
     current_task: Optional[str]
+    blocked_reason: Optional[str] = None
 
 
 @dataclass
@@ -95,6 +96,7 @@ def get_all_agents() -> list[AgentState]:
     for config in load_agents_config():
         name = config.get("name", "unknown")
         state = load_agent_state(name) or {}
+        extra = state.get("extra", {})
         agents.append(AgentState(
             name=name,
             role=config.get("role", "unknown"),
@@ -110,6 +112,7 @@ def get_all_agents() -> list[AgentState]:
             total_successes=state.get("total_successes", 0),
             total_failures=state.get("total_failures", 0),
             current_task=state.get("current_task"),
+            blocked_reason=extra.get("blocked_reason"),
         ))
     return agents
 
@@ -323,6 +326,7 @@ def get_demo_agents() -> list[AgentState]:
             total_successes=state["total_successes"],
             total_failures=state["total_failures"],
             current_task=current_task,
+            blocked_reason=None,
         ))
 
     return agents
@@ -383,6 +387,7 @@ class Colors:
     P0 = 9
     P1 = 10
     P2 = 11
+    BLOCKED = 12
 
 
 def init_colors():
@@ -400,6 +405,7 @@ def init_colors():
     curses.init_pair(Colors.P0, curses.COLOR_RED, -1)
     curses.init_pair(Colors.P1, curses.COLOR_YELLOW, -1)
     curses.init_pair(Colors.P2, curses.COLOR_WHITE, -1)
+    curses.init_pair(Colors.BLOCKED, curses.COLOR_YELLOW, -1)
 
 
 def draw_box(win, y: int, x: int, height: int, width: int, title: str = ""):
@@ -480,6 +486,17 @@ def calculate_next_run_progress(agent: AgentState) -> tuple[float, str]:
         return 0.0, "PAUSED"
     if agent.running:
         return 1.0, "RUNNING"
+    if agent.blocked_reason:
+        # Show the reason (e.g., "pr_limit:10/10" -> "10/10 PRs")
+        parts = agent.blocked_reason.split(":")
+        if len(parts) == 2 and parts[0] == "pr_limit":
+            return 0.0, f"{parts[1]} PRs"
+        elif len(parts) == 2 and parts[0] == "claimed_limit":
+            return 0.0, f"{parts[1]} claimed"
+        elif parts[0] == "no_tasks":
+            return 0.0, "no tasks"
+        else:
+            return 0.0, parts[0][:12]
     if not agent.last_started:
         return 1.0, "READY"
 
@@ -535,6 +552,11 @@ def render_agents_panel(win, y: int, x: int, height: int, width: int, agents: li
         elif agent.running:
             status = "RUNNING"
             color = Colors.RUNNING
+        elif agent.blocked_reason:
+            # Show shortened blocked reason
+            reason = agent.blocked_reason.split(":")[0]  # e.g., "pr_limit" from "pr_limit:10/10"
+            status = f"BLOCKED"
+            color = Colors.BLOCKED
         elif agent.consecutive_failures > 0:
             status = f"FAIL({agent.consecutive_failures})"
             color = Colors.FAILURE
@@ -557,7 +579,14 @@ def render_agents_panel(win, y: int, x: int, height: int, width: int, agents: li
             # Progress bar (if space permits)
             if row_y + 1 < y + height - 1 and inner_width > 20:
                 bar_width = min(30, inner_width - 2)
-                bar_color = Colors.RUNNING if agent.running else Colors.SUCCESS if not agent.paused else Colors.PAUSED
+                if agent.running:
+                    bar_color = Colors.RUNNING
+                elif agent.blocked_reason:
+                    bar_color = Colors.BLOCKED
+                elif agent.paused:
+                    bar_color = Colors.PAUSED
+                else:
+                    bar_color = Colors.SUCCESS
                 draw_progress_bar(win, row_y + 1, inner_x, bar_width, progress, bar_color)
 
                 # Current task if running
