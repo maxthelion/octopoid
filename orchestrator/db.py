@@ -15,7 +15,7 @@ from .config import get_orchestrator_dir
 
 
 # Schema version for migrations
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 def get_database_path() -> Path:
@@ -81,8 +81,10 @@ def init_schema() -> None:
                 attempt_count INTEGER DEFAULT 0,
                 has_plan BOOLEAN DEFAULT FALSE,
                 plan_id TEXT,
+                project_id TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (project_id) REFERENCES projects(id)
             )
         """)
 
@@ -95,6 +97,28 @@ def init_schema() -> None:
         """)
         conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_tasks_claimed_by ON tasks(claimed_by)
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_tasks_project_id ON tasks(project_id)
+        """)
+
+        # Projects table - containers for multi-task features
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS projects (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                description TEXT,
+                status TEXT DEFAULT 'draft',
+                branch TEXT,
+                base_branch TEXT DEFAULT 'main',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                created_by TEXT,
+                completed_at DATETIME
+            )
+        """)
+
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status)
         """)
 
         # Agents table - runtime state
@@ -162,6 +186,60 @@ def get_schema_version() -> int | None:
         return None
 
 
+def migrate_schema() -> bool:
+    """Migrate database schema to current version.
+
+    Returns:
+        True if migration was performed, False if already current
+    """
+    current = get_schema_version()
+    if current is None:
+        init_schema()
+        return True
+
+    if current >= SCHEMA_VERSION:
+        return False
+
+    with get_connection() as conn:
+        # Migration from v1 to v2: Add projects table and project_id column
+        if current < 2:
+            # Create projects table
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS projects (
+                    id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    description TEXT,
+                    status TEXT DEFAULT 'draft',
+                    branch TEXT,
+                    base_branch TEXT DEFAULT 'main',
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    created_by TEXT,
+                    completed_at DATETIME
+                )
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status)
+            """)
+
+            # Add project_id column to tasks (SQLite ADD COLUMN is limited but works here)
+            try:
+                conn.execute("ALTER TABLE tasks ADD COLUMN project_id TEXT")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_tasks_project_id ON tasks(project_id)
+            """)
+
+        # Update schema version
+        conn.execute(
+            "INSERT OR REPLACE INTO schema_info (key, value) VALUES (?, ?)",
+            ("version", str(SCHEMA_VERSION)),
+        )
+
+    return True
+
+
 # =============================================================================
 # Task Operations
 # =============================================================================
@@ -175,6 +253,7 @@ def create_task(
     branch: str = "main",
     complexity: str | None = None,
     blocked_by: str | None = None,
+    project_id: str | None = None,
 ) -> dict[str, Any]:
     """Create a new task in the database.
 
@@ -186,17 +265,24 @@ def create_task(
         branch: Base branch
         complexity: Estimated complexity
         blocked_by: Comma-separated list of blocking task IDs
+        project_id: Optional parent project ID
 
     Returns:
         Created task as dictionary
     """
+    # If task belongs to a project, inherit branch from project if not specified
+    if project_id and branch == "main":
+        project = get_project(project_id)
+        if project and project.get("branch"):
+            branch = project["branch"]
+
     with get_connection() as conn:
         conn.execute(
             """
-            INSERT INTO tasks (id, file_path, priority, role, branch, complexity, blocked_by)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO tasks (id, file_path, priority, role, branch, complexity, blocked_by, project_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (task_id, file_path, priority, role, branch, complexity, blocked_by),
+            (task_id, file_path, priority, role, branch, complexity, blocked_by, project_id),
         )
 
         # Log creation event
@@ -205,7 +291,7 @@ def create_task(
             INSERT INTO task_history (task_id, event, details)
             VALUES (?, 'created', ?)
             """,
-            (task_id, f"priority={priority}, role={role}"),
+            (task_id, f"priority={priority}, role={role}, project={project_id}"),
         )
 
     return get_task(task_id)
@@ -918,3 +1004,196 @@ def add_history_event(
             """,
             (task_id, event, agent, details),
         )
+
+
+# =============================================================================
+# Project Operations
+# =============================================================================
+
+
+def create_project(
+    project_id: str,
+    title: str,
+    description: str | None = None,
+    branch: str | None = None,
+    base_branch: str = "main",
+    created_by: str = "human",
+) -> dict[str, Any]:
+    """Create a new project.
+
+    Args:
+        project_id: Unique project identifier (PROJ-xxx)
+        title: Project title
+        description: Optional description
+        branch: Feature branch name (defaults to feature/{project_id})
+        base_branch: Base branch to create from
+        created_by: Who created the project
+
+    Returns:
+        Created project as dictionary
+    """
+    if branch is None:
+        # Generate branch name from project ID
+        branch = f"feature/{project_id.lower().replace('proj-', '')}"
+
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO projects (id, title, description, branch, base_branch, created_by)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (project_id, title, description, branch, base_branch, created_by),
+        )
+
+    return get_project(project_id)
+
+
+def get_project(project_id: str) -> dict[str, Any] | None:
+    """Get a project by ID.
+
+    Args:
+        project_id: Project identifier
+
+    Returns:
+        Project as dictionary or None if not found
+    """
+    with get_connection() as conn:
+        cursor = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+
+def list_projects(status: str | None = None) -> list[dict[str, Any]]:
+    """List projects, optionally filtered by status.
+
+    Args:
+        status: Filter by status (draft, active, complete, abandoned)
+
+    Returns:
+        List of project dictionaries
+    """
+    with get_connection() as conn:
+        if status:
+            cursor = conn.execute(
+                "SELECT * FROM projects WHERE status = ? ORDER BY created_at DESC",
+                (status,),
+            )
+        else:
+            cursor = conn.execute("SELECT * FROM projects ORDER BY created_at DESC")
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def update_project(project_id: str, **fields) -> dict[str, Any] | None:
+    """Update project fields.
+
+    Args:
+        project_id: Project identifier
+        **fields: Fields to update
+
+    Returns:
+        Updated project or None if not found
+    """
+    if not fields:
+        return get_project(project_id)
+
+    set_clause = ", ".join(f"{k} = ?" for k in fields.keys())
+    values = list(fields.values())
+    values.append(project_id)
+
+    with get_connection() as conn:
+        conn.execute(
+            f"UPDATE projects SET {set_clause} WHERE id = ?",
+            values,
+        )
+
+    return get_project(project_id)
+
+
+def activate_project(project_id: str) -> dict[str, Any] | None:
+    """Activate a project (set status to active).
+
+    Args:
+        project_id: Project identifier
+
+    Returns:
+        Updated project or None if not found
+    """
+    return update_project(project_id, status="active")
+
+
+def complete_project(project_id: str) -> dict[str, Any] | None:
+    """Mark a project as complete.
+
+    Args:
+        project_id: Project identifier
+
+    Returns:
+        Updated project or None if not found
+    """
+    return update_project(
+        project_id,
+        status="complete",
+        completed_at=datetime.now().isoformat(),
+    )
+
+
+def get_project_tasks(project_id: str) -> list[dict[str, Any]]:
+    """Get all tasks belonging to a project.
+
+    Args:
+        project_id: Project identifier
+
+    Returns:
+        List of task dictionaries sorted by priority
+    """
+    with get_connection() as conn:
+        cursor = conn.execute(
+            """
+            SELECT * FROM tasks
+            WHERE project_id = ?
+            ORDER BY
+                CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 ELSE 2 END,
+                created_at ASC
+            """,
+            (project_id,),
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def check_project_completion(project_id: str) -> bool:
+    """Check if all tasks in a project are done.
+
+    If all tasks are done, updates project status to 'ready-for-pr'.
+
+    Args:
+        project_id: Project identifier
+
+    Returns:
+        True if project is complete (all tasks done)
+    """
+    tasks = get_project_tasks(project_id)
+    if not tasks:
+        return False
+
+    all_done = all(t.get("queue") == "done" for t in tasks)
+
+    if all_done:
+        update_project(project_id, status="ready-for-pr")
+
+    return all_done
+
+
+def delete_project(project_id: str) -> bool:
+    """Delete a project.
+
+    Note: Does not delete associated tasks - they become orphaned.
+
+    Args:
+        project_id: Project identifier
+
+    Returns:
+        True if deleted, False if not found
+    """
+    with get_connection() as conn:
+        cursor = conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+        return cursor.rowcount > 0
