@@ -218,7 +218,8 @@ def get_task(task_id: str) -> dict[str, Any] | None:
         task_id: Task identifier
 
     Returns:
-        Task as dictionary or None if not found
+        Task as dictionary or None if not found.
+        Note: Task identifier is returned as 'id' key (not 'task_id').
     """
     with get_connection() as conn:
         cursor = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
@@ -298,7 +299,8 @@ def list_tasks(
         include_blocked: Whether to include blocked tasks
 
     Returns:
-        List of task dictionaries sorted by priority then created_at
+        List of task dictionaries sorted by priority then created_at.
+        Note: Task identifier is returned as 'id' key (not 'task_id').
     """
     conditions = []
     params = []

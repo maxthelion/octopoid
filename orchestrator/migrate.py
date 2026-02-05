@@ -6,12 +6,24 @@ Commands:
     migrate import   - Import existing task files from queue directories
     migrate status   - Show migration state and database stats
     migrate rollback - Remove the database and revert to file-based system
+
+Usage:
+    python -m orchestrator.orchestrator.migrate <command>
+
+    Note: This module must be run with -m flag due to relative imports.
 """
 
 import argparse
-import os
 import sys
 from pathlib import Path
+
+# Check for pyyaml early with clear error message
+try:
+    import yaml  # noqa: F401
+except ImportError:
+    print("Error: pyyaml is required for migration.")
+    print("Install it with: pip install pyyaml")
+    sys.exit(1)
 
 from .config import get_orchestrator_dir, get_queue_dir
 from .db import (
