@@ -1057,3 +1057,219 @@ def send_to_breakdown(
             "type": "task",
             "task_path": str(task_path),
         }
+
+
+def get_breakdowns_dir() -> Path:
+    """Get the breakdowns directory.
+
+    Returns:
+        Path to .orchestrator/shared/breakdowns/
+    """
+    breakdowns_dir = get_orchestrator_dir() / "shared" / "breakdowns"
+    breakdowns_dir.mkdir(parents=True, exist_ok=True)
+    return breakdowns_dir
+
+
+def list_pending_breakdowns() -> list[dict]:
+    """List all pending breakdown files.
+
+    Returns:
+        List of breakdown info dicts with path, project_id, title, task_count
+    """
+    breakdowns_dir = get_breakdowns_dir()
+    results = []
+
+    for path in breakdowns_dir.glob("*.md"):
+        content = path.read_text()
+
+        # Parse metadata
+        project_match = re.search(r'\*\*Project:\*\*\s*(\S+)', content)
+        status_match = re.search(r'\*\*Status:\*\*\s*(\S+)', content)
+        title_match = re.search(r'^# Breakdown:\s*(.+)$', content, re.MULTILINE)
+
+        # Count tasks
+        task_count = len(re.findall(r'^## Task \d+:', content, re.MULTILINE))
+
+        status = status_match.group(1) if status_match else "unknown"
+
+        if status == "pending_review":
+            results.append({
+                "path": path,
+                "project_id": project_match.group(1) if project_match else None,
+                "title": title_match.group(1) if title_match else path.stem,
+                "task_count": task_count,
+                "status": status,
+            })
+
+    return results
+
+
+def approve_breakdown(identifier: str) -> dict[str, Any]:
+    """Approve a breakdown and create tasks from it.
+
+    Args:
+        identifier: Project ID (PROJ-xxx) or breakdown filename
+
+    Returns:
+        Dict with created task info
+    """
+    breakdowns_dir = get_breakdowns_dir()
+
+    # Find the breakdown file
+    if identifier.startswith("PROJ-"):
+        breakdown_path = breakdowns_dir / f"{identifier}-breakdown.md"
+    else:
+        breakdown_path = breakdowns_dir / f"{identifier}.md"
+        if not breakdown_path.exists():
+            breakdown_path = breakdowns_dir / identifier
+
+    if not breakdown_path.exists():
+        raise FileNotFoundError(f"Breakdown file not found: {breakdown_path}")
+
+    content = breakdown_path.read_text()
+
+    # Parse metadata
+    project_match = re.search(r'\*\*Project:\*\*\s*(\S+)', content)
+    branch_match = re.search(r'\*\*Branch:\*\*\s*(\S+)', content)
+    status_match = re.search(r'\*\*Status:\*\*\s*(\S+)', content)
+
+    project_id = project_match.group(1) if project_match else None
+    branch = branch_match.group(1) if branch_match else "main"
+    status = status_match.group(1) if status_match else "unknown"
+
+    if status != "pending_review":
+        raise ValueError(f"Breakdown is not pending review (status: {status})")
+
+    # Parse tasks
+    tasks = _parse_breakdown_tasks(content)
+
+    if not tasks:
+        raise ValueError("No tasks found in breakdown file")
+
+    # Create tasks
+    created_ids = []
+    id_map = {}  # Map from task number to actual task ID
+
+    for task in tasks:
+        task_num = task["number"]
+        title = task["title"]
+        role = task.get("role", "implement")
+        priority = task.get("priority", "P2")
+        context = task.get("context", "")
+        criteria = task.get("acceptance_criteria", [])
+        depends_on = task.get("depends_on", [])
+
+        # Resolve dependencies to actual task IDs
+        blocked_by = None
+        if depends_on:
+            blocker_ids = []
+            for dep_num in depends_on:
+                if dep_num in id_map:
+                    blocker_ids.append(id_map[dep_num])
+            if blocker_ids:
+                blocked_by = ",".join(blocker_ids)
+
+        task_path = create_task(
+            title=title,
+            role=role,
+            context=context,
+            acceptance_criteria=criteria if criteria else ["Complete the task"],
+            priority=priority,
+            branch=branch,
+            created_by="human",
+            blocked_by=blocked_by,
+            project_id=project_id,
+            queue="incoming",
+        )
+
+        # Extract task ID from path
+        task_id = task_path.stem.replace("TASK-", "")
+        id_map[task_num] = task_id
+        created_ids.append(task_id)
+
+    # Update breakdown file status to approved
+    updated_content = content.replace(
+        "**Status:** pending_review",
+        f"**Status:** approved\n**Approved:** {datetime.now().isoformat()}"
+    )
+    breakdown_path.write_text(updated_content)
+
+    return {
+        "breakdown_file": str(breakdown_path),
+        "project_id": project_id,
+        "tasks_created": len(created_ids),
+        "task_ids": created_ids,
+    }
+
+
+def _parse_breakdown_tasks(content: str) -> list[dict]:
+    """Parse tasks from a breakdown markdown file.
+
+    Args:
+        content: Markdown content of breakdown file
+
+    Returns:
+        List of task dicts with number, title, role, priority, context, criteria, depends_on
+    """
+    tasks = []
+
+    # Split on task headers
+    task_pattern = r'^## Task (\d+):\s*(.+)$'
+    task_matches = list(re.finditer(task_pattern, content, re.MULTILINE))
+
+    for i, match in enumerate(task_matches):
+        task_num = int(match.group(1))
+        title = match.group(2).strip()
+
+        # Get content until next task or end
+        start = match.end()
+        end = task_matches[i + 1].start() if i + 1 < len(task_matches) else len(content)
+        task_content = content[start:end]
+
+        # Parse metadata
+        role_match = re.search(r'\*\*Role:\*\*\s*(\S+)', task_content)
+        priority_match = re.search(r'\*\*Priority:\*\*\s*(\S+)', task_content)
+        depends_match = re.search(r'\*\*Depends on:\*\*\s*(.+)', task_content)
+
+        role = role_match.group(1) if role_match else "implement"
+        priority = priority_match.group(1) if priority_match else "P2"
+
+        # Parse depends_on
+        depends_on = []
+        if depends_match:
+            deps_str = depends_match.group(1).strip()
+            if deps_str != "(none)":
+                # Parse comma-separated numbers
+                for dep in deps_str.split(","):
+                    dep = dep.strip()
+                    if dep.isdigit():
+                        depends_on.append(int(dep))
+
+        # Parse context
+        context = ""
+        context_match = re.search(r'### Context\s*\n\n(.+?)(?=\n###|\n---|\Z)', task_content, re.DOTALL)
+        if context_match:
+            context = context_match.group(1).strip()
+
+        # Parse acceptance criteria
+        criteria = []
+        criteria_match = re.search(r'### Acceptance Criteria\s*\n\n(.+?)(?=\n###|\n---|\Z)', task_content, re.DOTALL)
+        if criteria_match:
+            criteria_text = criteria_match.group(1)
+            for line in criteria_text.strip().split("\n"):
+                # Match both checked and unchecked items
+                item_match = re.match(r'^-\s*\[[ x]\]\s*(.+)$', line.strip())
+                if item_match:
+                    criteria.append(item_match.group(1))
+
+        tasks.append({
+            "number": task_num,
+            "title": title,
+            "role": role,
+            "priority": priority,
+            "context": context,
+            "acceptance_criteria": criteria,
+            "depends_on": depends_on,
+        })
+
+    return tasks

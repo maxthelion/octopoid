@@ -2,13 +2,13 @@
 
 import json
 import re
+from datetime import datetime
 from pathlib import Path
 
-from ..config import is_db_enabled
+from ..config import is_db_enabled, get_orchestrator_dir
 from ..queue_utils import (
     claim_task,
     complete_task,
-    create_task,
     fail_task,
     get_project,
 )
@@ -157,16 +157,22 @@ Remember:
 
             self.log(f"Parsed {len(subtasks)} subtasks")
 
-            # Create the tasks
-            created_ids = self._create_subtasks(subtasks, project_id, task.get("branch"))
+            # Write breakdown file for human review (instead of creating tasks directly)
+            breakdown_file = self._write_breakdown_file(
+                subtasks=subtasks,
+                project_id=project_id,
+                project=project,
+                task_title=task_title,
+                branch=task.get("branch"),
+            )
 
-            if not created_ids:
-                fail_task(task_path, "Failed to create any subtasks")
-                return 1
-
-            # Complete the breakdown task
-            complete_task(task_path, f"Decomposed into {len(created_ids)} tasks: {', '.join(created_ids)}")
-            self.log(f"Created {len(created_ids)} tasks: {created_ids}")
+            # Complete the breakdown task with reference to the breakdown file
+            complete_task(
+                task_path,
+                f"Breakdown ready for review: {breakdown_file.name}\n"
+                f"Review with: /approve-breakdown {project_id or breakdown_file.stem}"
+            )
+            self.log(f"Wrote breakdown file: {breakdown_file}")
 
             return 0
 
@@ -243,68 +249,113 @@ Remember:
 
         return []
 
-    def _create_subtasks(
+    def _write_breakdown_file(
         self,
         subtasks: list[dict],
         project_id: str | None,
+        project: dict | None,
+        task_title: str,
         branch: str | None,
-    ) -> list[str]:
-        """Create subtasks in the incoming queue.
+    ) -> Path:
+        """Write breakdown to a markdown file for human review.
 
         Args:
-            subtasks: List of subtask definitions
+            subtasks: List of subtask definitions from Claude
             project_id: Parent project ID if applicable
+            project: Project dict if applicable
+            task_title: Original breakdown task title
             branch: Branch to use for tasks
 
         Returns:
-            List of created task IDs
+            Path to the created breakdown file
         """
-        created_ids = []
-        id_map = {}  # Map from 1-indexed position to actual task ID
+        # Ensure breakdowns directory exists
+        breakdowns_dir = get_orchestrator_dir() / "shared" / "breakdowns"
+        breakdowns_dir.mkdir(parents=True, exist_ok=True)
 
+        # Generate filename
+        if project_id:
+            filename = f"{project_id}-breakdown.md"
+        else:
+            # Use timestamp for non-project breakdowns
+            timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            filename = f"breakdown-{timestamp}.md"
+
+        breakdown_path = breakdowns_dir / filename
+
+        # Build markdown content
+        lines = []
+
+        # Header
+        title = project.get("title") if project else task_title.replace("Break down: ", "")
+        lines.append(f"# Breakdown: {title}")
+        lines.append("")
+
+        # Metadata
+        if project_id:
+            lines.append(f"**Project:** {project_id}")
+        if branch:
+            lines.append(f"**Branch:** {branch}")
+        lines.append(f"**Created:** {datetime.now().isoformat()}")
+        lines.append(f"**Status:** pending_review")
+        lines.append("")
+
+        # Tasks
         for i, subtask in enumerate(subtasks, start=1):
-            title = subtask.get("title", f"Subtask {i}")
+            lines.append("---")
+            lines.append("")
+            lines.append(f"## Task {i}: {subtask.get('title', f'Subtask {i}')}")
+            lines.append("")
+
+            # Task metadata
             role = subtask.get("role", "implement")
             priority = subtask.get("priority", "P2")
-            context = subtask.get("context", "")
-            criteria = subtask.get("acceptance_criteria", [])
             depends_on = subtask.get("depends_on", [])
 
-            # Resolve dependencies to actual task IDs
-            blocked_by = None
+            lines.append(f"**Role:** {role}")
+            lines.append(f"**Priority:** {priority}")
+
             if depends_on:
-                blocker_ids = []
-                for dep_num in depends_on:
-                    if dep_num in id_map:
-                        blocker_ids.append(id_map[dep_num])
-                if blocker_ids:
-                    blocked_by = ",".join(blocker_ids)
+                deps_str = ", ".join(str(d) for d in depends_on)
+                lines.append(f"**Depends on:** {deps_str}")
+            else:
+                lines.append("**Depends on:** (none)")
 
-            try:
-                task_path = create_task(
-                    title=title,
-                    role=role,
-                    context=context,
-                    acceptance_criteria=criteria if criteria else ["Complete the task"],
-                    priority=priority,
-                    branch=branch or "main",
-                    created_by=self.agent_name,
-                    blocked_by=blocked_by,
-                    project_id=project_id,
-                    queue="incoming",  # Created tasks go to incoming
-                )
+            lines.append("")
 
-                # Extract task ID from path
-                task_id = task_path.stem.replace("TASK-", "")
-                id_map[i] = task_id
-                created_ids.append(task_id)
+            # Context
+            context = subtask.get("context", "")
+            if context:
+                lines.append("### Context")
+                lines.append("")
+                lines.append(context)
+                lines.append("")
 
-                self.log(f"  Created task {task_id}: {title}")
+            # Acceptance criteria
+            criteria = subtask.get("acceptance_criteria", [])
+            if criteria:
+                lines.append("### Acceptance Criteria")
+                lines.append("")
+                for criterion in criteria:
+                    lines.append(f"- [ ] {criterion}")
+                lines.append("")
 
-            except Exception as e:
-                self.log(f"  Failed to create task '{title}': {e}")
+        # Footer with instructions
+        lines.append("---")
+        lines.append("")
+        lines.append("## Review Instructions")
+        lines.append("")
+        lines.append("1. Review the tasks above for completeness and accuracy")
+        lines.append("2. Edit any tasks as needed (adjust criteria, context, dependencies)")
+        lines.append("3. Remove tasks that aren't needed")
+        lines.append("4. Add any missing tasks")
+        lines.append(f"5. When ready, run: `/approve-breakdown {project_id or breakdown_path.stem}`")
+        lines.append("")
 
-        return created_ids
+        # Write file
+        breakdown_path.write_text("\n".join(lines))
+
+        return breakdown_path
 
 
 if __name__ == "__main__":
