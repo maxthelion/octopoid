@@ -1247,13 +1247,13 @@ def _parse_breakdown_tasks(content: str) -> list[dict]:
 
         # Parse context
         context = ""
-        context_match = re.search(r'### Context\s*\n\n(.+?)(?=\n###|\n---|\Z)', task_content, re.DOTALL)
+        context_match = re.search(r'### Context\s*\n(.+?)(?=\n###|\n---|\Z)', task_content, re.DOTALL)
         if context_match:
             context = context_match.group(1).strip()
 
         # Parse acceptance criteria
         criteria = []
-        criteria_match = re.search(r'### Acceptance Criteria\s*\n\n(.+?)(?=\n###|\n---|\Z)', task_content, re.DOTALL)
+        criteria_match = re.search(r'### Acceptance Criteria\s*\n(.+?)(?=\n###|\n---|\Z)', task_content, re.DOTALL)
         if criteria_match:
             criteria_text = criteria_match.group(1)
             for line in criteria_text.strip().split("\n"):
