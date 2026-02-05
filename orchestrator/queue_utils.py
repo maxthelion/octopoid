@@ -336,12 +336,14 @@ def complete_task(task_path: Path | str, result: str | None = None) -> Path:
         New path in done queue
     """
     task_path = Path(task_path)
+    task_id = None
 
     if is_db_enabled():
         from . import db
         db_task = db.get_task_by_path(str(task_path))
         if db_task:
-            db.accept_completion(db_task["id"])
+            task_id = db_task["id"]
+            db.accept_completion(task_id)
 
     done_dir = get_queue_subdir("done")
     dest = done_dir / task_path.name
@@ -353,6 +355,11 @@ def complete_task(task_path: Path | str, result: str | None = None) -> Path:
             f.write(f"\n## Result\n{result}\n")
 
     os.rename(task_path, dest)
+
+    # Clean up agent notes
+    if task_id:
+        cleanup_task_notes(task_id)
+
     return dest
 
 
@@ -423,12 +430,14 @@ def accept_completion(
     """
     task_path = Path(task_path)
     project_id = None
+    task_id = None
 
     if is_db_enabled():
         from . import db
         db_task = db.get_task_by_path(str(task_path))
         if db_task:
-            db.accept_completion(db_task["id"], validator=validator)
+            task_id = db_task["id"]
+            db.accept_completion(task_id, validator=validator)
             project_id = db_task.get("project_id")
 
     done_dir = get_queue_subdir("done")
@@ -441,6 +450,10 @@ def accept_completion(
             f.write(f"ACCEPTED_BY: {validator}\n")
 
     os.rename(task_path, dest)
+
+    # Clean up agent notes
+    if task_id:
+        cleanup_task_notes(task_id)
 
     # Check for project completion
     if project_id and is_db_enabled():
@@ -1363,6 +1376,107 @@ def _parse_breakdown_tasks(content: str) -> list[dict]:
         })
 
     return tasks
+
+
+# =============================================================================
+# Agent Notes — persist learnings across attempts
+# =============================================================================
+
+# Max chars of stdout to save per attempt
+NOTES_STDOUT_LIMIT = 3000
+
+
+def get_task_notes(task_id: str) -> str | None:
+    """Read accumulated agent notes for a task.
+
+    Args:
+        task_id: Task identifier (short hash)
+
+    Returns:
+        Notes content string, or None if no notes exist
+    """
+    from .config import get_notes_dir
+    notes_path = get_notes_dir() / f"TASK-{task_id}.md"
+    if notes_path.exists():
+        try:
+            return notes_path.read_text()
+        except IOError:
+            return None
+    return None
+
+
+def save_task_notes(
+    task_id: str,
+    agent_name: str,
+    stdout: str,
+    commits: int = 0,
+    turns: int = 0,
+) -> None:
+    """Append a run summary to the notes file for a task.
+
+    Each call adds a new attempt section with metadata and a tail
+    of stdout (last NOTES_STDOUT_LIMIT chars).
+
+    Args:
+        task_id: Task identifier
+        agent_name: Name of the agent that ran
+        stdout: Full stdout from Claude invocation
+        commits: Commits made this attempt
+        turns: Turns used this attempt
+    """
+    from .config import get_notes_dir
+    notes_dir = get_notes_dir()
+    notes_dir.mkdir(parents=True, exist_ok=True)
+    notes_path = notes_dir / f"TASK-{task_id}.md"
+
+    # Count existing attempts
+    attempt = 1
+    if notes_path.exists():
+        try:
+            existing = notes_path.read_text()
+            attempt = existing.count("## Attempt ") + 1
+        except IOError:
+            pass
+
+    # Truncate stdout to tail
+    stdout_tail = stdout[-NOTES_STDOUT_LIMIT:] if len(stdout) > NOTES_STDOUT_LIMIT else stdout
+    if len(stdout) > NOTES_STDOUT_LIMIT:
+        stdout_tail = f"[...truncated {len(stdout) - NOTES_STDOUT_LIMIT} chars...]\n" + stdout_tail
+
+    timestamp = datetime.now().isoformat()
+    section = f"""
+## Attempt {attempt} — {agent_name} ({timestamp})
+Turns: {turns} | Commits: {commits}
+
+{stdout_tail.strip()}
+
+"""
+
+    with open(notes_path, "a") as f:
+        # Write header on first attempt
+        if attempt == 1:
+            f.write(f"# Agent Notes: TASK-{task_id}\n")
+        f.write(section)
+
+
+def cleanup_task_notes(task_id: str) -> bool:
+    """Delete notes file for a completed task.
+
+    Args:
+        task_id: Task identifier
+
+    Returns:
+        True if notes file existed and was deleted
+    """
+    from .config import get_notes_dir
+    notes_path = get_notes_dir() / f"TASK-{task_id}.md"
+    if notes_path.exists():
+        try:
+            notes_path.unlink()
+            return True
+        except IOError:
+            return False
+    return False
 
 
 # =============================================================================

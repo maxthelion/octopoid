@@ -111,6 +111,13 @@ def get_prompts_dir() -> Path:
     return get_orchestrator_dir() / "prompts"
 
 
+def get_notes_dir() -> Path:
+    """Get the shared notes directory for agent learning persistence."""
+    notes_dir = get_orchestrator_dir() / "shared" / "notes"
+    notes_dir.mkdir(parents=True, exist_ok=True)
+    return notes_dir
+
+
 def get_agents_runtime_dir() -> Path:
     """Get the agents runtime directory."""
     return get_orchestrator_dir() / "agents"
