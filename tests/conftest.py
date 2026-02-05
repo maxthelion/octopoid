@@ -154,7 +154,7 @@ def sample_project_with_tasks(mock_orchestrator_dir, initialized_db):
         update_task(tid, queue="done", commits_count=commits, turns_used=20)
         completed_tasks.append({"id": tid, "title": title, "commits": commits, "path": file_path})
 
-    # 1 burned-out task (provisional, 0 commits, 50 turns)
+    # 1 burned-out task (provisional, 0 commits, 100 turns)
     burned_id = "burn0001"
     burned_path = prov_dir / f"TASK-{burned_id}.md"
     burned_path.write_text(
@@ -164,7 +164,7 @@ def sample_project_with_tasks(mock_orchestrator_dir, initialized_db):
         f"## Acceptance Criteria\n- [ ] All tests pass\n- [ ] Edge cases added\n"
     )
     create_task(task_id=burned_id, file_path=str(burned_path), project_id="PROJ-test1", role="implement")
-    update_task(burned_id, queue="provisional", commits_count=0, turns_used=50)
+    update_task(burned_id, queue="provisional", commits_count=0, turns_used=100)
 
     # 1 task blocked by the burned-out task
     blocked_id = "block001"

@@ -15,16 +15,16 @@ class TestBurnedOutDetection:
     """Tests for the burned-out task detection heuristic."""
 
     def test_detect_burned_task(self):
-        """Task with 0 commits + 50 turns is burned out."""
+        """Task with 0 commits + 100 turns is burned out."""
         from orchestrator.queue_utils import is_burned_out
 
-        assert is_burned_out(commits_count=0, turns_used=50) is True
+        assert is_burned_out(commits_count=0, turns_used=100) is True
 
     def test_detect_burned_task_at_threshold(self):
-        """Task with 0 commits + 40 turns is burned out (threshold)."""
+        """Task with 0 commits + 80 turns is burned out (threshold)."""
         from orchestrator.queue_utils import is_burned_out
 
-        assert is_burned_out(commits_count=0, turns_used=40) is True
+        assert is_burned_out(commits_count=0, turns_used=80) is True
 
     def test_detect_burned_task_low_turns_not_burned(self):
         """Task with 0 commits + 10 turns is NOT burned (early error, not too-large)."""
@@ -32,11 +32,17 @@ class TestBurnedOutDetection:
 
         assert is_burned_out(commits_count=0, turns_used=10) is False
 
-    def test_detect_normal_task_with_commits(self):
-        """Task with 3 commits + 50 turns is normal."""
+    def test_detect_burned_task_below_threshold_not_burned(self):
+        """Task with 0 commits + 50 turns is NOT burned (below threshold)."""
         from orchestrator.queue_utils import is_burned_out
 
-        assert is_burned_out(commits_count=3, turns_used=50) is False
+        assert is_burned_out(commits_count=0, turns_used=50) is False
+
+    def test_detect_normal_task_with_commits(self):
+        """Task with 3 commits + 100 turns is normal."""
+        from orchestrator.queue_utils import is_burned_out
+
+        assert is_burned_out(commits_count=3, turns_used=100) is False
 
 
 # =============================================================================

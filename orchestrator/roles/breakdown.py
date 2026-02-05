@@ -151,7 +151,7 @@ Be specific - include file paths, line numbers where helpful, and concrete examp
             exit_code, exploration_output, stderr = self.invoke_claude(
                 exploration_prompt,
                 allowed_tools=exploration_tools,
-                max_turns=30,
+                max_turns=50,
             )
 
             if exit_code != 0:

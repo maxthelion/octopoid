@@ -9,7 +9,7 @@ class TestValidatorBurnedOutRouting:
     """Tests for validator routing burned-out tasks to recycling."""
 
     def test_validator_recycles_burned_task(self, mock_config, sample_project_with_tasks):
-        """Validator recycles a task with 0 commits and 50 turns."""
+        """Validator recycles a task with 0 commits and 100 turns."""
         db_path = sample_project_with_tasks["completed_tasks"][0]["path"].parent.parent.parent.parent / "state.db"
         with patch('orchestrator.db.get_database_path', return_value=db_path):
             with patch('orchestrator.queue_utils.is_db_enabled', return_value=True):
@@ -26,7 +26,7 @@ class TestValidatorBurnedOutRouting:
                         burned = sample_project_with_tasks["burned_task"]
 
                         # Call _recycle_task directly
-                        validator._recycle_task(burned["id"], burned["path"], 50)
+                        validator._recycle_task(burned["id"], burned["path"], 100)
 
                         # Verify it was recycled, not left in provisional
                         task = get_task(burned["id"])
@@ -34,7 +34,7 @@ class TestValidatorBurnedOutRouting:
 
                         # Verify log was called with recycling message
                         validator.log.assert_any_call(
-                            f"Recycling {burned['id']}: burned out (0 commits, 50 turns)"
+                            f"Recycling {burned['id']}: burned out (0 commits, 100 turns)"
                         )
 
     def test_validator_accepts_task_with_commits(self, mock_config, sample_project_with_tasks):
@@ -46,8 +46,8 @@ class TestValidatorBurnedOutRouting:
                     from orchestrator.queue_utils import is_burned_out
 
                     # A task with commits is not burned out regardless of turns
-                    assert is_burned_out(commits_count=2, turns_used=50) is False
-                    assert is_burned_out(commits_count=1, turns_used=40) is False
+                    assert is_burned_out(commits_count=2, turns_used=100) is False
+                    assert is_burned_out(commits_count=1, turns_used=80) is False
 
     def test_validator_cumulative_recycle(self, mock_config, sample_project_with_tasks):
         """Task with 3+ failed attempts gets recycled (cumulative catch)."""

@@ -1370,7 +1370,7 @@ def _parse_breakdown_tasks(content: str) -> list[dict]:
 # =============================================================================
 
 
-BURNED_OUT_TURN_THRESHOLD = 40
+BURNED_OUT_TURN_THRESHOLD = 80
 
 
 def is_burned_out(commits_count: int, turns_used: int) -> bool:

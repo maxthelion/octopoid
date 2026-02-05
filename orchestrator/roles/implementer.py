@@ -94,7 +94,7 @@ Remember:
             exit_code, stdout, stderr = self.invoke_claude(
                 prompt,
                 allowed_tools=allowed_tools,
-                max_turns=50,  # Allow more turns for implementation
+                max_turns=100,  # Allow more turns for implementation
             )
 
             # Count commits made during this session only

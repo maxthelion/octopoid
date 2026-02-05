@@ -32,8 +32,8 @@ class TestAcceptAllRouting:
                 with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_config / "shared" / "queue"):
                     from orchestrator.queue_utils import is_burned_out
 
-                    # A task with 0 commits and 50 turns IS burned out
-                    assert is_burned_out(commits_count=0, turns_used=50) is True
+                    # A task with 0 commits and 100 turns IS burned out
+                    assert is_burned_out(commits_count=0, turns_used=100) is True
 
     def test_burned_task_recycled_not_accepted(self, mock_config, sample_project_with_tasks):
         """Burned-out task gets recycled, not accepted to done."""
@@ -93,7 +93,7 @@ class TestAcceptAllRouting:
                     # Simulate the routing logic from accept_all.py
                     tasks_to_process = [
                         {"id": "norm0001", "path": normal_path, "commits": 2, "turns": 30},
-                        {"id": burned["id"], "path": burned["path"], "commits": 0, "turns": 50},
+                        {"id": burned["id"], "path": burned["path"], "commits": 0, "turns": 100},
                     ]
 
                     accepted = []
