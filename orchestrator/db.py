@@ -449,6 +449,7 @@ def count_tasks(queue: str | None = None) -> int:
 def claim_task(
     role_filter: str | None = None,
     agent_name: str | None = None,
+    from_queue: str = "incoming",
 ) -> dict[str, Any] | None:
     """Atomically claim the highest priority available task.
 
@@ -458,6 +459,7 @@ def claim_task(
     Args:
         role_filter: Only claim tasks with this role
         agent_name: Name of claiming agent
+        from_queue: Queue to claim from (default 'incoming', also supports 'breakdown')
 
     Returns:
         Claimed task or None if no suitable task available
@@ -465,10 +467,10 @@ def claim_task(
     with get_connection() as conn:
         # Build query for claimable tasks
         conditions = [
-            "queue = 'incoming'",
+            "queue = ?",
             "(blocked_by IS NULL OR blocked_by = '')",
         ]
-        params = []
+        params = [from_queue]
 
         if role_filter:
             conditions.append("role = ?")
@@ -505,9 +507,9 @@ def claim_task(
                 claimed_by = ?,
                 claimed_at = ?,
                 updated_at = ?
-            WHERE id = ? AND queue = 'incoming'
+            WHERE id = ? AND queue = ?
             """,
-            (agent_name, now, now, task_id),
+            (agent_name, now, now, task_id, from_queue),
         )
 
         # Log the claim

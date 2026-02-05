@@ -29,7 +29,7 @@ class BreakdownRole(BaseRole):
             return 1
 
         # Claim from breakdown queue
-        task = claim_task(role_filter="breakdown", agent_name=self.agent_name)
+        task = claim_task(role_filter="breakdown", agent_name=self.agent_name, from_queue="breakdown")
         if not task:
             self.log("No tasks in breakdown queue")
             return 0

@@ -244,22 +244,27 @@ def parse_task_file(task_path: Path) -> dict[str, Any] | None:
     }
 
 
-def claim_task(role_filter: str | None = None, agent_name: str | None = None) -> dict[str, Any] | None:
-    """Atomically claim a task from incoming queue.
+def claim_task(
+    role_filter: str | None = None,
+    agent_name: str | None = None,
+    from_queue: str = "incoming",
+) -> dict[str, Any] | None:
+    """Atomically claim a task from a queue.
 
     In DB mode, this enforces dependency checking - tasks with unresolved
     blocked_by entries cannot be claimed.
 
     Args:
-        role_filter: Only claim tasks with this role (e.g., 'implement', 'test')
+        role_filter: Only claim tasks with this role (e.g., 'implement', 'test', 'breakdown')
         agent_name: Name of claiming agent (for logging in task)
+        from_queue: Queue to claim from (default 'incoming', also supports 'breakdown')
 
     Returns:
         Task info dictionary if claimed, None if no suitable task
     """
     if is_db_enabled():
         from . import db
-        db_task = db.claim_task(role_filter=role_filter, agent_name=agent_name)
+        db_task = db.claim_task(role_filter=role_filter, agent_name=agent_name, from_queue=from_queue)
         if db_task:
             # Also update the file with claim info
             file_path = Path(db_task["file_path"])
