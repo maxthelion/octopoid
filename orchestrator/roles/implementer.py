@@ -8,7 +8,6 @@ from ..git_utils import (
     has_uncommitted_changes,
 )
 from ..queue_utils import (
-    can_claim_task,
     claim_task,
     complete_task,
     fail_task,
@@ -26,11 +25,8 @@ class ImplementerRole(BaseRole):
         Returns:
             Exit code (0 for success)
         """
-        # Check backpressure
-        can_claim, reason = can_claim_task()
-        if not can_claim:
-            self.log(f"Cannot claim task: {reason}")
-            return 0  # Not an error, just nothing to do
+        # Note: Backpressure is now checked by the scheduler before spawning.
+        # This avoids wasting resources on agent startup when blocked.
 
         # Try to claim a task
         task = claim_task(role_filter="implement", agent_name=self.agent_name)
