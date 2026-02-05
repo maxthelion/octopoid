@@ -69,6 +69,33 @@ Branch: {project.get('branch', 'N/A')}
             # ===== PHASE 1: EXPLORATION =====
             self.log("Phase 1: Exploring codebase...")
 
+            # Build branch diff context for re-breakdown tasks
+            branch_diff_section = ""
+            task_branch = task.get("branch", "main")
+            is_rebreakdown = "re-breakdown" in task_title.lower() or "recycled" in task_content.lower()
+
+            if is_rebreakdown and task_branch and task_branch != "main":
+                branch_diff_section = f"""
+## Branch State
+
+This is a re-breakdown of a task that previously failed. The worktree is already
+on the feature branch `{task_branch}`.
+
+**IMPORTANT:** Before exploring the codebase, run these git commands to understand
+what work has ALREADY been completed on this branch:
+
+```bash
+git log --oneline main..HEAD
+git diff --stat main...HEAD
+```
+
+Use the diff to identify:
+- What files have already been modified (completed work)
+- What the remaining gaps are vs the original requirements
+- Do NOT create tasks for work that is already done on this branch
+
+"""
+
             exploration_prompt = f"""You are analyzing a codebase to plan implementation tasks.
 
 ## Work to Implement
@@ -76,7 +103,7 @@ Branch: {project.get('branch', 'N/A')}
 {task_content}
 
 {project_context}
-
+{branch_diff_section}
 ## Your Task
 
 Explore the codebase to understand:
@@ -88,11 +115,17 @@ Explore the codebase to understand:
 3. **Existing patterns**: Find similar existing code that this work should follow. Note any conventions.
 
 4. **Integration points**: Where does this feature connect to existing systems?
-
+{'''
+5. **Branch state** (re-breakdown only): What work is already done on this branch? What remains?
+''' if is_rebreakdown else ''}
 ## Output Format
 
 Output your findings as markdown with these sections:
-
+{'''
+### Already Completed (from branch diff)
+- List work already done on the feature branch
+- Note which files were modified and what they accomplish
+''' if is_rebreakdown else ''}
 ### Testing Approach
 - Testing framework used
 - Example test file to follow
@@ -113,7 +146,7 @@ Output your findings as markdown with these sections:
 Be specific - include file paths, line numbers where helpful, and concrete examples.
 """
 
-            exploration_tools = ["Read", "Glob", "Grep", "Task"]
+            exploration_tools = ["Read", "Glob", "Grep", "Bash", "Task"]
 
             exit_code, exploration_output, stderr = self.invoke_claude(
                 exploration_prompt,
