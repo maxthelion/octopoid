@@ -1193,6 +1193,26 @@ def approve_breakdown(identifier: str) -> dict[str, Any]:
         id_map[task_num] = task_id
         created_ids.append(task_id)
 
+    # Find leaf subtasks (ones that no other subtask depends on)
+    # These are the "exit points" of the breakdown
+    depended_on = set()
+    for task in tasks:
+        for dep_num in task.get("depends_on", []):
+            if dep_num in id_map:
+                depended_on.add(id_map[dep_num])
+    leaf_ids = [tid for tid in created_ids if tid not in depended_on]
+
+    # Rewire external dependencies for re-breakdowns.
+    # When a task was recycled, external tasks remain blocked by the original
+    # (recycled) task ID. Now that we have real subtasks, rewire those
+    # external tasks to depend on the leaf subtasks — so they only unblock
+    # when the actual work is done.
+    if leaf_ids and is_db_enabled():
+        rebreakdown_match = re.search(r'Re-breakdown:\s*(\S+)', content)
+        if rebreakdown_match:
+            original_task_id = rebreakdown_match.group(1)
+            _rewire_dependencies(original_task_id, leaf_ids)
+
     # Update breakdown file status to approved
     updated_content = content.replace(
         "**Status:** pending_review",
@@ -1205,6 +1225,7 @@ def approve_breakdown(identifier: str) -> dict[str, Any]:
         "project_id": project_id,
         "tasks_created": len(created_ids),
         "task_ids": created_ids,
+        "leaf_ids": leaf_ids,
     }
 
 
@@ -1502,9 +1523,12 @@ def recycle_to_breakdown(task_path, reason="too_large") -> dict | None:
     db.update_task(task_id, queue="recycled", file_path=str(recycled_path))
     db.add_history_event(task_id, "recycled", details=f"reason={reason}, breakdown_task={breakdown_task_id}")
 
-    # Rewire dependencies: tasks blocked by the original now depend on the breakdown
-    if breakdown_task_id:
-        _rewire_dependencies(task_id, breakdown_task_id)
+    # NOTE: We intentionally do NOT rewire dependencies here.
+    # External tasks stay blocked by the original (recycled) task ID.
+    # When the breakdown is approved, approve_breakdown() rewires from
+    # the original task to the leaf subtasks. This avoids a race where
+    # the breakdown task gets accepted → _unblock_dependent_tasks fires
+    # → external tasks unblock before the real work is done.
 
     return {
         "breakdown_task": str(breakdown_task_path),
@@ -1514,14 +1538,25 @@ def recycle_to_breakdown(task_path, reason="too_large") -> dict | None:
     }
 
 
-def _rewire_dependencies(old_task_id: str, new_task_id: str) -> None:
-    """Rewire tasks blocked by old_task_id to depend on new_task_id instead.
+def _rewire_dependencies(old_task_id: str, new_task_ids: str | list[str]) -> None:
+    """Rewire tasks blocked by old_task_id to depend on new task(s) instead.
+
+    When a task is recycled/re-broken-down, tasks that depended on it need to
+    be rewired to depend on the replacement. If the replacement is multiple
+    leaf subtasks, the dependent task must wait for ALL of them.
 
     Args:
         old_task_id: The task ID being replaced
-        new_task_id: The new task ID to depend on
+        new_task_ids: Replacement task ID(s) — a single ID string,
+            a comma-separated string, or a list of IDs
     """
     from . import db
+
+    # Normalize to list
+    if isinstance(new_task_ids, str):
+        replacement_ids = [t.strip() for t in new_task_ids.split(",") if t.strip()]
+    else:
+        replacement_ids = list(new_task_ids)
 
     with db.get_connection() as conn:
         cursor = conn.execute(
@@ -1532,9 +1567,14 @@ def _rewire_dependencies(old_task_id: str, new_task_id: str) -> None:
         for row in cursor.fetchall():
             blocked_by = row["blocked_by"] or ""
             blockers = [b.strip() for b in blocked_by.split(",") if b.strip()]
-            # Replace old with new
-            blockers = [new_task_id if b == old_task_id else b for b in blockers]
-            new_blocked_by = ",".join(blockers) if blockers else None
+            # Replace old_task_id with all replacement IDs
+            new_blockers = []
+            for b in blockers:
+                if b == old_task_id:
+                    new_blockers.extend(replacement_ids)
+                else:
+                    new_blockers.append(b)
+            new_blocked_by = ",".join(new_blockers) if new_blockers else None
 
             conn.execute(
                 "UPDATE tasks SET blocked_by = ?, updated_at = ? WHERE id = ?",
