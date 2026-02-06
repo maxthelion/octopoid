@@ -139,7 +139,7 @@ class BaseRole(ABC):
             cwd=self.worktree,
             capture_output=True,
             text=True,
-            timeout=600,  # 10 minute timeout
+            timeout=3600,  # 60 minute timeout
         )
 
         self.debug_log(f"Claude exit code: {result.returncode}")
