@@ -1,6 +1,29 @@
-# Local Multi-Agent Scheduler
+# Octopoid
 
-A file-driven orchestrator that runs on 1-minute ticks, evaluates configured agents, and runs them when overdue. Designed as a self-contained git submodule.
+A file-driven orchestrator that runs Claude Code agents on a schedule. Designed as a self-contained git submodule.
+
+## What to expect
+
+**Out of the box**, add octopoid to your project as a submodule, point it at a directory of tasks, and start it running on a schedule. Implementer agents will pull tasks from the queue when there's capacity, work on them in isolated git worktrees, and open PRs. Merging those PRs frees up space for the next piece of work. Backpressure controls keep the system from getting ahead of itself — you'll never come back to a pile of stale PRs.
+
+**Extend it** to match how you want to work:
+
+- **Proposers** are specialist agents that analyse your codebase from different angles — test coverage, architecture, features — and put suggestions into a proposals directory. This keeps the queue filled with useful work without you having to write every task by hand.
+- **A curator** triages proposals and decides what's worth doing now. It scores, promotes, rejects with feedback, or defers — so speculative work doesn't pile up and proposers learn what matters.
+- **Plan reader** takes rough ideas, plans, and notes you've written down and turns them into structured proposals. Instead of ideas sitting in a doc going stale, they get evaluated and either acted on or explicitly set aside.
+- **Gatekeepers** review PRs before you see them, checking for lint issues, test failures, style problems, and security concerns. The work that reaches you for review is as polished as the system can make it.
+
+The goal is to stay at the level of direction and priorities while the orchestrator handles coordination and execution.
+
+## How it works
+
+Tasks are stored as markdown files in the filesystem. Each task has a title, context, acceptance criteria, and metadata like priority and role. Task state — who's claimed what, what's done, what's blocked — is tracked in SQLite, so operations are atomic and dependencies are enforced.
+
+A scheduler runs on a timer (typically every minute). Each tick, it evaluates which agents are due to run based on their configured intervals and whether conditions are met — for example, whether there are tasks available to claim or PRs to review. Agents that are ready get started; the rest wait.
+
+Each agent works in its own git worktree, branching off main by default. When multiple tasks are grouped into a project, they can branch off a shared feature branch instead. Either way, agents work concurrently without treading on each other. When an agent finishes, it commits its changes and opens a PR. Merging the PR completes the cycle and frees capacity for more work.
+
+All configuration lives in a single `agents.yaml` file. Backpressure limits control how many tasks can be in-flight and how many PRs can be open at once, so the system self-regulates and doesn't produce more work than you can review.
 
 ## Overview
 
