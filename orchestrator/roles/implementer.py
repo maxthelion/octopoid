@@ -114,6 +114,7 @@ Remember:
 - Keep changes focused on the task
 - Test your changes
 - Create atomic, well-described commits
+- Do NOT create a pull request — the orchestrator handles PR creation
 """
 
             # Invoke Claude with implementation tools
