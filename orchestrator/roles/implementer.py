@@ -1,6 +1,8 @@
 """Implementer role - claims tasks and implements features."""
 
-from ..config import is_db_enabled
+from pathlib import Path
+
+from ..config import is_db_enabled, get_notes_dir
 from ..git_utils import (
     create_feature_branch,
     create_pull_request,
@@ -57,6 +59,9 @@ class ImplementerRole(BaseRole):
             instructions = self.read_instructions()
             task_content = task.get("content", "")
 
+            # Set up notes file path for this task
+            notes_path = get_notes_dir() / f"TASK-{task_id}.md"
+
             # Check for notes from previous attempts
             previous_notes = get_task_notes(task_id)
             notes_section = ""
@@ -79,6 +84,21 @@ Use these to avoid repeating the same exploration and mistakes.
 
 {task_content}
 {notes_section}
+## Progress Notes
+
+As you work, periodically write your progress and findings to this file:
+`{notes_path}`
+
+Use the Write tool to update this file with:
+- Key files you've identified and their purposes
+- Approaches you've tried and their outcomes
+- What you've completed so far
+- Any blockers or issues discovered
+- What remains to be done
+
+This helps the next agent if your session is interrupted. Write notes
+after significant exploration or before attempting a complex change.
+
 ## Instructions
 
 1. Analyze the codebase to understand the context
@@ -97,6 +117,9 @@ Remember:
 """
 
             # Invoke Claude with implementation tools
+            # Stream stdout to a log file so output survives crashes/timeouts
+            stdout_log = get_notes_dir() / f"TASK-{task_id}.stdout.log"
+
             allowed_tools = [
                 "Read",
                 "Write",
@@ -110,7 +133,8 @@ Remember:
             exit_code, stdout, stderr = self.invoke_claude(
                 prompt,
                 allowed_tools=allowed_tools,
-                max_turns=100,  # Allow more turns for implementation
+                max_turns=100,
+                stdout_log=stdout_log,
             )
 
             # Count commits made during this session only
@@ -120,8 +144,16 @@ Remember:
                 commits_made = get_commit_count(self.worktree)
             self.debug_log(f"Commits made this session: {commits_made}")
 
-            # Save agent notes for future attempts
+            # Append stdout tail to notes as backup (Claude may have written
+            # structured notes already, this adds raw output context)
             save_task_notes(task_id, self.agent_name, stdout, commits=commits_made, turns=100)
+
+            # Clean up stdout log (notes file has the important bits)
+            if stdout_log.exists():
+                try:
+                    stdout_log.unlink()
+                except IOError:
+                    pass
 
             if exit_code != 0:
                 self.log(f"Implementation failed: {stderr}")

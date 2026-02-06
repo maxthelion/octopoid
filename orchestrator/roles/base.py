@@ -104,6 +104,7 @@ class BaseRole(ABC):
         allowed_tools: list[str] | None = None,
         max_turns: int | None = None,
         output_format: str = "text",
+        stdout_log: Path | None = None,
     ) -> tuple[int, str, str]:
         """Invoke Claude Code CLI with a prompt.
 
@@ -112,6 +113,9 @@ class BaseRole(ABC):
             allowed_tools: List of allowed tools (e.g., ["Read", "Write", "Bash"])
             max_turns: Maximum number of turns before stopping
             output_format: Output format ("text", "json", "stream-json")
+            stdout_log: If provided, stream stdout to this file in real-time.
+                        The file captures output incrementally so it survives
+                        timeouts and crashes.
 
         Returns:
             Tuple of (exit_code, stdout, stderr)
@@ -134,21 +138,91 @@ class BaseRole(ABC):
         self.debug_log(f"Max turns: {max_turns}")
         self.debug_log(f"Prompt length: {len(prompt)} chars")
 
-        result = subprocess.run(
+        if stdout_log:
+            # Stream stdout to file in real-time, so output survives crashes
+            stdout_log.parent.mkdir(parents=True, exist_ok=True)
+            return self._invoke_with_streaming(cmd, stdout_log)
+        else:
+            result = subprocess.run(
+                cmd,
+                cwd=self.worktree,
+                capture_output=True,
+                text=True,
+                timeout=3600,  # 60 minute timeout
+            )
+
+            self.debug_log(f"Claude exit code: {result.returncode}")
+            self.debug_log(f"Stdout length: {len(result.stdout)} chars")
+            self.debug_log(f"Stderr length: {len(result.stderr)} chars")
+            if result.returncode != 0:
+                self.debug_log(f"Stderr: {result.stderr[:1000]}")
+
+            return result.returncode, result.stdout, result.stderr
+
+    def _invoke_with_streaming(
+        self, cmd: list[str], stdout_log: Path
+    ) -> tuple[int, str, str]:
+        """Invoke Claude with stdout streamed to a log file.
+
+        Uses Popen so output is written incrementally. If the process
+        is killed or times out, whatever was written so far is preserved.
+
+        Args:
+            cmd: Command to run
+            stdout_log: Path to write stdout to
+
+        Returns:
+            Tuple of (exit_code, stdout, stderr)
+        """
+        import threading
+
+        proc = subprocess.Popen(
             cmd,
             cwd=self.worktree,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=3600,  # 60 minute timeout
         )
 
-        self.debug_log(f"Claude exit code: {result.returncode}")
-        self.debug_log(f"Stdout length: {len(result.stdout)} chars")
-        self.debug_log(f"Stderr length: {len(result.stderr)} chars")
-        if result.returncode != 0:
-            self.debug_log(f"Stderr: {result.stderr[:1000]}")
+        stdout_chunks: list[str] = []
+        stderr_chunks: list[str] = []
 
-        return result.returncode, result.stdout, result.stderr
+        def read_stdout():
+            with open(stdout_log, "w") as log:
+                for line in proc.stdout:
+                    log.write(line)
+                    log.flush()
+                    stdout_chunks.append(line)
+
+        def read_stderr():
+            for line in proc.stderr:
+                stderr_chunks.append(line)
+
+        t_out = threading.Thread(target=read_stdout, daemon=True)
+        t_err = threading.Thread(target=read_stderr, daemon=True)
+        t_out.start()
+        t_err.start()
+
+        try:
+            proc.wait(timeout=3600)  # 60 minute timeout
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+            self.log("Claude process timed out after 60 minutes")
+
+        t_out.join(timeout=5)
+        t_err.join(timeout=5)
+
+        stdout = "".join(stdout_chunks)
+        stderr = "".join(stderr_chunks)
+
+        self.debug_log(f"Claude exit code: {proc.returncode}")
+        self.debug_log(f"Stdout length: {len(stdout)} chars")
+        self.debug_log(f"Stderr length: {len(stderr)} chars")
+        if proc.returncode != 0:
+            self.debug_log(f"Stderr: {stderr[:1000]}")
+
+        return proc.returncode, stdout, stderr
 
     def read_instructions(self) -> str:
         """Read the agent instructions file.
