@@ -190,6 +190,7 @@ Output ONLY a JSON array. Each task should include specific file paths and follo
     "priority": "P1",
     "context": "Specific instructions including file paths to modify. Reference patterns found.",
     "acceptance_criteria": ["Specific, checkable criterion"],
+    "verification": "A concrete test: 'Test calls <user-facing function>() with <setup>, then asserts <user-visible outcome>'. Must name the entry-point function the user triggers, NOT a helper.",
     "depends_on": []
   }}
 ]
@@ -201,6 +202,7 @@ Rules:
 - Include test file paths in testing tasks
 - depends_on uses 1-indexed task numbers
 - 4-8 tasks total
+- CRITICAL: Every task's `verification` must describe a test that calls the actual user-facing function, not a helper beneath it
 
 Output ONLY the JSON array:
 """
@@ -415,6 +417,14 @@ Output ONLY the JSON array:
                 lines.append("")
                 for criterion in criteria:
                     lines.append(f"- [ ] {criterion}")
+                lines.append("")
+
+            # Verification (user code path test)
+            verification = subtask.get("verification", "")
+            if verification:
+                lines.append("### Verification (User Code Path)")
+                lines.append("")
+                lines.append(f"> {verification}")
                 lines.append("")
 
         # Footer with instructions

@@ -1365,6 +1365,21 @@ def _parse_breakdown_tasks(content: str) -> list[dict]:
                 if item_match:
                     criteria.append(item_match.group(1))
 
+        # Parse verification (user code path test requirement)
+        verification = ""
+        verification_match = re.search(
+            r'### Verification \(User Code Path\)\s*\n(.+?)(?=\n###|\n---|\Z)',
+            task_content, re.DOTALL,
+        )
+        if verification_match:
+            verification = verification_match.group(1).strip()
+            # Strip leading > from blockquote
+            verification = re.sub(r'^>\s*', '', verification)
+
+        # Append verification to context so agents see it prominently
+        if verification:
+            context += f"\n\n## VERIFICATION REQUIREMENT\n\nYou MUST write a test that exercises the user's actual code path:\n\n{verification}\n\nThis test must call the real user-facing function, NOT a helper. If this test passes, the feature works. If you can't make this test pass, the task is not done."
+
         tasks.append({
             "number": task_num,
             "title": title,
