@@ -211,12 +211,35 @@ def find_agent_commits(agent_sub: Path, local_sub: Path) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
+def _is_empty_cherry_pick(result: subprocess.CompletedProcess) -> bool:
+    """Detect whether a cherry-pick failed because it produced an empty commit.
+
+    This happens when the patch has already been applied (e.g., re-running
+    the approval script after a partial failure).  Git reports messages
+    containing 'nothing to commit', 'empty', or 'allow-empty' in this case.
+    """
+    combined = (result.stdout + result.stderr).lower()
+    return any(
+        phrase in combined
+        for phrase in [
+            "nothing to commit",
+            "empty",
+            "allow-empty",
+            "previously applied",
+        ]
+    )
+
+
 def cherry_pick_commits(commits: list[str], local_sub: Path) -> bool:
     """Cherry-pick commits one by one onto the current sqlite-model.
 
     Returns True on success, False on conflict.  On conflict the cherry-pick
     is aborted so the working tree is clean.
+
+    Already-applied commits (empty cherry-picks) are detected and skipped,
+    making this function safe to re-run after a partial failure.
     """
+    skipped = 0
     for sha in commits:
         # Get commit message for display
         msg_result = run(
@@ -233,6 +256,14 @@ def cherry_pick_commits(commits: list[str], local_sub: Path) -> bool:
             check=False,
         )
         if result.returncode != 0:
+            # Check if this is an empty cherry-pick (already applied)
+            if _is_empty_cherry_pick(result):
+                print(f"  Skipping {sha[:8]} — already applied")
+                # Reset any cherry-pick state
+                run(["git", "cherry-pick", "--abort"], cwd=local_sub, check=False)
+                skipped += 1
+                continue
+
             print(f"\n  CONFLICT during cherry-pick of {sha[:8]}")
             print(f"  stderr: {result.stderr.strip()}")
 
@@ -250,6 +281,8 @@ def cherry_pick_commits(commits: list[str], local_sub: Path) -> bool:
             print("    # resolve conflicts, then git cherry-pick --continue")
             return False
 
+    if skipped:
+        print(f"  ({skipped} commit(s) already applied, skipped)")
     return True
 
 
@@ -421,8 +454,21 @@ def update_submodule_ref(task_id: str) -> bool:
 def accept_in_db(task_id: str) -> bool:
     """Move task to done, clear claimed_by, unblock dependents.
 
-    Returns True on success.
+    Idempotent — safe to call multiple times.  If the task is already
+    in the 'done' queue, just ensures claimed_by is cleared.
     """
+    # Check if already done to avoid duplicate history entries
+    task = get_task(task_id)
+    if task and task.get("queue") == "done":
+        # Already accepted — just ensure claimed_by is cleared
+        if task.get("claimed_by"):
+            with get_connection() as conn:
+                conn.execute(
+                    "UPDATE tasks SET claimed_by = NULL WHERE id = ?",
+                    (task_id,),
+                )
+        return True
+
     accept_completion(task_id, validator="human")
 
     # Verify
@@ -476,6 +522,13 @@ def approve_orchestrator_task(task_id_prefix: str) -> int:
         print(f"Error: Task {task_id[:8]} has role='{role}', not 'orchestrator_impl'")
         print("Use approve_task.py for regular tasks")
         return 1
+
+    # Allow re-running on 'done' tasks for idempotency
+    if queue == "done":
+        print(f"Task {task_id[:8]} is already in 'done' queue — verifying consistency.")
+        accept_in_db(task_id)
+        print(f"\nTask {task_id[:8]} confirmed done.")
+        return 0
 
     if queue not in ("provisional", "review_pending", "claimed"):
         print(f"Error: Task {task_id[:8]} is in queue '{queue}', expected 'provisional', 'review_pending', or 'claimed'")

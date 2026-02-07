@@ -15,6 +15,7 @@ from orchestrator.approve_orch import (
     find_agent_submodule,
     find_agent_commits,
     cherry_pick_commits,
+    _is_empty_cherry_pick,
     run_tests,
     push_submodule,
     accept_in_db,
@@ -244,6 +245,49 @@ class TestFindAgentCommits:
 
 
 # ---------------------------------------------------------------------------
+# Test: _is_empty_cherry_pick
+# ---------------------------------------------------------------------------
+
+
+class TestIsEmptyCherryPick:
+    def test_detects_nothing_to_commit(self):
+        """Detects 'nothing to commit' message."""
+        result = subprocess.CompletedProcess(
+            args=[], returncode=1,
+            stdout="On branch sqlite-model\nnothing to commit, working tree clean\n",
+            stderr="",
+        )
+        assert _is_empty_cherry_pick(result) is True
+
+    def test_detects_empty_in_stderr(self):
+        """Detects 'empty' in stderr (git cherry-pick reports this)."""
+        result = subprocess.CompletedProcess(
+            args=[], returncode=1,
+            stdout="",
+            stderr="The previous cherry-pick is now empty, possibly due to conflict resolution.\n",
+        )
+        assert _is_empty_cherry_pick(result) is True
+
+    def test_detects_allow_empty_hint(self):
+        """Detects 'allow-empty' hint from git."""
+        result = subprocess.CompletedProcess(
+            args=[], returncode=1,
+            stdout="",
+            stderr="If you wish to commit it anyway, use:\n    git commit --allow-empty\n",
+        )
+        assert _is_empty_cherry_pick(result) is True
+
+    def test_does_not_match_real_conflict(self):
+        """Does not match genuine merge conflicts."""
+        result = subprocess.CompletedProcess(
+            args=[], returncode=1,
+            stdout="",
+            stderr="error: could not apply abc1234... some commit\nhint: Resolve all conflicts manually\n",
+        )
+        assert _is_empty_cherry_pick(result) is False
+
+
+# ---------------------------------------------------------------------------
 # Test: cherry_pick_commits
 # ---------------------------------------------------------------------------
 
@@ -292,6 +336,75 @@ class TestCherryPickCommits:
             cwd=local, capture_output=True, text=True,
         )
         assert status.stdout.strip() == ""
+
+    def test_already_applied_commit_is_skipped(self, git_repo):
+        """Cherry-pick of an already-applied commit is skipped (idempotency)."""
+        agent = git_repo["agent"]
+        local = git_repo["local"]
+
+        sha = _make_commit(agent, "feature.txt", "new feature", "add feature")
+
+        # Fetch and cherry-pick the first time
+        subprocess.run(
+            ["git", "fetch", str(agent), SUBMODULE_BRANCH],
+            cwd=local, check=True, capture_output=True,
+        )
+        result = cherry_pick_commits([sha], local)
+        assert result is True
+
+        # Get local HEAD before second attempt
+        head_before = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=local, capture_output=True, text=True, check=True,
+        ).stdout.strip()
+
+        # Re-fetch and cherry-pick the same commit again
+        subprocess.run(
+            ["git", "fetch", str(agent), SUBMODULE_BRANCH],
+            cwd=local, check=True, capture_output=True,
+        )
+        result = cherry_pick_commits([sha], local)
+        assert result is True  # Should succeed, not fail
+
+        # HEAD should not have changed (commit was skipped)
+        head_after = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=local, capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        assert head_before == head_after
+
+        # Working tree should be clean
+        status = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=local, capture_output=True, text=True,
+        )
+        assert status.stdout.strip() == ""
+
+    def test_mixed_applied_and_new_commits(self, git_repo):
+        """Mix of already-applied and new commits works correctly."""
+        agent = git_repo["agent"]
+        local = git_repo["local"]
+
+        sha1 = _make_commit(agent, "first.txt", "first", "first commit")
+        sha2 = _make_commit(agent, "second.txt", "second", "second commit")
+
+        # Fetch and apply only the first commit
+        subprocess.run(
+            ["git", "fetch", str(agent), SUBMODULE_BRANCH],
+            cwd=local, check=True, capture_output=True,
+        )
+        subprocess.run(
+            ["git", "cherry-pick", sha1],
+            cwd=local, check=True, capture_output=True,
+        )
+
+        # Now try to cherry-pick both (first is already applied)
+        result = cherry_pick_commits([sha1, sha2], local)
+        assert result is True
+
+        # Both files should exist
+        assert (local / "first.txt").read_text() == "first"
+        assert (local / "second.txt").read_text() == "second"
 
 
 # ---------------------------------------------------------------------------
@@ -397,6 +510,47 @@ class TestAcceptInDb:
             result = accept_in_db("fix12345")
             assert result is True
 
+    def test_idempotent_on_already_done(self, initialized_db):
+        """Re-calling accept_in_db on a done task is a no-op."""
+        with patch("orchestrator.db.get_database_path", return_value=initialized_db):
+            from orchestrator.db import create_task, update_task, get_task, get_connection
+
+            create_task(
+                task_id="idem1234",
+                file_path="/tmp/TASK-idem1234.md",
+                role="orchestrator_impl",
+            )
+            update_task("idem1234", queue="provisional", claimed_by="orch-impl-1")
+
+            # Accept the first time
+            result = accept_in_db("idem1234")
+            assert result is True
+
+            # Count history entries
+            with get_connection() as conn:
+                count_before = conn.execute(
+                    "SELECT COUNT(*) as c FROM task_history WHERE task_id = ? AND event = 'accepted'",
+                    ("idem1234",),
+                ).fetchone()["c"]
+
+            # Accept again (idempotent)
+            result = accept_in_db("idem1234")
+            assert result is True
+
+            # Should NOT add another history entry
+            with get_connection() as conn:
+                count_after = conn.execute(
+                    "SELECT COUNT(*) as c FROM task_history WHERE task_id = ? AND event = 'accepted'",
+                    ("idem1234",),
+                ).fetchone()["c"]
+
+            assert count_after == count_before
+
+            # Task should still be done
+            task = get_task("idem1234")
+            assert task["queue"] == "done"
+            assert task["claimed_by"] is None
+
 
 # ---------------------------------------------------------------------------
 # Test: full flow (mocked)
@@ -422,20 +576,35 @@ class TestApproveOrchestratorTask:
                 result = approve_orchestrator_task("impl1234")
                 assert result == 1
 
-    def test_rejects_wrong_queue(self, initialized_db):
-        """Returns error for tasks not in approvable queues."""
+    def test_done_task_succeeds_for_idempotency(self, initialized_db):
+        """Re-running on an already-done task succeeds (idempotency)."""
         with patch("orchestrator.db.get_database_path", return_value=initialized_db):
             with patch("orchestrator.approve_orch.is_db_enabled", return_value=True):
-                from orchestrator.db import create_task
+                from orchestrator.db import create_task, update_task
                 create_task(
                     task_id="done1234",
                     file_path="/tmp/TASK-done1234.md",
                     role="orchestrator_impl",
                 )
-                from orchestrator.db import update_task
                 update_task("done1234", queue="done")
 
                 result = approve_orchestrator_task("done1234")
+                assert result == 0
+
+    def test_rejects_wrong_queue(self, initialized_db):
+        """Returns error for tasks in non-approvable queues (e.g., incoming)."""
+        with patch("orchestrator.db.get_database_path", return_value=initialized_db):
+            with patch("orchestrator.approve_orch.is_db_enabled", return_value=True):
+                from orchestrator.db import create_task, update_task
+                create_task(
+                    task_id="inc_1234",
+                    file_path="/tmp/TASK-inc_1234.md",
+                    role="orchestrator_impl",
+                )
+                # incoming is not an approvable queue
+                update_task("inc_1234", queue="incoming")
+
+                result = approve_orchestrator_task("inc_1234")
                 assert result == 1
 
     def test_rejects_when_db_disabled(self):
