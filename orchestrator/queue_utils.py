@@ -383,6 +383,10 @@ def complete_task(task_path: Path | str, result: str | None = None) -> Path:
 
     os.rename(task_path, dest)
 
+    # Update file_path in DB to reflect new location
+    if task_id:
+        db.update_task(task_id, file_path=str(dest))
+
     # Clean up agent notes
     if task_id:
         cleanup_task_notes(task_id)
@@ -436,6 +440,10 @@ def submit_completion(
             f.write(f"TURNS_USED: {turns_used}\n")
 
     os.rename(task_path, dest)
+
+    # Update file_path in DB to reflect new location
+    db.update_task(db_task["id"], file_path=str(dest))
+
     return dest
 
 
@@ -478,6 +486,10 @@ def accept_completion(
 
     os.rename(task_path, dest)
 
+    # Update file_path in DB to reflect new location
+    if task_id:
+        db.update_task(task_id, file_path=str(dest))
+
     # Clean up agent notes
     if task_id:
         cleanup_task_notes(task_id)
@@ -511,12 +523,14 @@ def reject_completion(
     """
     task_path = Path(task_path)
     attempt_count = 0
+    task_id = None
 
     if is_db_enabled():
         from . import db
         db_task = db.get_task_by_path(str(task_path))
         if db_task:
-            updated = db.reject_completion(db_task["id"], reason=reason, validator=validator)
+            task_id = db_task["id"]
+            updated = db.reject_completion(task_id, reason=reason, validator=validator)
             if updated:
                 attempt_count = updated.get("attempt_count", 0)
 
@@ -532,6 +546,11 @@ def reject_completion(
             f.write(f"REJECTED_BY: {validator}\n")
 
     os.rename(task_path, dest)
+
+    # Update file_path in DB to reflect new location
+    if task_id:
+        db.update_task(task_id, file_path=str(dest))
+
     return dest
 
 
@@ -603,6 +622,10 @@ def review_reject_task(
         dest = escalated_dir / task_path.name
         os.rename(task_path, dest)
 
+        # Update file_path in DB to reflect new location
+        if task_id:
+            db.update_task(task_id, file_path=str(dest))
+
         # Send message to human
         from . import message_utils
         message_utils.warning(
@@ -619,6 +642,11 @@ def review_reject_task(
         incoming_dir = get_queue_subdir("incoming")
         dest = incoming_dir / task_path.name
         os.rename(task_path, dest)
+
+        # Update file_path in DB to reflect new location
+        if task_id:
+            db.update_task(task_id, file_path=str(dest))
+
         return dest, "rejected"
 
 

@@ -302,6 +302,264 @@ class TestReviewRejectTask:
             task = get_task("branch1")
             assert task["branch"] == "feature/test"  # Branch preserved
 
+    def test_reject_preserves_original_content(self, mock_config, initialized_db):
+        """Test that rejection preserves original task file content (header, context, criteria)."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task
+            from orchestrator.queue_utils import review_reject_task
+
+            prov_dir = mock_config / "shared" / "queue" / "provisional"
+            prov_dir.mkdir(parents=True, exist_ok=True)
+            original_content = (
+                "# [TASK-pres1] Important feature\n\n"
+                "ROLE: implement\n"
+                "PRIORITY: P1\n\n"
+                "## Context\n"
+                "This task implements feature X with detailed requirements.\n\n"
+                "## Acceptance Criteria\n"
+                "- [ ] Feature X works correctly\n"
+                "- [ ] Tests are added\n"
+            )
+            task_path = prov_dir / "TASK-pres1.md"
+            task_path.write_text(original_content)
+
+            create_task(task_id="pres1", file_path=str(task_path))
+
+            new_path, action = review_reject_task(
+                task_path,
+                feedback="Tests don't cover edge cases.",
+                rejected_by="gk-testing",
+            )
+
+            content = new_path.read_text()
+            # Original content must still be present
+            assert "# [TASK-pres1] Important feature" in content
+            assert "## Context" in content
+            assert "This task implements feature X" in content
+            assert "## Acceptance Criteria" in content
+            assert "Feature X works correctly" in content
+            assert "Tests are added" in content
+            # Rejection feedback must also be present
+            assert "## Review Feedback" in content
+            assert "Tests don't cover edge cases" in content
+
+    def test_multiple_rejections_accumulate(self, mock_config, initialized_db):
+        """Test that multiple rejections accumulate without losing earlier feedback."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, get_task
+            from orchestrator.queue_utils import review_reject_task, submit_completion
+
+            # Create task and file in provisional
+            prov_dir = mock_config / "shared" / "queue" / "provisional"
+            prov_dir.mkdir(parents=True, exist_ok=True)
+            incoming_dir = mock_config / "shared" / "queue" / "incoming"
+            incoming_dir.mkdir(parents=True, exist_ok=True)
+
+            original_content = (
+                "# [TASK-multi1] Multi-reject test\n\n"
+                "## Context\n"
+                "Original context.\n\n"
+                "## Acceptance Criteria\n"
+                "- [ ] It works\n"
+            )
+            task_path = prov_dir / "TASK-multi1.md"
+            task_path.write_text(original_content)
+
+            create_task(task_id="multi1", file_path=str(task_path))
+
+            # First rejection
+            new_path, action = review_reject_task(
+                task_path,
+                feedback="First issue: boundary violation.",
+                rejected_by="gk-arch",
+            )
+            assert action == "rejected"
+
+            # Simulate re-claim and re-submit (move file back to provisional)
+            resubmit_path = prov_dir / "TASK-multi1.md"
+            new_path.rename(resubmit_path)
+            from orchestrator.db import update_task
+            update_task("multi1", file_path=str(resubmit_path))
+
+            # Second rejection
+            new_path2, action2 = review_reject_task(
+                resubmit_path,
+                feedback="Second issue: tests at wrong layer.",
+                rejected_by="gk-testing",
+            )
+            assert action2 == "rejected"
+
+            content = new_path2.read_text()
+            # Original content preserved
+            assert "# [TASK-multi1] Multi-reject test" in content
+            assert "Original context." in content
+            assert "## Acceptance Criteria" in content
+            # Both rejection feedbacks present
+            assert "First issue: boundary violation" in content
+            assert "Second issue: tests at wrong layer" in content
+
+    def test_header_remains_first_heading(self, mock_config, initialized_db):
+        """Test that the # [TASK-xxx] header remains as the first heading after rejection."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task
+            from orchestrator.queue_utils import review_reject_task
+
+            prov_dir = mock_config / "shared" / "queue" / "provisional"
+            prov_dir.mkdir(parents=True, exist_ok=True)
+
+            original_content = "# [TASK-head1] Title stays first\n\n## Context\nSome context.\n"
+            task_path = prov_dir / "TASK-head1.md"
+            task_path.write_text(original_content)
+
+            create_task(task_id="head1", file_path=str(task_path))
+
+            new_path, _ = review_reject_task(
+                task_path,
+                feedback="Some feedback.",
+                rejected_by="gk",
+            )
+
+            content = new_path.read_text()
+            lines = content.strip().splitlines()
+            # First non-empty line should be the task header
+            first_heading = next(l for l in lines if l.startswith("#"))
+            assert first_heading.startswith("# [TASK-head1]")
+
+
+# =============================================================================
+# File Path Tracking Tests
+# =============================================================================
+
+
+class TestFilePathTracking:
+    """Tests that file_path in DB is updated when task files move between queues."""
+
+    def test_submit_completion_updates_file_path(self, mock_config, initialized_db):
+        """Test that submit_completion updates file_path in DB after moving file."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, get_task
+            from orchestrator.queue_utils import submit_completion
+
+            incoming_dir = mock_config / "shared" / "queue" / "incoming"
+            incoming_dir.mkdir(parents=True, exist_ok=True)
+            task_path = incoming_dir / "TASK-fp1.md"
+            task_path.write_text("# [TASK-fp1] Path tracking test\n")
+
+            create_task(task_id="fp1", file_path=str(task_path))
+
+            new_path = submit_completion(task_path, commits_count=2)
+
+            task = get_task("fp1")
+            assert task["file_path"] == str(new_path)
+            assert "provisional" in task["file_path"]
+
+    def test_accept_completion_updates_file_path(self, mock_config, initialized_db):
+        """Test that accept_completion updates file_path in DB after moving file."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, get_task
+            from orchestrator.queue_utils import accept_completion
+
+            prov_dir = mock_config / "shared" / "queue" / "provisional"
+            prov_dir.mkdir(parents=True, exist_ok=True)
+            task_path = prov_dir / "TASK-fp2.md"
+            task_path.write_text("# [TASK-fp2] Path tracking test\n")
+
+            create_task(task_id="fp2", file_path=str(task_path))
+
+            new_path = accept_completion(task_path, validator="validator")
+
+            task = get_task("fp2")
+            assert task["file_path"] == str(new_path)
+            assert "done" in task["file_path"]
+
+    def test_reject_completion_updates_file_path(self, mock_config, initialized_db):
+        """Test that reject_completion updates file_path in DB after moving file."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, get_task
+            from orchestrator.queue_utils import reject_completion
+
+            prov_dir = mock_config / "shared" / "queue" / "provisional"
+            prov_dir.mkdir(parents=True, exist_ok=True)
+            task_path = prov_dir / "TASK-fp3.md"
+            task_path.write_text("# [TASK-fp3] Path tracking test\n")
+
+            create_task(task_id="fp3", file_path=str(task_path))
+
+            new_path = reject_completion(task_path, reason="no commits")
+
+            task = get_task("fp3")
+            assert task["file_path"] == str(new_path)
+            assert "incoming" in task["file_path"]
+
+    def test_review_reject_updates_file_path(self, mock_config, initialized_db):
+        """Test that review_reject_task updates file_path in DB after moving file."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, get_task
+            from orchestrator.queue_utils import review_reject_task
+
+            prov_dir = mock_config / "shared" / "queue" / "provisional"
+            prov_dir.mkdir(parents=True, exist_ok=True)
+            task_path = prov_dir / "TASK-fp4.md"
+            task_path.write_text("# [TASK-fp4] Path tracking test\n")
+
+            create_task(task_id="fp4", file_path=str(task_path))
+
+            new_path, action = review_reject_task(
+                task_path, "needs work", rejected_by="gk"
+            )
+
+            task = get_task("fp4")
+            assert task["file_path"] == str(new_path)
+            assert "incoming" in task["file_path"]
+
+    def test_full_lifecycle_path_tracking(self, mock_config, initialized_db):
+        """Test file_path tracking through submit → reject → re-submit → accept."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, get_task
+            from orchestrator.queue_utils import (
+                submit_completion, review_reject_task, accept_completion,
+            )
+
+            incoming_dir = mock_config / "shared" / "queue" / "incoming"
+            incoming_dir.mkdir(parents=True, exist_ok=True)
+            original_content = "# [TASK-lc1] Lifecycle test\n\n## Context\nOriginal.\n"
+            task_path = incoming_dir / "TASK-lc1.md"
+            task_path.write_text(original_content)
+
+            create_task(task_id="lc1", file_path=str(task_path))
+
+            # Step 1: Submit (incoming → provisional)
+            prov_path = submit_completion(task_path, commits_count=1)
+            task = get_task("lc1")
+            assert "provisional" in task["file_path"]
+
+            # Step 2: Reject (provisional → incoming)
+            incoming_path, action = review_reject_task(
+                prov_path, "needs fixes", rejected_by="gk"
+            )
+            task = get_task("lc1")
+            assert "incoming" in task["file_path"]
+            # Content still intact
+            content = incoming_path.read_text()
+            assert "# [TASK-lc1] Lifecycle test" in content
+            assert "Original." in content
+            assert "needs fixes" in content
+
+            # Step 3: Re-submit (incoming → provisional)
+            prov_path2 = submit_completion(incoming_path, commits_count=2)
+            task = get_task("lc1")
+            assert "provisional" in task["file_path"]
+
+            # Step 4: Accept (provisional → done)
+            done_path = accept_completion(prov_path2, validator="v")
+            task = get_task("lc1")
+            assert "done" in task["file_path"]
+            # All content preserved
+            final_content = done_path.read_text()
+            assert "# [TASK-lc1] Lifecycle test" in final_content
+            assert "Original." in final_content
+            assert "needs fixes" in final_content
+
 
 # =============================================================================
 # Get Review Feedback Tests (queue_utils.py)
