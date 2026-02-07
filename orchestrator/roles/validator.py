@@ -51,12 +51,19 @@ class ValidatorRole(BaseRole):
             turns_used = task.get("turns_used", 0)
             attempt_count = task.get("attempt_count", 0)
 
-            self.debug_log(f"Validating {task_id}: commits={commits_count}, turns={turns_used}, attempts={attempt_count}")
+            role = task.get("role")
+            self.debug_log(f"Validating {task_id}: commits={commits_count}, turns={turns_used}, attempts={attempt_count}, role={role}")
+
+            # orchestrator_impl tasks commit to submodule, not main repo — skip commit check
+            if role == "orchestrator_impl":
+                self.log(f"Auto-accepting orchestrator_impl task {task_id} (submodule commits not tracked)")
+                accept_completion(task_path, validator=self.agent_name)
+                continue
 
             # Check if task has commits
             if require_commits and commits_count == 0:
                 # Immediate catch: burned out (0 commits, high turns) -> recycle
-                if is_burned_out(commits_count=commits_count, turns_used=turns_used):
+                if is_burned_out(commits_count=commits_count, turns_used=turns_used, role=role):
                     self._recycle_task(task_id, task_path, turns_used)
                 # Cumulative catch: too many failed attempts -> recycle for project tasks, escalate otherwise
                 elif attempt_count >= max_attempts:

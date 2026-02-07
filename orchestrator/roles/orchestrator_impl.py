@@ -101,7 +101,7 @@ Write your progress and findings to this file as you work:
 
 1. All code changes go in the `orchestrator/` submodule (Python)
 2. Run tests with: `cd orchestrator && ./venv/bin/python -m pytest tests/ -v`
-3. After code changes, run: `cd orchestrator && pip install -e .`
+3. Do NOT run `pip install -e .` — it will corrupt the shared scheduler venv
 4. The orchestrator venv is at `.orchestrator/venv/` or `orchestrator/venv/`
 5. Key files: `orchestrator/orchestrator/db.py`, `queue_utils.py`, `scheduler.py`
 6. The DB is SQLite — schema changes need migrations in `db.py`

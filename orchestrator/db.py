@@ -627,6 +627,7 @@ def accept_completion(task_id: str, validator: str | None = None) -> dict[str, A
             """
             UPDATE tasks
             SET queue = 'done',
+                claimed_by = NULL,
                 updated_at = ?
             WHERE id = ?
             """,
