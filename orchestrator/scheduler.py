@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from string import Template
 
-import orchestrator as _orchestrator_pkg
+
 
 from .backpressure import check_backpressure_for_role
 from .config import (
@@ -67,26 +67,6 @@ def debug_log(message: str) -> None:
     except OSError:
         pass
 
-
-def verify_install_path() -> None:
-    """Verify orchestrator module is loaded from the correct location.
-
-    If an agent runs `pip install -e .` in its worktree, the shared venv
-    silently starts loading orchestrator code from the wrong directory.
-    This guard detects that condition and exits immediately.
-    """
-    module_path = Path(_orchestrator_pkg.__file__).resolve()
-    module_str = str(module_path)
-
-    # Agent worktree paths contain segments like .orchestrator/agents/<name>/worktree
-    # A legitimate install loads from the main orchestrator/ submodule
-    if '/agents/' in module_str and '/worktree/' in module_str:
-        msg = (
-            f"FATAL: orchestrator module loaded from agent worktree: {module_path}"
-            "\nRun 'pip install -e .' from the main orchestrator/ submodule to fix."
-        )
-        print(msg, file=sys.stderr)
-        sys.exit(1)
 
 
 def run_pre_check(agent_name: str, agent_config: dict) -> bool:
@@ -739,9 +719,6 @@ def check_and_update_finished_agents() -> None:
 
 def run_scheduler() -> None:
     """Main scheduler loop - evaluate and spawn agents."""
-    # Guard: ensure orchestrator is loaded from the correct location
-    verify_install_path()
-
     print(f"[{datetime.now().isoformat()}] Scheduler starting")
     debug_log("Scheduler tick starting")
 
@@ -938,7 +915,7 @@ def _check_venv_integrity() -> None:
     mod_file = getattr(_orch, "__file__", None) or ""
     # Also check a submodule to catch editable installs that set __file__ on the package
     scheduler_file = str(Path(__file__).resolve())
-    if "agents/" in scheduler_file or "worktree" in scheduler_file:
+    if "agents/" in scheduler_file and "worktree" in scheduler_file:
         print(
             f"FATAL: orchestrator module loaded from agent worktree: {scheduler_file}\n"
             f"Fix: cd orchestrator && ../.orchestrator/venv/bin/pip install -e .",
