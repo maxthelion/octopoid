@@ -63,6 +63,9 @@ class ImplementerRole(BaseRole):
         # Reset tool counter for fresh turn counting
         self.reset_tool_counter()
 
+        # Reset tool counter for fresh turn counting
+        self.reset_tool_counter()
+
         try:
             # Create feature branch
             branch_name = create_feature_branch(self.worktree, task_id, base_branch)
