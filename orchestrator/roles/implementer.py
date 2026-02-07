@@ -46,6 +46,7 @@ class ImplementerRole(BaseRole):
         task_path = task["path"]
 
         self.log(f"Claimed task {task_id}: {task_title}")
+        self.current_task_id = task_id
 
         try:
             # Create feature branch

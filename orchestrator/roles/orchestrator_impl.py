@@ -56,6 +56,7 @@ class OrchestratorImplRole(ImplementerRole):
         base_branch = task.get("branch", "main")
         task_path = task["path"]
 
+        self.current_task_id = task_id
         self.log(f"Claimed orchestrator task {task_id}: {task_title}")
 
         try:

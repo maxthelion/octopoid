@@ -169,3 +169,16 @@ class TestBuildClaudeEnv:
         env = call_kwargs.kwargs.get("env") or call_kwargs[1].get("env")
         assert env is not None, "env should be passed to Popen"
         assert env["AGENT_NAME"] == "stream-agent"
+
+    def test_build_claude_env_includes_current_task_id(self):
+        """_build_claude_env should include CURRENT_TASK_ID when set."""
+        role = self._make_role(agent_name="task-agent")
+        role.current_task_id = "abc12345"
+        env = role._build_claude_env()
+        assert env["CURRENT_TASK_ID"] == "abc12345"
+
+    def test_build_claude_env_omits_current_task_id_when_none(self):
+        """_build_claude_env should not include CURRENT_TASK_ID when not set."""
+        role = self._make_role(agent_name="idle-agent")
+        env = role._build_claude_env()
+        assert "CURRENT_TASK_ID" not in env

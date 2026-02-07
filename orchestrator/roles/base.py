@@ -116,6 +116,8 @@ class BaseRole(ABC):
         env["WORKTREE"] = str(self.worktree)
         env["SHARED_DIR"] = str(self.shared_dir)
         env["ORCHESTRATOR_DIR"] = str(self.orchestrator_dir)
+        if self.current_task_id:
+            env["CURRENT_TASK_ID"] = self.current_task_id
         return env
 
     def invoke_claude(
