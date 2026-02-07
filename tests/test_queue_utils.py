@@ -237,6 +237,105 @@ class TestCreateTask:
                 content = task_path.read_text()
                 assert "BLOCKED_BY: task123,task456" in content
 
+    def test_create_task_acceptance_criteria_string_multiline(self, mock_orchestrator_dir):
+        """Test that a multi-line string for acceptance_criteria preserves lines.
+
+        Regression test: previously, passing a string would iterate character-by-character,
+        producing one '- [ ] <char>' line per character instead of per line.
+        """
+        with patch('orchestrator.queue_utils.is_db_enabled', return_value=False):
+            with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "shared" / "queue"):
+                from orchestrator.queue_utils import create_task
+
+                criteria_str = "Feature works correctly\nTests are added\nDocs updated"
+
+                task_path = create_task(
+                    title="String criteria task",
+                    role="implement",
+                    context="Test context",
+                    acceptance_criteria=criteria_str,
+                )
+
+                content = task_path.read_text()
+
+                # Each line should be a checklist item
+                assert "- [ ] Feature works correctly" in content
+                assert "- [ ] Tests are added" in content
+                assert "- [ ] Docs updated" in content
+
+                # Must NOT have character-level explosion
+                assert "- [ ] F" not in content or "- [ ] Feature works correctly" in content
+                # Count checklist items — should be exactly 3
+                checklist_lines = [
+                    line for line in content.splitlines()
+                    if line.strip().startswith("- [ ]")
+                ]
+                assert len(checklist_lines) == 3
+
+    def test_create_task_acceptance_criteria_string_with_existing_prefixes(self, mock_orchestrator_dir):
+        """Test that lines already prefixed with '- [ ]' are not double-wrapped."""
+        with patch('orchestrator.queue_utils.is_db_enabled', return_value=False):
+            with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "shared" / "queue"):
+                from orchestrator.queue_utils import create_task
+
+                criteria_str = "- [ ] Already prefixed\n- [ ] Also prefixed"
+
+                task_path = create_task(
+                    title="Pre-prefixed criteria",
+                    role="implement",
+                    context="Test context",
+                    acceptance_criteria=criteria_str,
+                )
+
+                content = task_path.read_text()
+
+                # Should appear exactly once, not double-wrapped
+                assert "- [ ] Already prefixed" in content
+                assert "- [ ] - [ ] Already prefixed" not in content
+                assert "- [ ] Also prefixed" in content
+                assert "- [ ] - [ ] Also prefixed" not in content
+
+    def test_create_task_acceptance_criteria_list_with_existing_prefixes(self, mock_orchestrator_dir):
+        """Test that list items already prefixed with '- [ ]' are not double-wrapped."""
+        with patch('orchestrator.queue_utils.is_db_enabled', return_value=False):
+            with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "shared" / "queue"):
+                from orchestrator.queue_utils import create_task
+
+                task_path = create_task(
+                    title="Pre-prefixed list criteria",
+                    role="implement",
+                    context="Test context",
+                    acceptance_criteria=["- [ ] Already prefixed", "Bare line"],
+                )
+
+                content = task_path.read_text()
+
+                assert "- [ ] Already prefixed" in content
+                assert "- [ ] - [ ] Already prefixed" not in content
+                assert "- [ ] Bare line" in content
+
+    def test_create_task_acceptance_criteria_single_string(self, mock_orchestrator_dir):
+        """Test that a single-line string works correctly."""
+        with patch('orchestrator.queue_utils.is_db_enabled', return_value=False):
+            with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "shared" / "queue"):
+                from orchestrator.queue_utils import create_task
+
+                task_path = create_task(
+                    title="Single line criteria",
+                    role="implement",
+                    context="Test context",
+                    acceptance_criteria="Feature works",
+                )
+
+                content = task_path.read_text()
+
+                assert "- [ ] Feature works" in content
+                checklist_lines = [
+                    line for line in content.splitlines()
+                    if line.strip().startswith("- [ ]")
+                ]
+                assert len(checklist_lines) == 1
+
 
 class TestFailTask:
     """Tests for fail_task function."""

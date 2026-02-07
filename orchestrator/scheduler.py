@@ -124,12 +124,21 @@ def peek_task_branch(role: str) -> str | None:
     For breakdown agents, this peeks at the breakdown queue.
     For implement agents, this peeks at incoming queue.
 
+    orchestrator_impl agents always use a Boxen worktree based on main.
+    They work inside the orchestrator/ submodule within that worktree,
+    so the worktree itself must be on main (not a submodule branch).
+
     Args:
         role: Agent role (breakdown, implement, etc.)
 
     Returns:
         Branch name if a task is available, None otherwise
     """
+    # orchestrator_impl always uses main — the agent works inside the
+    # orchestrator/ submodule, not on a Boxen feature branch.
+    if role == "orchestrator_impl":
+        return None
+
     if not is_db_enabled():
         return None
 
@@ -139,7 +148,6 @@ def peek_task_branch(role: str) -> str | None:
     role_queues = {
         "breakdown": "breakdown",
         "implement": "incoming",
-        "orchestrator_impl": "incoming",
         "test": "incoming",
     }
 

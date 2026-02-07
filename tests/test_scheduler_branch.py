@@ -80,3 +80,30 @@ class TestPeekTaskBranch:
             from orchestrator.scheduler import peek_task_branch
             branch = peek_task_branch("breakdown")
             assert branch is None
+
+    def test_peek_returns_none_for_orchestrator_impl(self, mock_config, initialized_db):
+        """orchestrator_impl always uses main — never overrides branch.
+
+        The orchestrator_impl agent works inside the orchestrator/ submodule
+        within a Boxen worktree, so the worktree must always be on main
+        regardless of what branch the task file says.
+        """
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            with patch('orchestrator.scheduler.is_db_enabled', return_value=True):
+                with patch('orchestrator.queue_utils.is_db_enabled', return_value=True):
+                    with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_config / "shared" / "queue"):
+                        from orchestrator.queue_utils import create_task
+
+                        # Create an orchestrator_impl task with a non-main branch
+                        create_task(
+                            title="Fix scheduler bug",
+                            role="orchestrator_impl",
+                            context="Fix a bug in the scheduler",
+                            acceptance_criteria=["Bug is fixed"],
+                            branch="sqlite-model",
+                        )
+
+                        from orchestrator.scheduler import peek_task_branch
+                        branch = peek_task_branch("orchestrator_impl")
+                        # Must return None (use main) even though the task has branch=sqlite-model
+                        assert branch is None

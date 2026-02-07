@@ -774,7 +774,7 @@ def create_task(
     title: str,
     role: str,
     context: str,
-    acceptance_criteria: list[str],
+    acceptance_criteria: list[str] | str,
     priority: str = "P1",
     branch: str = "main",
     created_by: str = "human",
@@ -788,7 +788,9 @@ def create_task(
         title: Task title
         role: Target role (implement, test, review, breakdown)
         context: Background/context section content
-        acceptance_criteria: List of acceptance criteria
+        acceptance_criteria: List of acceptance criteria lines, or a single
+            string (which will be split on newlines). Lines already prefixed
+            with "- [ ]" are kept as-is; bare lines get the prefix added.
         priority: P0, P1, or P2
         branch: Base branch to work from
         created_by: Who created the task
@@ -802,7 +804,21 @@ def create_task(
     task_id = uuid4().hex[:8]
     filename = f"TASK-{task_id}.md"
 
-    criteria_md = "\n".join(f"- [ ] {c}" for c in acceptance_criteria)
+    # Normalize acceptance_criteria to a list of lines
+    if isinstance(acceptance_criteria, str):
+        acceptance_criteria = [
+            line for line in acceptance_criteria.splitlines() if line.strip()
+        ]
+
+    # Build markdown checklist, preserving existing "- [ ]" prefixes
+    criteria_lines = []
+    for c in acceptance_criteria:
+        stripped = c.strip()
+        if stripped.startswith("- [ ]") or stripped.startswith("- [x]"):
+            criteria_lines.append(stripped)
+        else:
+            criteria_lines.append(f"- [ ] {stripped}")
+    criteria_md = "\n".join(criteria_lines)
 
     blocked_by_line = f"BLOCKED_BY: {blocked_by}\n" if blocked_by else ""
     project_line = f"PROJECT: {project_id}\n" if project_id else ""
