@@ -8,6 +8,9 @@ Usage:
 """
 
 import argparse
+import locale
+locale.setlocale(locale.LC_ALL, '')
+
 import curses
 import json
 import os
@@ -115,10 +118,9 @@ def draw_progress_bar(win, y: int, x: int, width: int, progress: float, color: i
     filled = int(bar_width * min(1.0, max(0.0, progress)))
     try:
         win.addstr(y, x, "[")
-        win.attron(curses.color_pair(color))
-        win.addstr(y, x + 1, "\u2588" * filled)
-        win.attroff(curses.color_pair(color))
-        win.addstr(y, x + 1 + filled, "\u2591" * (bar_width - filled))
+        win.addstr(y, x + 1, "\u2588" * filled, curses.color_pair(color))
+        win.addstr(y, x + 1 + filled, "\u2591" * (bar_width - filled),
+                   curses.color_pair(Colors.DIM))
         win.addstr(y, x + width - 1, "]")
     except curses.error:
         pass
@@ -528,16 +530,23 @@ def _render_task_card(win, y: int, x: int, width: int, task: dict[str, Any],
     if show_progress_bar and agent:
         agent_text = agent[:12]
         safe_addstr(win, row, x, agent_text, curses.color_pair(Colors.DIM))
+        turns_val = turns or 0
 
-        if turn_limit > 0:
-            bar_x = x + len(agent_text) + 1
-            bar_width = min(12, width - len(agent_text) - 1)
-            if bar_width >= 5:
-                progress = min(1.0, (turns or 0) / turn_limit)
-                draw_progress_bar(win, row, bar_x, bar_width, progress, Colors.RUNNING)
-                turn_text = f" {turns}/{turn_limit}t"
-                safe_addstr(win, row, bar_x + bar_width + 1, turn_text,
-                            curses.color_pair(Colors.DIM))
+        turn_text = f" {turns_val}/{turn_limit}t"
+        # Calculate available space for bar after agent text and turn text
+        remaining = width - len(agent_text) - 1 - len(turn_text)
+        bar_x = x + len(agent_text) + 1
+
+        if turn_limit > 0 and remaining >= 5:
+            bar_width = min(12, remaining)
+            progress = min(1.0, turns_val / turn_limit)
+            draw_progress_bar(win, row, bar_x, bar_width, progress, Colors.RUNNING)
+            safe_addstr(win, row, bar_x + bar_width, turn_text[:width - len(agent_text) - 1 - bar_width],
+                        curses.color_pair(Colors.DIM))
+        else:
+            # No room for bar, just show turn text
+            safe_addstr(win, row, bar_x, turn_text[:width - len(agent_text) - 1],
+                        curses.color_pair(Colors.DIM))
         row += 1
 
 
@@ -961,6 +970,7 @@ class DashboardState:
 class Dashboard:
     def __init__(self, stdscr, refresh_interval: float = 2.0, demo_mode: bool = False):
         self.stdscr = stdscr
+        self.stdscr.encoding = 'utf-8'
         self.refresh_interval = refresh_interval
         self.running = True
         self.state = DashboardState(demo_mode=demo_mode)
@@ -1129,7 +1139,10 @@ class Dashboard:
             try:
                 self.render()
                 key = self.stdscr.getch()
-                if key != -1:
+                if key == -1:
+                    # Timeout (no keypress) — refresh data
+                    self.load_data()
+                else:
                     self.running = self.handle_input(key)
             except KeyboardInterrupt:
                 break

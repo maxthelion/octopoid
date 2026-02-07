@@ -78,19 +78,19 @@ class TestCardHeight:
 
     def test_minimal_card(self):
         task = {"title": "Test task"}
-        assert dash._card_height(task) == 1
+        assert dash._card_height(task) == 2  # id + title
 
-    def test_card_with_agent(self):
+    def test_card_with_agent_no_show(self):
         task = {"title": "Test task", "agent": "impl-1"}
-        assert dash._card_height(task) == 2
+        assert dash._card_height(task) == 2  # agent not shown without show_agent
 
-    def test_card_with_pr(self):
-        task = {"title": "Test task", "pr_number": 50}
-        assert dash._card_height(task) == 2
+    def test_card_with_agent_show(self):
+        task = {"title": "Test task", "agent": "impl-1"}
+        assert dash._card_height(task, show_agent=True) == 3  # id + title + agent
 
     def test_card_with_agent_and_pr(self):
         task = {"title": "Test task", "agent": "impl-1", "pr_number": 50}
-        assert dash._card_height(task) == 3
+        assert dash._card_height(task, show_agent=True) == 3  # id + title + agent
 
 
 # ---------------------------------------------------------------------------
