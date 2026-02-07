@@ -16,10 +16,12 @@ from .config import (
     get_agents,
     get_agents_runtime_dir,
     get_commands_dir,
+    get_gatekeeper_config,
     get_global_instructions_path,
     get_orchestrator_dir,
     get_templates_dir,
     is_db_enabled,
+    is_gatekeeper_enabled,
     is_system_paused,
 )
 from .git_utils import ensure_worktree, get_worktree_path
@@ -137,6 +139,7 @@ def peek_task_branch(role: str) -> str | None:
     role_queues = {
         "breakdown": "breakdown",
         "implement": "incoming",
+        "orchestrator_impl": "incoming",
         "test": "incoming",
     }
 
@@ -326,6 +329,15 @@ def get_role_constraints(role: str) -> str:
 - Write tests for new functionality
 - Create a PR when work is complete
 """,
+        "orchestrator_impl": """
+- You work on the orchestrator infrastructure (Python), NOT the Boxen app
+- All code is in the orchestrator/ submodule
+- Run tests: cd orchestrator && ./venv/bin/python -m pytest tests/ -v
+- After changes: pip install -e . in the orchestrator venv
+- Key files: orchestrator/orchestrator/db.py, queue_utils.py, scheduler.py
+- Commit in the submodule, not the main repo root
+- Create a PR when work is complete
+""",
         "tester": """
 - You may read all files
 - You may modify test files only
@@ -452,6 +464,13 @@ def spawn_agent(agent_name: str, agent_id: int, role: str, agent_config: dict) -
     if role in ("proposer", "gatekeeper") and "focus" in agent_config:
         env["AGENT_FOCUS"] = agent_config["focus"]
 
+    # Pass gatekeeper review context
+    if role == "gatekeeper":
+        if "review_task_id" in agent_config:
+            env["REVIEW_TASK_ID"] = agent_config["review_task_id"]
+        if "review_check_name" in agent_config:
+            env["REVIEW_CHECK_NAME"] = agent_config["review_check_name"]
+
     # Pass debug mode to agents
     if DEBUG:
         env["ORCHESTRATOR_DEBUG"] = "1"
@@ -550,6 +569,102 @@ def process_auto_accept_tasks() -> None:
         debug_log(f"Error processing auto-accept tasks: {e}")
 
 
+def process_gatekeeper_reviews() -> None:
+    """Process provisional tasks that need gatekeeper review.
+
+    For each provisional task with commits (validated but not yet reviewed):
+    1. Check if gatekeeper review tracking already exists
+    2. If not, initialize review tracking
+    3. If all checks complete, apply pass/fail decision
+    """
+    if not is_db_enabled() or not is_gatekeeper_enabled():
+        return
+
+    try:
+        from . import db
+        from .review_utils import (
+            all_reviews_complete,
+            all_reviews_passed,
+            cleanup_review,
+            get_review_feedback,
+            has_active_review,
+            init_task_review,
+        )
+        from .queue_utils import review_reject_task
+
+        gk_config = get_gatekeeper_config()
+        required_checks = gk_config.get("required_checks", ["architecture", "testing", "qa"])
+        max_rejections = gk_config.get("max_rejections", 3)
+
+        # Get all provisional tasks with commits
+        provisional_tasks = db.list_tasks(queue="provisional")
+
+        for task in provisional_tasks:
+            task_id = task["id"]
+            commits = task.get("commits_count", 0)
+            auto_accept = task.get("auto_accept", False)
+
+            # Skip auto-accept tasks (handled by process_auto_accept_tasks)
+            if auto_accept:
+                continue
+
+            # Skip tasks without commits (validator handles these)
+            if commits == 0:
+                continue
+
+            # Check if review is already initialized
+            if has_active_review(task_id):
+                # Check if all reviews are complete
+                if all_reviews_complete(task_id):
+                    passed, failed_checks = all_reviews_passed(task_id)
+                    task_file_path = task.get("file_path", "")
+
+                    if passed:
+                        # All checks passed — accept the task
+                        debug_log(f"All gatekeeper checks passed for task {task_id}")
+                        db.accept_completion(task_id, validator="gatekeeper")
+                        cleanup_review(task_id)
+                        print(f"[{datetime.now().isoformat()}] Gatekeeper approved task {task_id}")
+                    else:
+                        # Some checks failed — reject with feedback
+                        feedback = get_review_feedback(task_id)
+                        debug_log(f"Gatekeeper checks failed for task {task_id}: {failed_checks}")
+
+                        if task_file_path:
+                            review_reject_task(
+                                task_file_path,
+                                feedback,
+                                rejected_by="gatekeeper",
+                                max_rejections=max_rejections,
+                            )
+                        else:
+                            # No file path, just update DB
+                            db.review_reject_completion(
+                                task_id,
+                                reason=f"Failed checks: {', '.join(failed_checks)}",
+                                reviewer="gatekeeper",
+                            )
+
+                        cleanup_review(task_id)
+                        print(f"[{datetime.now().isoformat()}] Gatekeeper rejected task {task_id}: {failed_checks}")
+            else:
+                # Initialize review tracking for this task
+                branch = task.get("branch", "main")
+                debug_log(f"Initializing gatekeeper review for task {task_id} (branch: {branch})")
+                init_task_review(
+                    task_id,
+                    branch=branch,
+                    base_branch="main",
+                    required_checks=required_checks,
+                )
+                print(f"[{datetime.now().isoformat()}] Initialized gatekeeper review for task {task_id}")
+
+    except Exception as e:
+        debug_log(f"Error processing gatekeeper reviews: {e}")
+        import traceback
+        debug_log(traceback.format_exc())
+
+
 def check_and_update_finished_agents() -> None:
     """Check for agents that have finished and update their state."""
     agents_dir = get_agents_runtime_dir()
@@ -605,6 +720,9 @@ def run_scheduler() -> None:
 
     # Process auto-accept tasks in provisional queue
     process_auto_accept_tasks()
+
+    # Process gatekeeper reviews for provisional tasks
+    process_gatekeeper_reviews()
 
     # Load agent configuration
     try:

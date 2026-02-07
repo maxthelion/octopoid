@@ -193,13 +193,44 @@ def check_recycler_backpressure() -> Tuple[bool, str]:
     return True, ""
 
 
+def check_gatekeeper_backpressure() -> Tuple[bool, str]:
+    """Backpressure check for gatekeeper agents.
+
+    Only proceed if there are active reviews with pending checks.
+
+    Returns:
+        Tuple of (can_proceed, reason)
+    """
+    try:
+        from .review_utils import get_reviews_dir, load_review_meta
+
+        reviews_dir = get_reviews_dir()
+        if not reviews_dir.exists():
+            return False, "no_reviews"
+
+        # Check if any reviews have pending checks
+        for review_dir in reviews_dir.iterdir():
+            if not review_dir.is_dir():
+                continue
+            task_id = review_dir.name.replace("TASK-", "")
+            meta = load_review_meta(task_id)
+            if meta and meta.get("status") == "in_progress":
+                return True, ""
+
+        return False, "no_pending_reviews"
+    except Exception:
+        return False, "review_check_error"
+
+
 # Map role to backpressure check function
 ROLE_CHECKS = {
     "implementer": check_implementer_backpressure,
     "breakdown": check_breakdown_backpressure,
     "recycler": check_recycler_backpressure,
+    "orchestrator_impl": check_implementer_backpressure,  # Same checks as implementer
     "tester": check_implementer_backpressure,  # Same checks as implementer
     "reviewer": check_implementer_backpressure,  # Same checks as implementer
+    "gatekeeper": check_gatekeeper_backpressure,
 }
 
 
