@@ -1,7 +1,8 @@
 """Check runner role - runs automated checks on provisional tasks.
 
 The check runner processes provisional tasks that have pending automated
-checks (e.g. pytest-submodule, gk-testing). For each task with pending checks:
+checks (e.g. pytest-submodule, gk-testing-octopoid). For each task with
+pending checks:
 
 1. Finds the agent's worktree and identifies commits to test
 2. Sets up a clean test environment in the review worktree
@@ -11,7 +12,8 @@ checks (e.g. pytest-submodule, gk-testing). For each task with pending checks:
 
 This role is lightweight — it runs checks directly without invoking Claude.
 
-The gk-testing check is an enhanced version of pytest-submodule that:
+The gk-testing-octopoid check is the rebase + pytest gatekeeper for
+orchestrator (Octopoid) tasks. It:
 - Rebases agent commits onto current origin/sqlite-model instead of cherry-picking
 - Provides richer failure context (conflict details, test failure summaries)
 - Identifies whether failures are likely caused by the agent's changes vs pre-existing
@@ -27,7 +29,7 @@ from .base import BaseRole, main_entry
 
 
 # Valid check types that the check runner knows how to handle
-VALID_CHECK_TYPES = {"pytest-submodule", "gk-testing"}
+VALID_CHECK_TYPES = {"pytest-submodule", "gk-testing-octopoid"}
 
 
 class CheckRunnerRole(BaseRole):
@@ -72,7 +74,7 @@ class CheckRunnerRole(BaseRole):
                 if check_name == "pytest-submodule":
                     self._run_pytest_submodule(task_id, task)
                     checked += 1
-                elif check_name == "gk-testing":
+                elif check_name == "gk-testing-octopoid":
                     self._run_gk_testing(task_id, task)
                     checked += 1
                 else:
@@ -190,7 +192,7 @@ class CheckRunnerRole(BaseRole):
             self.log(f"pytest-submodule FAILED for task {task_id}")
 
     def _run_gk_testing(self, task_id: str, task: dict) -> None:
-        """Run the gk-testing check: rebase onto current sqlite-model + pytest.
+        """Run the gk-testing-octopoid check: rebase onto current sqlite-model + pytest.
 
         Unlike pytest-submodule which cherry-picks, this check rebases the
         agent's commits onto the current origin/sqlite-model. This catches
@@ -216,7 +218,7 @@ class CheckRunnerRole(BaseRole):
         if not agent_worktree:
             self.log(f"Could not find worktree for task {task_id}")
             db.record_check_result(
-                task_id, "gk-testing", "fail",
+                task_id, "gk-testing-octopoid", "fail",
                 "Could not find agent worktree to test commits"
             )
             return
@@ -225,7 +227,7 @@ class CheckRunnerRole(BaseRole):
         if not submodule_path.exists():
             self.log(f"No orchestrator submodule in {agent_worktree}")
             db.record_check_result(
-                task_id, "gk-testing", "fail",
+                task_id, "gk-testing-octopoid", "fail",
                 "No orchestrator submodule found in agent worktree"
             )
             return
@@ -235,7 +237,7 @@ class CheckRunnerRole(BaseRole):
         if not commits:
             self.log(f"No submodule commits found for task {task_id}")
             db.record_check_result(
-                task_id, "gk-testing", "fail",
+                task_id, "gk-testing-octopoid", "fail",
                 "No commits found in orchestrator submodule"
             )
             return
@@ -249,7 +251,7 @@ class CheckRunnerRole(BaseRole):
         if not review_submodule.exists():
             self.log(f"Review worktree submodule not found at {review_submodule}")
             db.record_check_result(
-                task_id, "gk-testing", "fail",
+                task_id, "gk-testing-octopoid", "fail",
                 "Review worktree orchestrator submodule not found"
             )
             return
@@ -258,7 +260,7 @@ class CheckRunnerRole(BaseRole):
         setup_ok, setup_err = self._setup_clean_submodule(review_submodule, submodule_path)
         if not setup_ok:
             db.record_check_result(
-                task_id, "gk-testing", "fail",
+                task_id, "gk-testing-octopoid", "fail",
                 f"Failed to set up test environment: {setup_err}"
             )
             return
@@ -281,10 +283,10 @@ class CheckRunnerRole(BaseRole):
                                  "resolve conflicts, and resubmit.")
 
             db.record_check_result(
-                task_id, "gk-testing", "fail",
+                task_id, "gk-testing-octopoid", "fail",
                 "\n".join(summary_parts)
             )
-            self.log(f"gk-testing FAILED for task {task_id}: rebase conflict")
+            self.log(f"gk-testing-octopoid FAILED for task {task_id}: rebase conflict")
             return
 
         # Run pytest on the rebased code
@@ -294,8 +296,8 @@ class CheckRunnerRole(BaseRole):
             summary = f"All tests passed ({len(commits)} commit(s) rebased and tested)"
             if divergence_info:
                 summary += f"\n\nNote: Base branch had moved. Rebase succeeded automatically."
-            db.record_check_result(task_id, "gk-testing", "pass", summary)
-            self.log(f"gk-testing PASSED for task {task_id}")
+            db.record_check_result(task_id, "gk-testing-octopoid", "pass", summary)
+            self.log(f"gk-testing-octopoid PASSED for task {task_id}")
         else:
             # Build a detailed failure summary
             summary_parts = ["## Test Failures After Rebase\n"]
@@ -314,10 +316,10 @@ class CheckRunnerRole(BaseRole):
             summary_parts.append(f"\n### Test output\n\n```\n{truncated}\n```")
 
             db.record_check_result(
-                task_id, "gk-testing", "fail",
+                task_id, "gk-testing-octopoid", "fail",
                 "\n".join(summary_parts)
             )
-            self.log(f"gk-testing FAILED for task {task_id}: test failures")
+            self.log(f"gk-testing-octopoid FAILED for task {task_id}: test failures")
 
     def _check_divergence(self, review_sub: Path, agent_commits: list[str]) -> str:
         """Check if origin/sqlite-model has diverged since the agent forked.

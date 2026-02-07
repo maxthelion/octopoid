@@ -766,7 +766,7 @@ class TestCreateTaskOrchestratorImplDefaultChecks:
     """Tests for default checks on orchestrator_impl tasks."""
 
     def test_orchestrator_impl_gets_default_checks(self, mock_orchestrator_dir):
-        """Creating orchestrator_impl task without checks gets gk-testing default."""
+        """Creating orchestrator_impl task without checks gets gk-testing-octopoid default."""
         with patch('orchestrator.queue_utils.is_db_enabled', return_value=False):
             with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "shared" / "queue"):
                 from orchestrator.queue_utils import create_task
@@ -779,7 +779,7 @@ class TestCreateTaskOrchestratorImplDefaultChecks:
                 )
 
                 content = task_path.read_text()
-                assert "CHECKS: gk-testing" in content
+                assert "CHECKS: gk-testing-octopoid" in content
 
     def test_orchestrator_impl_explicit_checks_override_default(self, mock_orchestrator_dir):
         """Creating orchestrator_impl task with explicit checks uses those instead."""
@@ -815,12 +815,12 @@ class TestCreateTaskOrchestratorImplDefaultChecks:
 
                 # Verify file
                 content = task_path.read_text()
-                assert "CHECKS: gk-testing" in content
+                assert "CHECKS: gk-testing-octopoid" in content
 
                 # Verify DB
                 task_id = task_path.stem.replace("TASK-", "")
                 db_task = get_task(task_id)
-                assert db_task["checks"] == ["gk-testing"]
+                assert db_task["checks"] == ["gk-testing-octopoid"]
 
     def test_non_orchestrator_impl_no_default_checks(self, mock_orchestrator_dir):
         """Non-orchestrator_impl tasks do NOT get default checks."""
