@@ -220,7 +220,7 @@ class TestTaskLifecycle:
             assert claimed is None
 
     def test_submit_completion(self, initialized_db):
-        """Test submitting a task for validation."""
+        """Test submitting a task for pre-check."""
         with patch('orchestrator.db.get_database_path', return_value=initialized_db):
             from orchestrator.db import create_task, claim_task, submit_completion, get_task
 
@@ -242,7 +242,7 @@ class TestTaskLifecycle:
             claim_task()
             submit_completion("accept1", commits_count=1)
 
-            result = accept_completion("accept1", validator="validator-agent")
+            result = accept_completion("accept1", accepted_by="pre-check-agent")
 
             assert result["queue"] == "done"
 
@@ -255,7 +255,7 @@ class TestTaskLifecycle:
             claim_task()
             submit_completion("reject1", commits_count=0)
 
-            result = reject_completion("reject1", reason="no_commits", validator="validator")
+            result = reject_completion("reject1", reason="no_commits", rejected_by="pre-check")
 
             assert result["queue"] == "incoming"
             assert result["attempt_count"] == 1
@@ -453,7 +453,7 @@ class TestTaskHistory:
             create_task(task_id="lifecycle", file_path="/lifecycle.md")
             claim_task(agent_name="impl-agent")
             submit_completion("lifecycle", commits_count=2)
-            accept_completion("lifecycle", validator="validator")
+            accept_completion("lifecycle", accepted_by="pre-check")
 
             history = get_task_history("lifecycle")
             events = [h["event"] for h in history]

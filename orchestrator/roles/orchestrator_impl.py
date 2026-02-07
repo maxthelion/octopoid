@@ -254,7 +254,7 @@ Remember:
                     commits_count=commits_made,
                     turns_used=turns_used,
                 )
-                self.log(f"Submitted for validation ({commits_made} submodule commits)")
+                self.log(f"Submitted for pre-check ({commits_made} submodule commits)")
             else:
                 complete_task(task_path, result_msg)
 

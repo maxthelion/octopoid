@@ -787,7 +787,7 @@ def submit_completion(
     commits_count: int = 0,
     turns_used: int | None = None,
 ) -> dict[str, Any] | None:
-    """Submit a task for validation (move to provisional queue).
+    """Submit a task for pre-check (move to provisional queue).
 
     The task stays in provisional until the scheduler processes it.
     If auto_accept is enabled, the scheduler will move it to done.
@@ -810,7 +810,7 @@ def submit_completion(
     )
 
 
-def accept_completion(task_id: str, validator: str | None = None) -> dict[str, Any] | None:
+def accept_completion(task_id: str, accepted_by: str | None = None) -> dict[str, Any] | None:
     """Accept a provisional task and move it to done.
 
     Side effects (guaranteed by update_task_queue):
@@ -819,7 +819,7 @@ def accept_completion(task_id: str, validator: str | None = None) -> dict[str, A
 
     Args:
         task_id: Task identifier
-        validator: Name of the validator agent
+        accepted_by: Name of the agent or system that accepted (e.g. "scheduler", "gatekeeper", "human")
 
     Returns:
         Updated task or None if not found
@@ -828,14 +828,14 @@ def accept_completion(task_id: str, validator: str | None = None) -> dict[str, A
         task_id,
         "done",
         history_event="accepted",
-        history_agent=validator,
+        history_agent=accepted_by,
     )
 
 
 def reject_completion(
     task_id: str,
     reason: str,
-    validator: str | None = None,
+    rejected_by: str | None = None,
 ) -> dict[str, Any] | None:
     """Reject a provisional task and move it back to incoming for retry.
 
@@ -844,7 +844,7 @@ def reject_completion(
     Args:
         task_id: Task identifier
         reason: Rejection reason
-        validator: Name of the validator agent
+        rejected_by: Name of the agent or system that rejected
 
     Returns:
         Updated task or None if not found
@@ -858,7 +858,7 @@ def reject_completion(
         turns_used=0,
         attempt_count_increment=True,
         history_event="rejected",
-        history_agent=validator,
+        history_agent=rejected_by,
         history_details=reason,
     )
 
@@ -870,7 +870,7 @@ def review_reject_completion(
 ) -> dict[str, Any] | None:
     """Reject a task after gatekeeper review.
 
-    Unlike reject_completion() which increments attempt_count (for validation
+    Unlike reject_completion() which increments attempt_count (for pre-check
     failures like no commits), this increments rejection_count (for code
     quality issues found by reviewers).
 

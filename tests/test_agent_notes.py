@@ -125,7 +125,7 @@ class TestNotesIntegration:
                         assert get_task_notes(task_id) is not None
 
                         # Accept the task
-                        accept_completion(task["path"], validator="test")
+                        accept_completion(task["path"], accepted_by="test")
 
                         # Notes should be cleaned up
                         assert get_task_notes(task_id) is None

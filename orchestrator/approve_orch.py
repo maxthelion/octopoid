@@ -489,7 +489,7 @@ def accept_in_db(task_id: str) -> bool:
             update_task(task_id, claimed_by=None)
         return True
 
-    accept_completion(task_id, validator="human")
+    accept_completion(task_id, accepted_by="human")
 
     # Verify
     task = get_task(task_id)

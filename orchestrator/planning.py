@@ -46,7 +46,7 @@ ROLE: implement
 PRIORITY: P1
 BRANCH: {original_task.get('branch', 'main')}
 CREATED: {datetime.now().isoformat()}
-CREATED_BY: validator
+CREATED_BY: pre_check
 ORIGINAL_TASK: {original_task_id}
 
 ## Context

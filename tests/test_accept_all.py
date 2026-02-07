@@ -105,7 +105,7 @@ class TestAcceptAllRouting:
                             if result:
                                 recycled.append(t["id"])
                         else:
-                            accept_completion(t["path"], validator="test")
+                            accept_completion(t["path"], accepted_by="test")
                             accepted.append(t["id"])
 
                     assert "norm0001" in accepted

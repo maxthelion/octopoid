@@ -423,13 +423,13 @@ def get_role_constraints(role: str) -> str:
 - Approve or request changes via PR review
 - Do not modify code directly
 """,
-        # Validation layer
-        "validator": """
+        # Pre-check layer (scheduler-level submission filtering)
+        "pre_check": """
 - You do NOT need a worktree (lightweight agent)
-- Check provisional tasks for commits
-- Accept tasks with valid commits
-- Reject tasks without commits (increment retry count)
-- Escalate to planning after max retries
+- Pre-check provisional tasks for commits
+- Accept tasks with valid commits (pass to review)
+- Reject tasks without commits (send back for retry)
+- Recycle or escalate after max retries
 - Reset stuck claimed tasks
 - This role runs without Claude invocation
 """,
@@ -641,7 +641,7 @@ def process_auto_accept_tasks() -> None:
 
             if auto_accept:
                 debug_log(f"Auto-accepting task {task_id}")
-                db.accept_completion(task_id, validator="scheduler")
+                db.accept_completion(task_id, accepted_by="scheduler")
                 print(f"[{datetime.now().isoformat()}] Auto-accepted task {task_id}")
 
     except Exception as e:
@@ -651,7 +651,7 @@ def process_auto_accept_tasks() -> None:
 def process_gatekeeper_reviews() -> None:
     """Process provisional tasks that need gatekeeper review.
 
-    For each provisional task with commits (validated but not yet reviewed):
+    For each provisional task with commits (passed pre-check but not yet reviewed):
     1. Check if gatekeeper review tracking already exists
     2. If not, initialize review tracking
     3. If all checks complete, apply pass/fail decision
@@ -687,7 +687,7 @@ def process_gatekeeper_reviews() -> None:
             if auto_accept:
                 continue
 
-            # Skip tasks without commits (validator handles these)
+            # Skip tasks without commits (pre-check handles these)
             if commits == 0:
                 continue
 
@@ -701,7 +701,7 @@ def process_gatekeeper_reviews() -> None:
                     if passed:
                         # All checks passed — accept the task
                         debug_log(f"All gatekeeper checks passed for task {task_id}")
-                        db.accept_completion(task_id, validator="gatekeeper")
+                        db.accept_completion(task_id, accepted_by="gatekeeper")
                         cleanup_review(task_id)
                         print(f"[{datetime.now().isoformat()}] Gatekeeper approved task {task_id}")
                     else:

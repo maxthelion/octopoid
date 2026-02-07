@@ -48,7 +48,7 @@ class TestSchemaV4:
 
             create_task(task_id="indep1", file_path="/indep1.md")
 
-            # Validation rejection (increments attempt_count)
+            # Pre-check rejection (increments attempt_count)
             claim_task()
             submit_completion("indep1", commits_count=0)
             reject_completion("indep1", reason="no commits")
@@ -466,7 +466,7 @@ class TestFilePathTracking:
 
             create_task(task_id="fp2", file_path=str(task_path))
 
-            new_path = accept_completion(task_path, validator="validator")
+            new_path = accept_completion(task_path, accepted_by="pre_check")
 
             task = get_task("fp2")
             assert task["file_path"] == str(new_path)
@@ -551,7 +551,7 @@ class TestFilePathTracking:
             assert "provisional" in task["file_path"]
 
             # Step 4: Accept (provisional → done)
-            done_path = accept_completion(prov_path2, validator="v")
+            done_path = accept_completion(prov_path2, accepted_by="v")
             task = get_task("lc1")
             assert "done" in task["file_path"]
             # All content preserved
@@ -1143,7 +1143,7 @@ class TestProcessGatekeeperReviews:
                         assert has_active_review("auto1") is False
 
     def test_skips_tasks_without_commits(self, mock_config, initialized_db):
-        """Test that tasks without commits are skipped (validator handles them)."""
+        """Test that tasks without commits are skipped (pre-check handles them)."""
         with patch('orchestrator.db.get_database_path', return_value=initialized_db):
             with patch('orchestrator.review_utils.get_orchestrator_dir', return_value=mock_config):
                 with patch('orchestrator.config.is_gatekeeper_enabled', return_value=True):

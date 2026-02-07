@@ -56,7 +56,7 @@ class RecyclerRole(BaseRole):
                     elif result is None:
                         # Depth cap reached - accept for human review
                         self.log(f"Depth cap for {task_id}, accepting for human review")
-                        accept_completion(task_path, validator=self.agent_name)
+                        accept_completion(task_path, accepted_by=self.agent_name)
                         accepted += 1
                 except Exception as e:
                     self.log(f"Failed to recycle {task_id}: {e}")

@@ -349,34 +349,34 @@ class TestReportsCheckingSplit:
 
 
 # ---------------------------------------------------------------------------
-# Validator: skip tasks with pending checks
+# Pre-check: skip tasks with pending checks
 # ---------------------------------------------------------------------------
 
 
-class TestValidatorSkipsPendingChecks:
-    """Tests that the validator skips tasks with pending automated checks."""
+class TestPreCheckSkipsPendingChecks:
+    """Tests that the pre-check skips tasks with pending gatekeeper checks."""
 
-    def test_validator_skips_task_with_pending_checks(self, mock_config, initialized_db):
-        """Validator should not reject/accept tasks that have pending automated checks."""
+    def test_pre_check_skips_task_with_pending_checks(self, mock_config, initialized_db):
+        """Pre-check should not reject/accept tasks that have pending gatekeeper checks."""
         with patch("orchestrator.db.get_database_path", return_value=initialized_db):
-            with patch("orchestrator.roles.validator.is_db_enabled", return_value=True):
+            with patch("orchestrator.roles.pre_check.is_db_enabled", return_value=True):
                 with patch("orchestrator.queue_utils.is_db_enabled", return_value=True):
                     with patch("orchestrator.queue_utils.get_queue_dir", return_value=mock_config / "shared" / "queue"):
-                        with patch("orchestrator.roles.validator.get_validation_config", return_value={
+                        with patch("orchestrator.roles.pre_check.get_pre_check_config", return_value={
                             "require_commits": True,
                             "max_attempts_before_planning": 3,
                             "claim_timeout_minutes": 60,
                         }):
                             with patch.dict(os.environ, {
-                                "AGENT_NAME": "test-validator",
+                                "AGENT_NAME": "test-pre-check",
                                 "AGENT_ID": "0",
-                                "AGENT_ROLE": "validator",
+                                "AGENT_ROLE": "pre_check",
                                 "PARENT_PROJECT": str(mock_config.parent),
                                 "WORKTREE": str(mock_config.parent),
                                 "SHARED_DIR": str(mock_config / "shared"),
                                 "ORCHESTRATOR_DIR": str(mock_config),
                             }):
-                                from orchestrator.roles.validator import ValidatorRole
+                                from orchestrator.roles.pre_check import PreCheckRole
                                 from orchestrator.db import (
                                     create_task, claim_task, submit_completion, get_task,
                                 )
@@ -398,39 +398,39 @@ class TestValidatorSkipsPendingChecks:
                                     "# [TASK-vskip1] Orch task\nROLE: orchestrator_impl\n"
                                 )
 
-                                # Run validator
-                                role = ValidatorRole()
+                                # Run pre-check
+                                role = PreCheckRole()
                                 result = role.run()
                                 assert result == 0
 
                                 # Task should STILL be in provisional (not moved to done or incoming)
                                 task = get_task("vskip1")
                                 assert task["queue"] == "provisional", (
-                                    f"Validator should skip task with pending checks, "
+                                    f"Pre-check should skip task with pending checks, "
                                     f"but task was moved to {task['queue']}"
                                 )
 
-    def test_validator_processes_task_after_checks_pass(self, mock_config, initialized_db):
-        """After checks pass, validator should accept the task normally."""
+    def test_pre_check_processes_task_after_checks_pass(self, mock_config, initialized_db):
+        """After checks pass, pre-check should accept the task normally."""
         with patch("orchestrator.db.get_database_path", return_value=initialized_db):
-            with patch("orchestrator.roles.validator.is_db_enabled", return_value=True):
+            with patch("orchestrator.roles.pre_check.is_db_enabled", return_value=True):
                 with patch("orchestrator.queue_utils.is_db_enabled", return_value=True):
                     with patch("orchestrator.queue_utils.get_queue_dir", return_value=mock_config / "shared" / "queue"):
-                        with patch("orchestrator.roles.validator.get_validation_config", return_value={
+                        with patch("orchestrator.roles.pre_check.get_pre_check_config", return_value={
                             "require_commits": True,
                             "max_attempts_before_planning": 3,
                             "claim_timeout_minutes": 60,
                         }):
                             with patch.dict(os.environ, {
-                                "AGENT_NAME": "test-validator",
+                                "AGENT_NAME": "test-pre-check",
                                 "AGENT_ID": "0",
-                                "AGENT_ROLE": "validator",
+                                "AGENT_ROLE": "pre_check",
                                 "PARENT_PROJECT": str(mock_config.parent),
                                 "WORKTREE": str(mock_config.parent),
                                 "SHARED_DIR": str(mock_config / "shared"),
                                 "ORCHESTRATOR_DIR": str(mock_config),
                             }):
-                                from orchestrator.roles.validator import ValidatorRole
+                                from orchestrator.roles.pre_check import PreCheckRole
                                 from orchestrator.db import (
                                     create_task, claim_task, submit_completion,
                                     record_check_result, get_task,
@@ -454,8 +454,8 @@ class TestValidatorSkipsPendingChecks:
                                     "# [TASK-vskip2] Orch task\nROLE: orchestrator_impl\n"
                                 )
 
-                                # Run validator
-                                role = ValidatorRole()
+                                # Run pre-check
+                                role = PreCheckRole()
                                 result = role.run()
                                 assert result == 0
 

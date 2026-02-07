@@ -44,7 +44,7 @@ def mock_orchestrator_dir(temp_dir):
 model: task
 database:
   enabled: true
-validation:
+pre_check:
   require_commits: true
   max_attempts_before_planning: 3
   claim_timeout_minutes: 60

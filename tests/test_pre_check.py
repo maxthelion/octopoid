@@ -1,4 +1,4 @@
-"""Tests for orchestrator.roles.validator module."""
+"""Tests for orchestrator.roles.pre_check module."""
 
 import pytest
 from pathlib import Path
@@ -6,49 +6,49 @@ from unittest.mock import patch, MagicMock
 import os
 
 
-class TestValidatorRole:
-    """Tests for ValidatorRole class."""
+class TestPreCheckRole:
+    """Tests for PreCheckRole class."""
 
-    def test_validator_requires_db_mode(self, mock_config):
-        """Test that validator returns early if DB not enabled."""
-        with patch('orchestrator.roles.validator.is_db_enabled', return_value=False):
+    def test_pre_check_requires_db_mode(self, mock_config):
+        """Test that pre-check returns early if DB not enabled."""
+        with patch('orchestrator.roles.pre_check.is_db_enabled', return_value=False):
             with patch.dict(os.environ, {
-                'AGENT_NAME': 'test-validator',
+                'AGENT_NAME': 'test-pre-check',
                 'AGENT_ID': '0',
-                'AGENT_ROLE': 'validator',
+                'AGENT_ROLE': 'pre_check',
                 'PARENT_PROJECT': str(mock_config.parent),
                 'WORKTREE': str(mock_config.parent),
                 'SHARED_DIR': str(mock_config / 'shared'),
                 'ORCHESTRATOR_DIR': str(mock_config),
             }):
-                from orchestrator.roles.validator import ValidatorRole
+                from orchestrator.roles.pre_check import PreCheckRole
 
-                role = ValidatorRole()
+                role = PreCheckRole()
                 result = role.run()
 
                 assert result == 0  # Exits cleanly
 
-    def test_validator_accepts_task_with_commits(self, mock_config, initialized_db):
-        """Test that validator accepts tasks with commits."""
+    def test_pre_check_accepts_task_with_commits(self, mock_config, initialized_db):
+        """Test that pre-check accepts tasks with commits."""
         with patch('orchestrator.db.get_database_path', return_value=initialized_db):
-            with patch('orchestrator.roles.validator.is_db_enabled', return_value=True):
+            with patch('orchestrator.roles.pre_check.is_db_enabled', return_value=True):
                 with patch('orchestrator.queue_utils.is_db_enabled', return_value=True):
                     with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_config / "shared" / "queue"):
-                        with patch('orchestrator.roles.validator.get_validation_config', return_value={
+                        with patch('orchestrator.roles.pre_check.get_pre_check_config', return_value={
                             'require_commits': True,
                             'max_attempts_before_planning': 3,
                             'claim_timeout_minutes': 60,
                         }):
                             with patch.dict(os.environ, {
-                                'AGENT_NAME': 'test-validator',
+                                'AGENT_NAME': 'test-pre-check',
                                 'AGENT_ID': '0',
-                                'AGENT_ROLE': 'validator',
+                                'AGENT_ROLE': 'pre_check',
                                 'PARENT_PROJECT': str(mock_config.parent),
                                 'WORKTREE': str(mock_config.parent),
                                 'SHARED_DIR': str(mock_config / 'shared'),
                                 'ORCHESTRATOR_DIR': str(mock_config),
                             }):
-                                from orchestrator.roles.validator import ValidatorRole
+                                from orchestrator.roles.pre_check import PreCheckRole
                                 from orchestrator.db import create_task, claim_task, submit_completion, get_task
 
                                 # Setup: create and submit a task with commits
@@ -61,8 +61,8 @@ class TestValidatorRole:
                                 prov_dir.mkdir(parents=True, exist_ok=True)
                                 (prov_dir / "TASK-valid1.md").write_text("# [TASK-valid1] Test\n")
 
-                                # Run validator
-                                role = ValidatorRole()
+                                # Run pre-check
+                                role = PreCheckRole()
                                 result = role.run()
 
                                 assert result == 0
@@ -71,27 +71,27 @@ class TestValidatorRole:
                                 task = get_task("valid1")
                                 assert task["queue"] == "done"
 
-    def test_validator_rejects_task_without_commits(self, mock_config, initialized_db):
-        """Test that validator rejects tasks without commits."""
+    def test_pre_check_rejects_task_without_commits(self, mock_config, initialized_db):
+        """Test that pre-check rejects tasks without commits."""
         with patch('orchestrator.db.get_database_path', return_value=initialized_db):
-            with patch('orchestrator.roles.validator.is_db_enabled', return_value=True):
+            with patch('orchestrator.roles.pre_check.is_db_enabled', return_value=True):
                 with patch('orchestrator.queue_utils.is_db_enabled', return_value=True):
                     with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_config / "shared" / "queue"):
-                        with patch('orchestrator.roles.validator.get_validation_config', return_value={
+                        with patch('orchestrator.roles.pre_check.get_pre_check_config', return_value={
                             'require_commits': True,
                             'max_attempts_before_planning': 3,
                             'claim_timeout_minutes': 60,
                         }):
                             with patch.dict(os.environ, {
-                                'AGENT_NAME': 'test-validator',
+                                'AGENT_NAME': 'test-pre-check',
                                 'AGENT_ID': '0',
-                                'AGENT_ROLE': 'validator',
+                                'AGENT_ROLE': 'pre_check',
                                 'PARENT_PROJECT': str(mock_config.parent),
                                 'WORKTREE': str(mock_config.parent),
                                 'SHARED_DIR': str(mock_config / 'shared'),
                                 'ORCHESTRATOR_DIR': str(mock_config),
                             }):
-                                from orchestrator.roles.validator import ValidatorRole
+                                from orchestrator.roles.pre_check import PreCheckRole
                                 from orchestrator.db import create_task, claim_task, submit_completion, get_task
 
                                 # Setup: create and submit a task with NO commits
@@ -104,8 +104,8 @@ class TestValidatorRole:
                                 prov_dir.mkdir(parents=True, exist_ok=True)
                                 (prov_dir / "TASK-nocommit.md").write_text("# [TASK-nocommit] Test\n")
 
-                                # Run validator
-                                role = ValidatorRole()
+                                # Run pre-check
+                                role = PreCheckRole()
                                 result = role.run()
 
                                 assert result == 0
@@ -115,29 +115,29 @@ class TestValidatorRole:
                                 assert task["queue"] == "incoming"
                                 assert task["attempt_count"] == 1
 
-    def test_validator_escalates_after_max_attempts(self, mock_config, initialized_db):
-        """Test that validator escalates tasks after max attempts."""
+    def test_pre_check_escalates_after_max_attempts(self, mock_config, initialized_db):
+        """Test that pre-check escalates tasks after max attempts."""
         with patch('orchestrator.db.get_database_path', return_value=initialized_db):
-            with patch('orchestrator.roles.validator.is_db_enabled', return_value=True):
+            with patch('orchestrator.roles.pre_check.is_db_enabled', return_value=True):
                 with patch('orchestrator.queue_utils.is_db_enabled', return_value=True):
                     with patch('orchestrator.planning.is_db_enabled', return_value=True):
                         with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_config / "shared" / "queue"):
                             with patch('orchestrator.planning.get_queue_dir', return_value=mock_config / "shared" / "queue"):
-                                with patch('orchestrator.roles.validator.get_validation_config', return_value={
+                                with patch('orchestrator.roles.pre_check.get_pre_check_config', return_value={
                                     'require_commits': True,
                                     'max_attempts_before_planning': 2,  # Low threshold for test
                                     'claim_timeout_minutes': 60,
                                 }):
                                     with patch.dict(os.environ, {
-                                        'AGENT_NAME': 'test-validator',
+                                        'AGENT_NAME': 'test-pre-check',
                                         'AGENT_ID': '0',
-                                        'AGENT_ROLE': 'validator',
+                                        'AGENT_ROLE': 'pre_check',
                                         'PARENT_PROJECT': str(mock_config.parent),
                                         'WORKTREE': str(mock_config.parent),
                                         'SHARED_DIR': str(mock_config / 'shared'),
                                         'ORCHESTRATOR_DIR': str(mock_config),
                                     }):
-                                        from orchestrator.roles.validator import ValidatorRole
+                                        from orchestrator.roles.pre_check import PreCheckRole
                                         from orchestrator.db import create_task, claim_task, submit_completion, get_task, update_task
 
                                         # Setup: create a task that has already failed twice
@@ -155,8 +155,8 @@ class TestValidatorRole:
                                         task_file = prov_dir / "TASK-escalate.md"
                                         task_file.write_text("# [TASK-escalate] Test\nROLE: implement\n\n## Context\nTest task\n\n## Acceptance Criteria\n- [ ] Done\n")
 
-                                        # Run validator
-                                        role = ValidatorRole()
+                                        # Run pre-check
+                                        role = PreCheckRole()
                                         result = role.run()
 
                                         assert result == 0
@@ -165,27 +165,27 @@ class TestValidatorRole:
                                         task = get_task("escalate")
                                         assert task["queue"] == "recycled"
 
-    def test_validator_accepts_without_commit_requirement(self, mock_config, initialized_db):
-        """Test that validator accepts tasks when require_commits is False."""
+    def test_pre_check_accepts_without_commit_requirement(self, mock_config, initialized_db):
+        """Test that pre-check accepts tasks when require_commits is False."""
         with patch('orchestrator.db.get_database_path', return_value=initialized_db):
-            with patch('orchestrator.roles.validator.is_db_enabled', return_value=True):
+            with patch('orchestrator.roles.pre_check.is_db_enabled', return_value=True):
                 with patch('orchestrator.queue_utils.is_db_enabled', return_value=True):
                     with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_config / "shared" / "queue"):
-                        with patch('orchestrator.roles.validator.get_validation_config', return_value={
+                        with patch('orchestrator.roles.pre_check.get_pre_check_config', return_value={
                             'require_commits': False,  # Don't require commits
                             'max_attempts_before_planning': 3,
                             'claim_timeout_minutes': 60,
                         }):
                             with patch.dict(os.environ, {
-                                'AGENT_NAME': 'test-validator',
+                                'AGENT_NAME': 'test-pre-check',
                                 'AGENT_ID': '0',
-                                'AGENT_ROLE': 'validator',
+                                'AGENT_ROLE': 'pre_check',
                                 'PARENT_PROJECT': str(mock_config.parent),
                                 'WORKTREE': str(mock_config.parent),
                                 'SHARED_DIR': str(mock_config / 'shared'),
                                 'ORCHESTRATOR_DIR': str(mock_config),
                             }):
-                                from orchestrator.roles.validator import ValidatorRole
+                                from orchestrator.roles.pre_check import PreCheckRole
                                 from orchestrator.db import create_task, claim_task, submit_completion, get_task
 
                                 # Setup: create and submit a task with NO commits
@@ -198,8 +198,8 @@ class TestValidatorRole:
                                 prov_dir.mkdir(parents=True, exist_ok=True)
                                 (prov_dir / "TASK-nocheck.md").write_text("# [TASK-nocheck] Test\n")
 
-                                # Run validator
-                                role = ValidatorRole()
+                                # Run pre-check
+                                role = PreCheckRole()
                                 result = role.run()
 
                                 assert result == 0
@@ -209,30 +209,30 @@ class TestValidatorRole:
                                 assert task["queue"] == "done"
 
 
-class TestValidatorHelpers:
-    """Tests for validator helper methods."""
+class TestPreCheckHelpers:
+    """Tests for pre-check helper methods."""
 
     def test_reset_stuck_claimed(self, mock_config, initialized_db):
-        """Test resetting stuck claimed tasks via validator."""
+        """Test resetting stuck claimed tasks via pre-check."""
         with patch('orchestrator.db.get_database_path', return_value=initialized_db):
-            with patch('orchestrator.roles.validator.is_db_enabled', return_value=True):
+            with patch('orchestrator.roles.pre_check.is_db_enabled', return_value=True):
                 with patch('orchestrator.queue_utils.is_db_enabled', return_value=True):
                     with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_config / "shared" / "queue"):
-                        with patch('orchestrator.roles.validator.get_validation_config', return_value={
+                        with patch('orchestrator.roles.pre_check.get_pre_check_config', return_value={
                             'require_commits': True,
                             'max_attempts_before_planning': 3,
                             'claim_timeout_minutes': 60,
                         }):
                             with patch.dict(os.environ, {
-                                'AGENT_NAME': 'test-validator',
+                                'AGENT_NAME': 'test-pre-check',
                                 'AGENT_ID': '0',
-                                'AGENT_ROLE': 'validator',
+                                'AGENT_ROLE': 'pre_check',
                                 'PARENT_PROJECT': str(mock_config.parent),
                                 'WORKTREE': str(mock_config.parent),
                                 'SHARED_DIR': str(mock_config / 'shared'),
                                 'ORCHESTRATOR_DIR': str(mock_config),
                             }):
-                                from orchestrator.roles.validator import ValidatorRole
+                                from orchestrator.roles.pre_check import PreCheckRole
                                 from orchestrator.db import create_task, get_connection, get_task
 
                                 # Create a stuck claimed task
@@ -246,8 +246,8 @@ class TestValidatorHelpers:
                                         WHERE id = 'stuck'
                                     """)
 
-                                # Run validator
-                                role = ValidatorRole()
+                                # Run pre-check
+                                role = PreCheckRole()
                                 role._reset_stuck_claimed(60)
 
                                 # Task should be reset
@@ -256,30 +256,30 @@ class TestValidatorHelpers:
                                 assert task["claimed_by"] is None
 
 
-class TestValidatorNoAutoAcceptOrchestratorImpl:
-    """Tests that validator does NOT auto-accept orchestrator_impl tasks."""
+class TestPreCheckNoAutoAcceptOrchestratorImpl:
+    """Tests that pre-check does NOT auto-accept orchestrator_impl tasks."""
 
     def test_orchestrator_impl_task_not_auto_accepted(self, mock_config, initialized_db):
         """An orchestrator_impl task in provisional with 0 commits should be rejected, not auto-accepted."""
         with patch('orchestrator.db.get_database_path', return_value=initialized_db):
-            with patch('orchestrator.roles.validator.is_db_enabled', return_value=True):
+            with patch('orchestrator.roles.pre_check.is_db_enabled', return_value=True):
                 with patch('orchestrator.queue_utils.is_db_enabled', return_value=True):
                     with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_config / "shared" / "queue"):
-                        with patch('orchestrator.roles.validator.get_validation_config', return_value={
+                        with patch('orchestrator.roles.pre_check.get_pre_check_config', return_value={
                             'require_commits': True,
                             'max_attempts_before_planning': 3,
                             'claim_timeout_minutes': 60,
                         }):
                             with patch.dict(os.environ, {
-                                'AGENT_NAME': 'test-validator',
+                                'AGENT_NAME': 'test-pre-check',
                                 'AGENT_ID': '0',
-                                'AGENT_ROLE': 'validator',
+                                'AGENT_ROLE': 'pre_check',
                                 'PARENT_PROJECT': str(mock_config.parent),
                                 'WORKTREE': str(mock_config.parent),
                                 'SHARED_DIR': str(mock_config / 'shared'),
                                 'ORCHESTRATOR_DIR': str(mock_config),
                             }):
-                                from orchestrator.roles.validator import ValidatorRole
+                                from orchestrator.roles.pre_check import PreCheckRole
                                 from orchestrator.db import create_task, claim_task, submit_completion, get_task
 
                                 # Setup: create and submit an orchestrator_impl task with 0 commits
@@ -299,8 +299,8 @@ class TestValidatorNoAutoAcceptOrchestratorImpl:
                                     "ROLE: orchestrator_impl\n"
                                 )
 
-                                # Run validator
-                                role = ValidatorRole()
+                                # Run pre-check
+                                role = PreCheckRole()
                                 result = role.run()
                                 assert result == 0
 
@@ -317,24 +317,24 @@ class TestValidatorNoAutoAcceptOrchestratorImpl:
     def test_orchestrator_impl_task_with_commits_accepted(self, mock_config, initialized_db):
         """An orchestrator_impl task with commits should be accepted normally."""
         with patch('orchestrator.db.get_database_path', return_value=initialized_db):
-            with patch('orchestrator.roles.validator.is_db_enabled', return_value=True):
+            with patch('orchestrator.roles.pre_check.is_db_enabled', return_value=True):
                 with patch('orchestrator.queue_utils.is_db_enabled', return_value=True):
                     with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_config / "shared" / "queue"):
-                        with patch('orchestrator.roles.validator.get_validation_config', return_value={
+                        with patch('orchestrator.roles.pre_check.get_pre_check_config', return_value={
                             'require_commits': True,
                             'max_attempts_before_planning': 3,
                             'claim_timeout_minutes': 60,
                         }):
                             with patch.dict(os.environ, {
-                                'AGENT_NAME': 'test-validator',
+                                'AGENT_NAME': 'test-pre-check',
                                 'AGENT_ID': '0',
-                                'AGENT_ROLE': 'validator',
+                                'AGENT_ROLE': 'pre_check',
                                 'PARENT_PROJECT': str(mock_config.parent),
                                 'WORKTREE': str(mock_config.parent),
                                 'SHARED_DIR': str(mock_config / 'shared'),
                                 'ORCHESTRATOR_DIR': str(mock_config),
                             }):
-                                from orchestrator.roles.validator import ValidatorRole
+                                from orchestrator.roles.pre_check import PreCheckRole
                                 from orchestrator.db import create_task, claim_task, submit_completion, get_task
 
                                 # Setup: create and submit an orchestrator_impl task WITH commits
@@ -354,8 +354,8 @@ class TestValidatorNoAutoAcceptOrchestratorImpl:
                                     "ROLE: orchestrator_impl\n"
                                 )
 
-                                # Run validator
-                                role = ValidatorRole()
+                                # Run pre-check
+                                role = PreCheckRole()
                                 result = role.run()
                                 assert result == 0
 
@@ -371,10 +371,10 @@ class TestValidatorNoAutoAcceptOrchestratorImpl:
         be recycled, not just rejected.
         """
         with patch('orchestrator.db.get_database_path', return_value=initialized_db):
-            with patch('orchestrator.roles.validator.is_db_enabled', return_value=True):
+            with patch('orchestrator.roles.pre_check.is_db_enabled', return_value=True):
                 with patch('orchestrator.queue_utils.is_db_enabled', return_value=True):
                     with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_config / "shared" / "queue"):
-                        with patch('orchestrator.roles.validator.get_validation_config', return_value={
+                        with patch('orchestrator.roles.pre_check.get_pre_check_config', return_value={
                             'require_commits': True,
                             'max_attempts_before_planning': 3,
                             'claim_timeout_minutes': 60,
@@ -388,7 +388,7 @@ class TestValidatorNoAutoAcceptOrchestratorImpl:
                                 'SHARED_DIR': str(mock_config / 'shared'),
                                 'ORCHESTRATOR_DIR': str(mock_config),
                             }):
-                                from orchestrator.roles.validator import ValidatorRole
+                                from orchestrator.roles.pre_check import PreCheckRole
                                 from orchestrator.db import create_task, claim_task, submit_completion, get_task
 
                                 # Setup: create and submit an orchestrator_impl task with 0 commits and 100 turns
@@ -411,7 +411,7 @@ class TestValidatorNoAutoAcceptOrchestratorImpl:
                                 )
 
                                 # Run validator
-                                role = ValidatorRole()
+                                role = PreCheckRole()
                                 result = role.run()
                                 assert result == 0
 

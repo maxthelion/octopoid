@@ -207,8 +207,8 @@ queue_limits:
 #   enabled: false     # Set to true to use SQLite
 #   path: state.db     # Path relative to .orchestrator/
 
-# Validation settings (requires database enabled and validator agent)
-# validation:
+# Pre-check settings (scheduler-level submission filtering, requires database enabled)
+# pre_check:
 #   require_commits: true           # Reject tasks with no commits
 #   max_attempts_before_planning: 3 # Escalate to planning after N failures
 #   claim_timeout_minutes: 60       # Reset stuck claimed tasks after N minutes
@@ -278,9 +278,9 @@ agents:
   #   role: reviewer
   #   interval_seconds: 300
 
-  # --- Validation layer (requires database enabled) ---
-  # - name: validator
-  #   role: validator
+  # --- Pre-check layer (scheduler-level submission filtering) ---
+  # - name: pre-checker
+  #   role: pre_check
   #   interval_seconds: 60    # Check provisional queue frequently
   #   lightweight: true       # No worktree needed
 """

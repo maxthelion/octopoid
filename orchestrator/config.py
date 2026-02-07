@@ -332,8 +332,8 @@ DEFAULT_DATABASE_CONFIG = {
     "path": "state.db",  # Relative to .orchestrator/
 }
 
-# Default validation settings
-DEFAULT_VALIDATION_CONFIG = {
+# Default pre-check settings (scheduler-level submission filtering)
+DEFAULT_PRE_CHECK_CONFIG = {
     "require_commits": True,
     "max_attempts_before_planning": 3,
     "claim_timeout_minutes": 60,
@@ -357,31 +357,31 @@ def get_database_config() -> dict[str, Any]:
         return DEFAULT_DATABASE_CONFIG.copy()
 
 
-def get_validation_config() -> dict[str, Any]:
-    """Get validation configuration for the validator role.
+def get_pre_check_config() -> dict[str, Any]:
+    """Get pre-check configuration for the scheduler pre-check role.
 
     Returns:
         Dictionary with require_commits, max_attempts_before_planning, claim_timeout_minutes
     """
     try:
         config = load_agents_config()
-        val_config = config.get("validation", {})
+        val_config = config.get("pre_check", config.get("validation", {}))
         return {
             "require_commits": val_config.get(
                 "require_commits",
-                DEFAULT_VALIDATION_CONFIG["require_commits"]
+                DEFAULT_PRE_CHECK_CONFIG["require_commits"]
             ),
             "max_attempts_before_planning": val_config.get(
                 "max_attempts_before_planning",
-                DEFAULT_VALIDATION_CONFIG["max_attempts_before_planning"]
+                DEFAULT_PRE_CHECK_CONFIG["max_attempts_before_planning"]
             ),
             "claim_timeout_minutes": val_config.get(
                 "claim_timeout_minutes",
-                DEFAULT_VALIDATION_CONFIG["claim_timeout_minutes"]
+                DEFAULT_PRE_CHECK_CONFIG["claim_timeout_minutes"]
             ),
         }
     except FileNotFoundError:
-        return DEFAULT_VALIDATION_CONFIG.copy()
+        return DEFAULT_PRE_CHECK_CONFIG.copy()
 
 
 def is_db_enabled() -> bool:
@@ -393,7 +393,7 @@ def is_db_enabled() -> bool:
     return get_database_config()["enabled"]
 
 
-def get_validators() -> list[dict[str, Any]]:
-    """Get list of configured validator agents."""
+def get_pre_checkers() -> list[dict[str, Any]]:
+    """Get list of configured pre-check agents."""
     agents = get_agents()
-    return [a for a in agents if a.get("role") == "validator"]
+    return [a for a in agents if a.get("role") in ("pre_check", "validator")]

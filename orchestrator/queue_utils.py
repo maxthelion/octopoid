@@ -422,8 +422,8 @@ def claim_task(
 def complete_task(task_path: Path | str, result: str | None = None) -> Path:
     """Move a task to the done queue.
 
-    Note: In DB mode with validation enabled, use submit_completion() instead
-    to go through the provisional queue for validation.
+    Note: In DB mode with pre-check enabled, use submit_completion() instead
+    to go through the provisional queue for pre-check.
 
     Args:
         task_path: Path to the claimed task file
@@ -469,9 +469,9 @@ def submit_completion(
     commits_count: int = 0,
     turns_used: int | None = None,
 ) -> Path | None:
-    """Submit a task for validation (move to provisional queue).
+    """Submit a task for pre-check (move to provisional queue).
 
-    The task stays in provisional until a validator accepts or rejects it.
+    The task stays in provisional until the pre-check accepts or rejects it.
     Only available in DB mode - in file mode, falls back to complete_task().
 
     Args:
@@ -519,16 +519,16 @@ def submit_completion(
 
 def accept_completion(
     task_path: Path | str,
-    validator: str | None = None,
+    accepted_by: str | None = None,
 ) -> Path:
     """Accept a provisional task and move it to done.
 
-    Called by the validator when a task passes validation.
+    Called by the pre-check or gatekeeper when a task passes.
     If the task belongs to a project, checks for project completion.
 
     Args:
         task_path: Path to the provisional task file
-        validator: Name of the validator agent
+        accepted_by: Name of the agent or system that accepted (e.g. "scheduler", "gatekeeper", "human")
 
     Returns:
         New path in done queue
@@ -547,7 +547,7 @@ def accept_completion(
                 db_task = db.get_task(match.group(1))
         if db_task:
             task_id = db_task["id"]
-            db.accept_completion(task_id, validator=validator)
+            db.accept_completion(task_id, accepted_by=accepted_by)
             project_id = db_task.get("project_id")
 
     done_dir = get_queue_subdir("done")
@@ -557,8 +557,8 @@ def accept_completion(
     if task_path.exists():
         with open(task_path, "a") as f:
             f.write(f"\nACCEPTED_AT: {datetime.now().isoformat()}\n")
-            if validator:
-                f.write(f"ACCEPTED_BY: {validator}\n")
+            if accepted_by:
+                f.write(f"ACCEPTED_BY: {accepted_by}\n")
 
         os.rename(task_path, dest)
 
@@ -582,17 +582,17 @@ def accept_completion(
 def reject_completion(
     task_path: Path | str,
     reason: str,
-    validator: str | None = None,
+    accepted_by: str | None = None,
 ) -> Path:
     """Reject a provisional task and move it back to incoming for retry.
 
-    Called by the validator when a task fails validation (e.g., no commits).
+    Called by the pre-check when a task fails (e.g., no commits).
     The task's attempt_count is incremented.
 
     Args:
         task_path: Path to the provisional task file
         reason: Rejection reason
-        validator: Name of the validator agent
+        accepted_by: Name of the agent or system that rejected
 
     Returns:
         New path in incoming queue
@@ -606,7 +606,7 @@ def reject_completion(
         db_task = db.get_task_by_path(str(task_path))
         if db_task:
             task_id = db_task["id"]
-            updated = db.reject_completion(task_id, reason=reason, validator=validator)
+            updated = db.reject_completion(task_id, reason=reason, rejected_by=accepted_by)
             if updated:
                 attempt_count = updated.get("attempt_count", 0)
 
@@ -618,8 +618,8 @@ def reject_completion(
         f.write(f"\nREJECTED_AT: {datetime.now().isoformat()}\n")
         f.write(f"REJECTION_REASON: {reason}\n")
         f.write(f"ATTEMPT_COUNT: {attempt_count}\n")
-        if validator:
-            f.write(f"REJECTED_BY: {validator}\n")
+        if accepted_by:
+            f.write(f"REJECTED_BY: {accepted_by}\n")
 
     os.rename(task_path, dest)
 
@@ -638,7 +638,7 @@ def review_reject_task(
 ) -> tuple[Path, str]:
     """Reject a provisional task with review feedback from gatekeepers.
 
-    Increments rejection_count (distinct from attempt_count used by validator).
+    Increments rejection_count (distinct from attempt_count used by pre-check).
     If rejection_count reaches max_rejections, escalates to human attention
     instead of cycling back to the implementer.
 
