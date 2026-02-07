@@ -339,12 +339,14 @@ def get_role_constraints(role: str) -> str:
 """,
         "orchestrator_impl": """
 - You work on the orchestrator infrastructure (Python), NOT the Boxen app
-- All code is in the orchestrator/ submodule
+- FIRST: Initialize the submodule: cd orchestrator && git submodule update --init && git checkout sqlite-model
+- All code is in the orchestrator/ submodule directory
+- Work inside orchestrator/ for all edits and commits
 - Run tests: cd orchestrator && ./venv/bin/python -m pytest tests/ -v
 - After changes: pip install -e . in the orchestrator venv
 - Key files: orchestrator/orchestrator/db.py, queue_utils.py, scheduler.py
-- Commit in the submodule, not the main repo root
-- Create a PR when work is complete
+- Commit in the submodule (orchestrator/), not the main repo root
+- Do NOT create a PR in the main repo — commit directly to the sqlite-model branch
 """,
         "tester": """
 - You may read all files
@@ -838,6 +840,31 @@ def run_scheduler() -> None:
 
                 debug_log(f"Ensuring worktree for {agent_name} on branch {base_branch}")
                 ensure_worktree(agent_name, base_branch)
+
+                # Initialize submodule for orchestrator_impl agents
+                if role == "orchestrator_impl":
+                    worktree_path = get_worktree_path(agent_name)
+                    debug_log(f"Initializing submodule in worktree for {agent_name}")
+                    try:
+                        subprocess.run(
+                            ["git", "submodule", "update", "--init", "orchestrator"],
+                            cwd=worktree_path,
+                            capture_output=True,
+                            text=True,
+                            timeout=120,
+                        )
+                        # Checkout sqlite-model in the submodule
+                        sub_path = worktree_path / "orchestrator"
+                        subprocess.run(
+                            ["git", "checkout", "sqlite-model"],
+                            cwd=sub_path,
+                            capture_output=True,
+                            text=True,
+                            timeout=30,
+                        )
+                        debug_log(f"Submodule initialized for {agent_name}")
+                    except Exception as e:
+                        debug_log(f"Submodule init failed for {agent_name}: {e}")
 
                 # Setup commands in worktree
                 debug_log(f"Setting up commands for {agent_name}")
