@@ -719,13 +719,13 @@ class TestProcessGatekeeperReviews:
                         'required_checks': ['architecture', 'testing'],
                         'max_rejections': 3,
                     }):
-                        from orchestrator.db import create_task, update_task
+                        from orchestrator.db import create_task, update_task_queue
                         from orchestrator.scheduler import process_gatekeeper_reviews
                         from orchestrator.review_utils import has_active_review
 
                         # Create a provisional task with commits
                         create_task(task_id="gk1", file_path="/gk1.md", branch="agent/gk1")
-                        update_task("gk1", queue="provisional", commits_count=3)
+                        update_task_queue("gk1", "provisional", commits_count=3)
 
                         process_gatekeeper_reviews()
 
@@ -742,14 +742,14 @@ class TestProcessGatekeeperReviews:
                         'required_checks': ['architecture', 'testing'],
                         'max_rejections': 3,
                     }):
-                        from orchestrator.db import create_task, update_task, get_task
+                        from orchestrator.db import create_task, update_task_queue, get_task
                         from orchestrator.review_utils import (
                             init_task_review, record_review_result,
                         )
                         from orchestrator.scheduler import process_gatekeeper_reviews
 
                         create_task(task_id="gkpass", file_path="/gkpass.md", branch="agent/gkpass")
-                        update_task("gkpass", queue="provisional", commits_count=2)
+                        update_task_queue("gkpass", "provisional", commits_count=2)
 
                         # Init review and mark all as passed
                         init_task_review("gkpass", branch="agent/gkpass", required_checks=["architecture", "testing"])
@@ -771,7 +771,7 @@ class TestProcessGatekeeperReviews:
                         'required_checks': ['architecture', 'testing'],
                         'max_rejections': 3,
                     }):
-                        from orchestrator.db import create_task, update_task, get_task
+                        from orchestrator.db import create_task, update_task_queue, get_task
                         from orchestrator.review_utils import (
                             init_task_review, record_review_result,
                         )
@@ -787,7 +787,7 @@ class TestProcessGatekeeperReviews:
                         task_path.write_text("# [TASK-gkfail] Test\n")
 
                         create_task(task_id="gkfail", file_path=str(task_path), branch="agent/gkfail")
-                        update_task("gkfail", queue="provisional", commits_count=1)
+                        update_task_queue("gkfail", "provisional", commits_count=1)
 
                         # Init review, pass one, fail one
                         init_task_review("gkfail", branch="agent/gkfail", required_checks=["architecture", "testing"])
@@ -810,12 +810,12 @@ class TestProcessGatekeeperReviews:
                         'required_checks': ['architecture'],
                         'max_rejections': 3,
                     }):
-                        from orchestrator.db import create_task, update_task
+                        from orchestrator.db import create_task, update_task_queue
                         from orchestrator.scheduler import process_gatekeeper_reviews
                         from orchestrator.review_utils import has_active_review
 
                         create_task(task_id="auto1", file_path="/auto1.md", auto_accept=True)
-                        update_task("auto1", queue="provisional", commits_count=1)
+                        update_task_queue("auto1", "provisional", commits_count=1)
 
                         process_gatekeeper_reviews()
 
@@ -832,12 +832,12 @@ class TestProcessGatekeeperReviews:
                         'required_checks': ['architecture'],
                         'max_rejections': 3,
                     }):
-                        from orchestrator.db import create_task, update_task
+                        from orchestrator.db import create_task, update_task_queue
                         from orchestrator.scheduler import process_gatekeeper_reviews
                         from orchestrator.review_utils import has_active_review
 
                         create_task(task_id="nocom1", file_path="/nocom1.md")
-                        update_task("nocom1", queue="provisional", commits_count=0)
+                        update_task_queue("nocom1", "provisional", commits_count=0)
 
                         process_gatekeeper_reviews()
 
@@ -847,12 +847,12 @@ class TestProcessGatekeeperReviews:
         """Test that disabled gatekeeper system is a no-op."""
         with patch('orchestrator.db.get_database_path', return_value=initialized_db):
             with patch('orchestrator.scheduler.is_gatekeeper_enabled', return_value=False):
-                from orchestrator.db import create_task, update_task
+                from orchestrator.db import create_task, update_task_queue
                 from orchestrator.scheduler import process_gatekeeper_reviews
                 from orchestrator.review_utils import has_active_review
 
                 create_task(task_id="dis1", file_path="/dis1.md")
-                update_task("dis1", queue="provisional", commits_count=2)
+                update_task_queue("dis1", "provisional", commits_count=2)
 
                 # Should be a no-op when disabled
                 with patch('orchestrator.review_utils.get_orchestrator_dir', return_value=mock_config):

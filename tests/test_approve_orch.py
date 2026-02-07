@@ -480,13 +480,13 @@ class TestAcceptInDb:
     def test_accepts_task(self, initialized_db):
         """Moves task to done and clears claimed_by."""
         with patch("orchestrator.db.get_database_path", return_value=initialized_db):
-            from orchestrator.db import create_task, update_task
+            from orchestrator.db import create_task, update_task_queue
             create_task(
                 task_id="acc12345",
                 file_path="/tmp/TASK-acc12345.md",
                 role="orchestrator_impl",
             )
-            update_task("acc12345", queue="provisional", claimed_by="orch-impl-1")
+            update_task_queue("acc12345", "provisional", claimed_by="orch-impl-1")
 
             result = accept_in_db("acc12345")
             assert result is True
@@ -499,13 +499,13 @@ class TestAcceptInDb:
     def test_fixes_incorrect_state(self, initialized_db):
         """Corrects queue state if accept_completion didn't fully work."""
         with patch("orchestrator.db.get_database_path", return_value=initialized_db):
-            from orchestrator.db import create_task, update_task
+            from orchestrator.db import create_task, update_task_queue
             create_task(
                 task_id="fix12345",
                 file_path="/tmp/TASK-fix12345.md",
                 role="orchestrator_impl",
             )
-            update_task("fix12345", queue="claimed", claimed_by="orch-impl-1")
+            update_task_queue("fix12345", "claimed", claimed_by="orch-impl-1")
 
             result = accept_in_db("fix12345")
             assert result is True
@@ -513,14 +513,14 @@ class TestAcceptInDb:
     def test_idempotent_on_already_done(self, initialized_db):
         """Re-calling accept_in_db on a done task is a no-op."""
         with patch("orchestrator.db.get_database_path", return_value=initialized_db):
-            from orchestrator.db import create_task, update_task, get_task, get_connection
+            from orchestrator.db import create_task, update_task_queue, get_task, get_connection
 
             create_task(
                 task_id="idem1234",
                 file_path="/tmp/TASK-idem1234.md",
                 role="orchestrator_impl",
             )
-            update_task("idem1234", queue="provisional", claimed_by="orch-impl-1")
+            update_task_queue("idem1234", "provisional", claimed_by="orch-impl-1")
 
             # Accept the first time
             result = accept_in_db("idem1234")
@@ -568,10 +568,8 @@ class TestApproveOrchestratorTask:
                     file_path="/tmp/TASK-impl1234.md",
                     role="implement",
                 )
-                update_mock = patch("orchestrator.db.update_task")
-                with update_mock:
-                    from orchestrator.db import update_task
-                    update_task("impl1234", queue="provisional")
+                from orchestrator.db import update_task_queue
+                update_task_queue("impl1234", "provisional")
 
                 result = approve_orchestrator_task("impl1234")
                 assert result == 1
@@ -580,13 +578,13 @@ class TestApproveOrchestratorTask:
         """Re-running on an already-done task succeeds (idempotency)."""
         with patch("orchestrator.db.get_database_path", return_value=initialized_db):
             with patch("orchestrator.approve_orch.is_db_enabled", return_value=True):
-                from orchestrator.db import create_task, update_task
+                from orchestrator.db import create_task, update_task_queue
                 create_task(
                     task_id="done1234",
                     file_path="/tmp/TASK-done1234.md",
                     role="orchestrator_impl",
                 )
-                update_task("done1234", queue="done")
+                update_task_queue("done1234", "done")
 
                 result = approve_orchestrator_task("done1234")
                 assert result == 0
@@ -595,14 +593,15 @@ class TestApproveOrchestratorTask:
         """Returns error for tasks in non-approvable queues (e.g., incoming)."""
         with patch("orchestrator.db.get_database_path", return_value=initialized_db):
             with patch("orchestrator.approve_orch.is_db_enabled", return_value=True):
-                from orchestrator.db import create_task, update_task
+                from orchestrator.db import create_task, update_task_queue
                 create_task(
                     task_id="inc_1234",
                     file_path="/tmp/TASK-inc_1234.md",
                     role="orchestrator_impl",
                 )
-                # incoming is not an approvable queue
-                update_task("inc_1234", queue="incoming")
+                # incoming is not an approvable queue — task is already created in incoming,
+                # but we explicitly set it to confirm the guard
+                update_task_queue("inc_1234", "incoming")
 
                 result = approve_orchestrator_task("inc_1234")
                 assert result == 1

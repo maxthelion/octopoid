@@ -72,7 +72,7 @@ class TestAcceptAllRouting:
                         recycle_to_breakdown,
                         accept_completion,
                     )
-                    from orchestrator.db import get_task, update_task
+                    from orchestrator.db import get_task, update_task, update_task_queue
 
                     # Create a "normal" task in provisional (has commits)
                     prov_dir = mock_config / "shared" / "queue" / "provisional"
@@ -86,7 +86,7 @@ class TestAcceptAllRouting:
                     )
                     from orchestrator.db import create_task as db_create_task
                     db_create_task(task_id="norm0001", file_path=str(normal_path), project_id="PROJ-test1", role="implement")
-                    update_task("norm0001", queue="provisional", commits_count=2, turns_used=30)
+                    update_task_queue("norm0001", "provisional", commits_count=2, turns_used=30)
 
                     burned = sample_project_with_tasks["burned_task"]
 
