@@ -193,6 +193,35 @@ def check_recycler_backpressure() -> Tuple[bool, str]:
     return True, ""
 
 
+def check_check_runner_backpressure() -> Tuple[bool, str]:
+    """Backpressure check for check_runner agent.
+
+    Only proceed if there are provisional tasks with pending automated checks.
+
+    Returns:
+        Tuple of (can_proceed, reason)
+    """
+    if not is_db_enabled():
+        return False, "check_runner_requires_db"
+
+    from . import db
+
+    tasks = db.list_tasks(queue="provisional")
+    for task in tasks:
+        checks = task.get("checks", [])
+        if not checks:
+            continue
+        check_results = task.get("check_results", {})
+        has_pending = any(
+            c not in check_results or check_results[c].get("status") not in ("pass", "fail")
+            for c in checks
+        )
+        if has_pending:
+            return True, ""
+
+    return False, "no_pending_checks"
+
+
 def check_gatekeeper_backpressure() -> Tuple[bool, str]:
     """Backpressure check for gatekeeper agents.
 
@@ -231,6 +260,7 @@ ROLE_CHECKS = {
     "tester": check_implementer_backpressure,  # Same checks as implementer
     "reviewer": check_implementer_backpressure,  # Same checks as implementer
     "gatekeeper": check_gatekeeper_backpressure,
+    "check_runner": check_check_runner_backpressure,
 }
 
 

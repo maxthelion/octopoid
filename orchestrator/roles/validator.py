@@ -52,6 +52,19 @@ class ValidatorRole(BaseRole):
             attempt_count = task.get("attempt_count", 0)
 
             role = task.get("role")
+
+            # Skip tasks with pending automated checks — the check_runner handles these
+            checks = task.get("checks", [])
+            if checks:
+                check_results = task.get("check_results", {})
+                has_pending = any(
+                    c not in check_results or check_results[c].get("status") not in ("pass", "fail")
+                    for c in checks
+                )
+                if has_pending:
+                    self.debug_log(f"Skipping {task_id}: has pending automated checks")
+                    continue
+
             self.debug_log(f"Validating {task_id}: commits={commits_count}, turns={turns_used}, attempts={attempt_count}, role={role}")
 
             # Check if task has commits

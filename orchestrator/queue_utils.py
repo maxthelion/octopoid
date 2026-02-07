@@ -190,6 +190,15 @@ def _db_task_to_file_format(db_task: dict[str, Any]) -> dict[str, Any]:
         # Fallback: if raw string slips through, parse it
         checks = [c.strip() for c in checks.split(",") if c.strip()] if checks else []
 
+    # check_results comes back as a dict from db.get_task() / db.list_tasks()
+    check_results = db_task.get("check_results", {})
+    if isinstance(check_results, str):
+        import json
+        try:
+            check_results = json.loads(check_results) if check_results else {}
+        except (json.JSONDecodeError, TypeError):
+            check_results = {}
+
     return {
         "path": file_path,
         "id": db_task["id"],
@@ -212,6 +221,7 @@ def _db_task_to_file_format(db_task: dict[str, Any]) -> dict[str, Any]:
         "pr_number": db_task.get("pr_number"),
         "pr_url": db_task.get("pr_url"),
         "checks": checks,
+        "check_results": check_results,
     }
 
 

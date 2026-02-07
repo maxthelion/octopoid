@@ -46,10 +46,26 @@ def _gather_work() -> dict[str, list[dict[str, Any]]]:
     incoming = [_format_task(t) for t in list_tasks("incoming")]
     claimed = [_format_task(t) for t in list_tasks("claimed")]
 
-    # Split provisional into "checking" (has checks) and "in_review" (ready for human)
+    # Split provisional into "checking" (has pending checks) and "in_review" (ready for human)
     provisional = [_format_task(t) for t in list_tasks("provisional")]
-    checking = [t for t in provisional if t.get("checks")]
-    in_review = [t for t in provisional if not t.get("checks")]
+    checking = []
+    in_review = []
+    for t in provisional:
+        checks = t.get("checks", [])
+        if not checks:
+            # No checks defined — ready for human review
+            in_review.append(t)
+        else:
+            # Has checks — see if all have passed
+            check_results = t.get("check_results", {})
+            all_passed = all(
+                check_results.get(c, {}).get("status") == "pass"
+                for c in checks
+            )
+            if all_passed:
+                in_review.append(t)
+            else:
+                checking.append(t)
 
     # "done_today" — tasks completed in the last 24 hours
     done_all = list_tasks("done")
@@ -91,6 +107,7 @@ def _format_task(task: dict[str, Any]) -> dict[str, Any]:
         "attempt_count": task.get("attempt_count", 0),
         "rejection_count": task.get("rejection_count", 0),
         "checks": task.get("checks", []),
+        "check_results": task.get("check_results", {}),
     }
 
 
@@ -123,6 +140,7 @@ _ROLE_TURN_LIMITS: dict[str, int] = {
     "proposer": 20,
     "inbox_poller": 10,
     "recycler": 10,
+    "check_runner": 10,
 }
 
 

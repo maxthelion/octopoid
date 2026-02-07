@@ -382,6 +382,14 @@ def get_role_constraints(role: str) -> str:
 - Accept depth-capped tasks for human review
 - This role runs without Claude invocation
 """,
+        "check_runner": """
+- You do NOT need a worktree (lightweight agent)
+- Run automated checks on provisional tasks with pending checks
+- For pytest-submodule: cherry-pick agent commits, run pytest
+- Record pass/fail results in the DB check_results field
+- Reject failed tasks back to agents with test output
+- This role runs without Claude invocation
+""",
     }
     return constraints.get(role, "- Follow standard development practices")
 

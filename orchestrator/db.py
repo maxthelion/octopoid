@@ -18,7 +18,7 @@ from .config import get_orchestrator_dir
 _SENTINEL = object()
 
 # Schema version for migrations
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 
 def get_database_path() -> Path:
@@ -90,6 +90,7 @@ def init_schema() -> None:
                 pr_number INTEGER,
                 pr_url TEXT,
                 checks TEXT,
+                check_results TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (project_id) REFERENCES projects(id)
@@ -273,6 +274,13 @@ def migrate_schema() -> bool:
             except sqlite3.OperationalError:
                 pass  # Column already exists
 
+        # Migration from v5 to v6: Add check_results column
+        if current < 6:
+            try:
+                conn.execute("ALTER TABLE tasks ADD COLUMN check_results TEXT")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+
         # Update schema version
         conn.execute(
             "INSERT OR REPLACE INTO schema_info (key, value) VALUES (?, ?)",
@@ -370,6 +378,39 @@ def _parse_checks(raw: str | None) -> list[str]:
     return [c.strip() for c in raw.split(",") if c.strip()]
 
 
+def _parse_check_results(raw: str | None) -> dict[str, dict]:
+    """Parse a JSON check_results string into a dict.
+
+    Args:
+        raw: JSON string from DB, or None
+
+    Returns:
+        Dict mapping check name to result dict {status, summary, timestamp}
+    """
+    import json
+    if not raw:
+        return {}
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return {}
+
+
+def _serialize_check_results(results: dict[str, dict]) -> str | None:
+    """Serialize check results dict to JSON string for DB storage.
+
+    Args:
+        results: Dict mapping check name to result dict
+
+    Returns:
+        JSON string or None if empty
+    """
+    import json
+    if not results:
+        return None
+    return json.dumps(results)
+
+
 def get_task(task_id: str) -> dict[str, Any] | None:
     """Get a task by ID.
 
@@ -380,6 +421,7 @@ def get_task(task_id: str) -> dict[str, Any] | None:
         Task as dictionary or None if not found.
         Note: Task identifier is returned as 'id' key (not 'task_id').
         The 'checks' field is returned as a list of strings (empty list if NULL).
+        The 'check_results' field is returned as a dict (empty dict if NULL).
     """
     with get_connection() as conn:
         cursor = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
@@ -388,6 +430,7 @@ def get_task(task_id: str) -> dict[str, Any] | None:
             return None
         task = dict(row)
         task["checks"] = _parse_checks(task.get("checks"))
+        task["check_results"] = _parse_check_results(task.get("check_results"))
         return task
 
 
@@ -400,6 +443,7 @@ def get_task_by_path(file_path: str) -> dict[str, Any] | None:
     Returns:
         Task as dictionary or None if not found.
         The 'checks' field is returned as a list of strings (empty list if NULL).
+        The 'check_results' field is returned as a dict (empty dict if NULL).
     """
     with get_connection() as conn:
         cursor = conn.execute("SELECT * FROM tasks WHERE file_path = ?", (file_path,))
@@ -408,6 +452,7 @@ def get_task_by_path(file_path: str) -> dict[str, Any] | None:
             return None
         task = dict(row)
         task["checks"] = _parse_checks(task.get("checks"))
+        task["check_results"] = _parse_check_results(task.get("check_results"))
         return task
 
 
@@ -642,6 +687,7 @@ def list_tasks(
         for row in cursor.fetchall():
             task = dict(row)
             task["checks"] = _parse_checks(task.get("checks"))
+            task["check_results"] = _parse_check_results(task.get("check_results"))
             tasks.append(task)
         return tasks
 
@@ -849,6 +895,111 @@ def review_reject_completion(
         history_agent=reviewer,
         history_details=reason,
     )
+
+
+def record_check_result(
+    task_id: str,
+    check_name: str,
+    status: str,
+    summary: str = "",
+) -> dict[str, Any] | None:
+    """Record the result of an automated check for a task.
+
+    Updates the check_results JSON field on the task. Each check result
+    is keyed by check_name and contains {status, summary, timestamp}.
+
+    Args:
+        task_id: Task identifier
+        check_name: Name of the check (e.g. 'pytest-submodule')
+        status: Result status ('pass' or 'fail')
+        summary: Brief description of the result
+
+    Returns:
+        Updated task or None if not found
+    """
+    task = get_task(task_id)
+    if not task:
+        return None
+
+    results = task.get("check_results", {})
+    results[check_name] = {
+        "status": status,
+        "summary": summary,
+        "timestamp": datetime.now().isoformat(),
+    }
+
+    serialized = _serialize_check_results(results)
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE tasks SET check_results = ?, updated_at = ? WHERE id = ?",
+            (serialized, datetime.now().isoformat(), task_id),
+        )
+        conn.execute(
+            """
+            INSERT INTO task_history (task_id, event, details)
+            VALUES (?, ?, ?)
+            """,
+            (task_id, f"check_{status}", f"{check_name}: {summary[:200]}"),
+        )
+
+    return get_task(task_id)
+
+
+def all_checks_passed(task_id: str) -> tuple[bool, list[str]]:
+    """Check if all required checks for a task have passed.
+
+    Args:
+        task_id: Task identifier
+
+    Returns:
+        Tuple of (all_passed, list_of_failed_or_pending_check_names)
+    """
+    task = get_task(task_id)
+    if not task:
+        return False, []
+
+    checks = task.get("checks", [])
+    if not checks:
+        return True, []
+
+    results = task.get("check_results", {})
+    not_passed = []
+    for check_name in checks:
+        result = results.get(check_name, {})
+        if result.get("status") != "pass":
+            not_passed.append(check_name)
+
+    return len(not_passed) == 0, not_passed
+
+
+def get_check_feedback(task_id: str) -> str:
+    """Aggregate feedback from failed checks into markdown.
+
+    Args:
+        task_id: Task identifier
+
+    Returns:
+        Formatted markdown feedback string (empty if all passed)
+    """
+    task = get_task(task_id)
+    if not task:
+        return ""
+
+    checks = task.get("checks", [])
+    results = task.get("check_results", {})
+    feedback_parts = []
+
+    for check_name in checks:
+        result = results.get(check_name, {})
+        status = result.get("status", "pending")
+        summary = result.get("summary", "")
+        timestamp = result.get("timestamp", "")
+
+        if status == "fail":
+            part = f"### {check_name} ({timestamp})\n\n**FAILED** — {summary}\n"
+            feedback_parts.append(part)
+
+    return "\n".join(feedback_parts)
 
 
 def escalate_to_planning(task_id: str, plan_id: str) -> dict[str, Any] | None:
