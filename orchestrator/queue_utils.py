@@ -184,6 +184,12 @@ def _db_task_to_file_format(db_task: dict[str, Any]) -> dict[str, Any]:
         except IOError:
             pass
 
+    # checks comes back as a list from db.get_task() / db.list_tasks()
+    checks = db_task.get("checks", [])
+    if isinstance(checks, str):
+        # Fallback: if raw string slips through, parse it
+        checks = [c.strip() for c in checks.split(",") if c.strip()] if checks else []
+
     return {
         "path": file_path,
         "id": db_task["id"],
@@ -205,6 +211,7 @@ def _db_task_to_file_format(db_task: dict[str, Any]) -> dict[str, Any]:
         "rejection_count": db_task.get("rejection_count", 0),
         "pr_number": db_task.get("pr_number"),
         "pr_url": db_task.get("pr_url"),
+        "checks": checks,
     }
 
 
@@ -234,6 +241,12 @@ def parse_task_file(task_path: Path) -> dict[str, Any] | None:
     created_match = re.search(r"^CREATED:\s*(.+)$", content, re.MULTILINE)
     created_by_match = re.search(r"^CREATED_BY:\s*(.+)$", content, re.MULTILINE)
     blocked_by_match = re.search(r"^BLOCKED_BY:\s*(.+)$", content, re.MULTILINE)
+    checks_match = re.search(r"^CHECKS:\s*(.+)$", content, re.MULTILINE)
+
+    # Parse checks into a list
+    checks: list[str] = []
+    if checks_match:
+        checks = [c.strip() for c in checks_match.group(1).strip().split(",") if c.strip()]
 
     return {
         "path": task_path,
@@ -245,6 +258,7 @@ def parse_task_file(task_path: Path) -> dict[str, Any] | None:
         "created": created_match.group(1).strip() if created_match else None,
         "created_by": created_by_match.group(1).strip() if created_by_match else None,
         "blocked_by": blocked_by_match.group(1).strip() if blocked_by_match else None,
+        "checks": checks,
         "content": content,
     }
 
@@ -780,6 +794,7 @@ def create_task(
     blocked_by: str | None = None,
     project_id: str | None = None,
     queue: str = "incoming",
+    checks: list[str] | None = None,
 ) -> Path:
     """Create a new task file in the specified queue.
 
@@ -796,6 +811,8 @@ def create_task(
         blocked_by: Comma-separated list of task IDs that block this task
         project_id: Optional parent project ID
         queue: Queue to create in (default: incoming, can be 'breakdown')
+        checks: Optional list of check names that must pass before human review
+            (e.g. ['pytest-submodule', 'vitest'])
 
     Returns:
         Path to created task file
@@ -825,6 +842,7 @@ def create_task(
 
     blocked_by_line = f"BLOCKED_BY: {blocked_by}\n" if blocked_by else ""
     project_line = f"PROJECT: {project_id}\n" if project_id else ""
+    checks_line = f"CHECKS: {','.join(checks)}\n" if checks else ""
 
     # If task belongs to a project, inherit branch from project
     if project_id and branch == "main" and is_db_enabled():
@@ -840,7 +858,7 @@ PRIORITY: {priority}
 BRANCH: {branch}
 CREATED: {datetime.now().isoformat()}
 CREATED_BY: {created_by}
-{project_line}{blocked_by_line}
+{project_line}{blocked_by_line}{checks_line}
 ## Context
 {context}
 
@@ -864,6 +882,7 @@ CREATED_BY: {created_by}
             branch=branch,
             blocked_by=blocked_by,
             project_id=project_id,
+            checks=checks,
         )
         # Set queue status if not incoming
         if queue != "incoming":

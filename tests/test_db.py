@@ -734,3 +734,137 @@ class TestUpdateTaskQueue:
             # Now fully unblocked
             task = get_task("waitall")
             assert task["blocked_by"] is None
+
+
+class TestChecksField:
+    """Tests for the per-task checks field."""
+
+    def test_create_task_with_checks(self, initialized_db):
+        """create_task with checks stores comma-separated string and retrieves as list."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, get_task
+
+            task = create_task(
+                task_id="chk1",
+                file_path="/chk1.md",
+                checks=["pytest-submodule", "vitest"],
+            )
+
+            assert task["checks"] == ["pytest-submodule", "vitest"]
+
+            # Verify round-trip
+            fetched = get_task("chk1")
+            assert fetched["checks"] == ["pytest-submodule", "vitest"]
+
+    def test_create_task_without_checks(self, initialized_db):
+        """create_task without checks returns empty list."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, get_task
+
+            task = create_task(
+                task_id="chk2",
+                file_path="/chk2.md",
+            )
+
+            assert task["checks"] == []
+
+            fetched = get_task("chk2")
+            assert fetched["checks"] == []
+
+    def test_create_task_with_empty_checks(self, initialized_db):
+        """create_task with empty checks list returns empty list."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, get_task
+
+            task = create_task(
+                task_id="chk3",
+                file_path="/chk3.md",
+                checks=[],
+            )
+
+            assert task["checks"] == []
+
+    def test_create_task_with_single_check(self, initialized_db):
+        """create_task with a single check stores and retrieves correctly."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, get_task
+
+            task = create_task(
+                task_id="chk4",
+                file_path="/chk4.md",
+                checks=["pytest-submodule"],
+            )
+
+            assert task["checks"] == ["pytest-submodule"]
+
+    def test_checks_stored_as_comma_separated_in_db(self, initialized_db):
+        """Verify the raw DB value is a comma-separated string."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, get_connection
+
+            create_task(
+                task_id="chk5",
+                file_path="/chk5.md",
+                checks=["pytest-submodule", "vitest"],
+            )
+
+            with get_connection() as conn:
+                cursor = conn.execute(
+                    "SELECT checks FROM tasks WHERE id = ?", ("chk5",)
+                )
+                row = cursor.fetchone()
+                assert row["checks"] == "pytest-submodule,vitest"
+
+    def test_checks_null_when_none(self, initialized_db):
+        """Verify checks is NULL in DB when not specified."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, get_connection
+
+            create_task(
+                task_id="chk6",
+                file_path="/chk6.md",
+            )
+
+            with get_connection() as conn:
+                cursor = conn.execute(
+                    "SELECT checks, typeof(checks) as ctype FROM tasks WHERE id = ?",
+                    ("chk6",),
+                )
+                row = cursor.fetchone()
+                assert row["ctype"] == "null"
+                assert row["checks"] is None
+
+    def test_list_tasks_returns_checks_as_list(self, initialized_db):
+        """list_tasks returns checks as list for each task."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, list_tasks
+
+            create_task(
+                task_id="chk7",
+                file_path="/chk7.md",
+                checks=["pytest-submodule"],
+            )
+            create_task(
+                task_id="chk8",
+                file_path="/chk8.md",
+            )
+
+            tasks = list_tasks(queue="incoming")
+            by_id = {t["id"]: t for t in tasks}
+
+            assert by_id["chk7"]["checks"] == ["pytest-submodule"]
+            assert by_id["chk8"]["checks"] == []
+
+    def test_get_task_by_path_returns_checks_as_list(self, initialized_db):
+        """get_task_by_path returns checks as list."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, get_task_by_path
+
+            create_task(
+                task_id="chk9",
+                file_path="/chk9.md",
+                checks=["vitest", "typecheck"],
+            )
+
+            task = get_task_by_path("/chk9.md")
+            assert task["checks"] == ["vitest", "typecheck"]

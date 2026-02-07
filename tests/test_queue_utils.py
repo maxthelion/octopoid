@@ -612,3 +612,151 @@ class TestCreateTaskBlockedByNormalization:
                     assert row is not None, f"Task {task_id} not found in DB"
                     assert row["btype"] == "null", f"Expected null type, got {row['btype']} with value {repr(row['blocked_by'])}"
                     assert row["blocked_by"] is None
+
+
+class TestParseTaskFileChecks:
+    """Tests for CHECKS: field parsing in parse_task_file."""
+
+    def test_parse_task_with_checks(self, mock_orchestrator_dir):
+        """parse_task_file extracts CHECKS field as a list."""
+        from orchestrator.queue_utils import parse_task_file
+
+        task_path = mock_orchestrator_dir / "shared" / "queue" / "incoming" / "TASK-chkparse1.md"
+        task_path.write_text(
+            "# [TASK-chkparse1] Task with checks\n"
+            "ROLE: orchestrator_impl\n"
+            "PRIORITY: P1\n"
+            "CHECKS: pytest-submodule,vitest\n"
+            "\n## Context\nSome context\n"
+        )
+
+        task = parse_task_file(task_path)
+        assert task["checks"] == ["pytest-submodule", "vitest"]
+
+    def test_parse_task_with_single_check(self, mock_orchestrator_dir):
+        """parse_task_file handles a single check."""
+        from orchestrator.queue_utils import parse_task_file
+
+        task_path = mock_orchestrator_dir / "shared" / "queue" / "incoming" / "TASK-chkparse2.md"
+        task_path.write_text(
+            "# [TASK-chkparse2] Task with one check\n"
+            "CHECKS: pytest-submodule\n"
+            "\n## Context\nSome context\n"
+        )
+
+        task = parse_task_file(task_path)
+        assert task["checks"] == ["pytest-submodule"]
+
+    def test_parse_task_without_checks(self, mock_orchestrator_dir):
+        """parse_task_file returns empty list when no CHECKS line."""
+        from orchestrator.queue_utils import parse_task_file
+
+        task_path = mock_orchestrator_dir / "shared" / "queue" / "incoming" / "TASK-chkparse3.md"
+        task_path.write_text(
+            "# [TASK-chkparse3] Task without checks\n"
+            "ROLE: implement\n"
+            "\n## Context\nSome context\n"
+        )
+
+        task = parse_task_file(task_path)
+        assert task["checks"] == []
+
+    def test_parse_task_checks_with_spaces(self, mock_orchestrator_dir):
+        """parse_task_file handles spaces around commas in CHECKS."""
+        from orchestrator.queue_utils import parse_task_file
+
+        task_path = mock_orchestrator_dir / "shared" / "queue" / "incoming" / "TASK-chkparse4.md"
+        task_path.write_text(
+            "# [TASK-chkparse4] Task with spaced checks\n"
+            "CHECKS: pytest-submodule , vitest , typecheck\n"
+            "\n## Context\nSome context\n"
+        )
+
+        task = parse_task_file(task_path)
+        assert task["checks"] == ["pytest-submodule", "vitest", "typecheck"]
+
+
+class TestCreateTaskChecks:
+    """Tests for checks parameter in queue_utils.create_task."""
+
+    def test_create_task_with_checks_writes_to_file(self, mock_orchestrator_dir):
+        """create_task with checks writes CHECKS line to file."""
+        with patch('orchestrator.queue_utils.is_db_enabled', return_value=False):
+            with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "shared" / "queue"):
+                from orchestrator.queue_utils import create_task
+
+                task_path = create_task(
+                    title="Task with checks",
+                    role="orchestrator_impl",
+                    context="test context",
+                    acceptance_criteria=["test"],
+                    checks=["pytest-submodule", "vitest"],
+                )
+
+                content = task_path.read_text()
+                assert "CHECKS: pytest-submodule,vitest" in content
+
+    def test_create_task_without_checks_no_checks_line(self, mock_orchestrator_dir):
+        """create_task without checks does not write CHECKS line."""
+        with patch('orchestrator.queue_utils.is_db_enabled', return_value=False):
+            with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "shared" / "queue"):
+                from orchestrator.queue_utils import create_task
+
+                task_path = create_task(
+                    title="Task without checks",
+                    role="implement",
+                    context="test context",
+                    acceptance_criteria=["test"],
+                )
+
+                content = task_path.read_text()
+                assert "CHECKS:" not in content
+
+    def test_create_task_checks_passed_to_db(self, mock_orchestrator_dir, initialized_db):
+        """Full integration: queue_utils.create_task passes checks to DB."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "shared" / "queue"):
+                from orchestrator.queue_utils import create_task
+                from orchestrator.db import get_connection
+
+                task_path = create_task(
+                    title="DB checks test",
+                    role="orchestrator_impl",
+                    context="test context",
+                    acceptance_criteria=["test"],
+                    checks=["pytest-submodule"],
+                )
+
+                task_id = task_path.stem.replace("TASK-", "")
+
+                with get_connection() as conn:
+                    cursor = conn.execute(
+                        "SELECT checks FROM tasks WHERE id = ?", (task_id,)
+                    )
+                    row = cursor.fetchone()
+                    assert row is not None, f"Task {task_id} not found in DB"
+                    assert row["checks"] == "pytest-submodule"
+
+    def test_create_task_checks_roundtrip_file_and_db(self, mock_orchestrator_dir, initialized_db):
+        """Full roundtrip: create with checks, verify file has CHECKS line, DB has checks."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "shared" / "queue"):
+                from orchestrator.queue_utils import create_task, parse_task_file
+                from orchestrator.db import get_task
+
+                task_path = create_task(
+                    title="Roundtrip checks test",
+                    role="orchestrator_impl",
+                    context="test context",
+                    acceptance_criteria=["test"],
+                    checks=["pytest-submodule", "vitest"],
+                )
+
+                # Verify file
+                file_task = parse_task_file(task_path)
+                assert file_task["checks"] == ["pytest-submodule", "vitest"]
+
+                # Verify DB
+                task_id = task_path.stem.replace("TASK-", "")
+                db_task = get_task(task_id)
+                assert db_task["checks"] == ["pytest-submodule", "vitest"]

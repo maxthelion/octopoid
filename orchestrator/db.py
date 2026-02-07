@@ -18,7 +18,7 @@ from .config import get_orchestrator_dir
 _SENTINEL = object()
 
 # Schema version for migrations
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 def get_database_path() -> Path:
@@ -89,6 +89,7 @@ def init_schema() -> None:
                 rejection_count INTEGER DEFAULT 0,
                 pr_number INTEGER,
                 pr_url TEXT,
+                checks TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (project_id) REFERENCES projects(id)
@@ -265,6 +266,13 @@ def migrate_schema() -> bool:
             except sqlite3.OperationalError:
                 pass  # Column already exists
 
+        # Migration from v4 to v5: Add checks column
+        if current < 5:
+            try:
+                conn.execute("ALTER TABLE tasks ADD COLUMN checks TEXT")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+
         # Update schema version
         conn.execute(
             "INSERT OR REPLACE INTO schema_info (key, value) VALUES (?, ?)",
@@ -289,6 +297,7 @@ def create_task(
     blocked_by: str | None = None,
     project_id: str | None = None,
     auto_accept: bool | None = None,
+    checks: list[str] | None = None,
 ) -> dict[str, Any]:
     """Create a new task in the database.
 
@@ -302,6 +311,7 @@ def create_task(
         blocked_by: Comma-separated list of blocking task IDs
         project_id: Optional parent project ID
         auto_accept: Skip provisional queue, go straight to done (inherits from project if None)
+        checks: Optional list of check names (e.g. ['pytest-submodule', 'vitest'])
 
     Returns:
         Created task as dictionary
@@ -322,13 +332,16 @@ def create_task(
     if not blocked_by or blocked_by == "None":
         blocked_by = None
 
+    # Store checks as comma-separated string, or NULL if empty/None
+    checks_str = ",".join(checks) if checks else None
+
     with get_connection() as conn:
         conn.execute(
             """
-            INSERT INTO tasks (id, file_path, priority, role, branch, complexity, blocked_by, project_id, auto_accept)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO tasks (id, file_path, priority, role, branch, complexity, blocked_by, project_id, auto_accept, checks)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (task_id, file_path, priority, role, branch, complexity, blocked_by, project_id, auto_accept),
+            (task_id, file_path, priority, role, branch, complexity, blocked_by, project_id, auto_accept, checks_str),
         )
 
         # Log creation event
@@ -343,6 +356,20 @@ def create_task(
     return get_task(task_id)
 
 
+def _parse_checks(raw: str | None) -> list[str]:
+    """Parse a comma-separated checks string into a list.
+
+    Args:
+        raw: Comma-separated checks string from DB, or None
+
+    Returns:
+        List of check names, empty list if None/empty
+    """
+    if not raw:
+        return []
+    return [c.strip() for c in raw.split(",") if c.strip()]
+
+
 def get_task(task_id: str) -> dict[str, Any] | None:
     """Get a task by ID.
 
@@ -352,11 +379,16 @@ def get_task(task_id: str) -> dict[str, Any] | None:
     Returns:
         Task as dictionary or None if not found.
         Note: Task identifier is returned as 'id' key (not 'task_id').
+        The 'checks' field is returned as a list of strings (empty list if NULL).
     """
     with get_connection() as conn:
         cursor = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
         row = cursor.fetchone()
-        return dict(row) if row else None
+        if row is None:
+            return None
+        task = dict(row)
+        task["checks"] = _parse_checks(task.get("checks"))
+        return task
 
 
 def get_task_by_path(file_path: str) -> dict[str, Any] | None:
@@ -366,12 +398,17 @@ def get_task_by_path(file_path: str) -> dict[str, Any] | None:
         file_path: Path to the task file
 
     Returns:
-        Task as dictionary or None if not found
+        Task as dictionary or None if not found.
+        The 'checks' field is returned as a list of strings (empty list if NULL).
     """
     with get_connection() as conn:
         cursor = conn.execute("SELECT * FROM tasks WHERE file_path = ?", (file_path,))
         row = cursor.fetchone()
-        return dict(row) if row else None
+        if row is None:
+            return None
+        task = dict(row)
+        task["checks"] = _parse_checks(task.get("checks"))
+        return task
 
 
 def update_task(task_id: str, **fields) -> dict[str, Any] | None:
@@ -601,7 +638,12 @@ def list_tasks(
             """,
             params,
         )
-        return [dict(row) for row in cursor.fetchall()]
+        tasks = []
+        for row in cursor.fetchall():
+            task = dict(row)
+            task["checks"] = _parse_checks(task.get("checks"))
+            tasks.append(task)
+        return tasks
 
 
 def count_tasks(queue: str | None = None) -> int:
