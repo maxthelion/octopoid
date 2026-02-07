@@ -804,6 +804,10 @@ def create_task(
     task_id = uuid4().hex[:8]
     filename = f"TASK-{task_id}.md"
 
+    # Normalize blocked_by: ensure None/empty/string-"None" all become None
+    if not blocked_by or blocked_by == "None":
+        blocked_by = None
+
     # Normalize acceptance_criteria to a list of lines
     if isinstance(acceptance_criteria, str):
         acceptance_criteria = [

@@ -477,3 +477,146 @@ class TestTaskHistory:
             assert len(custom) == 1
             assert custom[0]["agent"] == "test"
             assert custom[0]["details"] == "custom details"
+
+
+class TestBlockedByNormalization:
+    """Tests that blocked_by is properly normalized to SQL NULL."""
+
+    def test_create_task_blocked_by_none_stores_null(self, initialized_db):
+        """create_task with blocked_by=None stores SQL NULL, not string 'None'."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, get_task, get_connection
+
+            create_task(task_id="bn1", file_path="/bn1.md", blocked_by=None)
+
+            task = get_task("bn1")
+            assert task["blocked_by"] is None
+
+            # Verify at the SQL level it's actually NULL, not string "None"
+            with get_connection() as conn:
+                cursor = conn.execute(
+                    "SELECT blocked_by, typeof(blocked_by) as btype FROM tasks WHERE id = ?",
+                    ("bn1",),
+                )
+                row = cursor.fetchone()
+                assert row["btype"] == "null"
+                assert row["blocked_by"] is None
+
+    def test_create_task_blocked_by_string_none_stores_null(self, initialized_db):
+        """create_task with blocked_by='None' (string) stores SQL NULL."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, get_task, get_connection
+
+            create_task(task_id="bn2", file_path="/bn2.md", blocked_by="None")
+
+            task = get_task("bn2")
+            assert task["blocked_by"] is None
+
+            with get_connection() as conn:
+                cursor = conn.execute(
+                    "SELECT blocked_by, typeof(blocked_by) as btype FROM tasks WHERE id = ?",
+                    ("bn2",),
+                )
+                row = cursor.fetchone()
+                assert row["btype"] == "null"
+
+    def test_create_task_blocked_by_empty_string_stores_null(self, initialized_db):
+        """create_task with blocked_by='' stores SQL NULL."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, get_task, get_connection
+
+            create_task(task_id="bn3", file_path="/bn3.md", blocked_by="")
+
+            task = get_task("bn3")
+            assert task["blocked_by"] is None
+
+            with get_connection() as conn:
+                cursor = conn.execute(
+                    "SELECT blocked_by, typeof(blocked_by) as btype FROM tasks WHERE id = ?",
+                    ("bn3",),
+                )
+                row = cursor.fetchone()
+                assert row["btype"] == "null"
+
+    def test_create_task_blocked_by_valid_id_stores_correctly(self, initialized_db):
+        """create_task with a real blocked_by ID stores the string correctly."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, get_task
+
+            create_task(task_id="bn4", file_path="/bn4.md", blocked_by="abc123")
+
+            task = get_task("bn4")
+            assert task["blocked_by"] == "abc123"
+
+    def test_create_task_blocked_by_multiple_ids_stores_correctly(self, initialized_db):
+        """create_task with comma-separated IDs stores them correctly."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, get_task
+
+            create_task(task_id="bn5", file_path="/bn5.md", blocked_by="abc123,def456")
+
+            task = get_task("bn5")
+            assert task["blocked_by"] == "abc123,def456"
+
+    def test_update_task_blocked_by_none_stores_null(self, initialized_db):
+        """update_task with blocked_by=None stores SQL NULL."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, update_task, get_task, get_connection
+
+            create_task(task_id="bn6", file_path="/bn6.md", blocked_by="blocker1")
+
+            # Clear the blocked_by
+            update_task("bn6", blocked_by=None)
+
+            task = get_task("bn6")
+            assert task["blocked_by"] is None
+
+            with get_connection() as conn:
+                cursor = conn.execute(
+                    "SELECT blocked_by, typeof(blocked_by) as btype FROM tasks WHERE id = ?",
+                    ("bn6",),
+                )
+                row = cursor.fetchone()
+                assert row["btype"] == "null"
+
+    def test_update_task_blocked_by_string_none_stores_null(self, initialized_db):
+        """update_task with blocked_by='None' (string) stores SQL NULL."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, update_task, get_task, get_connection
+
+            create_task(task_id="bn7", file_path="/bn7.md", blocked_by="blocker1")
+
+            update_task("bn7", blocked_by="None")
+
+            task = get_task("bn7")
+            assert task["blocked_by"] is None
+
+            with get_connection() as conn:
+                cursor = conn.execute(
+                    "SELECT blocked_by, typeof(blocked_by) as btype FROM tasks WHERE id = ?",
+                    ("bn7",),
+                )
+                row = cursor.fetchone()
+                assert row["btype"] == "null"
+
+    def test_task_with_null_blocked_by_is_claimable(self, initialized_db):
+        """Tasks with NULL blocked_by should be claimable."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, claim_task
+
+            create_task(task_id="bn8", file_path="/bn8.md", blocked_by=None)
+
+            claimed = claim_task(agent_name="agent1")
+            assert claimed is not None
+            assert claimed["id"] == "bn8"
+
+    def test_task_with_string_none_blocked_by_is_claimable(self, initialized_db):
+        """Tasks created with blocked_by='None' should still be claimable after normalization."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, claim_task
+
+            create_task(task_id="bn9", file_path="/bn9.md", blocked_by="None")
+
+            claimed = claim_task(agent_name="agent1")
+            assert claimed is not None
+            assert claimed["id"] == "bn9"

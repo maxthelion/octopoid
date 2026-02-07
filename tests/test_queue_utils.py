@@ -486,3 +486,129 @@ class TestBackpressure:
 
                     assert can_claim is False
                     assert "No tasks" in reason
+
+
+class TestCreateTaskBlockedByNormalization:
+    """Tests for blocked_by normalization in queue_utils.create_task."""
+
+    def test_create_task_no_blocked_by_no_blocked_by_in_file(self, mock_orchestrator_dir):
+        """create_task without blocked_by should not write BLOCKED_BY line to file."""
+        with patch('orchestrator.queue_utils.is_db_enabled', return_value=False):
+            with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "shared" / "queue"):
+                from orchestrator.queue_utils import create_task
+
+                task_path = create_task(
+                    title="No blockers",
+                    role="implement",
+                    context="test",
+                    acceptance_criteria=["test"],
+                    blocked_by=None,
+                )
+
+                content = task_path.read_text()
+                assert "BLOCKED_BY" not in content
+
+    def test_create_task_string_none_blocked_by_no_blocked_by_in_file(self, mock_orchestrator_dir):
+        """create_task with blocked_by='None' should not write BLOCKED_BY line to file."""
+        with patch('orchestrator.queue_utils.is_db_enabled', return_value=False):
+            with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "shared" / "queue"):
+                from orchestrator.queue_utils import create_task
+
+                task_path = create_task(
+                    title="String None blocker",
+                    role="implement",
+                    context="test",
+                    acceptance_criteria=["test"],
+                    blocked_by="None",
+                )
+
+                content = task_path.read_text()
+                assert "BLOCKED_BY" not in content
+
+    def test_create_task_empty_string_blocked_by_no_blocked_by_in_file(self, mock_orchestrator_dir):
+        """create_task with blocked_by='' should not write BLOCKED_BY line to file."""
+        with patch('orchestrator.queue_utils.is_db_enabled', return_value=False):
+            with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "shared" / "queue"):
+                from orchestrator.queue_utils import create_task
+
+                task_path = create_task(
+                    title="Empty string blocker",
+                    role="implement",
+                    context="test",
+                    acceptance_criteria=["test"],
+                    blocked_by="",
+                )
+
+                content = task_path.read_text()
+                assert "BLOCKED_BY" not in content
+
+    def test_create_task_valid_blocked_by_written_to_file(self, mock_orchestrator_dir):
+        """create_task with a real blocked_by writes BLOCKED_BY line to file."""
+        with patch('orchestrator.queue_utils.is_db_enabled', return_value=False):
+            with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "shared" / "queue"):
+                from orchestrator.queue_utils import create_task
+
+                task_path = create_task(
+                    title="Valid blocker",
+                    role="implement",
+                    context="test",
+                    acceptance_criteria=["test"],
+                    blocked_by="abc123",
+                )
+
+                content = task_path.read_text()
+                assert "BLOCKED_BY: abc123" in content
+
+    def test_create_task_db_blocked_by_none_stores_null(self, mock_orchestrator_dir, initialized_db):
+        """Full integration: queue_utils.create_task with blocked_by=None stores SQL NULL in DB."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "shared" / "queue"):
+                from orchestrator.queue_utils import create_task
+                from orchestrator.db import get_connection
+
+                task_path = create_task(
+                    title="DB null test",
+                    role="implement",
+                    context="test",
+                    acceptance_criteria=["test"],
+                    blocked_by=None,
+                )
+
+                task_id = task_path.stem.replace("TASK-", "")
+
+                with get_connection() as conn:
+                    cursor = conn.execute(
+                        "SELECT blocked_by, typeof(blocked_by) as btype FROM tasks WHERE id = ?",
+                        (task_id,),
+                    )
+                    row = cursor.fetchone()
+                    assert row is not None, f"Task {task_id} not found in DB"
+                    assert row["btype"] == "null", f"Expected null type, got {row['btype']} with value {repr(row['blocked_by'])}"
+                    assert row["blocked_by"] is None
+
+    def test_create_task_db_blocked_by_string_none_stores_null(self, mock_orchestrator_dir, initialized_db):
+        """Full integration: queue_utils.create_task with blocked_by='None' stores SQL NULL in DB."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "shared" / "queue"):
+                from orchestrator.queue_utils import create_task
+                from orchestrator.db import get_connection
+
+                task_path = create_task(
+                    title="DB string None test",
+                    role="implement",
+                    context="test",
+                    acceptance_criteria=["test"],
+                    blocked_by="None",
+                )
+
+                task_id = task_path.stem.replace("TASK-", "")
+
+                with get_connection() as conn:
+                    cursor = conn.execute(
+                        "SELECT blocked_by, typeof(blocked_by) as btype FROM tasks WHERE id = ?",
+                        (task_id,),
+                    )
+                    row = cursor.fetchone()
+                    assert row is not None, f"Task {task_id} not found in DB"
+                    assert row["btype"] == "null", f"Expected null type, got {row['btype']} with value {repr(row['blocked_by'])}"
+                    assert row["blocked_by"] is None

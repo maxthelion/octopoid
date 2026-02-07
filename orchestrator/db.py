@@ -315,6 +315,10 @@ def create_task(
     if auto_accept is None:
         auto_accept = False
 
+    # Normalize blocked_by: ensure None/empty/string-"None" all become SQL NULL
+    if not blocked_by or blocked_by == "None":
+        blocked_by = None
+
     with get_connection() as conn:
         conn.execute(
             """
@@ -379,6 +383,10 @@ def update_task(task_id: str, **fields) -> dict[str, Any] | None:
     """
     if not fields:
         return get_task(task_id)
+
+    # Normalize blocked_by: ensure None/empty/string-"None" all become SQL NULL
+    if "blocked_by" in fields and (not fields["blocked_by"] or fields["blocked_by"] == "None"):
+        fields["blocked_by"] = None
 
     # Build SET clause dynamically
     set_clause = ", ".join(f"{k} = ?" for k in fields.keys())
