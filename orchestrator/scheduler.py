@@ -120,6 +120,56 @@ def run_pre_check(agent_name: str, agent_config: dict) -> bool:
         return True
 
 
+def _verify_submodule_isolation(sub_path: Path, agent_name: str) -> None:
+    """Verify that a worktree's submodule has its own git object store.
+
+    Orchestrator_impl agents work in a submodule inside their worktree.
+    The worktree's submodule and the main checkout's submodule have
+    SEPARATE git object stores. A commit in one is invisible from the
+    other. This function verifies the submodule .git pointer is correct.
+
+    If the submodule's .git points to the main checkout's object store
+    (instead of the worktree's), the agent would commit to the wrong
+    location and the approve script would not find the commits.
+
+    Args:
+        sub_path: Path to the submodule directory in the worktree
+        agent_name: Agent name for logging
+    """
+    git_pointer = sub_path / ".git"
+    if not git_pointer.exists():
+        debug_log(f"WARNING: {agent_name} submodule has no .git at {git_pointer}")
+        return
+
+    content = git_pointer.read_text().strip()
+
+    # A submodule .git is a file containing "gitdir: <path>"
+    if not content.startswith("gitdir:"):
+        debug_log(f"WARNING: {agent_name} submodule .git is not a gitdir pointer: {content[:80]}")
+        return
+
+    gitdir = content.split("gitdir:", 1)[1].strip()
+
+    # The gitdir should reference the worktree's modules directory, NOT
+    # the main checkout's modules. A healthy worktree submodule points to
+    # something like: ../../.git/worktrees/<name>/modules/orchestrator
+    # A BROKEN one would point to: ../../.git/modules/orchestrator
+    # (which is the main checkout's object store).
+    if "worktrees" in gitdir or "worktree" in gitdir:
+        debug_log(f"{agent_name} submodule .git correctly points to worktree store: {gitdir}")
+    else:
+        # This is the dangerous case — submodule shares the main checkout's store
+        debug_log(
+            f"WARNING: {agent_name} submodule .git points to MAIN checkout store: {gitdir}. "
+            f"Commits may go to the wrong location! "
+            f"Expected a path containing 'worktrees/' for isolated worktree storage."
+        )
+        print(
+            f"WARNING: Agent {agent_name} submodule may share git store with main checkout. "
+            f"gitdir={gitdir}"
+        )
+
+
 def peek_task_branch(role: str) -> str | None:
     """Peek at the next task for a role and return its branch.
 
@@ -342,14 +392,15 @@ def get_role_constraints(role: str) -> str:
 """,
         "orchestrator_impl": """
 - You work on the orchestrator infrastructure (Python), NOT the Boxen app
-- FIRST: Initialize the submodule: cd orchestrator && git submodule update --init && git checkout sqlite-model
-- All code is in the orchestrator/ submodule directory
+- All code is in the orchestrator/ submodule directory (already initialized by the scheduler)
 - Work inside orchestrator/ for all edits and commits
 - Run tests: cd orchestrator && ./venv/bin/python -m pytest tests/ -v
 - Do NOT run `pip install -e .` — it will corrupt the shared scheduler venv. Just edit code and run tests.
 - Key files: orchestrator/orchestrator/db.py, queue_utils.py, scheduler.py
-- Commit in the submodule (orchestrator/), not the main repo root
+- CRITICAL: Commit ONLY in the worktree's orchestrator/ submodule, not the main repo root
+- Use `git -C orchestrator/ commit` to ensure commits go to the submodule
 - Do NOT create a PR in the main repo — commit directly to the sqlite-model branch
+- Do NOT use absolute paths to /Users/.../dev/boxen/orchestrator/ — that is a DIFFERENT git repo
 """,
         "tester": """
 - You may read all files
@@ -873,6 +924,9 @@ def run_scheduler() -> None:
                             text=True,
                             timeout=30,
                         )
+                        # Verify the submodule has its own git object store
+                        # (not sharing with the main checkout's submodule)
+                        _verify_submodule_isolation(sub_path, agent_name)
                         debug_log(f"Submodule initialized for {agent_name}")
                     except Exception as e:
                         debug_log(f"Submodule init failed for {agent_name}: {e}")
