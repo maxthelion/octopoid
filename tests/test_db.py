@@ -330,7 +330,7 @@ class TestDependencyManagement:
     def test_check_dependencies_resolved(self, initialized_db):
         """Test checking if dependencies are resolved."""
         with patch('orchestrator.db.get_database_path', return_value=initialized_db):
-            from orchestrator.db import create_task, check_dependencies_resolved, update_task
+            from orchestrator.db import create_task, check_dependencies_resolved, update_task_queue
 
             create_task(task_id="dep1", file_path="/dep1.md")
             create_task(task_id="dep2", file_path="/dep2.md", blocked_by="dep1")
@@ -339,7 +339,7 @@ class TestDependencyManagement:
             assert check_dependencies_resolved("dep2") is False
 
             # Mark dep1 as done
-            update_task("dep1", queue="done")
+            update_task_queue("dep1", "done")
 
             # Now resolved
             assert check_dependencies_resolved("dep2") is True
@@ -620,3 +620,117 @@ class TestBlockedByNormalization:
             claimed = claim_task(agent_name="agent1")
             assert claimed is not None
             assert claimed["id"] == "bn9"
+
+
+class TestUpdateTaskQueue:
+    """Tests for the centralized update_task_queue() function."""
+
+    def test_update_task_raises_on_queue_kwarg(self, initialized_db):
+        """update_task() must raise ValueError if 'queue' is passed."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, update_task
+
+            create_task(task_id="utq1", file_path="/utq1.md")
+
+            with pytest.raises(ValueError, match="Cannot update 'queue' via update_task"):
+                update_task("utq1", queue="done")
+
+    def test_done_transition_unblocks_dependents(self, initialized_db):
+        """Moving a task to 'done' must unblock dependent tasks."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, update_task_queue, get_task
+
+            create_task(task_id="blocker1", file_path="/blocker1.md")
+            create_task(task_id="dep1", file_path="/dep1.md", blocked_by="blocker1")
+
+            # Verify dep1 is blocked
+            dep = get_task("dep1")
+            assert dep["blocked_by"] == "blocker1"
+
+            # Move blocker to done
+            update_task_queue("blocker1", "done")
+
+            # dep1 should be unblocked
+            dep = get_task("dep1")
+            assert dep["blocked_by"] is None
+
+    def test_done_transition_clears_claimed_by(self, initialized_db):
+        """Moving a task to 'done' must clear claimed_by."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, update_task_queue, get_task
+
+            create_task(task_id="clm1", file_path="/clm1.md")
+            update_task_queue("clm1", "claimed", claimed_by="agent-1")
+
+            task = get_task("clm1")
+            assert task["claimed_by"] == "agent-1"
+
+            # Move to done — claimed_by should be auto-cleared
+            update_task_queue("clm1", "done")
+
+            task = get_task("clm1")
+            assert task["queue"] == "done"
+            assert task["claimed_by"] is None
+
+    def test_done_transition_records_history(self, initialized_db):
+        """Moving a task to 'done' must record a history event."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, update_task_queue, get_task_history
+
+            create_task(task_id="hist1", file_path="/hist1.md")
+            update_task_queue("hist1", "done")
+
+            history = get_task_history("hist1")
+            queue_events = [h for h in history if "done" in h.get("event", "")]
+            assert len(queue_events) >= 1
+
+    def test_non_done_transition_does_not_unblock(self, initialized_db):
+        """Moving a task to a non-done queue must NOT unblock dependents."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, update_task_queue, get_task
+
+            create_task(task_id="blocker2", file_path="/blocker2.md")
+            create_task(task_id="dep2", file_path="/dep2.md", blocked_by="blocker2")
+
+            # Move blocker to provisional (not done)
+            update_task_queue("blocker2", "provisional")
+
+            # dep2 should still be blocked
+            dep = get_task("dep2")
+            assert dep["blocked_by"] == "blocker2"
+
+    def test_sets_commits_and_turns(self, initialized_db):
+        """update_task_queue can set commits_count and turns_used."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, update_task_queue, get_task
+
+            create_task(task_id="ct1", file_path="/ct1.md")
+            update_task_queue("ct1", "provisional", commits_count=5, turns_used=42)
+
+            task = get_task("ct1")
+            assert task["queue"] == "provisional"
+            assert task["commits_count"] == 5
+            assert task["turns_used"] == 42
+
+    def test_multi_blocker_partial_unblock(self, initialized_db):
+        """A task blocked by multiple tasks only unblocks when ALL blockers are done."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, update_task_queue, get_task
+
+            create_task(task_id="blkA", file_path="/blkA.md")
+            create_task(task_id="blkB", file_path="/blkB.md")
+            create_task(task_id="waitall", file_path="/waitall.md", blocked_by="blkA,blkB")
+
+            # Complete first blocker
+            update_task_queue("blkA", "done")
+
+            # Still blocked by blkB
+            task = get_task("waitall")
+            assert task["blocked_by"] == "blkB"
+
+            # Complete second blocker
+            update_task_queue("blkB", "done")
+
+            # Now fully unblocked
+            task = get_task("waitall")
+            assert task["blocked_by"] is None

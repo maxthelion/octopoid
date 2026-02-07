@@ -547,19 +547,17 @@ def review_reject_task(
 
             if rejection_count >= max_rejections:
                 # Escalate to human
-                db.update_task(
+                db.update_task_queue(
                     task_id,
-                    queue="escalated",
-                    rejection_count=rejection_count,
+                    "escalated",
                     claimed_by=None,
                     claimed_at=None,
+                    history_event="review_escalated",
+                    history_agent=rejected_by,
+                    history_details=f"rejection_count={rejection_count}, max={max_rejections}",
                 )
-                db.add_history_event(
-                    task_id,
-                    "review_escalated",
-                    agent=rejected_by,
-                    details=f"rejection_count={rejection_count}, max={max_rejections}",
-                )
+                # Also set rejection_count directly (not incrementing, setting absolute value)
+                db.update_task(task_id, rejection_count=rejection_count)
             else:
                 db.review_reject_completion(
                     task_id,
@@ -752,11 +750,12 @@ def retry_task(task_path: Path | str) -> Path:
         from . import db
         db_task = db.get_task_by_path(str(task_path))
         if db_task:
-            db.update_task(
+            db.update_task_queue(
                 db_task["id"],
-                queue="incoming",
+                "incoming",
                 claimed_by=None,
                 claimed_at=None,
+                history_event="retried",
             )
 
     incoming_dir = get_queue_subdir("incoming")
@@ -868,7 +867,7 @@ CREATED_BY: {created_by}
         )
         # Set queue status if not incoming
         if queue != "incoming":
-            db.update_task(task_id, queue=queue)
+            db.update_task_queue(task_id, queue, history_event="created_in_queue", history_details=f"queue={queue}")
 
     return task_path
 
@@ -1801,8 +1800,13 @@ def recycle_to_breakdown(task_path, reason="too_large") -> dict | None:
     if task_path.exists():
         task_path.rename(recycled_path)
 
-    db.update_task(task_id, queue="recycled", file_path=str(recycled_path))
-    db.add_history_event(task_id, "recycled", details=f"reason={reason}, breakdown_task={breakdown_task_id}")
+    db.update_task_queue(
+        task_id,
+        "recycled",
+        file_path=str(recycled_path),
+        history_event="recycled",
+        history_details=f"reason={reason}, breakdown_task={breakdown_task_id}",
+    )
 
     # NOTE: We intentionally do NOT rewire dependencies here.
     # External tasks stay blocked by the original (recycled) task ID.

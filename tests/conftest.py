@@ -123,6 +123,7 @@ def sample_project_with_tasks(mock_orchestrator_dir, initialized_db):
         submit_completion as db_submit,
         accept_completion as db_accept,
         update_task,
+        update_task_queue,
         get_database_path,
     )
 
@@ -151,7 +152,7 @@ def sample_project_with_tasks(mock_orchestrator_dir, initialized_db):
         file_path = done_dir / f"TASK-{tid}.md"
         file_path.write_text(f"# [TASK-{tid}] {title}\n\nROLE: implement\nPRIORITY: P1\nBRANCH: feature/test1\nPROJECT: PROJ-test1\n\n## Context\nTask {i+1} context.\n\n## Acceptance Criteria\n- [ ] Done\n")
         create_task(task_id=tid, file_path=str(file_path), project_id="PROJ-test1", role="implement")
-        update_task(tid, queue="done", commits_count=commits, turns_used=20)
+        update_task_queue(tid, "done", commits_count=commits, turns_used=20)
         completed_tasks.append({"id": tid, "title": title, "commits": commits, "path": file_path})
 
     # 1 burned-out task (provisional, 0 commits, 100 turns)
@@ -164,7 +165,7 @@ def sample_project_with_tasks(mock_orchestrator_dir, initialized_db):
         f"## Acceptance Criteria\n- [ ] All tests pass\n- [ ] Edge cases added\n"
     )
     create_task(task_id=burned_id, file_path=str(burned_path), project_id="PROJ-test1", role="implement")
-    update_task(burned_id, queue="provisional", commits_count=0, turns_used=100)
+    update_task_queue(burned_id, "provisional", commits_count=0, turns_used=100)
 
     # 1 task blocked by the burned-out task
     blocked_id = "block001"

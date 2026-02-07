@@ -172,7 +172,7 @@ class TestRecycleToBreakdown:
             with patch('orchestrator.queue_utils.is_db_enabled', return_value=True):
                 with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_config / "shared" / "queue"):
                     from orchestrator.queue_utils import recycle_to_breakdown
-                    from orchestrator.db import create_task, update_task
+                    from orchestrator.db import create_task, update_task, update_task_queue
 
                     # Create a standalone burned task (no project)
                     prov_dir = mock_config / "shared" / "queue" / "provisional"
@@ -185,7 +185,7 @@ class TestRecycleToBreakdown:
                         "## Acceptance Criteria\n- [ ] Done\n"
                     )
                     create_task(task_id="standalone", file_path=str(task_path), role="implement")
-                    update_task("standalone", queue="provisional", commits_count=0, turns_used=50)
+                    update_task_queue("standalone", "provisional", commits_count=0, turns_used=50)
 
                     result = recycle_to_breakdown(task_path)
 
@@ -214,7 +214,7 @@ class TestRecycleDepthCap:
             with patch('orchestrator.queue_utils.is_db_enabled', return_value=True):
                 with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_config / "shared" / "queue"):
                     from orchestrator.queue_utils import recycle_to_breakdown
-                    from orchestrator.db import create_task, update_task
+                    from orchestrator.db import create_task, update_task, update_task_queue
 
                     prov_dir = mock_config / "shared" / "queue" / "provisional"
                     prov_dir.mkdir(parents=True, exist_ok=True)
@@ -227,7 +227,7 @@ class TestRecycleDepthCap:
                         "## Acceptance Criteria\n- [ ] Done\n"
                     )
                     create_task(task_id="deep0001", file_path=str(task_path), role="implement")
-                    update_task("deep0001", queue="provisional", commits_count=0, turns_used=50)
+                    update_task_queue("deep0001", "provisional", commits_count=0, turns_used=50)
 
                     result = recycle_to_breakdown(task_path)
 
@@ -420,7 +420,7 @@ class TestStaleBlockerReconciliation:
     def test_task_with_done_blocker_gets_unblocked(self, mock_config, initialized_db):
         """Task blocked by a done task gets unblocked on reconciliation."""
         with patch('orchestrator.db.get_database_path', return_value=initialized_db):
-            from orchestrator.db import create_task, update_task, get_task, reconcile_stale_blockers
+            from orchestrator.db import create_task, update_task, update_task_queue, update_task_queue, get_task, reconcile_stale_blockers
 
             # Create a blocker task and mark it done
             incoming_dir = mock_config / "shared" / "queue" / "incoming"
@@ -431,7 +431,7 @@ class TestStaleBlockerReconciliation:
             blocker_path = done_dir / "TASK-blocker1.md"
             blocker_path.write_text("# [TASK-blocker1] Blocker\n\nROLE: implement\n")
             create_task(task_id="blocker1", file_path=str(blocker_path), role="implement")
-            update_task("blocker1", queue="done")
+            update_task_queue("blocker1", "done")
 
             # Create a blocked task
             blocked_path = incoming_dir / "TASK-blocked1.md"
@@ -457,7 +457,7 @@ class TestStaleBlockerReconciliation:
     def test_task_with_mixed_blockers_not_unblocked(self, mock_config, initialized_db):
         """Task blocked by mix of done and non-done blockers is NOT unblocked."""
         with patch('orchestrator.db.get_database_path', return_value=initialized_db):
-            from orchestrator.db import create_task, update_task, get_task, reconcile_stale_blockers
+            from orchestrator.db import create_task, update_task, update_task_queue, update_task_queue, get_task, reconcile_stale_blockers
 
             incoming_dir = mock_config / "shared" / "queue" / "incoming"
             incoming_dir.mkdir(parents=True, exist_ok=True)
@@ -468,7 +468,7 @@ class TestStaleBlockerReconciliation:
             b1_path = done_dir / "TASK-mix_done.md"
             b1_path.write_text("# [TASK-mix_done] Done blocker\n\nROLE: implement\n")
             create_task(task_id="mix_done", file_path=str(b1_path), role="implement")
-            update_task("mix_done", queue="done")
+            update_task_queue("mix_done", "done")
 
             # Blocker 2: still incoming (not done)
             b2_path = incoming_dir / "TASK-mix_pending.md"
@@ -495,7 +495,7 @@ class TestStaleBlockerReconciliation:
     def test_task_with_multiple_done_blockers_unblocked(self, mock_config, initialized_db):
         """Task blocked by multiple done tasks gets unblocked."""
         with patch('orchestrator.db.get_database_path', return_value=initialized_db):
-            from orchestrator.db import create_task, update_task, get_task, reconcile_stale_blockers
+            from orchestrator.db import create_task, update_task, update_task_queue, update_task_queue, get_task, reconcile_stale_blockers
 
             done_dir = mock_config / "shared" / "queue" / "done"
             done_dir.mkdir(parents=True, exist_ok=True)
@@ -507,7 +507,7 @@ class TestStaleBlockerReconciliation:
                 p = done_dir / f"TASK-{tid}.md"
                 p.write_text(f"# [TASK-{tid}] Done\n\nROLE: implement\n")
                 create_task(task_id=tid, file_path=str(p), role="implement")
-                update_task(tid, queue="done")
+                update_task_queue(tid, "done")
 
             # Blocked by both
             blocked_path = incoming_dir / "TASK-multi_blk.md"
@@ -525,7 +525,7 @@ class TestStaleBlockerReconciliation:
     def test_reconciliation_records_history(self, mock_config, initialized_db):
         """Reconciliation logs a history event for unblocked tasks."""
         with patch('orchestrator.db.get_database_path', return_value=initialized_db):
-            from orchestrator.db import create_task, update_task, get_task_history, reconcile_stale_blockers
+            from orchestrator.db import create_task, update_task, update_task_queue, update_task_queue, get_task_history, reconcile_stale_blockers
 
             done_dir = mock_config / "shared" / "queue" / "done"
             done_dir.mkdir(parents=True, exist_ok=True)
@@ -535,7 +535,7 @@ class TestStaleBlockerReconciliation:
             b_path = done_dir / "TASK-hist_blk.md"
             b_path.write_text("# [TASK-hist_blk] Done\n\nROLE: implement\n")
             create_task(task_id="hist_blk", file_path=str(b_path), role="implement")
-            update_task("hist_blk", queue="done")
+            update_task_queue("hist_blk", "done")
 
             t_path = incoming_dir / "TASK-hist_task.md"
             t_path.write_text("# [TASK-hist_task] Blocked\n\nROLE: implement\nBLOCKED_BY: hist_blk\n")
@@ -568,7 +568,7 @@ class TestStaleBlockerReconciliation:
     def test_idempotent_on_second_run(self, mock_config, initialized_db):
         """Running reconciliation twice doesn't double-process."""
         with patch('orchestrator.db.get_database_path', return_value=initialized_db):
-            from orchestrator.db import create_task, update_task, get_task, reconcile_stale_blockers
+            from orchestrator.db import create_task, update_task, update_task_queue, update_task_queue, get_task, reconcile_stale_blockers
 
             done_dir = mock_config / "shared" / "queue" / "done"
             done_dir.mkdir(parents=True, exist_ok=True)
@@ -578,7 +578,7 @@ class TestStaleBlockerReconciliation:
             b_path = done_dir / "TASK-idem_blk.md"
             b_path.write_text("# [TASK-idem_blk] Done\n\nROLE: implement\n")
             create_task(task_id="idem_blk", file_path=str(b_path), role="implement")
-            update_task("idem_blk", queue="done")
+            update_task_queue("idem_blk", "done")
 
             t_path = incoming_dir / "TASK-idem_task.md"
             t_path.write_text("# [TASK-idem_task] Blocked\n\nROLE: implement\nBLOCKED_BY: idem_blk\n")

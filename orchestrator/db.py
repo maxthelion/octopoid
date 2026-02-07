@@ -14,6 +14,9 @@ from typing import Any, Generator
 from .config import get_orchestrator_dir
 
 
+# Sentinel value for keyword arguments where None is a valid value
+_SENTINEL = object()
+
 # Schema version for migrations
 SCHEMA_VERSION = 4
 
@@ -372,15 +375,29 @@ def get_task_by_path(file_path: str) -> dict[str, Any] | None:
 
 
 def update_task(task_id: str, **fields) -> dict[str, Any] | None:
-    """Update task fields.
+    """Update task fields (except queue — use update_task_queue for that).
+
+    To change a task's queue, use update_task_queue() which guarantees
+    that side effects (unblocking dependents, clearing claimed_by, etc.)
+    are always applied.
 
     Args:
         task_id: Task identifier
-        **fields: Fields to update
+        **fields: Fields to update (must not include 'queue')
 
     Returns:
         Updated task or None if not found
+
+    Raises:
+        ValueError: If 'queue' is passed — use update_task_queue() instead
     """
+    if "queue" in fields:
+        raise ValueError(
+            "Cannot update 'queue' via update_task(). "
+            "Use update_task_queue(task_id, new_queue, ...) instead, "
+            "which guarantees side effects like unblocking dependents."
+        )
+
     if not fields:
         return get_task(task_id)
 
@@ -398,6 +415,124 @@ def update_task(task_id: str, **fields) -> dict[str, Any] | None:
         conn.execute(
             f"UPDATE tasks SET {set_clause}, updated_at = ? WHERE id = ?",
             values,
+        )
+
+    return get_task(task_id)
+
+
+def update_task_queue(
+    task_id: str,
+    new_queue: str,
+    *,
+    claimed_by: str | None = _SENTINEL,
+    claimed_at: str | None = _SENTINEL,
+    commits_count: int | None = None,
+    turns_used: int | None = None,
+    attempt_count_increment: bool = False,
+    rejection_count_increment: bool = False,
+    has_plan: bool | None = None,
+    plan_id: str | None = None,
+    file_path: str | None = None,
+    history_event: str | None = None,
+    history_agent: str | None = None,
+    history_details: str | None = None,
+) -> dict[str, Any] | None:
+    """Transition a task to a new queue, applying mandatory side effects.
+
+    This is the ONLY function that should change a task's queue column.
+    All queue transitions must go through here to guarantee that:
+    - Transitioning to 'done' always unblocks dependent tasks
+    - Transitioning to 'done' always clears claimed_by
+    - History events are recorded
+
+    Args:
+        task_id: Task identifier
+        new_queue: Target queue name
+        claimed_by: New claimed_by value (_SENTINEL = don't change, None = clear)
+        claimed_at: New claimed_at value (_SENTINEL = don't change, None = clear)
+        commits_count: Set commits_count if provided
+        turns_used: Set turns_used if provided
+        attempt_count_increment: If True, increment attempt_count by 1
+        rejection_count_increment: If True, increment rejection_count by 1
+        has_plan: Set has_plan if provided
+        plan_id: Set plan_id if provided
+        file_path: Set file_path if provided
+        history_event: Event name for task_history (auto-generated if None)
+        history_agent: Agent name for history event
+        history_details: Details for history event
+
+    Returns:
+        Updated task or None if not found
+    """
+    now = datetime.now().isoformat()
+
+    # --- Build the SET clause dynamically ---
+    set_parts = ["queue = ?", "updated_at = ?"]
+    params: list[Any] = [new_queue, now]
+
+    # Side effects for 'done' queue: always clear claimed_by
+    if new_queue == "done":
+        if claimed_by is _SENTINEL:
+            claimed_by = None
+
+    if claimed_by is not _SENTINEL:
+        set_parts.append("claimed_by = ?")
+        params.append(claimed_by)
+
+    if claimed_at is not _SENTINEL:
+        set_parts.append("claimed_at = ?")
+        params.append(claimed_at)
+
+    if commits_count is not None:
+        set_parts.append("commits_count = ?")
+        params.append(commits_count)
+
+    if turns_used is not None:
+        set_parts.append("turns_used = ?")
+        params.append(turns_used)
+
+    if attempt_count_increment:
+        set_parts.append("attempt_count = attempt_count + 1")
+
+    if rejection_count_increment:
+        set_parts.append("rejection_count = rejection_count + 1")
+
+    if has_plan is not None:
+        set_parts.append("has_plan = ?")
+        params.append(has_plan)
+
+    if plan_id is not None:
+        set_parts.append("plan_id = ?")
+        params.append(plan_id)
+
+    if file_path is not None:
+        set_parts.append("file_path = ?")
+        params.append(file_path)
+
+    set_clause = ", ".join(set_parts)
+    params.append(task_id)  # WHERE clause
+
+    with get_connection() as conn:
+        conn.execute(
+            f"UPDATE tasks SET {set_clause} WHERE id = ?",
+            params,
+        )
+
+        # --- Side effect: unblock dependents when moving to 'done' ---
+        if new_queue == "done":
+            _unblock_dependent_tasks(conn, task_id)
+
+        # --- Record history event ---
+        if history_event is None:
+            # Auto-generate event name from queue transition
+            history_event = f"queue_changed_to_{new_queue}"
+
+        conn.execute(
+            """
+            INSERT INTO task_history (task_id, event, agent, details)
+            VALUES (?, ?, ?, ?)
+            """,
+            (task_id, history_event, history_agent, history_details),
         )
 
     return get_task(task_id)
@@ -547,31 +682,16 @@ def claim_task(
             return None
 
         task_id = row["id"]
-        now = datetime.now().isoformat()
 
-        # Claim the task
-        conn.execute(
-            """
-            UPDATE tasks
-            SET queue = 'claimed',
-                claimed_by = ?,
-                claimed_at = ?,
-                updated_at = ?
-            WHERE id = ? AND queue = ?
-            """,
-            (agent_name, now, now, task_id, from_queue),
-        )
-
-        # Log the claim
-        conn.execute(
-            """
-            INSERT INTO task_history (task_id, event, agent, details)
-            VALUES (?, 'claimed', ?, NULL)
-            """,
-            (task_id, agent_name),
-        )
-
-    return get_task(task_id)
+    now = datetime.now().isoformat()
+    return update_task_queue(
+        task_id,
+        "claimed",
+        claimed_by=agent_name,
+        claimed_at=now,
+        history_event="claimed",
+        history_agent=agent_name,
+    )
 
 
 def submit_completion(
@@ -592,34 +712,22 @@ def submit_completion(
     Returns:
         Updated task or None if not found
     """
-    now = datetime.now().isoformat()
-
-    with get_connection() as conn:
-        conn.execute(
-            """
-            UPDATE tasks
-            SET queue = 'provisional',
-                commits_count = ?,
-                turns_used = ?,
-                updated_at = ?
-            WHERE id = ?
-            """,
-            (commits_count, turns_used, now, task_id),
-        )
-
-        conn.execute(
-            """
-            INSERT INTO task_history (task_id, event, details)
-            VALUES (?, 'submitted', ?)
-            """,
-            (task_id, f"commits={commits_count}, turns={turns_used}"),
-        )
-
-    return get_task(task_id)
+    return update_task_queue(
+        task_id,
+        "provisional",
+        commits_count=commits_count,
+        turns_used=turns_used,
+        history_event="submitted",
+        history_details=f"commits={commits_count}, turns={turns_used}",
+    )
 
 
 def accept_completion(task_id: str, validator: str | None = None) -> dict[str, Any] | None:
     """Accept a provisional task and move it to done.
+
+    Side effects (guaranteed by update_task_queue):
+    - claimed_by is cleared
+    - Dependent tasks are unblocked
 
     Args:
         task_id: Task identifier
@@ -628,32 +736,12 @@ def accept_completion(task_id: str, validator: str | None = None) -> dict[str, A
     Returns:
         Updated task or None if not found
     """
-    now = datetime.now().isoformat()
-
-    with get_connection() as conn:
-        conn.execute(
-            """
-            UPDATE tasks
-            SET queue = 'done',
-                claimed_by = NULL,
-                updated_at = ?
-            WHERE id = ?
-            """,
-            (now, task_id),
-        )
-
-        conn.execute(
-            """
-            INSERT INTO task_history (task_id, event, agent, details)
-            VALUES (?, 'accepted', ?, NULL)
-            """,
-            (task_id, validator),
-        )
-
-        # Check if any tasks were blocked by this one
-        _unblock_dependent_tasks(conn, task_id)
-
-    return get_task(task_id)
+    return update_task_queue(
+        task_id,
+        "done",
+        history_event="accepted",
+        history_agent=validator,
+    )
 
 
 def reject_completion(
@@ -673,33 +761,18 @@ def reject_completion(
     Returns:
         Updated task or None if not found
     """
-    now = datetime.now().isoformat()
-
-    with get_connection() as conn:
-        conn.execute(
-            """
-            UPDATE tasks
-            SET queue = 'incoming',
-                claimed_by = NULL,
-                claimed_at = NULL,
-                commits_count = 0,
-                turns_used = NULL,
-                attempt_count = attempt_count + 1,
-                updated_at = ?
-            WHERE id = ?
-            """,
-            (now, task_id),
-        )
-
-        conn.execute(
-            """
-            INSERT INTO task_history (task_id, event, agent, details)
-            VALUES (?, 'rejected', ?, ?)
-            """,
-            (task_id, validator, reason),
-        )
-
-    return get_task(task_id)
+    return update_task_queue(
+        task_id,
+        "incoming",
+        claimed_by=None,
+        claimed_at=None,
+        commits_count=0,
+        turns_used=0,
+        attempt_count_increment=True,
+        history_event="rejected",
+        history_agent=validator,
+        history_details=reason,
+    )
 
 
 def review_reject_completion(
@@ -724,31 +797,16 @@ def review_reject_completion(
     Returns:
         Updated task or None if not found
     """
-    now = datetime.now().isoformat()
-
-    with get_connection() as conn:
-        conn.execute(
-            """
-            UPDATE tasks
-            SET queue = 'incoming',
-                claimed_by = NULL,
-                claimed_at = NULL,
-                rejection_count = rejection_count + 1,
-                updated_at = ?
-            WHERE id = ?
-            """,
-            (now, task_id),
-        )
-
-        conn.execute(
-            """
-            INSERT INTO task_history (task_id, event, agent, details)
-            VALUES (?, 'review_rejected', ?, ?)
-            """,
-            (task_id, reviewer, reason),
-        )
-
-    return get_task(task_id)
+    return update_task_queue(
+        task_id,
+        "incoming",
+        claimed_by=None,
+        claimed_at=None,
+        rejection_count_increment=True,
+        history_event="review_rejected",
+        history_agent=reviewer,
+        history_details=reason,
+    )
 
 
 def escalate_to_planning(task_id: str, plan_id: str) -> dict[str, Any] | None:
@@ -761,30 +819,14 @@ def escalate_to_planning(task_id: str, plan_id: str) -> dict[str, Any] | None:
     Returns:
         Updated original task or None if not found
     """
-    now = datetime.now().isoformat()
-
-    with get_connection() as conn:
-        conn.execute(
-            """
-            UPDATE tasks
-            SET queue = 'escalated',
-                has_plan = TRUE,
-                plan_id = ?,
-                updated_at = ?
-            WHERE id = ?
-            """,
-            (plan_id, now, task_id),
-        )
-
-        conn.execute(
-            """
-            INSERT INTO task_history (task_id, event, details)
-            VALUES (?, 'escalated', ?)
-            """,
-            (task_id, f"plan_id={plan_id}"),
-        )
-
-    return get_task(task_id)
+    return update_task_queue(
+        task_id,
+        "escalated",
+        has_plan=True,
+        plan_id=plan_id,
+        history_event="escalated",
+        history_details=f"plan_id={plan_id}",
+    )
 
 
 def fail_task(task_id: str, error: str) -> dict[str, Any] | None:
@@ -797,28 +839,12 @@ def fail_task(task_id: str, error: str) -> dict[str, Any] | None:
     Returns:
         Updated task or None if not found
     """
-    now = datetime.now().isoformat()
-
-    with get_connection() as conn:
-        conn.execute(
-            """
-            UPDATE tasks
-            SET queue = 'failed',
-                updated_at = ?
-            WHERE id = ?
-            """,
-            (now, task_id),
-        )
-
-        conn.execute(
-            """
-            INSERT INTO task_history (task_id, event, details)
-            VALUES (?, 'failed', ?)
-            """,
-            (task_id, error),
-        )
-
-    return get_task(task_id)
+    return update_task_queue(
+        task_id,
+        "failed",
+        history_event="failed",
+        history_details=error,
+    )
 
 
 def _unblock_dependent_tasks(conn: sqlite3.Connection, completed_task_id: str) -> None:
@@ -968,29 +994,19 @@ def reset_stuck_claimed(timeout_minutes: int = 60) -> list[str]:
             (f"-{timeout_minutes} minutes",),
         )
 
-        for row in cursor.fetchall():
-            task_id = row["id"]
-            reset_ids.append(task_id)
+        stuck_ids = [row["id"] for row in cursor.fetchall()]
 
-            conn.execute(
-                """
-                UPDATE tasks
-                SET queue = 'incoming',
-                    claimed_by = NULL,
-                    claimed_at = NULL,
-                    updated_at = datetime('now')
-                WHERE id = ?
-                """,
-                (task_id,),
-            )
-
-            conn.execute(
-                """
-                INSERT INTO task_history (task_id, event, details)
-                VALUES (?, 'reset', 'claimed timeout exceeded')
-                """,
-                (task_id,),
-            )
+    # Use update_task_queue for each (outside the connection to avoid nesting)
+    for task_id in stuck_ids:
+        update_task_queue(
+            task_id,
+            "incoming",
+            claimed_by=None,
+            claimed_at=None,
+            history_event="reset",
+            history_details="claimed timeout exceeded",
+        )
+        reset_ids.append(task_id)
 
     return reset_ids
 

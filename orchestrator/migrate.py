@@ -131,8 +131,8 @@ def cmd_import(args: argparse.Namespace) -> int:
 
                 # Update queue status if not incoming
                 if db_queue != "incoming":
-                    from .db import update_task
-                    update_task(task_id, queue=db_queue)
+                    from .db import update_task_queue
+                    update_task_queue(task_id, db_queue, history_event="migrated", history_details=f"from_queue={db_queue}")
 
                 if args.verbose:
                     print(f"  Imported {task_id} ({db_queue})")

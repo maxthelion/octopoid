@@ -548,7 +548,7 @@ class TestGatherWorkWithDB:
 
     def test_work_sections_populated_from_db(self, mock_config, initialized_db):
         """Test that _gather_work returns data from DB tasks."""
-        from orchestrator.db import create_task, update_task
+        from orchestrator.db import create_task, update_task, update_task_queue
 
         with patch("orchestrator.db.get_database_path", return_value=initialized_db):
             incoming_dir = mock_config / "shared" / "queue" / "incoming"
@@ -568,13 +568,13 @@ class TestGatherWorkWithDB:
             fp2 = claimed_dir / "TASK-clm001.md"
             fp2.write_text("# [TASK-clm001] Claimed task\n\nROLE: implement\nPRIORITY: P1\n")
             create_task(task_id="clm001", file_path=str(fp2), role="implement")
-            update_task("clm001", queue="claimed", claimed_by="agent-1")
+            update_task_queue("clm001", "claimed", claimed_by="agent-1")
 
             # provisional task
             fp3 = prov_dir / "TASK-prv001.md"
             fp3.write_text("# [TASK-prv001] Provisional task\n\nROLE: implement\nPRIORITY: P2\n")
             create_task(task_id="prv001", file_path=str(fp3), role="implement")
-            update_task("prv001", queue="provisional")
+            update_task_queue("prv001", "provisional")
 
             work = _gather_work()
 
@@ -588,7 +588,7 @@ class TestGatherWorkWithDB:
 
     def test_done_today_filters_by_recency(self, mock_config, initialized_db):
         """Test that done_today only includes recent tasks."""
-        from orchestrator.db import create_task, update_task
+        from orchestrator.db import create_task, update_task, update_task_queue
 
         with patch("orchestrator.db.get_database_path", return_value=initialized_db):
             done_dir = mock_config / "shared" / "queue" / "done"
@@ -598,7 +598,7 @@ class TestGatherWorkWithDB:
             fp1 = done_dir / "TASK-recent1.md"
             fp1.write_text(f"# [TASK-recent1] Recent task\n\nROLE: implement\nCREATED: {now_str}\n")
             create_task(task_id="recent1", file_path=str(fp1), role="implement")
-            update_task("recent1", queue="done")
+            update_task_queue("recent1", "done")
 
             work = _gather_work()
 
@@ -610,7 +610,7 @@ class TestRecentTasksForAgent:
     """Tests for _get_recent_tasks_for_agent()."""
 
     def test_returns_tasks_for_agent_from_db(self, mock_config, initialized_db):
-        from orchestrator.db import create_task, update_task
+        from orchestrator.db import create_task, update_task, update_task_queue
 
         with patch("orchestrator.db.get_database_path", return_value=initialized_db):
             done_dir = mock_config / "shared" / "queue" / "done"
@@ -621,7 +621,7 @@ class TestRecentTasksForAgent:
                 fp = done_dir / f"TASK-{tid}.md"
                 fp.write_text(f"# [TASK-{tid}] Task {i}\n\nROLE: implement\n")
                 create_task(task_id=tid, file_path=str(fp), role="implement")
-                update_task(tid, queue="done", claimed_by="test-agent", commits_count=i)
+                update_task_queue(tid, "done", claimed_by="test-agent", commits_count=i)
 
             tasks = _get_recent_tasks_for_agent("test-agent", limit=5)
 

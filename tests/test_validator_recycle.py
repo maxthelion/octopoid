@@ -80,7 +80,7 @@ class TestValidatorBurnedOutRouting:
                 with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_config / "shared" / "queue"):
                     with patch('orchestrator.config.is_db_enabled', return_value=True):
                         from orchestrator.roles.validator import ValidatorRole
-                        from orchestrator.db import create_task, update_task, get_task
+                        from orchestrator.db import create_task, update_task_queue, get_task
 
                         # Create a task with RE_BREAKDOWN_DEPTH: 1
                         prov_dir = mock_config / "shared" / "queue" / "provisional"
@@ -94,7 +94,7 @@ class TestValidatorBurnedOutRouting:
                             "## Acceptance Criteria\n- [ ] Done\n"
                         )
                         create_task(task_id="deep0002", file_path=str(task_path), role="implement")
-                        update_task("deep0002", queue="provisional", commits_count=0, turns_used=50)
+                        update_task_queue("deep0002", "provisional", commits_count=0, turns_used=50)
 
                         validator = ValidatorRole.__new__(ValidatorRole)
                         validator.agent_name = "test-validator"

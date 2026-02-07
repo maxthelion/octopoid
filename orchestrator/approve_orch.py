@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import find_parent_project, get_agents_runtime_dir, is_db_enabled
-from .db import accept_completion, get_connection, get_task
+from .db import accept_completion, get_connection, get_task, update_task_queue
 
 
 # ---------------------------------------------------------------------------
@@ -456,17 +456,17 @@ def accept_in_db(task_id: str) -> bool:
 
     Idempotent — safe to call multiple times.  If the task is already
     in the 'done' queue, just ensures claimed_by is cleared.
+
+    Uses update_task_queue() to guarantee side effects (unblocking
+    dependents, clearing claimed_by) are always applied.
     """
     # Check if already done to avoid duplicate history entries
     task = get_task(task_id)
     if task and task.get("queue") == "done":
         # Already accepted — just ensure claimed_by is cleared
         if task.get("claimed_by"):
-            with get_connection() as conn:
-                conn.execute(
-                    "UPDATE tasks SET claimed_by = NULL WHERE id = ?",
-                    (task_id,),
-                )
+            from .db import update_task
+            update_task(task_id, claimed_by=None)
         return True
 
     accept_completion(task_id, validator="human")
@@ -479,19 +479,19 @@ def accept_in_db(task_id: str) -> bool:
 
     if task.get("queue") != "done":
         print(f"  WARNING: DB shows queue='{task.get('queue')}', fixing...")
-        with get_connection() as conn:
-            conn.execute(
-                "UPDATE tasks SET queue = 'done', claimed_by = NULL WHERE id = ?",
-                (task_id,),
-            )
+        # Use update_task_queue to ensure side effects fire
+        update_task_queue(
+            task_id,
+            "done",
+            claimed_by=None,
+            history_event="force_accepted",
+            history_details="fixed inconsistent queue state",
+        )
         return True
 
     if task.get("claimed_by"):
-        with get_connection() as conn:
-            conn.execute(
-                "UPDATE tasks SET claimed_by = NULL WHERE id = ?",
-                (task_id,),
-            )
+        from .db import update_task
+        update_task(task_id, claimed_by=None)
 
     return True
 
