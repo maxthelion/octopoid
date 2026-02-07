@@ -407,3 +407,187 @@ class TestFractalDependencyRewiring:
             blocked = get_task("block001")
             assert leaf_ids[0] in blocked["blocked_by"]
             assert "burn0001" not in blocked["blocked_by"]
+
+
+# =============================================================================
+# Stale blocker reconciliation tests
+# =============================================================================
+
+
+class TestStaleBlockerReconciliation:
+    """Tests for reconcile_stale_blockers() in the recycler."""
+
+    def test_task_with_done_blocker_gets_unblocked(self, mock_config, initialized_db):
+        """Task blocked by a done task gets unblocked on reconciliation."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, update_task, get_task, reconcile_stale_blockers
+
+            # Create a blocker task and mark it done
+            incoming_dir = mock_config / "shared" / "queue" / "incoming"
+            incoming_dir.mkdir(parents=True, exist_ok=True)
+            done_dir = mock_config / "shared" / "queue" / "done"
+            done_dir.mkdir(parents=True, exist_ok=True)
+
+            blocker_path = done_dir / "TASK-blocker1.md"
+            blocker_path.write_text("# [TASK-blocker1] Blocker\n\nROLE: implement\n")
+            create_task(task_id="blocker1", file_path=str(blocker_path), role="implement")
+            update_task("blocker1", queue="done")
+
+            # Create a blocked task
+            blocked_path = incoming_dir / "TASK-blocked1.md"
+            blocked_path.write_text("# [TASK-blocked1] Blocked\n\nROLE: implement\nBLOCKED_BY: blocker1\n")
+            create_task(task_id="blocked1", file_path=str(blocked_path), role="implement", blocked_by="blocker1")
+
+            # Verify it's blocked
+            task = get_task("blocked1")
+            assert task["blocked_by"] == "blocker1"
+
+            # Run reconciliation
+            result = reconcile_stale_blockers()
+
+            # Should have unblocked it
+            assert len(result) == 1
+            assert result[0]["task_id"] == "blocked1"
+            assert result[0]["stale_blockers"] == ["blocker1"]
+
+            # Verify blocked_by is cleared
+            task = get_task("blocked1")
+            assert task["blocked_by"] is None
+
+    def test_task_with_mixed_blockers_not_unblocked(self, mock_config, initialized_db):
+        """Task blocked by mix of done and non-done blockers is NOT unblocked."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, update_task, get_task, reconcile_stale_blockers
+
+            incoming_dir = mock_config / "shared" / "queue" / "incoming"
+            incoming_dir.mkdir(parents=True, exist_ok=True)
+            done_dir = mock_config / "shared" / "queue" / "done"
+            done_dir.mkdir(parents=True, exist_ok=True)
+
+            # Blocker 1: done
+            b1_path = done_dir / "TASK-mix_done.md"
+            b1_path.write_text("# [TASK-mix_done] Done blocker\n\nROLE: implement\n")
+            create_task(task_id="mix_done", file_path=str(b1_path), role="implement")
+            update_task("mix_done", queue="done")
+
+            # Blocker 2: still incoming (not done)
+            b2_path = incoming_dir / "TASK-mix_pending.md"
+            b2_path.write_text("# [TASK-mix_pending] Pending blocker\n\nROLE: implement\n")
+            create_task(task_id="mix_pending", file_path=str(b2_path), role="implement")
+
+            # Blocked task depends on both
+            blocked_path = incoming_dir / "TASK-mix_blocked.md"
+            blocked_path.write_text("# [TASK-mix_blocked] Blocked\n\nROLE: implement\nBLOCKED_BY: mix_done,mix_pending\n")
+            create_task(task_id="mix_blocked", file_path=str(blocked_path), role="implement", blocked_by="mix_done,mix_pending")
+
+            # Run reconciliation
+            result = reconcile_stale_blockers()
+
+            # Should NOT unblock (mix_pending is still in incoming)
+            assert len(result) == 0
+
+            # Verify blocked_by is unchanged
+            task = get_task("mix_blocked")
+            assert task["blocked_by"] is not None
+            assert "mix_done" in task["blocked_by"]
+            assert "mix_pending" in task["blocked_by"]
+
+    def test_task_with_multiple_done_blockers_unblocked(self, mock_config, initialized_db):
+        """Task blocked by multiple done tasks gets unblocked."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, update_task, get_task, reconcile_stale_blockers
+
+            done_dir = mock_config / "shared" / "queue" / "done"
+            done_dir.mkdir(parents=True, exist_ok=True)
+            incoming_dir = mock_config / "shared" / "queue" / "incoming"
+            incoming_dir.mkdir(parents=True, exist_ok=True)
+
+            # Two done blockers
+            for tid in ["multi_d1", "multi_d2"]:
+                p = done_dir / f"TASK-{tid}.md"
+                p.write_text(f"# [TASK-{tid}] Done\n\nROLE: implement\n")
+                create_task(task_id=tid, file_path=str(p), role="implement")
+                update_task(tid, queue="done")
+
+            # Blocked by both
+            blocked_path = incoming_dir / "TASK-multi_blk.md"
+            blocked_path.write_text("# [TASK-multi_blk] Blocked\n\nROLE: implement\nBLOCKED_BY: multi_d1,multi_d2\n")
+            create_task(task_id="multi_blk", file_path=str(blocked_path), role="implement", blocked_by="multi_d1,multi_d2")
+
+            result = reconcile_stale_blockers()
+
+            assert len(result) == 1
+            assert set(result[0]["stale_blockers"]) == {"multi_d1", "multi_d2"}
+
+            task = get_task("multi_blk")
+            assert task["blocked_by"] is None
+
+    def test_reconciliation_records_history(self, mock_config, initialized_db):
+        """Reconciliation logs a history event for unblocked tasks."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, update_task, get_task_history, reconcile_stale_blockers
+
+            done_dir = mock_config / "shared" / "queue" / "done"
+            done_dir.mkdir(parents=True, exist_ok=True)
+            incoming_dir = mock_config / "shared" / "queue" / "incoming"
+            incoming_dir.mkdir(parents=True, exist_ok=True)
+
+            b_path = done_dir / "TASK-hist_blk.md"
+            b_path.write_text("# [TASK-hist_blk] Done\n\nROLE: implement\n")
+            create_task(task_id="hist_blk", file_path=str(b_path), role="implement")
+            update_task("hist_blk", queue="done")
+
+            t_path = incoming_dir / "TASK-hist_task.md"
+            t_path.write_text("# [TASK-hist_task] Blocked\n\nROLE: implement\nBLOCKED_BY: hist_blk\n")
+            create_task(task_id="hist_task", file_path=str(t_path), role="implement", blocked_by="hist_blk")
+
+            reconcile_stale_blockers()
+
+            history = get_task_history("hist_task")
+            unblock_events = [h for h in history if h["event"] == "unblocked"]
+            assert len(unblock_events) == 1
+            assert "stale blockers cleared" in unblock_events[0]["details"]
+            assert "hist_blk" in unblock_events[0]["details"]
+
+    def test_no_tasks_blocked_returns_empty(self, mock_config, initialized_db):
+        """Reconciliation with no blocked tasks returns empty list."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, reconcile_stale_blockers
+
+            incoming_dir = mock_config / "shared" / "queue" / "incoming"
+            incoming_dir.mkdir(parents=True, exist_ok=True)
+
+            # A task with no blocker
+            p = incoming_dir / "TASK-no_block.md"
+            p.write_text("# [TASK-no_block] Free\n\nROLE: implement\n")
+            create_task(task_id="no_block", file_path=str(p), role="implement")
+
+            result = reconcile_stale_blockers()
+            assert result == []
+
+    def test_idempotent_on_second_run(self, mock_config, initialized_db):
+        """Running reconciliation twice doesn't double-process."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, update_task, get_task, reconcile_stale_blockers
+
+            done_dir = mock_config / "shared" / "queue" / "done"
+            done_dir.mkdir(parents=True, exist_ok=True)
+            incoming_dir = mock_config / "shared" / "queue" / "incoming"
+            incoming_dir.mkdir(parents=True, exist_ok=True)
+
+            b_path = done_dir / "TASK-idem_blk.md"
+            b_path.write_text("# [TASK-idem_blk] Done\n\nROLE: implement\n")
+            create_task(task_id="idem_blk", file_path=str(b_path), role="implement")
+            update_task("idem_blk", queue="done")
+
+            t_path = incoming_dir / "TASK-idem_task.md"
+            t_path.write_text("# [TASK-idem_task] Blocked\n\nROLE: implement\nBLOCKED_BY: idem_blk\n")
+            create_task(task_id="idem_task", file_path=str(t_path), role="implement", blocked_by="idem_blk")
+
+            # First run unblocks
+            result1 = reconcile_stale_blockers()
+            assert len(result1) == 1
+
+            # Second run finds nothing to do
+            result2 = reconcile_stale_blockers()
+            assert len(result2) == 0

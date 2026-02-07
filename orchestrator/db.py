@@ -858,6 +858,67 @@ def _unblock_dependent_tasks(conn: sqlite3.Connection, completed_task_id: str) -
             )
 
 
+def reconcile_stale_blockers() -> list[dict[str, Any]]:
+    """Clear stale blockers from tasks where all referenced blockers are done.
+
+    Scans all tasks with non-null blocked_by and checks whether each referenced
+    blocker task has queue='done'. If ALL blockers for a task are done, clears
+    blocked_by and records a history event. Tasks with a mix of done and non-done
+    blockers are left unchanged.
+
+    Returns:
+        List of dicts describing each unblocked task:
+        [{"task_id": str, "stale_blockers": [str]}]
+    """
+    unblocked = []
+
+    with get_connection() as conn:
+        cursor = conn.execute(
+            "SELECT id, blocked_by FROM tasks WHERE blocked_by IS NOT NULL AND blocked_by != ''"
+        )
+        blocked_tasks = cursor.fetchall()
+
+        for row in blocked_tasks:
+            task_id = row["id"]
+            blocked_by = row["blocked_by"]
+            blockers = [b.strip() for b in blocked_by.split(",") if b.strip()]
+
+            if not blockers:
+                continue
+
+            # Check each blocker's status
+            all_done = True
+            stale_ids = []
+            for blocker_id in blockers:
+                bcursor = conn.execute(
+                    "SELECT queue FROM tasks WHERE id = ?", (blocker_id,)
+                )
+                blocker_row = bcursor.fetchone()
+                if blocker_row and blocker_row["queue"] == "done":
+                    stale_ids.append(blocker_id)
+                else:
+                    all_done = False
+
+            if all_done and stale_ids:
+                conn.execute(
+                    "UPDATE tasks SET blocked_by = NULL, updated_at = ? WHERE id = ?",
+                    (datetime.now().isoformat(), task_id),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO task_history (task_id, event, details)
+                    VALUES (?, 'unblocked', ?)
+                    """,
+                    (task_id, f"stale blockers cleared: {', '.join(stale_ids)}"),
+                )
+                unblocked.append({
+                    "task_id": task_id,
+                    "stale_blockers": stale_ids,
+                })
+
+    return unblocked
+
+
 def check_dependencies_resolved(task_id: str) -> bool:
     """Check if all dependencies for a task are resolved.
 

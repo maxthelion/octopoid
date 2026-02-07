@@ -2,11 +2,13 @@
 
 The recycler polls the provisional queue for tasks that burned out
 (0 commits after many turns) and sends them back through the breakdown
-queue with enriched project context. This is a lightweight role that
+queue with enriched project context. It also reconciles stale blockers
+so tasks don't get permanently stuck. This is a lightweight role that
 doesn't need a worktree or invoke Claude.
 """
 
 from ..config import is_db_enabled
+from ..db import reconcile_stale_blockers
 from ..queue_utils import (
     accept_completion,
     is_burned_out,
@@ -68,6 +70,14 @@ class RecyclerRole(BaseRole):
 
         if recycled or accepted:
             self.log(f"Done: {recycled} recycled, {accepted} accepted (depth cap)")
+
+        # Reconcile stale blockers: tasks blocked by done tasks get unblocked
+        unblocked = reconcile_stale_blockers()
+        for item in unblocked:
+            self.log(
+                f"Cleared stale blockers on {item['task_id']}: "
+                f"{', '.join(item['stale_blockers'])}"
+            )
 
         return 0
 
