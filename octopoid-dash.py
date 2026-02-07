@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Octopoid Dashboard - Terminal UI for monitoring agent orchestration.
+Octopoid Dashboard - Tabbed project management TUI.
 
 Usage:
-    python dashboard.py [--refresh N]    # Normal mode (requires .orchestrator)
-    python dashboard.py --demo           # Demo mode with sample data
+    python octopoid-dash.py [--refresh N]    # Normal mode (requires .orchestrator)
+    python octopoid-dash.py --demo           # Demo mode with sample data
 """
 
 import argparse
@@ -12,369 +12,34 @@ import curses
 import json
 import os
 import random
+import subprocess
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
-# Global flag for demo mode
-DEMO_MODE = False
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
 
+TAB_WORK = 0
+TAB_PRS = 1
+TAB_INBOX = 2
+TAB_AGENTS = 3
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# Data Models
-# ═══════════════════════════════════════════════════════════════════════════════
+TAB_NAMES = ["Work", "PRs", "Inbox", "Agents"]
+TAB_KEYS = ["W", "P", "I", "A"]
 
-@dataclass
-class AgentState:
-    name: str
-    role: str
-    interval_seconds: int
-    paused: bool
-    running: bool
-    pid: Optional[int]
-    last_started: Optional[str]
-    last_finished: Optional[str]
-    last_exit_code: Optional[int]
-    consecutive_failures: int
-    total_runs: int
-    total_successes: int
-    total_failures: int
-    current_task: Optional[str]
-    blocked_reason: Optional[str] = None
+MAX_TURNS = 200  # default max turns for progress bar
 
 
-@dataclass
-class Task:
-    filename: str
-    title: str
-    role: str
-    priority: str
-    status: str
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Data Loading
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def get_orchestrator_dir() -> Path:
-    """Get the .orchestrator directory path."""
-    return Path.cwd() / ".orchestrator"
-
-
-def load_agents_config() -> list[dict]:
-    """Load agent configuration from agents.yaml."""
-    import yaml
-    config_path = get_orchestrator_dir() / "agents.yaml"
-    if not config_path.exists():
-        return []
-    with open(config_path) as f:
-        config = yaml.safe_load(f) or {}
-    return config.get("agents", [])
-
-
-def load_agent_state(agent_name: str) -> Optional[dict]:
-    """Load agent state from state.json."""
-    state_path = get_orchestrator_dir() / "agents" / agent_name / "state.json"
-    if not state_path.exists():
-        return None
-    try:
-        with open(state_path) as f:
-            return json.load(f)
-    except (json.JSONDecodeError, IOError):
-        return None
-
-
-def get_all_agents() -> list[AgentState]:
-    """Get all agents with their current states."""
-    if DEMO_MODE:
-        return get_demo_agents()
-
-    agents = []
-    for config in load_agents_config():
-        name = config.get("name", "unknown")
-        state = load_agent_state(name) or {}
-        extra = state.get("extra", {})
-        agents.append(AgentState(
-            name=name,
-            role=config.get("role", "unknown"),
-            interval_seconds=config.get("interval_seconds", 300),
-            paused=config.get("paused", False),
-            running=state.get("running", False),
-            pid=state.get("pid"),
-            last_started=state.get("last_started"),
-            last_finished=state.get("last_finished"),
-            last_exit_code=state.get("last_exit_code"),
-            consecutive_failures=state.get("consecutive_failures", 0),
-            total_runs=state.get("total_runs", 0),
-            total_successes=state.get("total_successes", 0),
-            total_failures=state.get("total_failures", 0),
-            current_task=state.get("current_task"),
-            blocked_reason=extra.get("blocked_reason"),
-        ))
-    return agents
-
-
-def get_tasks_by_status() -> dict[str, list[Task]]:
-    """Get all tasks grouped by status."""
-    if DEMO_MODE:
-        return get_demo_tasks()
-
-    queue_dir = get_orchestrator_dir() / "shared" / "queue"
-    tasks: dict[str, list[Task]] = {
-        "incoming": [],
-        "claimed": [],
-        "done": [],
-        "failed": [],
-    }
-
-    for status in tasks.keys():
-        status_dir = queue_dir / status
-        if not status_dir.exists():
-            continue
-        for task_file in sorted(status_dir.glob("*.md")):
-            try:
-                content = task_file.read_text()
-                # Parse title from first heading
-                title = "Untitled"
-                role = "unknown"
-                priority = "P2"
-                for line in content.split("\n"):
-                    if line.startswith("# "):
-                        title = line[2:].strip()
-                    elif line.startswith("ROLE:"):
-                        role = line.split(":", 1)[1].strip()
-                    elif line.startswith("PRIORITY:"):
-                        priority = line.split(":", 1)[1].strip()
-                tasks[status].append(Task(
-                    filename=task_file.name,
-                    title=title[:50] + "..." if len(title) > 50 else title,
-                    role=role,
-                    priority=priority,
-                    status=status,
-                ))
-            except IOError:
-                pass
-    return tasks
-
-
-def get_recent_logs(max_lines: int = 100) -> list[str]:
-    """Get recent log lines from today's scheduler log."""
-    if DEMO_MODE:
-        return get_demo_logs()
-
-    logs_dir = get_orchestrator_dir() / "logs"
-    if not logs_dir.exists():
-        return ["No logs directory found"]
-
-    # Find today's scheduler log
-    today = datetime.now().strftime("%Y-%m-%d")
-    log_file = logs_dir / f"scheduler-{today}.log"
-
-    if not log_file.exists():
-        # Try to find most recent log file
-        log_files = sorted(logs_dir.glob("scheduler-*.log"), reverse=True)
-        if log_files:
-            log_file = log_files[0]
-        else:
-            # Try agent logs
-            log_files = sorted(logs_dir.glob("*.log"), reverse=True)
-            if log_files:
-                log_file = log_files[0]
-            else:
-                return ["No log files found"]
-
-    try:
-        lines = log_file.read_text().split("\n")
-        return lines[-max_lines:] if len(lines) > max_lines else lines
-    except IOError:
-        return ["Could not read log file"]
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Demo Mode Data Generation
-# ═══════════════════════════════════════════════════════════════════════════════
-
-DEMO_AGENTS_CONFIG = [
-    {"name": "pm-agent", "role": "product_manager", "interval_seconds": 600, "paused": False},
-    {"name": "impl-agent-1", "role": "implementer", "interval_seconds": 180, "paused": False},
-    {"name": "impl-agent-2", "role": "implementer", "interval_seconds": 180, "paused": False},
-    {"name": "test-agent", "role": "tester", "interval_seconds": 120, "paused": False},
-    {"name": "review-agent", "role": "reviewer", "interval_seconds": 300, "paused": True},
-    {"name": "proposer-arch", "role": "proposer", "interval_seconds": 3600, "paused": False},
-]
-
-DEMO_TASKS = {
-    "incoming": [
-        ("TASK-a1b2c3d4", "Add user authentication flow", "implement", "P1"),
-        ("TASK-e5f6g7h8", "Fix memory leak in data processor", "implement", "P0"),
-        ("TASK-i9j0k1l2", "Update API documentation", "implement", "P2"),
-    ],
-    "claimed": [
-        ("TASK-m3n4o5p6", "Implement caching layer for queries", "implement", "P1"),
-        ("TASK-q7r8s9t0", "Write unit tests for auth module", "test", "P1"),
-    ],
-    "done": [
-        ("TASK-u1v2w3x4", "Set up CI/CD pipeline", "implement", "P1"),
-        ("TASK-y5z6a7b8", "Database schema migration", "implement", "P0"),
-    ],
-    "failed": [
-        ("TASK-c9d0e1f2", "Integration tests for payment API", "test", "P1"),
-    ],
-}
-
-DEMO_LOG_MESSAGES = [
-    ("[INFO] [SCHEDULER] Starting scheduler tick", "INFO"),
-    ("[INFO] [pm-agent] Checking for work", "INFO"),
-    ("[INFO] [impl-agent-1] Claimed task TASK-m3n4o5p6", "INFO"),
-    ("[DEBUG] [impl-agent-1] Reading file src/cache.py", "DEBUG"),
-    ("[INFO] [impl-agent-1] Writing implementation", "INFO"),
-    ("[INFO] [test-agent] Running test suite", "INFO"),
-    ("[WARNING] [test-agent] Flaky test detected: test_concurrent_access", "WARNING"),
-    ("[INFO] [test-agent] 47/48 tests passed", "INFO"),
-    ("[ERROR] [impl-agent-2] Failed to acquire lock - retrying", "ERROR"),
-    ("[INFO] [impl-agent-2] Lock acquired, continuing", "INFO"),
-    ("[INFO] [SCHEDULER] Agent pm-agent completed successfully", "INFO"),
-    ("[DEBUG] [proposer-arch] Analyzing codebase structure", "DEBUG"),
-    ("[INFO] [proposer-arch] Generated 3 proposals", "INFO"),
-    ("[INFO] [SCHEDULER] Tick complete, sleeping for 60s", "INFO"),
-    ("[INFO] [SCHEDULER] Starting scheduler tick", "INFO"),
-    ("[WARNING] [review-agent] Agent is paused, skipping", "WARNING"),
-    ("[INFO] [impl-agent-1] Creating pull request", "INFO"),
-    ("[INFO] [impl-agent-1] PR #42 created successfully", "INFO"),
-    ("[INFO] [test-agent] Claimed task TASK-q7r8s9t0", "INFO"),
-    ("[DEBUG] [test-agent] Setting up test environment", "DEBUG"),
-]
-
-# Store demo state for animation
-_demo_state = {
-    "tick": 0,
-    "agent_states": {},
-}
-
-
-def get_demo_agents() -> list[AgentState]:
-    """Generate demo agent data with simulated activity."""
-    global _demo_state
-    _demo_state["tick"] += 1
-    tick = _demo_state["tick"]
-
-    agents = []
-    now = datetime.now()
-
-    for i, config in enumerate(DEMO_AGENTS_CONFIG):
-        name = config["name"]
-
-        # Initialize state if not exists
-        if name not in _demo_state["agent_states"]:
-            _demo_state["agent_states"][name] = {
-                "running": False,
-                "last_started": (now - timedelta(seconds=random.randint(10, config["interval_seconds"]))).isoformat(),
-                "total_runs": random.randint(5, 50),
-                "total_successes": 0,
-                "total_failures": 0,
-                "consecutive_failures": 0,
-            }
-            state = _demo_state["agent_states"][name]
-            state["total_successes"] = int(state["total_runs"] * random.uniform(0.85, 0.98))
-            state["total_failures"] = state["total_runs"] - state["total_successes"]
-
-        state = _demo_state["agent_states"][name]
-
-        # Simulate running/idle transitions
-        if not config["paused"]:
-            if state["running"]:
-                # 20% chance to finish running
-                if random.random() < 0.2:
-                    state["running"] = False
-                    state["total_runs"] += 1
-                    if random.random() < 0.9:  # 90% success rate
-                        state["total_successes"] += 1
-                        state["consecutive_failures"] = 0
-                    else:
-                        state["total_failures"] += 1
-                        state["consecutive_failures"] += 1
-            else:
-                # Check if overdue and should start
-                last = datetime.fromisoformat(state["last_started"])
-                if (now - last).total_seconds() > config["interval_seconds"]:
-                    if random.random() < 0.3:  # 30% chance to start
-                        state["running"] = True
-                        state["last_started"] = now.isoformat()
-
-        # Determine current task
-        current_task = None
-        if state["running"] and config["role"] in ["implementer", "tester", "reviewer"]:
-            claimed_tasks = DEMO_TASKS.get("claimed", [])
-            if claimed_tasks:
-                current_task = claimed_tasks[i % len(claimed_tasks)][0]
-
-        agents.append(AgentState(
-            name=name,
-            role=config["role"],
-            interval_seconds=config["interval_seconds"],
-            paused=config["paused"],
-            running=state["running"],
-            pid=random.randint(10000, 99999) if state["running"] else None,
-            last_started=state["last_started"],
-            last_finished=state.get("last_finished"),
-            last_exit_code=0 if state["consecutive_failures"] == 0 else 1,
-            consecutive_failures=state["consecutive_failures"],
-            total_runs=state["total_runs"],
-            total_successes=state["total_successes"],
-            total_failures=state["total_failures"],
-            current_task=current_task,
-            blocked_reason=None,
-        ))
-
-    return agents
-
-
-def get_demo_tasks() -> dict[str, list[Task]]:
-    """Generate demo task data."""
-    tasks: dict[str, list[Task]] = {
-        "incoming": [],
-        "claimed": [],
-        "done": [],
-        "failed": [],
-    }
-
-    for status, task_list in DEMO_TASKS.items():
-        for task_id, title, role, priority in task_list:
-            tasks[status].append(Task(
-                filename=f"{task_id}.md",
-                title=f"[{task_id}] {title}",
-                role=role,
-                priority=priority,
-                status=status,
-            ))
-
-    return tasks
-
-
-def get_demo_logs() -> list[str]:
-    """Generate demo log data with timestamps."""
-    now = datetime.now()
-    logs = []
-
-    for i, (msg, _) in enumerate(DEMO_LOG_MESSAGES):
-        ts = (now - timedelta(seconds=(len(DEMO_LOG_MESSAGES) - i) * 5)).strftime("%Y-%m-%dT%H:%M:%S")
-        logs.append(f"[{ts}] {msg}")
-
-    # Add some live-looking entries
-    logs.append(f"[{now.strftime('%Y-%m-%dT%H:%M:%S')}] [INFO] [SCHEDULER] Dashboard connected")
-
-    return logs
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# UI Components
-# ═══════════════════════════════════════════════════════════════════════════════
+# ---------------------------------------------------------------------------
+# Color pairs
+# ---------------------------------------------------------------------------
 
 class Colors:
-    """Color pair indices."""
     DEFAULT = 0
     HEADER = 1
     RUNNING = 2
@@ -388,10 +53,12 @@ class Colors:
     P1 = 10
     P2 = 11
     BLOCKED = 12
+    TAB_ACTIVE = 13
+    TAB_INACTIVE = 14
+    DIM = 15
 
 
 def init_colors():
-    """Initialize color pairs."""
     curses.start_color()
     curses.use_default_colors()
     curses.init_pair(Colors.HEADER, curses.COLOR_CYAN, -1)
@@ -406,393 +73,949 @@ def init_colors():
     curses.init_pair(Colors.P1, curses.COLOR_YELLOW, -1)
     curses.init_pair(Colors.P2, curses.COLOR_WHITE, -1)
     curses.init_pair(Colors.BLOCKED, curses.COLOR_YELLOW, -1)
+    curses.init_pair(Colors.TAB_ACTIVE, curses.COLOR_BLACK, curses.COLOR_CYAN)
+    curses.init_pair(Colors.TAB_INACTIVE, curses.COLOR_CYAN, -1)
+    curses.init_pair(Colors.DIM, curses.COLOR_WHITE, -1)
 
 
-def draw_box(win, y: int, x: int, height: int, width: int, title: str = ""):
-    """Draw a box with optional title."""
-    if height < 2 or width < 2:
-        return
+# ---------------------------------------------------------------------------
+# Safe drawing helpers
+# ---------------------------------------------------------------------------
 
-    # Draw corners and edges
+def safe_addstr(win, y: int, x: int, text: str, attr: int = 0, max_x: int = 0):
+    """Write text to window, clipping to max_x if provided."""
     try:
-        win.attron(curses.color_pair(Colors.BORDER))
+        max_y_win, max_x_win = win.getmaxyx()
+        if y < 0 or y >= max_y_win or x < 0 or x >= max_x_win:
+            return
+        limit = (max_x if max_x > 0 else max_x_win) - x
+        if limit <= 0:
+            return
+        win.addnstr(y, x, text, limit, attr)
+    except curses.error:
+        pass
 
-        # Top edge
-        win.addch(y, x, curses.ACS_ULCORNER)
-        win.hline(y, x + 1, curses.ACS_HLINE, width - 2)
-        win.addch(y, x + width - 1, curses.ACS_URCORNER)
 
-        # Bottom edge
-        win.addch(y + height - 1, x, curses.ACS_LLCORNER)
-        win.hline(y + height - 1, x + 1, curses.ACS_HLINE, width - 2)
-        try:
-            win.addch(y + height - 1, x + width - 1, curses.ACS_LRCORNER)
-        except curses.error:
-            pass  # Bottom-right corner can fail
-
-        # Sides
-        for i in range(1, height - 1):
-            win.addch(y + i, x, curses.ACS_VLINE)
-            try:
-                win.addch(y + i, x + width - 1, curses.ACS_VLINE)
-            except curses.error:
-                pass
-
-        win.attroff(curses.color_pair(Colors.BORDER))
-
-        # Title
-        if title and width > len(title) + 4:
-            win.attron(curses.color_pair(Colors.HEADER) | curses.A_BOLD)
-            win.addstr(y, x + 2, f" {title} ")
-            win.attroff(curses.color_pair(Colors.HEADER) | curses.A_BOLD)
+def safe_hline(win, y: int, x: int, ch, width: int, attr: int = 0):
+    try:
+        if attr:
+            win.attron(attr)
+        win.hline(y, x, ch, width)
+        if attr:
+            win.attroff(attr)
     except curses.error:
         pass
 
 
 def draw_progress_bar(win, y: int, x: int, width: int, progress: float, color: int):
-    """Draw a progress bar."""
+    """Draw a compact progress bar like [██████░░░░]."""
     if width < 3:
         return
-
     bar_width = width - 2
     filled = int(bar_width * min(1.0, max(0.0, progress)))
-
     try:
         win.addstr(y, x, "[")
         win.attron(curses.color_pair(color))
-        win.addstr(y, x + 1, "█" * filled)
+        win.addstr(y, x + 1, "\u2588" * filled)
         win.attroff(curses.color_pair(color))
-        win.addstr(y, x + 1 + filled, "░" * (bar_width - filled))
+        win.addstr(y, x + 1 + filled, "\u2591" * (bar_width - filled))
         win.addstr(y, x + width - 1, "]")
     except curses.error:
         pass
 
 
-def format_time_delta(seconds: float) -> str:
-    """Format seconds as human-readable time."""
-    if seconds < 0:
-        return "overdue"
-    elif seconds < 60:
-        return f"{int(seconds)}s"
-    elif seconds < 3600:
-        return f"{int(seconds // 60)}m {int(seconds % 60)}s"
-    else:
-        return f"{int(seconds // 3600)}h {int((seconds % 3600) // 60)}m"
+# ---------------------------------------------------------------------------
+# Time formatting
+# ---------------------------------------------------------------------------
 
-
-def calculate_next_run_progress(agent: AgentState) -> tuple[float, str]:
-    """Calculate progress until next run and time remaining."""
-    if agent.paused:
-        return 0.0, "PAUSED"
-    if agent.running:
-        return 1.0, "RUNNING"
-    if agent.blocked_reason:
-        # Show the reason (e.g., "pr_limit:10/10" -> "10/10 PRs")
-        parts = agent.blocked_reason.split(":")
-        if len(parts) == 2 and parts[0] == "pr_limit":
-            return 0.0, f"{parts[1]} PRs"
-        elif len(parts) == 2 and parts[0] == "claimed_limit":
-            return 0.0, f"{parts[1]} claimed"
-        elif parts[0] == "no_tasks":
-            return 0.0, "no tasks"
-        else:
-            return 0.0, parts[0][:12]
-    if not agent.last_started:
-        return 1.0, "READY"
-
+def format_age(iso_str: str | None) -> str:
+    """Format an ISO timestamp as a human-readable age like '2h', '15m'."""
+    if not iso_str:
+        return ""
     try:
-        last = datetime.fromisoformat(agent.last_started.replace("Z", "+00:00"))
-        now = datetime.now(last.tzinfo) if last.tzinfo else datetime.now()
-        elapsed = (now - last).total_seconds()
-        remaining = agent.interval_seconds - elapsed
-        progress = min(1.0, elapsed / agent.interval_seconds)
-
-        if remaining <= 0:
-            return 1.0, "READY"
-        return progress, format_time_delta(remaining)
+        dt = datetime.fromisoformat(str(iso_str).replace("Z", "+00:00"))
+        if dt.tzinfo:
+            dt = dt.replace(tzinfo=None)
+        delta = datetime.now() - dt
+        secs = delta.total_seconds()
+        if secs < 0:
+            return "now"
+        if secs < 60:
+            return f"{int(secs)}s"
+        if secs < 3600:
+            return f"{int(secs // 60)}m"
+        if secs < 86400:
+            return f"{int(secs // 3600)}h"
+        return f"{int(secs // 86400)}d"
     except (ValueError, TypeError):
-        return 0.0, "???"
+        return ""
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# Panel Renderers
-# ═══════════════════════════════════════════════════════════════════════════════
+# ---------------------------------------------------------------------------
+# Data layer — wraps reports.py or provides demo data
+# ---------------------------------------------------------------------------
 
-def render_agents_panel(win, y: int, x: int, height: int, width: int, agents: list[AgentState]):
-    """Render the agents status panel."""
-    draw_box(win, y, x, height, width, "🐙 Agents")
+def load_report(demo_mode: bool) -> dict[str, Any]:
+    """Load the project report, either live or demo."""
+    if demo_mode:
+        return _generate_demo_report()
 
-    if height < 4 or width < 20:
-        return
-
-    inner_y = y + 1
-    inner_x = x + 1
-    inner_width = width - 2
-    inner_height = height - 2
-
-    # Header row
     try:
-        win.attron(curses.color_pair(Colors.HEADER) | curses.A_BOLD)
-        header = f"{'Name':<16} {'Role':<12} {'Status':<10} {'Next Run':<12}"
-        win.addnstr(inner_y, inner_x, header, inner_width)
-        win.attroff(curses.color_pair(Colors.HEADER) | curses.A_BOLD)
-    except curses.error:
-        pass
+        # Add parent of orchestrator package to sys.path if needed
+        pkg_dir = Path(__file__).resolve().parent / "orchestrator"
+        if pkg_dir.exists():
+            parent = str(pkg_dir.parent)
+            if parent not in sys.path:
+                sys.path.insert(0, parent)
 
-    # Agent rows
-    for i, agent in enumerate(agents):
-        row_y = inner_y + 1 + i * 2
-        if row_y >= y + height - 2:
-            break
+        from orchestrator.reports import get_project_report
+        return get_project_report()
+    except Exception as e:
+        return {
+            "work": {"incoming": [], "in_progress": [], "in_review": [], "done_today": []},
+            "prs": [],
+            "proposals": [],
+            "messages": [],
+            "agents": [],
+            "health": {"scheduler": f"error: {e}", "idle_agents": 0, "running_agents": 0,
+                        "paused_agents": 0, "total_agents": 0, "queue_depth": 0,
+                        "system_paused": False},
+            "generated_at": datetime.now().isoformat(),
+        }
 
-        # Determine status and color
-        if agent.paused:
-            status = "PAUSED"
-            color = Colors.PAUSED
-        elif agent.running:
-            status = "RUNNING"
-            color = Colors.RUNNING
-        elif agent.blocked_reason:
-            # Show shortened blocked reason
-            reason = agent.blocked_reason.split(":")[0]  # e.g., "pr_limit" from "pr_limit:10/10"
-            status = f"BLOCKED"
-            color = Colors.BLOCKED
-        elif agent.consecutive_failures > 0:
-            status = f"FAIL({agent.consecutive_failures})"
-            color = Colors.FAILURE
-        else:
-            status = "IDLE"
-            color = Colors.SUCCESS
 
-        progress, time_str = calculate_next_run_progress(agent)
+def load_drafts(demo_mode: bool) -> list[dict[str, Any]]:
+    """Load project management drafts for the Inbox tab."""
+    if demo_mode:
+        return _generate_demo_drafts()
 
+    drafts = []
+    drafts_dir = Path.cwd() / "project-management" / "drafts"
+    if not drafts_dir.exists():
+        return []
+    for f in sorted(drafts_dir.glob("*.md")):
+        title = f.stem.replace("-", " ").title()
+        # Try to extract a better title from the file
         try:
-            # Agent info line
-            win.attron(curses.color_pair(color))
-            name_display = agent.name[:16].ljust(16)
-            role_display = agent.role[:12].ljust(12)
-            status_display = status[:10].ljust(10)
-            info_line = f"{name_display} {role_display} {status_display} {time_str:<12}"
-            win.addnstr(row_y, inner_x, info_line, inner_width)
-            win.attroff(curses.color_pair(color))
-
-            # Progress bar (if space permits)
-            if row_y + 1 < y + height - 1 and inner_width > 20:
-                bar_width = min(30, inner_width - 2)
-                if agent.running:
-                    bar_color = Colors.RUNNING
-                elif agent.blocked_reason:
-                    bar_color = Colors.BLOCKED
-                elif agent.paused:
-                    bar_color = Colors.PAUSED
-                else:
-                    bar_color = Colors.SUCCESS
-                draw_progress_bar(win, row_y + 1, inner_x, bar_width, progress, bar_color)
-
-                # Current task if running
-                if agent.running and agent.current_task and inner_width > 35:
-                    task_display = f" → {agent.current_task}"
-                    win.addnstr(row_y + 1, inner_x + bar_width + 1, task_display, inner_width - bar_width - 2)
-        except curses.error:
+            first_line = f.read_text().split("\n", 1)[0]
+            if first_line.startswith("# "):
+                title = first_line[2:].strip()
+        except OSError:
             pass
+        drafts.append({"filename": f.name, "title": title})
+    return drafts
 
 
-def render_tasks_panel(win, y: int, x: int, height: int, width: int, tasks: dict[str, list[Task]]):
-    """Render the tasks by status panel."""
-    draw_box(win, y, x, height, width, "📋 Tasks")
+# ---------------------------------------------------------------------------
+# Demo data generation
+# ---------------------------------------------------------------------------
 
-    if height < 4 or width < 20:
-        return
+# Mutable demo state for animation
+_demo_tick = 0
 
-    inner_y = y + 1
-    inner_x = x + 1
-    inner_width = width - 2
 
-    # Status counts header
-    counts = f"Incoming: {len(tasks['incoming'])}  Claimed: {len(tasks['claimed'])}  Done: {len(tasks['done'])}  Failed: {len(tasks['failed'])}"
-    try:
-        win.attron(curses.color_pair(Colors.HEADER))
-        win.addnstr(inner_y, inner_x, counts, inner_width)
-        win.attroff(curses.color_pair(Colors.HEADER))
-    except curses.error:
-        pass
+def _generate_demo_report() -> dict[str, Any]:
+    global _demo_tick
+    _demo_tick += 1
+    now = datetime.now()
 
-    current_row = inner_y + 2
-
-    # Show tasks by status
-    status_colors = {
-        "incoming": Colors.WARNING,
-        "claimed": Colors.RUNNING,
-        "failed": Colors.FAILURE,
+    work = {
+        "incoming": [
+            {"id": "a1b2c3d4", "title": "Snap system point fork unification", "role": "implement",
+             "priority": "P1", "agent": None, "turns": 0, "commits": 0, "pr_number": None,
+             "created": (now - timedelta(hours=3)).isoformat(), "project_id": None},
+            {"id": "e5f6g7h8", "title": "Queue manipulation scripts", "role": "orchestrator_impl",
+             "priority": "P2", "agent": None, "turns": 0, "commits": 0, "pr_number": None,
+             "created": (now - timedelta(hours=1)).isoformat(), "project_id": None},
+            {"id": "i9j0k1l2", "title": "Center line replacement", "role": "implement",
+             "priority": "P2", "agent": None, "turns": 0, "commits": 0, "pr_number": None,
+             "created": (now - timedelta(hours=5)).isoformat(), "project_id": None},
+        ],
+        "in_progress": [
+            {"id": "m3n4o5p6", "title": "Gatekeeper review D1+D2", "role": "orchestrator_impl",
+             "priority": "P1", "agent": "orch-impl-1", "turns": 74, "commits": 3,
+             "pr_number": None, "created": (now - timedelta(hours=2)).isoformat(),
+             "project_id": "PROJ-gate"},
+            {"id": "q7r8s9t0", "title": "Void transparency fix", "role": "implement",
+             "priority": "P1", "agent": "impl-agent-1", "turns": 45, "commits": 2,
+             "pr_number": None, "created": (now - timedelta(hours=1)).isoformat(),
+             "project_id": None},
+        ],
+        "in_review": [
+            {"id": "u1v2w3x4", "title": "Fix z-fighting on bounding box", "role": "implement",
+             "priority": "P1", "agent": "impl-agent-1", "turns": 120, "commits": 4,
+             "pr_number": 50, "created": (now - timedelta(hours=15)).isoformat(),
+             "project_id": None},
+            {"id": "y5z6a7b8", "title": "Rename Inset tool to Offset", "role": "implement",
+             "priority": "P2", "agent": "impl-agent-2", "turns": 35, "commits": 2,
+             "pr_number": 52, "created": (now - timedelta(hours=15)).isoformat(),
+             "project_id": None},
+            {"id": "c9d0e1f2", "title": "Axis arrow replacement", "role": "implement",
+             "priority": "P2", "agent": "impl-agent-1", "turns": 90, "commits": 5,
+             "pr_number": 49, "created": (now - timedelta(hours=16)).isoformat(),
+             "project_id": None},
+            {"id": "g3h4i5j6", "title": "Void mesh transparency", "role": "implement",
+             "priority": "P2", "agent": "impl-agent-2", "turns": 55, "commits": 3,
+             "pr_number": 51, "created": (now - timedelta(hours=15)).isoformat(),
+             "project_id": None},
+        ],
+        "done_today": [
+            {"id": "k7l8m9n0", "title": "Toggle face buttons", "role": "implement",
+             "priority": "P1", "agent": "impl-agent-1", "turns": 60, "commits": 3,
+             "pr_number": 53, "created": (now - timedelta(hours=4)).isoformat(),
+             "project_id": None},
+            {"id": "o1p2q3r4", "title": "Task templates system", "role": "implement",
+             "priority": "P2", "agent": "impl-agent-2", "turns": 40, "commits": 2,
+             "pr_number": 47, "created": (now - timedelta(hours=6)).isoformat(),
+             "project_id": None},
+            {"id": "s5t6u7v8", "title": "Whats-next script", "role": "orchestrator_impl",
+             "priority": "P2", "agent": "orch-impl-1", "turns": 30, "commits": 1,
+             "pr_number": None, "created": (now - timedelta(hours=8)).isoformat(),
+             "project_id": None},
+            {"id": "w9x0y1z2", "title": "CLAUDE.md role definitions", "role": "implement",
+             "priority": "P2", "agent": "impl-agent-1", "turns": 25, "commits": 1,
+             "pr_number": 46, "created": (now - timedelta(hours=10)).isoformat(),
+             "project_id": None},
+            {"id": "a3b4c5d6", "title": "2D snap system", "role": "implement",
+             "priority": "P1", "agent": "impl-agent-2", "turns": 85, "commits": 5,
+             "pr_number": 48, "created": (now - timedelta(hours=12)).isoformat(),
+             "project_id": None},
+        ],
     }
 
-    for status in ["incoming", "claimed", "failed"]:
-        if current_row >= y + height - 1:
-            break
-
-        status_tasks = tasks[status]
-        if not status_tasks:
-            continue
-
-        # Status header
-        try:
-            win.attron(curses.color_pair(status_colors.get(status, Colors.DEFAULT)) | curses.A_BOLD)
-            win.addnstr(current_row, inner_x, f"── {status.upper()} ──", inner_width)
-            win.attroff(curses.color_pair(status_colors.get(status, Colors.DEFAULT)) | curses.A_BOLD)
-        except curses.error:
-            pass
-        current_row += 1
-
-        # Show tasks
-        for task in status_tasks[:5]:  # Limit to 5 per status
-            if current_row >= y + height - 1:
-                break
-
-            # Priority color
-            priority_color = {
-                "P0": Colors.P0,
-                "P1": Colors.P1,
-                "P2": Colors.P2,
-            }.get(task.priority, Colors.DEFAULT)
-
-            try:
-                win.attron(curses.color_pair(priority_color))
-                task_line = f"  [{task.priority}] {task.title}"
-                win.addnstr(current_row, inner_x, task_line, inner_width)
-                win.attroff(curses.color_pair(priority_color))
-            except curses.error:
-                pass
-            current_row += 1
-
-        if len(status_tasks) > 5:
-            try:
-                win.addnstr(current_row, inner_x, f"  ... and {len(status_tasks) - 5} more", inner_width)
-            except curses.error:
-                pass
-            current_row += 1
-
-        current_row += 1  # Space between sections
-
-
-def render_logs_panel(win, y: int, x: int, height: int, width: int, logs: list[str], scroll_offset: int = 0):
-    """Render the logs panel."""
-    draw_box(win, y, x, height, width, "📜 Logs")
-
-    if height < 3 or width < 20:
-        return
-
-    inner_y = y + 1
-    inner_x = x + 1
-    inner_width = width - 2
-    inner_height = height - 2
-
-    # Calculate which logs to show
-    visible_logs = logs[-(inner_height + scroll_offset):]
-    if scroll_offset > 0:
-        visible_logs = visible_logs[:-scroll_offset]
-    visible_logs = visible_logs[-inner_height:]
-
-    for i, line in enumerate(visible_logs):
-        if i >= inner_height:
-            break
-
-        try:
-            # Color based on log level
-            color = Colors.DEFAULT
-            if "[ERROR]" in line or "ERROR" in line:
-                color = Colors.FAILURE
-            elif "[WARN]" in line or "WARNING" in line:
-                color = Colors.WARNING
-            elif "[INFO]" in line:
-                color = Colors.SUCCESS
-            elif "[DEBUG]" in line:
-                color = Colors.PAUSED
-
-            win.attron(curses.color_pair(color))
-            # Truncate long lines
-            display_line = line[:inner_width] if len(line) > inner_width else line
-            win.addnstr(inner_y + i, inner_x, display_line, inner_width)
-            win.attroff(curses.color_pair(color))
-        except curses.error:
-            pass
-
-
-def render_stats_panel(win, y: int, x: int, height: int, width: int, agents: list[AgentState], tasks: dict[str, list[Task]]):
-    """Render a small stats panel."""
-    draw_box(win, y, x, height, width, "📊 Stats")
-
-    if height < 3 or width < 15:
-        return
-
-    inner_y = y + 1
-    inner_x = x + 1
-    inner_width = width - 2
-
-    running = sum(1 for a in agents if a.running)
-    total_agents = len(agents)
-    total_runs = sum(a.total_runs for a in agents)
-    total_success = sum(a.total_successes for a in agents)
-    success_rate = (total_success / total_runs * 100) if total_runs > 0 else 0
-
-    stats = [
-        f"Agents: {running}/{total_agents} running",
-        f"Total runs: {total_runs}",
-        f"Success rate: {success_rate:.1f}%",
-        f"Queue depth: {len(tasks['incoming'])}",
+    prs = [
+        {"number": 55, "title": "Queue manipulation scripts", "branch": "agent/32edc31a",
+         "author": "bot", "created_at": (now - timedelta(hours=1)).isoformat(),
+         "url": "https://github.com/owner/repo/pull/55"},
+        {"number": 54, "title": "Gatekeeper review system", "branch": "agent/06b44db0",
+         "author": "bot", "created_at": (now - timedelta(hours=1)).isoformat(),
+         "url": "https://github.com/owner/repo/pull/54"},
+        {"number": 52, "title": "Rename Inset tool to Offset", "branch": "agent/d4063abb",
+         "author": "bot", "created_at": (now - timedelta(hours=15)).isoformat(),
+         "url": "https://github.com/owner/repo/pull/52"},
+        {"number": 51, "title": "Fix void mesh transparency", "branch": "agent/78606c45",
+         "author": "bot", "created_at": (now - timedelta(hours=15)).isoformat(),
+         "url": "https://github.com/owner/repo/pull/51"},
+        {"number": 50, "title": "Fix z-fighting on bounding box", "branch": "agent/f737dc48",
+         "author": "bot", "created_at": (now - timedelta(hours=15)).isoformat(),
+         "url": "https://github.com/owner/repo/pull/50"},
+        {"number": 49, "title": "Replace axis arrow with center line", "branch": "agent/251e9f63",
+         "author": "bot", "created_at": (now - timedelta(hours=16)).isoformat(),
+         "url": "https://github.com/owner/repo/pull/49"},
+        {"number": 48, "title": "2D View Snapping System", "branch": "agent/a6f7f4cf",
+         "author": "bot", "created_at": (now - timedelta(hours=16)).isoformat(),
+         "url": "https://github.com/owner/repo/pull/48"},
     ]
 
-    for i, stat in enumerate(stats):
-        if inner_y + i >= y + height - 1:
+    proposals = [
+        {"id": "PROP-001", "title": "Store-to-Engine Migration", "proposer": "architect",
+         "category": "refactor", "complexity": "XL",
+         "created": (now - timedelta(days=2)).isoformat()},
+        {"id": "PROP-002", "title": "Fix utils-to-store dependency", "proposer": "architect",
+         "category": "refactor", "complexity": "M",
+         "created": (now - timedelta(days=1)).isoformat()},
+        {"id": "PROP-003", "title": "Proposal Flow Redesign", "proposer": "architect",
+         "category": "feature", "complexity": "L",
+         "created": (now - timedelta(hours=18)).isoformat()},
+        {"id": "PROP-004", "title": "Multi-Machine Coordination", "proposer": "architect",
+         "category": "feature", "complexity": "XL",
+         "created": (now - timedelta(hours=12)).isoformat()},
+        {"id": "PROP-005", "title": "Extract useOperationPalette", "proposer": "architect",
+         "category": "refactor", "complexity": "S",
+         "created": (now - timedelta(hours=6)).isoformat()},
+        {"id": "PROP-006", "title": "Eliminate Duplicate Model State", "proposer": "architect",
+         "category": "refactor", "complexity": "L",
+         "created": (now - timedelta(hours=4)).isoformat()},
+        {"id": "PROP-007", "title": "Modularize SketchView2D", "proposer": "architect",
+         "category": "refactor", "complexity": "M",
+         "created": (now - timedelta(hours=2)).isoformat()},
+    ]
+
+    messages: list[dict[str, Any]] = []
+
+    # Simulate running state changes
+    is_running = (_demo_tick % 8) < 5  # running 5 out of 8 ticks
+
+    agents = [
+        {"name": "impl-agent-1", "role": "implementer", "status": "idle",
+         "paused": False, "current_task": None,
+         "last_started": (now - timedelta(minutes=2)).isoformat(),
+         "last_finished": (now - timedelta(minutes=1)).isoformat(),
+         "last_exit_code": 0, "consecutive_failures": 0, "total_runs": 42,
+         "recent_tasks": [
+             {"id": "k7l8m9n0", "title": "Toggle face buttons", "queue": "done",
+              "commits": 3, "turns": 60, "pr_number": 53},
+             {"id": "u1v2w3x4", "title": "Fix z-fighting", "queue": "provisional",
+              "commits": 4, "turns": 120, "pr_number": 50},
+             {"id": "c9d0e1f2", "title": "Axis arrow replacement", "queue": "provisional",
+              "commits": 5, "turns": 90, "pr_number": 49},
+         ],
+         "notes": "PanelPathRenderer uses useMemo for geometry computation. "
+                  "Consider extracting shared ops infrastructure for 2D/3D views."},
+        {"name": "impl-agent-2", "role": "implementer", "status": "idle",
+         "paused": False, "current_task": None,
+         "last_started": (now - timedelta(minutes=5)).isoformat(),
+         "last_finished": (now - timedelta(minutes=4)).isoformat(),
+         "last_exit_code": 0, "consecutive_failures": 0, "total_runs": 38,
+         "recent_tasks": [
+             {"id": "y5z6a7b8", "title": "Rename Inset to Offset", "queue": "provisional",
+              "commits": 2, "turns": 35, "pr_number": 52},
+             {"id": "g3h4i5j6", "title": "Void mesh transparency", "queue": "provisional",
+              "commits": 3, "turns": 55, "pr_number": 51},
+         ],
+         "notes": None},
+        {"name": "orch-impl-1", "role": "orchestrator_impl",
+         "status": "running" if is_running else "idle",
+         "paused": False,
+         "current_task": "m3n4o5p6" if is_running else None,
+         "last_started": (now - timedelta(minutes=12)).isoformat() if is_running
+                         else (now - timedelta(minutes=2)).isoformat(),
+         "last_finished": None if is_running
+                          else (now - timedelta(minutes=1)).isoformat(),
+         "last_exit_code": None if is_running else 0,
+         "consecutive_failures": 0, "total_runs": 15,
+         "recent_tasks": [
+             {"id": "s5t6u7v8", "title": "Whats-next script", "queue": "done",
+              "commits": 1, "turns": 30, "pr_number": None},
+         ],
+         "notes": None},
+        {"name": "breakdown-1", "role": "breakdown", "status": "idle",
+         "paused": False, "current_task": None,
+         "last_started": (now - timedelta(minutes=30)).isoformat(),
+         "last_finished": (now - timedelta(minutes=29)).isoformat(),
+         "last_exit_code": 0, "consecutive_failures": 0, "total_runs": 8,
+         "recent_tasks": [], "notes": None},
+        {"name": "inbox-poller", "role": "inbox_poller", "status": "idle",
+         "paused": False, "current_task": None,
+         "last_started": (now - timedelta(minutes=10)).isoformat(),
+         "last_finished": (now - timedelta(minutes=9)).isoformat(),
+         "last_exit_code": 0, "consecutive_failures": 0, "total_runs": 120,
+         "recent_tasks": [], "notes": None},
+        {"name": "recycler", "role": "recycler", "status": "idle",
+         "paused": True, "current_task": None,
+         "last_started": (now - timedelta(hours=2)).isoformat(),
+         "last_finished": (now - timedelta(hours=2)).isoformat(),
+         "last_exit_code": 0, "consecutive_failures": 0, "total_runs": 3,
+         "recent_tasks": [], "notes": None},
+    ]
+
+    health = {
+        "scheduler": "running",
+        "system_paused": False,
+        "idle_agents": sum(1 for a in agents if a["status"] == "idle" and not a["paused"]),
+        "running_agents": sum(1 for a in agents if a["status"] == "running"),
+        "paused_agents": sum(1 for a in agents if a["paused"]),
+        "total_agents": len(agents),
+        "queue_depth": len(work["incoming"]) + len(work["in_progress"]),
+    }
+
+    return {
+        "work": work,
+        "prs": prs,
+        "proposals": proposals,
+        "messages": messages,
+        "agents": agents,
+        "health": health,
+        "generated_at": now.isoformat(),
+    }
+
+
+def _generate_demo_drafts() -> list[dict[str, Any]]:
+    return [
+        {"filename": "gatekeeper-review-plan.md", "title": "Gatekeeper Review Plan"},
+        {"filename": "specialist-agents.md", "title": "Specialist Agents"},
+        {"filename": "local-env-config.md", "title": "Local Environment Configuration"},
+        {"filename": "workflow-improvements.md", "title": "Workflow Improvements"},
+        {"filename": "interactive-role-gates.md", "title": "Interactive Role & Gates"},
+        {"filename": "dashboard-redesign.md", "title": "Dashboard Redesign"},
+        {"filename": "operation-sourced-identity.md", "title": "Operation Sourced Identity"},
+        {"filename": "visual-pr-review.md", "title": "Visual PR Review Command"},
+        {"filename": "project-breakdown.md", "title": "Project Breakdown System"},
+        {"filename": "fillet-max-radius.md", "title": "Fillet Max Radius Geometry"},
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Tab renderers
+# ---------------------------------------------------------------------------
+
+def render_work_tab(win, report: dict[str, Any], state: "DashboardState"):
+    """Render Tab 1: Work Board (kanban)."""
+    max_y, max_x = win.getmaxyx()
+    work = report.get("work", {})
+
+    columns = [
+        ("QUEUED", work.get("incoming", []), Colors.WARNING),
+        ("IN PROGRESS", work.get("in_progress", []), Colors.RUNNING),
+        ("IN REVIEW", work.get("in_review", []), Colors.HEADER),
+        ("DONE", work.get("done_today", []), Colors.SUCCESS),
+    ]
+
+    col_width = max(15, (max_x - 1) // len(columns))
+    content_start_y = 0
+
+    for col_idx, (col_title, tasks, title_color) in enumerate(columns):
+        col_x = col_idx * col_width
+        right_edge = min(col_x + col_width - 1, max_x - 1)
+        inner_width = right_edge - col_x - 1
+
+        if inner_width < 10:
+            continue
+
+        # Column header
+        header = f" {col_title} ({len(tasks)}) "
+        safe_addstr(win, content_start_y, col_x, header,
+                    curses.color_pair(title_color) | curses.A_BOLD, right_edge)
+        safe_hline(win, content_start_y + 1, col_x, curses.ACS_HLINE, inner_width + 1,
+                   curses.color_pair(Colors.BORDER))
+
+        # Draw column separator (vertical line)
+        if col_idx > 0:
+            for row in range(content_start_y, max_y):
+                safe_addstr(win, row, col_x - 1, "\u2502",
+                            curses.color_pair(Colors.BORDER))
+
+        # Task cards
+        card_y = content_start_y + 2
+        for task in tasks:
+            if card_y + 3 >= max_y:
+                remaining = len(tasks) - tasks.index(task)
+                if remaining > 0:
+                    safe_addstr(win, card_y, col_x + 1, f"+{remaining} more",
+                                curses.color_pair(Colors.DIM))
+                break
+
+            _render_task_card(win, card_y, col_x + 1, inner_width, task)
+            card_y += _card_height(task) + 1  # +1 for spacing
+
+
+def _card_height(task: dict[str, Any]) -> int:
+    """Calculate card height in lines."""
+    h = 1  # title
+    if task.get("agent"):
+        h += 1  # agent + progress
+    if task.get("pr_number"):
+        h += 1  # PR info
+    return max(h, 1)
+
+
+def _render_task_card(win, y: int, x: int, width: int, task: dict[str, Any]):
+    """Render a single task card."""
+    title = task.get("title", "untitled")
+    role = task.get("role", "")
+    agent = task.get("agent")
+    turns = task.get("turns", 0)
+    pr = task.get("pr_number")
+    created = task.get("created")
+    is_orch = role in ("orchestrator_impl", "breakdown", "recycler", "inbox_poller")
+
+    # Title line with role badge
+    line = ""
+    if is_orch:
+        line = "ORCH "
+        safe_addstr(win, y, x, "ORCH", curses.color_pair(Colors.PAUSED) | curses.A_BOLD)
+        safe_addstr(win, y, x + 5, title[:width - 6], curses.color_pair(Colors.DEFAULT))
+    else:
+        safe_addstr(win, y, x, title[:width], curses.color_pair(Colors.DEFAULT))
+
+    row = y + 1
+
+    # Agent + progress bar
+    if agent:
+        agent_text = agent[:12]
+        safe_addstr(win, row, x, agent_text, curses.color_pair(Colors.DIM))
+        bar_x = x + len(agent_text) + 1
+        bar_width = min(12, width - len(agent_text) - 1)
+        if bar_width >= 5:
+            progress = min(1.0, turns / MAX_TURNS) if MAX_TURNS > 0 else 0
+            draw_progress_bar(win, row, bar_x, bar_width, progress, Colors.RUNNING)
+            turn_text = f" {turns}t"
+            safe_addstr(win, row, bar_x + bar_width + 1, turn_text,
+                        curses.color_pair(Colors.DIM))
+        row += 1
+
+    # PR info + wait time
+    if pr:
+        age = format_age(created)
+        pr_text = f"PR #{pr}"
+        if age:
+            pr_text += f" {age}"
+        safe_addstr(win, row, x, pr_text, curses.color_pair(Colors.HEADER))
+        row += 1
+
+
+def render_prs_tab(win, report: dict[str, Any], state: "DashboardState"):
+    """Render Tab 2: PRs list."""
+    max_y, max_x = win.getmaxyx()
+    prs = report.get("prs", [])
+
+    # Header
+    safe_addstr(win, 0, 1, f" OPEN PRs ({len(prs)}) ",
+                curses.color_pair(Colors.HEADER) | curses.A_BOLD)
+    safe_hline(win, 1, 1, curses.ACS_HLINE, max_x - 2,
+               curses.color_pair(Colors.BORDER))
+
+    if not prs:
+        safe_addstr(win, 3, 3, "No open pull requests.",
+                    curses.color_pair(Colors.DIM))
+        return
+
+    # Column headers
+    y = 2
+    safe_addstr(win, y, 2, "  #", curses.color_pair(Colors.DIM))
+    safe_addstr(win, y, 8, "Title", curses.color_pair(Colors.DIM))
+    safe_addstr(win, y, max(40, max_x - 40), "Branch", curses.color_pair(Colors.DIM))
+    safe_addstr(win, y, max(60, max_x - 15), "Age", curses.color_pair(Colors.DIM))
+    y += 1
+
+    for i, pr in enumerate(prs):
+        if y >= max_y - 3:
             break
-        try:
-            win.addnstr(inner_y + i, inner_x, stat, inner_width)
-        except curses.error:
-            pass
+
+        selected = i == state.pr_cursor
+        attr = curses.color_pair(Colors.HIGHLIGHT) if selected else 0
+
+        # Determine if this is an orchestrator PR
+        branch = pr.get("branch", "")
+        is_orch = "orch" in branch.lower()
+
+        num = str(pr.get("number", ""))
+        title = pr.get("title", "untitled")
+        age = format_age(pr.get("created_at"))
+
+        # Build the line
+        safe_addstr(win, y, 2, f"#{num:<4}", attr or curses.color_pair(Colors.P1))
+        title_max = max(30, max_x - 45) - 9
+        safe_addstr(win, y, 8, title[:title_max], attr or curses.color_pair(Colors.DEFAULT))
+
+        branch_x = max(40, max_x - 40)
+        branch_max = max(18, max_x - 15 - branch_x)
+        safe_addstr(win, y, branch_x, branch[:branch_max],
+                    attr or curses.color_pair(Colors.DIM))
+
+        age_x = max(60, max_x - 15)
+        safe_addstr(win, y, age_x, age, attr or curses.color_pair(Colors.DIM))
+
+        if is_orch:
+            badge_x = age_x + len(age) + 2
+            safe_addstr(win, y, badge_x, "ORCH",
+                        curses.color_pair(Colors.PAUSED) | curses.A_BOLD)
+
+        y += 1
+
+    # Action hints
+    hint_y = max_y - 2
+    safe_hline(win, hint_y - 1, 1, curses.ACS_HLINE, max_x - 2,
+               curses.color_pair(Colors.BORDER))
+    safe_addstr(win, hint_y, 2, "[Enter] preview  [a] approve  [r] reject  [d] diff",
+                curses.color_pair(Colors.DIM))
 
 
-def render_help_bar(win, max_y: int, max_x: int):
-    """Render the help bar at the bottom."""
-    help_text = " q:Quit  r:Refresh  j/k:Scroll logs  ?:Help "
-    try:
-        win.attron(curses.color_pair(Colors.HIGHLIGHT))
-        win.addnstr(max_y - 1, 0, help_text.ljust(max_x), max_x)
-        win.attroff(curses.color_pair(Colors.HIGHLIGHT))
-    except curses.error:
-        pass
+def render_inbox_tab(win, report: dict[str, Any], drafts: list[dict[str, Any]],
+                     state: "DashboardState"):
+    """Render Tab 3: Inbox (Proposals | Messages | Drafts)."""
+    max_y, max_x = win.getmaxyx()
+    proposals = report.get("proposals", [])
+    messages = report.get("messages", [])
+
+    # Three sub-columns
+    col_width = max(15, (max_x - 2) // 3)
+
+    sub_cols = [
+        ("PROPOSALS", proposals, 0),
+        ("MESSAGES", messages, col_width),
+        ("DRAFTS", drafts, col_width * 2),
+    ]
+
+    for col_title, items, col_x in sub_cols:
+        right_edge = min(col_x + col_width - 1, max_x - 1)
+        inner_w = right_edge - col_x - 1
+
+        safe_addstr(win, 0, col_x + 1, f" {col_title} ({len(items)}) ",
+                    curses.color_pair(Colors.HEADER) | curses.A_BOLD)
+        safe_hline(win, 1, col_x, curses.ACS_HLINE, inner_w + 1,
+                   curses.color_pair(Colors.BORDER))
+
+        # Column separator
+        if col_x > 0:
+            for row in range(0, max_y - 2):
+                safe_addstr(win, row, col_x - 1, "\u2502",
+                            curses.color_pair(Colors.BORDER))
+
+        y = 2
+        if not items:
+            safe_addstr(win, y, col_x + 1, "No pending items",
+                        curses.color_pair(Colors.DIM))
+            continue
+
+        for item in items:
+            if y >= max_y - 4:
+                remaining = len(items) - items.index(item)
+                safe_addstr(win, y, col_x + 2, f"...+{remaining} more",
+                            curses.color_pair(Colors.DIM))
+                break
+
+            if col_title == "PROPOSALS":
+                title = item.get("title", "untitled")
+                safe_addstr(win, y, col_x + 2, f"\u2022 {title[:inner_w - 3]}",
+                            curses.color_pair(Colors.DEFAULT))
+            elif col_title == "MESSAGES":
+                mtype = item.get("type", "info")
+                fname = item.get("filename", "")
+                color = Colors.FAILURE if mtype == "error" else (
+                    Colors.WARNING if mtype == "warning" else Colors.DEFAULT)
+                safe_addstr(win, y, col_x + 2, f"\u2022 [{mtype}] {fname[:inner_w - 12]}",
+                            curses.color_pair(color))
+            elif col_title == "DRAFTS":
+                title = item.get("title", item.get("filename", "untitled"))
+                safe_addstr(win, y, col_x + 2, f"\u2022 {title[:inner_w - 3]}",
+                            curses.color_pair(Colors.DEFAULT))
+            y += 1
+
+    # Action hints
+    hint_y = max_y - 2
+    safe_hline(win, hint_y - 1, 1, curses.ACS_HLINE, max_x - 2,
+               curses.color_pair(Colors.BORDER))
+    safe_addstr(win, hint_y, 2, "[Enter] read  [a] approve  [x] dismiss  [e] enqueue",
+                curses.color_pair(Colors.DIM))
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# Main Dashboard
-# ═══════════════════════════════════════════════════════════════════════════════
+def render_agents_tab(win, report: dict[str, Any], state: "DashboardState"):
+    """Render Tab 4: Agents (master-detail)."""
+    max_y, max_x = win.getmaxyx()
+    agents = report.get("agents", [])
+    health = report.get("health", {})
+
+    # Master-detail split
+    list_width = min(24, max_x // 3)
+    detail_x = list_width + 1
+    detail_width = max_x - detail_x - 1
+
+    # -- LEFT: Agent list --
+    safe_addstr(win, 0, 1, " AGENTS ",
+                curses.color_pair(Colors.HEADER) | curses.A_BOLD)
+    safe_hline(win, 1, 0, curses.ACS_HLINE, list_width,
+               curses.color_pair(Colors.BORDER))
+
+    # Vertical separator
+    for row in range(0, max_y - 2):
+        safe_addstr(win, row, list_width, "\u2502",
+                    curses.color_pair(Colors.BORDER))
+
+    for i, agent in enumerate(agents):
+        y = 2 + i
+        if y >= max_y - 2:
+            break
+
+        selected = i == state.agent_cursor
+        name = agent.get("name", "?")
+        status = agent.get("status", "idle")
+        paused = agent.get("paused", False)
+
+        # Status badge
+        if paused:
+            badge = "PAUSE"
+            badge_color = Colors.PAUSED
+        elif status == "running":
+            badge = "RUN"
+            badge_color = Colors.RUNNING
+        elif status.startswith("idle("):
+            badge = "BLOCK"
+            badge_color = Colors.BLOCKED
+        else:
+            badge = "IDLE"
+            badge_color = Colors.SUCCESS
+
+        # Cursor indicator
+        prefix = "\u25b6 " if selected else "  "
+        row_attr = curses.color_pair(Colors.HIGHLIGHT) if selected else 0
+
+        safe_addstr(win, y, 1, prefix, row_attr)
+        name_max = list_width - 8 - len(prefix)
+        safe_addstr(win, y, 1 + len(prefix), name[:name_max], row_attr)
+        safe_addstr(win, y, list_width - len(badge) - 1, badge,
+                    curses.color_pair(badge_color) | curses.A_BOLD)
+
+    # -- RIGHT: Detail pane --
+    if not agents:
+        safe_addstr(win, 2, detail_x + 1, "No agents configured.",
+                    curses.color_pair(Colors.DIM))
+        return
+
+    agent = agents[min(state.agent_cursor, len(agents) - 1)]
+    _render_agent_detail(win, 0, detail_x + 1, detail_width, max_y - 2, agent, report)
+
+    # Action hints
+    hint_y = max_y - 2
+    safe_hline(win, hint_y - 1, 0, curses.ACS_HLINE, max_x - 1,
+               curses.color_pair(Colors.BORDER))
+    safe_addstr(win, hint_y, 2, "[j/k] select  [p] pause/resume  [Enter] expand",
+                curses.color_pair(Colors.DIM))
+
+
+def _render_agent_detail(win, y: int, x: int, width: int, max_height: int,
+                         agent: dict[str, Any], report: dict[str, Any]):
+    """Render the agent detail pane."""
+    name = agent.get("name", "?")
+    role = agent.get("role", "?")
+    status = agent.get("status", "idle")
+    paused = agent.get("paused", False)
+    current_task_id = agent.get("current_task")
+    last_started = agent.get("last_started")
+    recent_tasks = agent.get("recent_tasks", [])
+    notes = agent.get("notes")
+
+    # Agent name header
+    safe_addstr(win, y, x, name, curses.color_pair(Colors.HEADER) | curses.A_BOLD)
+    safe_hline(win, y + 1, x, curses.ACS_HLINE, min(len(name) + 2, width),
+               curses.color_pair(Colors.BORDER))
+    row = y + 2
+
+    # Role
+    safe_addstr(win, row, x, f"Role: ", curses.color_pair(Colors.DIM))
+    safe_addstr(win, row, x + 6, role, curses.color_pair(Colors.DEFAULT))
+    row += 1
+
+    # Status
+    if paused:
+        status_text = "PAUSED"
+        status_color = Colors.PAUSED
+    elif status == "running":
+        status_text = "RUNNING"
+        status_color = Colors.RUNNING
+        if last_started:
+            age = format_age(last_started)
+            status_text += f" \u00b7 {age} elapsed"
+        turns = 0
+        # Try to find current task turns from work data
+        if current_task_id:
+            for cat in report.get("work", {}).values():
+                if isinstance(cat, list):
+                    for t in cat:
+                        if t.get("id") == current_task_id:
+                            turns = t.get("turns", 0)
+                            break
+        if turns:
+            status_text += f" \u00b7 {turns}/{MAX_TURNS} turns"
+    elif status.startswith("idle("):
+        reason = status[5:-1] if status.endswith(")") else status[5:]
+        status_text = f"BLOCKED \u00b7 {reason}"
+        status_color = Colors.BLOCKED
+    else:
+        status_text = "IDLE"
+        status_color = Colors.SUCCESS
+        if last_started:
+            age = format_age(last_started)
+            status_text += f" \u00b7 last run {age} ago"
+
+    safe_addstr(win, row, x, "Status: ", curses.color_pair(Colors.DIM))
+    safe_addstr(win, row, x + 8, status_text,
+                curses.color_pair(status_color))
+    row += 2
+
+    # Current task section
+    safe_addstr(win, row, x, "CURRENT TASK",
+                curses.color_pair(Colors.HEADER) | curses.A_BOLD)
+    safe_hline(win, row + 1, x, curses.ACS_HLINE, 12,
+               curses.color_pair(Colors.BORDER))
+    row += 2
+
+    if current_task_id:
+        # Find task details
+        task_info = None
+        for cat in report.get("work", {}).values():
+            if isinstance(cat, list):
+                for t in cat:
+                    if t.get("id") == current_task_id:
+                        task_info = t
+                        break
+
+        if task_info:
+            title = task_info.get("title", "untitled")
+            safe_addstr(win, row, x, f"{current_task_id[:8]} {title[:width - 10]}",
+                        curses.color_pair(Colors.DEFAULT))
+            row += 1
+
+            branch = task_info.get("branch", "")
+            if branch:
+                safe_addstr(win, row, x, f"Branch: {branch[:width - 8]}",
+                            curses.color_pair(Colors.DIM))
+                row += 1
+
+            commits = task_info.get("commits", 0)
+            turns = task_info.get("turns", 0)
+            safe_addstr(win, row, x, f"Commits: {commits}",
+                        curses.color_pair(Colors.DIM))
+            row += 1
+
+            # Progress bar for turns
+            if status == "running" and turns:
+                bar_width = min(25, width - 15)
+                if bar_width >= 5:
+                    draw_progress_bar(win, row, x, bar_width,
+                                      min(1.0, turns / MAX_TURNS), Colors.RUNNING)
+                    safe_addstr(win, row, x + bar_width + 1,
+                                f" {turns}/{MAX_TURNS} turns",
+                                curses.color_pair(Colors.DIM))
+                row += 1
+        else:
+            safe_addstr(win, row, x, f"Task: {current_task_id[:8]}",
+                        curses.color_pair(Colors.DEFAULT))
+            row += 1
+    else:
+        safe_addstr(win, row, x, "(none)", curses.color_pair(Colors.DIM))
+        row += 1
+
+    row += 1
+    if row >= y + max_height:
+        return
+
+    # Recent work section
+    safe_addstr(win, row, x, "RECENT WORK",
+                curses.color_pair(Colors.HEADER) | curses.A_BOLD)
+    safe_hline(win, row + 1, x, curses.ACS_HLINE, 11,
+               curses.color_pair(Colors.BORDER))
+    row += 2
+
+    if recent_tasks:
+        for rt in recent_tasks[:5]:
+            if row >= y + max_height:
+                break
+            tid = rt.get("id", "?")[:8]
+            rtitle = rt.get("title", "untitled")
+            queue = rt.get("queue", "")
+            pr_num = rt.get("pr_number")
+
+            check = "\u2713" if queue == "done" else "\u25cb"
+            color = Colors.SUCCESS if queue == "done" else Colors.DIM
+
+            line = f"{check} {tid} {rtitle[:width - 30]}"
+            safe_addstr(win, row, x, line, curses.color_pair(color))
+
+            if pr_num:
+                pr_text = f"PR #{pr_num}"
+                status_word = "merged" if queue == "done" else "waiting"
+                extra = f" {pr_text} {status_word}"
+                safe_addstr(win, row, x + min(len(line) + 1, width - len(extra) - 1),
+                            extra, curses.color_pair(Colors.DIM))
+            row += 1
+    else:
+        safe_addstr(win, row, x, "(no recent tasks)", curses.color_pair(Colors.DIM))
+        row += 1
+
+    row += 1
+    if row >= y + max_height:
+        return
+
+    # Notes section
+    safe_addstr(win, row, x, "NOTES",
+                curses.color_pair(Colors.HEADER) | curses.A_BOLD)
+    safe_hline(win, row + 1, x, curses.ACS_HLINE, 5,
+               curses.color_pair(Colors.BORDER))
+    row += 2
+
+    if notes:
+        # Word-wrap notes into available width
+        words = notes.split()
+        line = ""
+        for word in words:
+            if len(line) + len(word) + 1 > width - 2:
+                safe_addstr(win, row, x, f'"{line}',
+                            curses.color_pair(Colors.DIM))
+                row += 1
+                line = word
+                if row >= y + max_height:
+                    break
+            else:
+                line = f"{line} {word}" if line else word
+        if line and row < y + max_height:
+            safe_addstr(win, row, x, f' {line}"',
+                        curses.color_pair(Colors.DIM))
+            row += 1
+    else:
+        safe_addstr(win, row, x, "(none)", curses.color_pair(Colors.DIM))
+
+
+# ---------------------------------------------------------------------------
+# Dashboard state
+# ---------------------------------------------------------------------------
+
+@dataclass
+class DashboardState:
+    """Mutable dashboard UI state."""
+    active_tab: int = TAB_WORK
+    agent_cursor: int = 0
+    pr_cursor: int = 0
+    work_cursor: int = 0
+    inbox_cursor: int = 0
+    last_report: Optional[dict[str, Any]] = None
+    last_drafts: Optional[list[dict[str, Any]]] = None
+    demo_mode: bool = False
+
+
+# ---------------------------------------------------------------------------
+# Main Dashboard class
+# ---------------------------------------------------------------------------
 
 class Dashboard:
-    def __init__(self, stdscr, refresh_interval: float = 2.0):
+    def __init__(self, stdscr, refresh_interval: float = 2.0, demo_mode: bool = False):
         self.stdscr = stdscr
         self.refresh_interval = refresh_interval
-        self.log_scroll = 0
         self.running = True
+        self.state = DashboardState(demo_mode=demo_mode)
 
         # Initialize curses
-        curses.curs_set(0)  # Hide cursor
-        self.stdscr.nodelay(True)  # Non-blocking input
+        curses.curs_set(0)
+        self.stdscr.nodelay(True)
         self.stdscr.timeout(int(refresh_interval * 1000))
         init_colors()
 
+    def load_data(self):
+        """Load fresh data."""
+        self.state.last_report = load_report(self.state.demo_mode)
+        self.state.last_drafts = load_drafts(self.state.demo_mode)
+
     def handle_input(self, key: int) -> bool:
         """Handle keyboard input. Returns False to quit."""
+        report = self.state.last_report or {}
+
+        # Global: quit
         if key == ord('q') or key == ord('Q'):
             return False
-        elif key == ord('r') or key == ord('R'):
-            self.log_scroll = 0
+
+        # Global: refresh
+        if key == ord('r') or key == ord('R'):
+            self.load_data()
+            return True
+
+        # Tab switching: W/P/I/A or 1/2/3/4
+        if key == ord('w') or key == ord('1'):
+            self.state.active_tab = TAB_WORK
+        elif key == ord('p') or key == ord('2'):
+            self.state.active_tab = TAB_PRS
+        elif key == ord('i') or key == ord('3'):
+            self.state.active_tab = TAB_INBOX
+        elif key == ord('a') or key == ord('4'):
+            self.state.active_tab = TAB_AGENTS
+
+        # Navigation: j/k
         elif key == ord('j') or key == curses.KEY_DOWN:
-            self.log_scroll = max(0, self.log_scroll - 1)
+            self._move_cursor(1, report)
         elif key == ord('k') or key == curses.KEY_UP:
-            self.log_scroll += 1
-        elif key == ord('g'):
-            self.log_scroll = 0  # Go to bottom (newest)
-        elif key == ord('G'):
-            self.log_scroll = 1000  # Go to top (oldest)
+            self._move_cursor(-1, report)
+
         return True
+
+    def _move_cursor(self, delta: int, report: dict[str, Any]):
+        """Move the active tab's cursor."""
+        if self.state.active_tab == TAB_AGENTS:
+            agents = report.get("agents", [])
+            self.state.agent_cursor = max(0, min(
+                len(agents) - 1, self.state.agent_cursor + delta))
+        elif self.state.active_tab == TAB_PRS:
+            prs = report.get("prs", [])
+            self.state.pr_cursor = max(0, min(
+                len(prs) - 1, self.state.pr_cursor + delta))
 
     def render(self):
         """Render the entire dashboard."""
@@ -801,81 +1024,106 @@ class Dashboard:
 
         if max_y < 10 or max_x < 40:
             try:
-                self.stdscr.addstr(0, 0, "Terminal too small!")
+                self.stdscr.addstr(0, 0, "Terminal too small! Need 40x10 minimum.")
             except curses.error:
                 pass
             return
 
-        # Load data
-        agents = get_all_agents()
-        tasks = get_tasks_by_status()
-        logs = get_recent_logs(200)
+        report = self.state.last_report or {}
+        drafts = self.state.last_drafts or []
+        health = report.get("health", {})
 
-        # Calculate layout
-        # For small windows, stack vertically
-        # For larger windows, use a more complex layout
-
-        header_height = 1
-        help_height = 1
-        available_height = max_y - header_height - help_height
-
-        # Header
-        title = "🐙 OCTOPOID DASHBOARD"
-        if DEMO_MODE:
+        # -- Header line with tab bar --
+        header_y = 0
+        title = "OCTOPOID"
+        if self.state.demo_mode:
             title += " [DEMO]"
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        safe_addstr(self.stdscr, header_y, 1, title,
+                    curses.color_pair(Colors.HEADER) | curses.A_BOLD)
+        if self.state.demo_mode:
+            # Highlight [DEMO]
+            demo_start = len("OCTOPOID ")
+            safe_addstr(self.stdscr, header_y, 1 + demo_start, "[DEMO]",
+                        curses.color_pair(Colors.WARNING) | curses.A_BOLD)
+
+        # Tab bar (right-aligned)
+        tab_bar = ""
+        tab_x = max(20, max_x - 35)
+        for i, name in enumerate(TAB_NAMES):
+            label = f" [{TAB_KEYS[i]}]{name} "
+            if i == self.state.active_tab:
+                safe_addstr(self.stdscr, header_y, tab_x, label,
+                            curses.color_pair(Colors.TAB_ACTIVE) | curses.A_BOLD)
+            else:
+                safe_addstr(self.stdscr, header_y, tab_x, label,
+                            curses.color_pair(Colors.TAB_INACTIVE))
+            tab_x += len(label)
+
+        # Separator under header
+        safe_hline(self.stdscr, 1, 0, curses.ACS_HLINE, max_x,
+                   curses.color_pair(Colors.BORDER))
+
+        # -- Content area --
+        content_y = 2
+        content_height = max_y - 4  # header + separator + status bar + hint
+        content_width = max_x
+
+        # Create a sub-window for content
         try:
-            self.stdscr.attron(curses.color_pair(Colors.HEADER) | curses.A_BOLD)
-            self.stdscr.addstr(0, 0, title)
-            self.stdscr.attroff(curses.color_pair(Colors.HEADER) | curses.A_BOLD)
-            if DEMO_MODE:
-                # Highlight DEMO in yellow
-                demo_pos = len("🐙 OCTOPOID DASHBOARD ")
-                self.stdscr.attron(curses.color_pair(Colors.WARNING) | curses.A_BOLD)
-                self.stdscr.addstr(0, demo_pos, "[DEMO]")
-                self.stdscr.attroff(curses.color_pair(Colors.WARNING) | curses.A_BOLD)
-            self.stdscr.addstr(0, max_x - len(timestamp) - 1, timestamp)
+            content_win = self.stdscr.subwin(content_height, content_width,
+                                              content_y, 0)
         except curses.error:
-            pass
+            return
 
-        if max_x >= 100:
-            # Wide layout: [Agents | Tasks] over [Logs | Stats]
-            left_width = max_x * 2 // 3
-            right_width = max_x - left_width
-            top_height = available_height // 2
-            bottom_height = available_height - top_height
+        if self.state.active_tab == TAB_WORK:
+            render_work_tab(content_win, report, self.state)
+        elif self.state.active_tab == TAB_PRS:
+            render_prs_tab(content_win, report, self.state)
+        elif self.state.active_tab == TAB_INBOX:
+            render_inbox_tab(content_win, report, drafts, self.state)
+        elif self.state.active_tab == TAB_AGENTS:
+            render_agents_tab(content_win, report, self.state)
 
-            render_agents_panel(self.stdscr, header_height, 0, top_height, left_width, agents)
-            render_tasks_panel(self.stdscr, header_height, left_width, top_height, right_width, tasks)
-            render_logs_panel(self.stdscr, header_height + top_height, 0, bottom_height, left_width + right_width * 2 // 3, logs, self.log_scroll)
-            render_stats_panel(self.stdscr, header_height + top_height, left_width + right_width * 2 // 3, bottom_height, right_width // 3 + 1, agents, tasks)
+        # -- Status bar (bottom) --
+        status_y = max_y - 1
+        work = report.get("work", {})
+        agents_list = report.get("agents", [])
+        prs = report.get("prs", [])
+        proposals = report.get("proposals", [])
+        messages = report.get("messages", [])
 
-        elif max_x >= 60:
-            # Medium layout: Agents on top, Tasks + Logs below
-            agents_height = min(len(agents) * 2 + 3, available_height // 2)
-            remaining = available_height - agents_height
-            tasks_height = remaining // 2
-            logs_height = remaining - tasks_height
+        running_count = health.get("running_agents", 0)
+        idle_count = health.get("idle_agents", 0)
+        scheduler = health.get("scheduler", "?")
 
-            render_agents_panel(self.stdscr, header_height, 0, agents_height, max_x, agents)
-            render_tasks_panel(self.stdscr, header_height + agents_height, 0, tasks_height, max_x // 2, tasks)
-            render_logs_panel(self.stdscr, header_height + agents_height, max_x // 2, tasks_height + logs_height, max_x - max_x // 2, logs, self.log_scroll)
+        parts = []
+        parts.append(f"Sched: {scheduler}")
+        parts.append(f"{health.get('total_agents', 0)} agents")
+        if running_count:
+            parts.append(f"{running_count} running")
+        parts.append(f"{idle_count} idle")
+        parts.append(f"{len(work.get('incoming', []))} queued")
+        parts.append(f"{len(prs)} PRs")
+        parts.append(f"{len(proposals)} proposals")
+        if messages:
+            parts.append(f"{len(messages)} msgs")
 
-        else:
-            # Narrow layout: Stack everything vertically
-            panel_height = available_height // 3
+        status_text = " \u00b7 ".join(parts)
+        safe_addstr(self.stdscr, status_y, 0, " " * max_x,
+                    curses.color_pair(Colors.HIGHLIGHT))
+        safe_addstr(self.stdscr, status_y, 1, status_text,
+                    curses.color_pair(Colors.HIGHLIGHT))
 
-            render_agents_panel(self.stdscr, header_height, 0, panel_height, max_x, agents)
-            render_tasks_panel(self.stdscr, header_height + panel_height, 0, panel_height, max_x, tasks)
-            render_logs_panel(self.stdscr, header_height + panel_height * 2, 0, available_height - panel_height * 2, max_x, logs, self.log_scroll)
-
-        # Help bar
-        render_help_bar(self.stdscr, max_y, max_x)
+        # Timestamp on the right
+        ts = datetime.now().strftime("%H:%M:%S")
+        safe_addstr(self.stdscr, status_y, max_x - len(ts) - 2, ts,
+                    curses.color_pair(Colors.HIGHLIGHT))
 
         self.stdscr.refresh()
 
     def run(self):
         """Main loop."""
+        self.load_data()
         while self.running:
             try:
                 self.render()
@@ -888,30 +1136,33 @@ class Dashboard:
                 pass
 
 
-def main(stdscr, refresh_interval: float):
-    """Main entry point."""
-    dashboard = Dashboard(stdscr, refresh_interval)
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+def main(stdscr, refresh_interval: float, demo_mode: bool):
+    dashboard = Dashboard(stdscr, refresh_interval, demo_mode)
     dashboard.run()
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Octopoid Dashboard")
-    parser.add_argument("--refresh", type=float, default=2.0, help="Refresh interval in seconds")
-    parser.add_argument("--demo", action="store_true", help="Run in demo mode with sample data")
+    parser = argparse.ArgumentParser(description="Octopoid Project Dashboard")
+    parser.add_argument("--refresh", type=float, default=2.0,
+                        help="Refresh interval in seconds")
+    parser.add_argument("--demo", action="store_true",
+                        help="Run in demo mode with sample data")
     args = parser.parse_args()
 
-    # Set demo mode
-    if args.demo:
-        DEMO_MODE = True
-    else:
+    if not args.demo:
         # Check if .orchestrator directory exists
-        if not get_orchestrator_dir().exists():
+        orch_dir = Path.cwd() / ".orchestrator"
+        if not orch_dir.exists():
             print("Error: .orchestrator directory not found.")
             print("Please run this from an octopoid project directory,")
             print("or use --demo flag to see a demo with sample data.")
             sys.exit(1)
 
     try:
-        curses.wrapper(lambda stdscr: main(stdscr, args.refresh))
+        curses.wrapper(lambda stdscr: main(stdscr, args.refresh, args.demo))
     except KeyboardInterrupt:
         pass
