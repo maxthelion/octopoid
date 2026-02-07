@@ -902,9 +902,30 @@ def run_scheduler() -> None:
     debug_log("Scheduler tick complete")
 
 
+def _check_venv_integrity() -> None:
+    """Verify the orchestrator module is loaded from the correct location.
+
+    If an agent runs `pip install -e .` inside its worktree, it hijacks the
+    shared venv to load code from the wrong directory. Detect this and abort.
+    """
+    import orchestrator as _orch
+    mod_file = getattr(_orch, "__file__", None) or ""
+    # Also check a submodule to catch editable installs that set __file__ on the package
+    scheduler_file = str(Path(__file__).resolve())
+    if "agents/" in scheduler_file or "worktree" in scheduler_file:
+        print(
+            f"FATAL: orchestrator module loaded from agent worktree: {scheduler_file}\n"
+            f"Fix: cd orchestrator && ../.orchestrator/venv/bin/pip install -e .",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+
 def main() -> None:
     """Entry point for scheduler."""
     global DEBUG
+
+    _check_venv_integrity()
 
     parser = argparse.ArgumentParser(description="Run the orchestrator scheduler")
     parser.add_argument(
