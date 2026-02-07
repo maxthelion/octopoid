@@ -817,6 +817,10 @@ def create_task(
     Returns:
         Path to created task file
     """
+    # Default checks for orchestrator_impl tasks
+    if role == "orchestrator_impl" and checks is None:
+        checks = ["pytest-submodule"]
+
     task_id = uuid4().hex[:8]
     filename = f"TASK-{task_id}.md"
 

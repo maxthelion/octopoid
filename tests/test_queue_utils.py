@@ -760,3 +760,80 @@ class TestCreateTaskChecks:
                 task_id = task_path.stem.replace("TASK-", "")
                 db_task = get_task(task_id)
                 assert db_task["checks"] == ["pytest-submodule", "vitest"]
+
+
+class TestCreateTaskOrchestratorImplDefaultChecks:
+    """Tests for default checks on orchestrator_impl tasks."""
+
+    def test_orchestrator_impl_gets_default_checks(self, mock_orchestrator_dir):
+        """Creating orchestrator_impl task without checks gets pytest-submodule default."""
+        with patch('orchestrator.queue_utils.is_db_enabled', return_value=False):
+            with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "shared" / "queue"):
+                from orchestrator.queue_utils import create_task
+
+                task_path = create_task(
+                    title="Orchestrator impl task",
+                    role="orchestrator_impl",
+                    context="test context",
+                    acceptance_criteria=["test"],
+                )
+
+                content = task_path.read_text()
+                assert "CHECKS: pytest-submodule" in content
+
+    def test_orchestrator_impl_explicit_checks_override_default(self, mock_orchestrator_dir):
+        """Creating orchestrator_impl task with explicit checks uses those instead."""
+        with patch('orchestrator.queue_utils.is_db_enabled', return_value=False):
+            with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "shared" / "queue"):
+                from orchestrator.queue_utils import create_task
+
+                task_path = create_task(
+                    title="Orchestrator impl task with custom checks",
+                    role="orchestrator_impl",
+                    context="test context",
+                    acceptance_criteria=["test"],
+                    checks=["custom-check", "another-check"],
+                )
+
+                content = task_path.read_text()
+                assert "CHECKS: custom-check,another-check" in content
+                assert "pytest-submodule" not in content
+
+    def test_orchestrator_impl_default_checks_in_db(self, mock_orchestrator_dir, initialized_db):
+        """Full integration: orchestrator_impl task gets default checks in both file and DB."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "shared" / "queue"):
+                from orchestrator.queue_utils import create_task
+                from orchestrator.db import get_task
+
+                task_path = create_task(
+                    title="DB default checks test",
+                    role="orchestrator_impl",
+                    context="test context",
+                    acceptance_criteria=["test"],
+                )
+
+                # Verify file
+                content = task_path.read_text()
+                assert "CHECKS: pytest-submodule" in content
+
+                # Verify DB
+                task_id = task_path.stem.replace("TASK-", "")
+                db_task = get_task(task_id)
+                assert db_task["checks"] == ["pytest-submodule"]
+
+    def test_non_orchestrator_impl_no_default_checks(self, mock_orchestrator_dir):
+        """Non-orchestrator_impl tasks do NOT get default checks."""
+        with patch('orchestrator.queue_utils.is_db_enabled', return_value=False):
+            with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "shared" / "queue"):
+                from orchestrator.queue_utils import create_task
+
+                task_path = create_task(
+                    title="Normal implement task",
+                    role="implement",
+                    context="test context",
+                    acceptance_criteria=["test"],
+                )
+
+                content = task_path.read_text()
+                assert "CHECKS:" not in content

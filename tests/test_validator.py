@@ -254,3 +254,111 @@ class TestValidatorHelpers:
                                 task = get_task("stuck")
                                 assert task["queue"] == "incoming"
                                 assert task["claimed_by"] is None
+
+
+class TestValidatorNoAutoAcceptOrchestratorImpl:
+    """Tests that validator does NOT auto-accept orchestrator_impl tasks."""
+
+    def test_orchestrator_impl_task_not_auto_accepted(self, mock_config, initialized_db):
+        """An orchestrator_impl task in provisional with 0 commits should be rejected, not auto-accepted."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            with patch('orchestrator.roles.validator.is_db_enabled', return_value=True):
+                with patch('orchestrator.queue_utils.is_db_enabled', return_value=True):
+                    with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_config / "shared" / "queue"):
+                        with patch('orchestrator.roles.validator.get_validation_config', return_value={
+                            'require_commits': True,
+                            'max_attempts_before_planning': 3,
+                            'claim_timeout_minutes': 60,
+                        }):
+                            with patch.dict(os.environ, {
+                                'AGENT_NAME': 'test-validator',
+                                'AGENT_ID': '0',
+                                'AGENT_ROLE': 'validator',
+                                'PARENT_PROJECT': str(mock_config.parent),
+                                'WORKTREE': str(mock_config.parent),
+                                'SHARED_DIR': str(mock_config / 'shared'),
+                                'ORCHESTRATOR_DIR': str(mock_config),
+                            }):
+                                from orchestrator.roles.validator import ValidatorRole
+                                from orchestrator.db import create_task, claim_task, submit_completion, get_task
+
+                                # Setup: create and submit an orchestrator_impl task with 0 commits
+                                create_task(
+                                    task_id="orchval1",
+                                    file_path=str(mock_config / "shared" / "queue" / "provisional" / "TASK-orchval1.md"),
+                                    role="orchestrator_impl",
+                                )
+                                claim_task()
+                                submit_completion("orchval1", commits_count=0, turns_used=20)
+
+                                # Create the task file
+                                prov_dir = mock_config / "shared" / "queue" / "provisional"
+                                prov_dir.mkdir(parents=True, exist_ok=True)
+                                (prov_dir / "TASK-orchval1.md").write_text(
+                                    "# [TASK-orchval1] Orchestrator impl task\n"
+                                    "ROLE: orchestrator_impl\n"
+                                )
+
+                                # Run validator
+                                role = ValidatorRole()
+                                result = role.run()
+                                assert result == 0
+
+                                # Task should NOT be in done (auto-accepted), should be rejected back to incoming
+                                task = get_task("orchval1")
+                                assert task["queue"] != "done", (
+                                    "orchestrator_impl task should NOT be auto-accepted"
+                                )
+                                assert task["queue"] == "incoming", (
+                                    f"Expected orchestrator_impl task to be rejected to incoming, "
+                                    f"but found in {task['queue']}"
+                                )
+
+    def test_orchestrator_impl_task_with_commits_accepted(self, mock_config, initialized_db):
+        """An orchestrator_impl task with commits should be accepted normally."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            with patch('orchestrator.roles.validator.is_db_enabled', return_value=True):
+                with patch('orchestrator.queue_utils.is_db_enabled', return_value=True):
+                    with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_config / "shared" / "queue"):
+                        with patch('orchestrator.roles.validator.get_validation_config', return_value={
+                            'require_commits': True,
+                            'max_attempts_before_planning': 3,
+                            'claim_timeout_minutes': 60,
+                        }):
+                            with patch.dict(os.environ, {
+                                'AGENT_NAME': 'test-validator',
+                                'AGENT_ID': '0',
+                                'AGENT_ROLE': 'validator',
+                                'PARENT_PROJECT': str(mock_config.parent),
+                                'WORKTREE': str(mock_config.parent),
+                                'SHARED_DIR': str(mock_config / 'shared'),
+                                'ORCHESTRATOR_DIR': str(mock_config),
+                            }):
+                                from orchestrator.roles.validator import ValidatorRole
+                                from orchestrator.db import create_task, claim_task, submit_completion, get_task
+
+                                # Setup: create and submit an orchestrator_impl task WITH commits
+                                create_task(
+                                    task_id="orchval2",
+                                    file_path=str(mock_config / "shared" / "queue" / "provisional" / "TASK-orchval2.md"),
+                                    role="orchestrator_impl",
+                                )
+                                claim_task()
+                                submit_completion("orchval2", commits_count=3, turns_used=20)
+
+                                # Create the task file
+                                prov_dir = mock_config / "shared" / "queue" / "provisional"
+                                prov_dir.mkdir(parents=True, exist_ok=True)
+                                (prov_dir / "TASK-orchval2.md").write_text(
+                                    "# [TASK-orchval2] Orchestrator impl task with commits\n"
+                                    "ROLE: orchestrator_impl\n"
+                                )
+
+                                # Run validator
+                                role = ValidatorRole()
+                                result = role.run()
+                                assert result == 0
+
+                                # Task should be accepted (has commits)
+                                task = get_task("orchval2")
+                                assert task["queue"] == "done"

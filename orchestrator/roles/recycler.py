@@ -46,13 +46,6 @@ class RecyclerRole(BaseRole):
             role = task.get("role")
             self.debug_log(f"Checking {task_id}: commits={commits_count}, turns={turns_used}, role={role}")
 
-            # orchestrator_impl tasks commit to submodule — auto-accept
-            if role == "orchestrator_impl":
-                self.log(f"Auto-accepting orchestrator_impl task {task_id} (submodule commits not tracked)")
-                accept_completion(task_path, validator=self.agent_name)
-                accepted += 1
-                continue
-
             if is_burned_out(commits_count=commits_count, turns_used=turns_used, role=role):
                 self.log(f"Recycling {task_id}: burned out (0 commits, {turns_used} turns)")
                 try:

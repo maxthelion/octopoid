@@ -7,6 +7,58 @@ from unittest.mock import patch
 
 
 # =============================================================================
+# Orchestrator_impl auto-accept removal tests
+# =============================================================================
+
+
+class TestRecyclerNoAutoAcceptOrchestratorImpl:
+    """Tests that recycler does NOT auto-accept orchestrator_impl tasks."""
+
+    def test_orchestrator_impl_task_not_auto_accepted(self, mock_config, initialized_db):
+        """An orchestrator_impl task in provisional should NOT be auto-accepted by recycler."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            with patch('orchestrator.roles.recycler.is_db_enabled', return_value=True):
+                with patch('orchestrator.queue_utils.is_db_enabled', return_value=True):
+                    with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_config / "shared" / "queue"):
+                        with patch.dict(os.environ, {
+                            'AGENT_NAME': 'test-recycler',
+                            'AGENT_ID': '0',
+                            'AGENT_ROLE': 'recycler',
+                            'PARENT_PROJECT': str(mock_config.parent),
+                            'WORKTREE': str(mock_config.parent),
+                            'SHARED_DIR': str(mock_config / 'shared'),
+                            'ORCHESTRATOR_DIR': str(mock_config),
+                        }):
+                            from orchestrator.roles.recycler import RecyclerRole
+                            from orchestrator.db import create_task, update_task_queue, get_task
+
+                            # Create an orchestrator_impl task in provisional
+                            prov_dir = mock_config / "shared" / "queue" / "provisional"
+                            prov_dir.mkdir(parents=True, exist_ok=True)
+                            task_path = prov_dir / "TASK-orch0001.md"
+                            task_path.write_text(
+                                "# [TASK-orch0001] Orchestrator impl task\n\n"
+                                "ROLE: orchestrator_impl\nPRIORITY: P1\nBRANCH: main\n\n"
+                                "## Context\nSome orchestrator work.\n\n"
+                                "## Acceptance Criteria\n- [ ] Done\n"
+                            )
+                            create_task(task_id="orch0001", file_path=str(task_path), role="orchestrator_impl")
+                            update_task_queue("orch0001", "provisional", commits_count=0, turns_used=50)
+
+                            # Run recycler
+                            role = RecyclerRole()
+                            result = role.run()
+                            assert result == 0
+
+                            # Task should still be in provisional — NOT auto-accepted
+                            task = get_task("orch0001")
+                            assert task["queue"] == "provisional", (
+                                f"Expected orchestrator_impl task to remain in provisional, "
+                                f"but found in {task['queue']}"
+                            )
+
+
+# =============================================================================
 # Detection heuristic tests
 # =============================================================================
 
