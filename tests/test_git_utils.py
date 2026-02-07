@@ -192,3 +192,191 @@ class TestHasUncommittedChanges:
             has_changes = has_uncommitted_changes(temp_dir)
 
             assert has_changes is True
+
+
+class TestGetSubmoduleStatus:
+    """Tests for get_submodule_status function."""
+
+    def test_nonexistent_submodule(self, temp_dir):
+        """Returns exists=False when submodule directory doesn't exist."""
+        from orchestrator.git_utils import get_submodule_status
+
+        result = get_submodule_status(temp_dir)
+        assert result["exists"] is False
+        assert result["branch"] == ""
+        assert result["commits_ahead"] == 0
+
+    def test_submodule_without_git(self, temp_dir):
+        """Returns exists=False when submodule dir exists but has no .git."""
+        from orchestrator.git_utils import get_submodule_status
+
+        (temp_dir / "orchestrator").mkdir()
+        result = get_submodule_status(temp_dir)
+        assert result["exists"] is False
+
+    def test_submodule_on_sqlite_model(self, temp_dir):
+        """Reports branch correctly when on sqlite-model."""
+        from orchestrator.git_utils import get_submodule_status
+
+        sub = temp_dir / "orchestrator"
+        sub.mkdir()
+        (sub / ".git").write_text("gitdir: ...")
+
+        def mock_run_git(args, cwd=None, check=True):
+            result = MagicMock()
+            result.returncode = 0
+            if args[:2] == ["rev-parse", "--abbrev-ref"]:
+                result.stdout = "sqlite-model\n"
+            elif args[:2] == ["rev-list", "--count"]:
+                result.stdout = "3\n"
+            elif args[:2] == ["log", "--oneline"]:
+                result.stdout = "abc1234 fix something\ndef5678 add feature\nghi9012 init\n"
+            elif args[:2] == ["diff", "--shortstat"]:
+                result.stdout = ""
+            elif args[:3] == ["diff", "--cached", "--shortstat"]:
+                result.stdout = ""
+            elif args[:2] == ["ls-files", "--others"]:
+                result.stdout = ""
+            else:
+                result.stdout = ""
+            return result
+
+        with patch('orchestrator.git_utils.run_git', side_effect=mock_run_git):
+            result = get_submodule_status(temp_dir)
+
+        assert result["exists"] is True
+        assert result["branch"] == "sqlite-model"
+        assert result["commits_ahead"] == 3
+        assert len(result["recent_commits"]) == 3
+        assert result["warnings"] == []
+
+    def test_submodule_detached_head(self, temp_dir):
+        """Reports detached HEAD with warning."""
+        from orchestrator.git_utils import get_submodule_status
+
+        sub = temp_dir / "orchestrator"
+        sub.mkdir()
+        (sub / ".git").write_text("gitdir: ...")
+
+        call_count = [0]
+
+        def mock_run_git(args, cwd=None, check=True):
+            result = MagicMock()
+            result.returncode = 0
+            if args[:2] == ["rev-parse", "--abbrev-ref"]:
+                result.stdout = "HEAD\n"  # detached
+            elif args[:2] == ["rev-parse", "--short"]:
+                result.stdout = "abc1234\n"
+            elif args[:2] == ["rev-list", "--count"]:
+                result.stdout = "0\n"
+            else:
+                result.stdout = ""
+            return result
+
+        with patch('orchestrator.git_utils.run_git', side_effect=mock_run_git):
+            result = get_submodule_status(temp_dir)
+
+        assert result["exists"] is True
+        assert "DETACHED" in result["branch"]
+        assert "abc1234" in result["branch"]
+        assert "submodule HEAD is detached" in result["warnings"]
+
+    def test_submodule_wrong_branch(self, temp_dir):
+        """Warns when submodule is on unexpected branch."""
+        from orchestrator.git_utils import get_submodule_status
+
+        sub = temp_dir / "orchestrator"
+        sub.mkdir()
+        (sub / ".git").write_text("gitdir: ...")
+
+        def mock_run_git(args, cwd=None, check=True):
+            result = MagicMock()
+            result.returncode = 0
+            if args[:2] == ["rev-parse", "--abbrev-ref"]:
+                result.stdout = "main\n"
+            elif args[:2] == ["rev-list", "--count"]:
+                result.stdout = "0\n"
+            else:
+                result.stdout = ""
+            return result
+
+        with patch('orchestrator.git_utils.run_git', side_effect=mock_run_git):
+            result = get_submodule_status(temp_dir)
+
+        assert result["branch"] == "main"
+        assert any("unexpected branch" in w for w in result["warnings"])
+
+    def test_submodule_with_unstaged_changes(self, temp_dir):
+        """Reports unstaged changes in submodule."""
+        from orchestrator.git_utils import get_submodule_status
+
+        sub = temp_dir / "orchestrator"
+        sub.mkdir()
+        (sub / ".git").write_text("gitdir: ...")
+
+        def mock_run_git(args, cwd=None, check=True):
+            result = MagicMock()
+            result.returncode = 0
+            if args[:2] == ["rev-parse", "--abbrev-ref"]:
+                result.stdout = "sqlite-model\n"
+            elif args[:2] == ["rev-list", "--count"]:
+                result.stdout = "0\n"
+            elif args == ["diff", "--shortstat"]:
+                result.stdout = " 2 files changed, 15 insertions(+), 3 deletions(-)\n"
+            elif args[:3] == ["diff", "--cached", "--shortstat"]:
+                result.stdout = ""
+            elif args[:2] == ["ls-files", "--others"]:
+                result.stdout = "new_file.py\nanother.py\n"
+            else:
+                result.stdout = ""
+            return result
+
+        with patch('orchestrator.git_utils.run_git', side_effect=mock_run_git):
+            result = get_submodule_status(temp_dir)
+
+        assert result["diff_shortstat"] == "2 files changed, 15 insertions(+), 3 deletions(-)"
+        assert result["untracked_count"] == 2
+
+    def test_submodule_custom_name(self, temp_dir):
+        """Respects custom submodule name."""
+        from orchestrator.git_utils import get_submodule_status
+
+        sub = temp_dir / "custom-sub"
+        sub.mkdir()
+        (sub / ".git").write_text("gitdir: ...")
+
+        def mock_run_git(args, cwd=None, check=True):
+            result = MagicMock()
+            result.returncode = 0
+            if args[:2] == ["rev-parse", "--abbrev-ref"]:
+                result.stdout = "sqlite-model\n"
+            elif args[:2] == ["rev-list", "--count"]:
+                result.stdout = "0\n"
+            else:
+                result.stdout = ""
+            return result
+
+        with patch('orchestrator.git_utils.run_git', side_effect=mock_run_git):
+            result = get_submodule_status(temp_dir, submodule_name="custom-sub")
+
+        assert result["exists"] is True
+        assert result["branch"] == "sqlite-model"
+
+    def test_submodule_git_failures_graceful(self, temp_dir):
+        """Handles git command failures gracefully."""
+        from orchestrator.git_utils import get_submodule_status
+
+        sub = temp_dir / "orchestrator"
+        sub.mkdir()
+        (sub / ".git").write_text("gitdir: ...")
+
+        def mock_run_git(args, cwd=None, check=True):
+            raise subprocess.SubprocessError("git not available")
+
+        with patch('orchestrator.git_utils.run_git', side_effect=mock_run_git):
+            result = get_submodule_status(temp_dir)
+
+        # Should not raise, return safe defaults
+        assert result["exists"] is True
+        assert result["branch"] == ""
+        assert result["commits_ahead"] == 0

@@ -619,3 +619,124 @@ def get_head_ref(worktree_path: Path) -> str:
         return ""
     except subprocess.CalledProcessError:
         return ""
+
+
+def get_submodule_status(worktree_path: Path, submodule_name: str = "orchestrator") -> dict[str, str | int | list[str]]:
+    """Get git status of a submodule within a worktree.
+
+    Useful for orchestrator_impl tasks where the real work happens
+    inside the orchestrator/ submodule, not the main repo.
+
+    Args:
+        worktree_path: Path to the agent's worktree
+        submodule_name: Name of the submodule directory (default: "orchestrator")
+
+    Returns:
+        Dictionary with keys:
+        - exists (bool): Whether the submodule directory exists with a .git
+        - branch (str): Current branch name, or "DETACHED" if detached HEAD
+        - commits_ahead (int): Commits ahead of origin/<branch>
+        - recent_commits (list[str]): Recent commit oneline summaries
+        - diff_shortstat (str): Shortstat of unstaged changes
+        - staged_shortstat (str): Shortstat of staged changes
+        - untracked_count (int): Number of untracked files
+        - warnings (list[str]): Any warnings (wrong branch, detached, etc.)
+    """
+    sub_path = worktree_path / submodule_name
+    result: dict[str, str | int | list[str] | bool] = {
+        "exists": False,
+        "branch": "",
+        "commits_ahead": 0,
+        "recent_commits": [],
+        "diff_shortstat": "",
+        "staged_shortstat": "",
+        "untracked_count": 0,
+        "warnings": [],
+    }
+
+    # Check submodule exists
+    if not sub_path.exists() or not (sub_path / ".git").exists():
+        return result
+
+    result["exists"] = True
+    warnings: list[str] = []
+
+    # Get branch
+    try:
+        branch_result = run_git(
+            ["rev-parse", "--abbrev-ref", "HEAD"], cwd=sub_path, check=False
+        )
+        branch = branch_result.stdout.strip() if branch_result.returncode == 0 else ""
+    except (subprocess.SubprocessError, OSError):
+        branch = ""
+
+    if branch == "HEAD":
+        # Detached HEAD
+        try:
+            short_sha = run_git(
+                ["rev-parse", "--short", "HEAD"], cwd=sub_path, check=False
+            )
+            branch = f"DETACHED@{short_sha.stdout.strip()}" if short_sha.returncode == 0 else "DETACHED"
+        except (subprocess.SubprocessError, OSError):
+            branch = "DETACHED"
+        warnings.append("submodule HEAD is detached")
+    elif branch and branch != "sqlite-model":
+        warnings.append(f"submodule on unexpected branch '{branch}' (expected sqlite-model)")
+
+    result["branch"] = branch
+
+    # Count commits ahead of origin/<branch>
+    remote_ref = f"origin/{branch}" if branch and not branch.startswith("DETACHED") else "origin/sqlite-model"
+    try:
+        ahead_result = run_git(
+            ["rev-list", "--count", f"{remote_ref}..HEAD"], cwd=sub_path, check=False
+        )
+        if ahead_result.returncode == 0:
+            result["commits_ahead"] = int(ahead_result.stdout.strip())
+    except (subprocess.SubprocessError, OSError, ValueError):
+        pass
+
+    # Recent commit log (up to 5)
+    n = min(int(result["commits_ahead"]) if isinstance(result["commits_ahead"], int) else 0, 5)
+    if n > 0:
+        try:
+            log_result = run_git(
+                ["log", "--oneline", f"-{n}"], cwd=sub_path, check=False
+            )
+            if log_result.returncode == 0 and log_result.stdout.strip():
+                result["recent_commits"] = log_result.stdout.strip().split("\n")
+        except (subprocess.SubprocessError, OSError):
+            pass
+
+    # Unstaged changes
+    try:
+        diff_result = run_git(
+            ["diff", "--shortstat"], cwd=sub_path, check=False
+        )
+        if diff_result.returncode == 0:
+            result["diff_shortstat"] = diff_result.stdout.strip()
+    except (subprocess.SubprocessError, OSError):
+        pass
+
+    # Staged changes
+    try:
+        staged_result = run_git(
+            ["diff", "--cached", "--shortstat"], cwd=sub_path, check=False
+        )
+        if staged_result.returncode == 0:
+            result["staged_shortstat"] = staged_result.stdout.strip()
+    except (subprocess.SubprocessError, OSError):
+        pass
+
+    # Untracked files
+    try:
+        untracked_result = run_git(
+            ["ls-files", "--others", "--exclude-standard"], cwd=sub_path, check=False
+        )
+        if untracked_result.returncode == 0 and untracked_result.stdout.strip():
+            result["untracked_count"] = len(untracked_result.stdout.strip().split("\n"))
+    except (subprocess.SubprocessError, OSError):
+        pass
+
+    result["warnings"] = warnings
+    return result
