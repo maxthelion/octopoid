@@ -250,6 +250,42 @@ class BaseRole(ABC):
 
         return proc.returncode, stdout, stderr
 
+    def get_tool_counter_path(self) -> Path:
+        """Get path to the tool counter file for this agent.
+
+        Returns:
+            Path to .orchestrator/agents/<name>/tool_counter
+        """
+        return self.orchestrator_dir / "agents" / self.agent_name / "tool_counter"
+
+    def read_tool_count(self) -> int | None:
+        """Read the tool call count from the counter file.
+
+        The PostToolUse hook appends one byte per tool call.
+        File size in bytes = number of tool calls.
+
+        Returns:
+            Number of tool calls, or None if counter file doesn't exist
+        """
+        counter_path = self.get_tool_counter_path()
+        try:
+            return counter_path.stat().st_size
+        except FileNotFoundError:
+            return None
+
+    def reset_tool_counter(self) -> None:
+        """Reset the tool counter file by truncating it.
+
+        Called when claiming a new task to start counting from zero.
+        """
+        counter_path = self.get_tool_counter_path()
+        try:
+            counter_path.parent.mkdir(parents=True, exist_ok=True)
+            counter_path.write_bytes(b"")
+            self.debug_log(f"Reset tool counter: {counter_path}")
+        except OSError as e:
+            self.debug_log(f"Failed to reset tool counter: {e}")
+
     def read_instructions(self) -> str:
         """Read the agent instructions file.
 
