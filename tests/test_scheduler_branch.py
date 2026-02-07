@@ -100,10 +100,10 @@ class TestPeekTaskBranch:
                             role="orchestrator_impl",
                             context="Fix a bug in the scheduler",
                             acceptance_criteria=["Bug is fixed"],
-                            branch="sqlite-model",
+                            branch="main",
                         )
 
                         from orchestrator.scheduler import peek_task_branch
                         branch = peek_task_branch("orchestrator_impl")
-                        # Must return None (use main) even though the task has branch=sqlite-model
+                        # Must return None (use main) even though the task has branch=main
                         assert branch is None

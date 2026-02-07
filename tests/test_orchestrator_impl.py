@@ -145,6 +145,7 @@ class TestOrchestratorImplPrompt:
                  patch.object(role, 'read_instructions', return_value=''), \
                  patch.object(role, 'reset_tool_counter'), \
                  patch.object(role, 'read_tool_count', return_value=5), \
+                 patch.object(role, '_create_submodule_branch'), \
                  patch('orchestrator.git_utils.create_feature_branch', return_value='agent/test'), \
                  patch('orchestrator.git_utils.get_head_ref', return_value='abc123'), \
                  patch('orchestrator.git_utils.get_commit_count', return_value=1), \
@@ -185,6 +186,7 @@ class TestOrchestratorImplPrompt:
                  patch.object(role, 'read_instructions', return_value=''), \
                  patch.object(role, 'reset_tool_counter'), \
                  patch.object(role, 'read_tool_count', return_value=5), \
+                 patch.object(role, '_create_submodule_branch'), \
                  patch('orchestrator.git_utils.create_feature_branch', return_value='agent/test'), \
                  patch('orchestrator.git_utils.get_head_ref', return_value='abc123'), \
                  patch('orchestrator.git_utils.get_commit_count', return_value=1), \
@@ -222,6 +224,7 @@ class TestOrchestratorImplCommitCounting:
                  patch.object(role, 'read_instructions', return_value=''), \
                  patch.object(role, 'reset_tool_counter'), \
                  patch.object(role, 'read_tool_count', return_value=5), \
+                 patch.object(role, '_create_submodule_branch'), \
                  patch('orchestrator.git_utils.create_feature_branch', return_value='agent/test'), \
                  patch('orchestrator.git_utils.get_head_ref', return_value='abc123'), \
                  patch('orchestrator.git_utils.get_commit_count', mock_commit_count), \
@@ -258,6 +261,7 @@ class TestOrchestratorImplCommitCounting:
                  patch.object(role, 'read_instructions', return_value=''), \
                  patch.object(role, 'reset_tool_counter'), \
                  patch.object(role, 'read_tool_count', return_value=5), \
+                 patch.object(role, '_create_submodule_branch'), \
                  patch('orchestrator.git_utils.create_feature_branch', return_value='agent/test'), \
                  patch('orchestrator.git_utils.get_head_ref', mock_head_ref), \
                  patch('orchestrator.git_utils.get_commit_count', return_value=1), \
@@ -296,6 +300,7 @@ class TestOrchestratorImplNoPR:
                  patch.object(role, 'read_instructions', return_value=''), \
                  patch.object(role, 'reset_tool_counter'), \
                  patch.object(role, 'read_tool_count', return_value=5), \
+                 patch.object(role, '_create_submodule_branch'), \
                  patch('orchestrator.git_utils.create_feature_branch', return_value='agent/test'), \
                  patch('orchestrator.git_utils.get_head_ref', return_value='abc123'), \
                  patch('orchestrator.git_utils.get_commit_count', return_value=1), \

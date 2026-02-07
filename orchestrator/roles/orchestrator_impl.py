@@ -3,7 +3,7 @@
 This is a variant of the implementer role that:
 - Claims tasks with role='orchestrator_impl' (not 'implement')
 - Works on the orchestrator Python codebase (submodule)
-- Commits to the submodule's sqlite-model branch (not the main repo)
+- Commits to the submodule's main branch (not the main repo)
 - Does NOT create PRs — approval is via approve_orch.py
 """
 
@@ -17,12 +17,23 @@ class OrchestratorImplRole(ImplementerRole):
 
     Key differences from regular ImplementerRole:
     - Creates a feature branch in the main repo for tracking, but all real
-      work happens in the orchestrator/ submodule on sqlite-model
+      work happens in the orchestrator/ submodule on main
     - Counts commits from the submodule, not the main repo
     - Does NOT create pull requests (approval uses approve_orch.py)
     - Provides explicit submodule paths in the agent prompt to prevent
       the agent from accidentally committing to the wrong git repo
     """
+
+    def _create_submodule_branch(self, submodule_path, branch_name):
+        """Create a feature branch in the submodule for isolated commits."""
+        import subprocess
+        subprocess.run(
+            ["git", "checkout", "-b", branch_name],
+            cwd=submodule_path,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
 
     def _get_submodule_path(self):
         """Get the path to the orchestrator submodule in this agent's worktree.
@@ -59,6 +70,7 @@ class OrchestratorImplRole(ImplementerRole):
         """
         from pathlib import Path
         from ..config import is_db_enabled, get_notes_dir
+        import subprocess
         from ..git_utils import (
             create_feature_branch,
             get_commit_count,
@@ -91,6 +103,12 @@ class OrchestratorImplRole(ImplementerRole):
             # Create feature branch in main repo (for tracking/worktree purposes)
             branch_name = create_feature_branch(self.worktree, task_id, base_branch)
             self.log(f"Created branch: {branch_name}")
+
+            # Create feature branch in the SUBMODULE so commits stay isolated
+            # until approved. This prevents commits from bleeding between tasks.
+            sub_branch = f"orch/{task_id}"
+            self._create_submodule_branch(submodule_path, sub_branch)
+            self.log(f"Created submodule branch: {sub_branch}")
 
             # Snapshot the SUBMODULE HEAD before implementation — this is
             # what we compare against to count commits afterward.
@@ -223,9 +241,9 @@ Remember:
                 return exit_code
 
             # orchestrator_impl tasks do NOT create PRs — they commit
-            # directly to the submodule's sqlite-model branch. Approval
+            # directly to the submodule's main branch. Approval
             # is handled by approve_orch.py which cherry-picks from the
-            # agent's worktree submodule to the canonical sqlite-model.
+            # agent's worktree submodule to the canonical main.
             self.log("Skipping PR creation (orchestrator_impl uses approve_orch.py)")
 
             result_msg = f"Implementation complete ({commits_made} submodule commits)"

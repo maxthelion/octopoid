@@ -215,7 +215,7 @@ class TestGetSubmoduleStatus:
         assert result["exists"] is False
 
     def test_submodule_on_sqlite_model(self, temp_dir):
-        """Reports branch correctly when on sqlite-model."""
+        """Reports branch correctly when on main."""
         from orchestrator.git_utils import get_submodule_status
 
         sub = temp_dir / "orchestrator"
@@ -226,7 +226,7 @@ class TestGetSubmoduleStatus:
             result = MagicMock()
             result.returncode = 0
             if args[:2] == ["rev-parse", "--abbrev-ref"]:
-                result.stdout = "sqlite-model\n"
+                result.stdout = "main\n"
             elif args[:2] == ["rev-list", "--count"]:
                 result.stdout = "3\n"
             elif args[:2] == ["log", "--oneline"]:
@@ -245,7 +245,7 @@ class TestGetSubmoduleStatus:
             result = get_submodule_status(temp_dir)
 
         assert result["exists"] is True
-        assert result["branch"] == "sqlite-model"
+        assert result["branch"] == "main"
         assert result["commits_ahead"] == 3
         assert len(result["recent_commits"]) == 3
         assert result["warnings"] == []
@@ -293,7 +293,7 @@ class TestGetSubmoduleStatus:
             result = MagicMock()
             result.returncode = 0
             if args[:2] == ["rev-parse", "--abbrev-ref"]:
-                result.stdout = "main\n"
+                result.stdout = "some-other-branch\n"
             elif args[:2] == ["rev-list", "--count"]:
                 result.stdout = "0\n"
             else:
@@ -303,7 +303,7 @@ class TestGetSubmoduleStatus:
         with patch('orchestrator.git_utils.run_git', side_effect=mock_run_git):
             result = get_submodule_status(temp_dir)
 
-        assert result["branch"] == "main"
+        assert result["branch"] == "some-other-branch"
         assert any("unexpected branch" in w for w in result["warnings"])
 
     def test_submodule_with_unstaged_changes(self, temp_dir):
@@ -318,7 +318,7 @@ class TestGetSubmoduleStatus:
             result = MagicMock()
             result.returncode = 0
             if args[:2] == ["rev-parse", "--abbrev-ref"]:
-                result.stdout = "sqlite-model\n"
+                result.stdout = "main\n"
             elif args[:2] == ["rev-list", "--count"]:
                 result.stdout = "0\n"
             elif args == ["diff", "--shortstat"]:
@@ -349,7 +349,7 @@ class TestGetSubmoduleStatus:
             result = MagicMock()
             result.returncode = 0
             if args[:2] == ["rev-parse", "--abbrev-ref"]:
-                result.stdout = "sqlite-model\n"
+                result.stdout = "main\n"
             elif args[:2] == ["rev-list", "--count"]:
                 result.stdout = "0\n"
             else:
@@ -360,7 +360,7 @@ class TestGetSubmoduleStatus:
             result = get_submodule_status(temp_dir, submodule_name="custom-sub")
 
         assert result["exists"] is True
-        assert result["branch"] == "sqlite-model"
+        assert result["branch"] == "main"
 
     def test_submodule_git_failures_graceful(self, temp_dir):
         """Handles git command failures gracefully."""

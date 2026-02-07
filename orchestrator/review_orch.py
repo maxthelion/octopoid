@@ -1,8 +1,8 @@
 """Review local submodule commits for an orchestrator specialist task.
 
 Shows the commits an agent has made to the orchestrator submodule's
-sqlite-model branch inside their worktree that haven't been pushed to
-origin/sqlite-model yet.  This is the read-only counterpart to
+main branch inside their worktree that haven't been pushed to
+origin/main yet.  This is the read-only counterpart to
 approve_orch.py — it lets a reviewer inspect what an agent did before
 running the approval flow.
 
@@ -18,7 +18,7 @@ from typing import Any
 from .config import get_agents_runtime_dir, is_db_enabled
 
 
-SUBMODULE_BRANCH = "sqlite-model"
+SUBMODULE_BRANCH = "main"
 
 
 # ---------------------------------------------------------------------------
@@ -118,7 +118,7 @@ def find_agent_submodule(task_info: dict[str, Any]) -> Path | None:
 
 
 def check_submodule_branch(agent_sub: Path) -> str | None:
-    """Verify the agent's submodule is on sqlite-model.
+    """Verify the agent's submodule is on main.
 
     Returns the branch name if valid, or None with an error message.
     """
@@ -146,7 +146,7 @@ def check_submodule_branch(agent_sub: Path) -> str | None:
 
 
 def get_local_commits(agent_sub: Path) -> list[dict[str, str]]:
-    """Get commits on sqlite-model that are not on origin/sqlite-model.
+    """Get commits on main that are not on origin/main.
 
     Returns a list of dicts with 'sha', 'subject', 'author', 'date' keys,
     oldest first. Returns empty list if there are no unpushed commits.
@@ -157,7 +157,7 @@ def get_local_commits(agent_sub: Path) -> list[dict[str, str]]:
         cwd=agent_sub,
     )
 
-    # Check if origin/sqlite-model exists
+    # Check if origin/main exists
     ref_check = _run(
         ["git", "rev-parse", "--verify", f"origin/{SUBMODULE_BRANCH}"],
         cwd=agent_sub,
@@ -199,7 +199,7 @@ def get_local_commits(agent_sub: Path) -> list[dict[str, str]]:
 
 
 def get_diff(agent_sub: Path) -> str:
-    """Get the diff of local commits vs origin/sqlite-model.
+    """Get the diff of local commits vs origin/main.
 
     Returns the diff text, or empty string if no diff.
     """

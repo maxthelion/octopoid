@@ -57,8 +57,8 @@ def _make_commit(repo: Path, filename: str, content: str, message: str) -> str:
 def git_repo(tmp_path):
     """Create a bare git repo to act as 'origin' and a clone (agent_sub).
 
-    - origin: bare repo with sqlite-model branch
-    - agent_sub: clone on sqlite-model (simulates agent's worktree submodule)
+    - origin: bare repo with main branch
+    - agent_sub: clone on main (simulates agent's worktree submodule)
     """
     origin = tmp_path / "origin.git"
     agent = tmp_path / "agent_sub"
@@ -66,10 +66,10 @@ def git_repo(tmp_path):
     # Create bare origin
     subprocess.run(["git", "init", "--bare", str(origin)], check=True, capture_output=True)
 
-    # Clone, create sqlite-model branch with initial commit
+    # Clone, ensure on main branch with initial commit
     subprocess.run(["git", "clone", str(origin), str(agent)], check=True, capture_output=True)
     subprocess.run(
-        ["git", "checkout", "-b", SUBMODULE_BRANCH],
+        ["git", "checkout", "-B", "main"],
         cwd=agent, check=True, capture_output=True,
     )
     (agent / "base.txt").write_text("base content\n")
@@ -197,7 +197,7 @@ class TestFindAgentSubmodule:
 
 class TestCheckSubmoduleBranch:
     def test_valid_branch(self, git_repo):
-        """Returns branch name when on sqlite-model."""
+        """Returns branch name when on main."""
         result = check_submodule_branch(git_repo["agent_sub"])
         assert result == SUBMODULE_BRANCH
 

@@ -1,8 +1,8 @@
 """Full approval automation for orchestrator specialist tasks.
 
 Orchestrator specialist agents (role=orchestrator_impl) commit to the
-orchestrator submodule's sqlite-model branch inside their worktree.
-Approving a task means landing those commits on the canonical sqlite-model
+orchestrator submodule's main branch inside their worktree.
+Approving a task means landing those commits on the canonical main
 branch, running tests, pushing, updating the submodule ref on main, and
 accepting in the DB.
 
@@ -23,7 +23,7 @@ from .db import accept_completion, get_connection, get_task, update_task_queue
 # Constants
 # ---------------------------------------------------------------------------
 
-SUBMODULE_BRANCH = "sqlite-model"
+SUBMODULE_BRANCH = "main"
 
 
 # ---------------------------------------------------------------------------
@@ -138,8 +138,9 @@ def find_agent_submodule(task_info: dict[str, Any]) -> Path | None:
 def find_agent_commits(agent_sub: Path, local_sub: Path) -> list[str]:
     """Return commit SHAs from agent submodule that are not in local_sub.
 
-    We fetch from the agent's submodule repo, then compare FETCH_HEAD
-    against the local sqlite-model HEAD.  Returns a list of SHAs in
+    We detect the agent's current branch (which may be a feature branch
+    like orch/<task-id> or main), fetch it, then compare FETCH_HEAD
+    against the local main HEAD.  Returns a list of SHAs in
     topological order (oldest first), ready for cherry-pick.
     """
     # Get local HEAD
@@ -150,15 +151,34 @@ def find_agent_commits(agent_sub: Path, local_sub: Path) -> list[str]:
         return []
     local_sha = local_head.stdout.strip()
 
+    # Detect the agent's current branch (could be orch/<task-id> or main)
+    agent_branch_result = run(
+        ["git", "branch", "--show-current"], cwd=agent_sub, check=False
+    )
+    agent_branch = agent_branch_result.stdout.strip() if agent_branch_result.returncode == 0 else ""
+    if not agent_branch:
+        agent_branch = "HEAD"  # Detached HEAD fallback
+    print(f"  Agent submodule branch: {agent_branch}")
+
     # Fetch from agent submodule so we can compare
     fetch_result = run(
-        ["git", "fetch", str(agent_sub), SUBMODULE_BRANCH],
+        ["git", "fetch", str(agent_sub), agent_branch],
         cwd=local_sub,
         check=False,
     )
     if fetch_result.returncode != 0:
         print(f"  WARNING: fetch from agent submodule failed: {fetch_result.stderr.strip()}")
-        return []
+        # Fallback: try fetching main
+        if agent_branch != SUBMODULE_BRANCH:
+            fetch_result = run(
+                ["git", "fetch", str(agent_sub), SUBMODULE_BRANCH],
+                cwd=local_sub,
+                check=False,
+            )
+            if fetch_result.returncode != 0:
+                return []
+        else:
+            return []
 
     # Get FETCH_HEAD
     fetch_head = run(
@@ -231,7 +251,7 @@ def _is_empty_cherry_pick(result: subprocess.CompletedProcess) -> bool:
 
 
 def cherry_pick_commits(commits: list[str], local_sub: Path) -> bool:
-    """Cherry-pick commits one by one onto the current sqlite-model.
+    """Cherry-pick commits one by one onto the current main.
 
     Returns True on success, False on conflict.  On conflict the cherry-pick
     is aborted so the working tree is clean.
@@ -332,12 +352,12 @@ def run_tests(local_sub: Path) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Step 5 — Push sqlite-model
+# Step 5 — Push main
 # ---------------------------------------------------------------------------
 
 
 def push_submodule(local_sub: Path) -> bool:
-    """Push sqlite-model to origin, handling remote divergence.
+    """Push main to origin, handling remote divergence.
 
     Returns True on success.
     """
@@ -565,7 +585,7 @@ def approve_orchestrator_task(task_id_prefix: str) -> int:
 
     if not commits:
         print("   WARNING: No new commits found in agent submodule")
-        print("   The agent may not have committed, or commits are already in sqlite-model.")
+        print("   The agent may not have committed, or commits are already in main.")
         # Ask user to confirm
         try:
             response = input("   Continue anyway? [y/N] ").strip().lower()
@@ -579,7 +599,7 @@ def approve_orchestrator_task(task_id_prefix: str) -> int:
 
     # Step 4: Cherry-pick
     if commits:
-        print("\n3. Cherry-picking commits onto sqlite-model...")
+        print("\n3. Cherry-picking commits onto main...")
         if not cherry_pick_commits(commits, local_sub):
             return 1
         print("   Cherry-pick complete")
@@ -601,9 +621,9 @@ def approve_orchestrator_task(task_id_prefix: str) -> int:
     else:
         print("\n3-4. Skipping cherry-pick and tests (no commits)")
 
-    # Step 6: Push sqlite-model
+    # Step 6: Push main
     if commits:
-        print("\n5. Pushing sqlite-model...")
+        print("\n5. Pushing main...")
         if not push_submodule(local_sub):
             return 1
         print("   Pushed")

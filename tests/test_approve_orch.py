@@ -32,8 +32,8 @@ from orchestrator.approve_orch import (
 @pytest.fixture
 def git_repo(tmp_path):
     """Create a bare git repo to act as 'origin' and two clones:
-    - local_sub: the main submodule (on sqlite-model)
-    - agent_sub: the agent's worktree submodule (on sqlite-model)
+    - local_sub: the main submodule (on main)
+    - agent_sub: the agent's worktree submodule (on main)
 
     Returns a dict with paths and helpers.
     """
@@ -44,9 +44,10 @@ def git_repo(tmp_path):
     # Create bare origin
     subprocess.run(["git", "init", "--bare", str(origin)], check=True, capture_output=True)
 
-    # Clone to local, create sqlite-model branch with initial commit
+    # Clone to local, make initial commit on main
     subprocess.run(["git", "clone", str(origin), str(local)], check=True, capture_output=True)
-    subprocess.run(["git", "checkout", "-b", SUBMODULE_BRANCH], cwd=local, check=True, capture_output=True)
+    # Ensure we're on a branch called 'main' (handles older git defaults)
+    subprocess.run(["git", "checkout", "-B", "main"], cwd=local, check=True, capture_output=True)
     (local / "base.txt").write_text("base content\n")
     subprocess.run(["git", "add", "."], cwd=local, check=True, capture_output=True)
     subprocess.run(
@@ -55,13 +56,13 @@ def git_repo(tmp_path):
         env=_git_env(),
     )
     subprocess.run(
-        ["git", "push", "-u", "origin", SUBMODULE_BRANCH],
+        ["git", "push", "-u", "origin", "main"],
         cwd=local, check=True, capture_output=True,
     )
 
     # Clone to agent
     subprocess.run(["git", "clone", str(origin), str(agent)], check=True, capture_output=True)
-    subprocess.run(["git", "checkout", SUBMODULE_BRANCH], cwd=agent, check=True, capture_output=True)
+    subprocess.run(["git", "checkout", "main"], cwd=agent, check=True, capture_output=True)
 
     return {
         "origin": origin,
@@ -254,7 +255,7 @@ class TestIsEmptyCherryPick:
         """Detects 'nothing to commit' message."""
         result = subprocess.CompletedProcess(
             args=[], returncode=1,
-            stdout="On branch sqlite-model\nnothing to commit, working tree clean\n",
+            stdout="On branch main\nnothing to commit, working tree clean\n",
             stderr="",
         )
         assert _is_empty_cherry_pick(result) is True

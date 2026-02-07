@@ -680,13 +680,13 @@ def get_submodule_status(worktree_path: Path, submodule_name: str = "orchestrato
         except (subprocess.SubprocessError, OSError):
             branch = "DETACHED"
         warnings.append("submodule HEAD is detached")
-    elif branch and branch != "sqlite-model":
-        warnings.append(f"submodule on unexpected branch '{branch}' (expected sqlite-model)")
+    elif branch and branch != "main":
+        warnings.append(f"submodule on unexpected branch '{branch}' (expected main)")
 
     result["branch"] = branch
 
     # Count commits ahead of origin/<branch>
-    remote_ref = f"origin/{branch}" if branch and not branch.startswith("DETACHED") else "origin/sqlite-model"
+    remote_ref = f"origin/{branch}" if branch and not branch.startswith("DETACHED") else "origin/main"
     try:
         ahead_result = run_git(
             ["rev-list", "--count", f"{remote_ref}..HEAD"], cwd=sub_path, check=False

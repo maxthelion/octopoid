@@ -14,7 +14,7 @@ This role is lightweight — it runs checks directly without invoking Claude.
 
 The gk-testing-octopoid check is the rebase + pytest gatekeeper for
 orchestrator (Octopoid) tasks. It:
-- Rebases agent commits onto current origin/sqlite-model instead of cherry-picking
+- Rebases agent commits onto current origin/main instead of cherry-picking
 - Provides richer failure context (conflict details, test failure summaries)
 - Identifies whether failures are likely caused by the agent's changes vs pre-existing
 """
@@ -125,7 +125,7 @@ class CheckRunnerRole(BaseRole):
             )
             return
 
-        # Get the agent's commits on sqlite-model
+        # Get the agent's commits on main
         commits = self._get_submodule_commits(submodule_path)
         if not commits:
             self.log(f"No submodule commits found for task {task_id}")
@@ -149,7 +149,7 @@ class CheckRunnerRole(BaseRole):
             )
             return
 
-        # Set up clean state: fetch and reset to origin/sqlite-model
+        # Set up clean state: fetch and reset to origin/main
         setup_ok, setup_err = self._setup_clean_submodule(review_submodule, submodule_path)
         if not setup_ok:
             db.record_check_result(
@@ -192,15 +192,15 @@ class CheckRunnerRole(BaseRole):
             self.log(f"pytest-submodule FAILED for task {task_id}")
 
     def _run_gk_testing(self, task_id: str, task: dict) -> None:
-        """Run the gk-testing-octopoid check: rebase onto current sqlite-model + pytest.
+        """Run the gk-testing-octopoid check: rebase onto current main + pytest.
 
         Unlike pytest-submodule which cherry-picks, this check rebases the
-        agent's commits onto the current origin/sqlite-model. This catches
+        agent's commits onto the current origin/main. This catches
         divergence issues and produces a cleaner history.
 
         Flow:
         1. Find agent worktree and submodule commits
-        2. Set up review worktree with clean origin/sqlite-model
+        2. Set up review worktree with clean origin/main
         3. Create a temporary branch and rebase agent commits onto it
         4. Run pytest on the rebased code
         5. Record pass/fail with context
@@ -232,7 +232,7 @@ class CheckRunnerRole(BaseRole):
             )
             return
 
-        # Get the agent's commits on sqlite-model
+        # Get the agent's commits on main
         commits = self._get_submodule_commits(submodule_path)
         if not commits:
             self.log(f"No submodule commits found for task {task_id}")
@@ -256,7 +256,7 @@ class CheckRunnerRole(BaseRole):
             )
             return
 
-        # Set up clean state: fetch and reset to origin/sqlite-model
+        # Set up clean state: fetch and reset to origin/main
         setup_ok, setup_err = self._setup_clean_submodule(review_submodule, submodule_path)
         if not setup_ok:
             db.record_check_result(
@@ -268,18 +268,18 @@ class CheckRunnerRole(BaseRole):
         # Check if base has diverged since agent forked
         divergence_info = self._check_divergence(review_submodule, commits)
 
-        # Rebase commits onto current origin/sqlite-model
+        # Rebase commits onto current origin/main
         rebase_ok, rebase_err = self._rebase_commits(review_submodule, commits)
         if not rebase_ok:
             # Build a helpful rejection message with divergence context
             summary_parts = ["## Rebase Failed\n"]
             summary_parts.append(f"Could not rebase {len(commits)} commit(s) "
-                                 f"onto current `origin/sqlite-model`.\n")
+                                 f"onto current `origin/main`.\n")
             if divergence_info:
-                summary_parts.append(f"\n### What changed on sqlite-model\n\n{divergence_info}\n")
+                summary_parts.append(f"\n### What changed on main\n\n{divergence_info}\n")
             summary_parts.append(f"\n### Conflict details\n\n{rebase_err}\n")
             summary_parts.append("\n### Suggested fix\n\n"
-                                 "Pull the latest `origin/sqlite-model`, rebase your commits, "
+                                 "Pull the latest `origin/main`, rebase your commits, "
                                  "resolve conflicts, and resubmit.")
 
             db.record_check_result(
@@ -302,7 +302,7 @@ class CheckRunnerRole(BaseRole):
             # Build a detailed failure summary
             summary_parts = ["## Test Failures After Rebase\n"]
             summary_parts.append(f"Rebased {len(commits)} commit(s) onto current "
-                                 f"`origin/sqlite-model` successfully, but tests failed.\n")
+                                 f"`origin/main` successfully, but tests failed.\n")
 
             if divergence_info:
                 summary_parts.append(f"\n### Base branch changes\n\n{divergence_info}\n")
@@ -322,10 +322,10 @@ class CheckRunnerRole(BaseRole):
             self.log(f"gk-testing-octopoid FAILED for task {task_id}: test failures")
 
     def _check_divergence(self, review_sub: Path, agent_commits: list[str]) -> str:
-        """Check if origin/sqlite-model has diverged since the agent forked.
+        """Check if origin/main has diverged since the agent forked.
 
         Compares the agent's base (parent of first commit) against current
-        origin/sqlite-model. Returns a summary of what changed if diverged.
+        origin/main. Returns a summary of what changed if diverged.
 
         Args:
             review_sub: Path to review worktree's orchestrator submodule
@@ -352,9 +352,9 @@ class CheckRunnerRole(BaseRole):
 
             agent_base = result.stdout.strip()
 
-            # Compare with current origin/sqlite-model
+            # Compare with current origin/main
             result = subprocess.run(
-                ["git", "rev-parse", "origin/sqlite-model"],
+                ["git", "rev-parse", "origin/main"],
                 cwd=review_sub,
                 capture_output=True,
                 text=True,
@@ -370,7 +370,7 @@ class CheckRunnerRole(BaseRole):
 
             # Get the log of commits between agent base and current HEAD
             result = subprocess.run(
-                ["git", "log", "--oneline", f"{agent_base}..origin/sqlite-model"],
+                ["git", "log", "--oneline", f"{agent_base}..origin/main"],
                 cwd=review_sub,
                 capture_output=True,
                 text=True,
@@ -383,7 +383,7 @@ class CheckRunnerRole(BaseRole):
             commit_count = len(upstream_commits.strip().split("\n"))
 
             return (
-                f"{commit_count} commit(s) landed on `sqlite-model` since the agent forked:\n\n"
+                f"{commit_count} commit(s) landed on `main` since the agent forked:\n\n"
                 f"```\n{upstream_commits}\n```"
             )
 
@@ -391,10 +391,10 @@ class CheckRunnerRole(BaseRole):
             return ""
 
     def _rebase_commits(self, review_sub: Path, commits: list[str]) -> tuple[bool, str]:
-        """Rebase agent commits onto current origin/sqlite-model.
+        """Rebase agent commits onto current origin/main.
 
         Creates a temporary branch from the agent's first commit's parent,
-        applies all agent commits, then rebases onto origin/sqlite-model.
+        applies all agent commits, then rebases onto origin/main.
 
         Args:
             review_sub: Path to review worktree's orchestrator submodule
@@ -404,9 +404,9 @@ class CheckRunnerRole(BaseRole):
             Tuple of (success, error_message)
         """
         try:
-            # Strategy: checkout origin/sqlite-model, then cherry-pick agent commits
+            # Strategy: checkout origin/main, then cherry-pick agent commits
             # This achieves the same result as rebasing the agent's work onto the
-            # latest base. We already reset to origin/sqlite-model in setup, so
+            # latest base. We already reset to origin/main in setup, so
             # we just need to cherry-pick in order.
             #
             # The difference from plain cherry-pick (pytest-submodule) is that
@@ -452,7 +452,7 @@ class CheckRunnerRole(BaseRole):
                     )
                     # Reset to clean state
                     subprocess.run(
-                        ["git", "reset", "--hard", "origin/sqlite-model"],
+                        ["git", "reset", "--hard", "origin/main"],
                         cwd=review_sub,
                         capture_output=True,
                     )
@@ -490,7 +490,7 @@ class CheckRunnerRole(BaseRole):
                 capture_output=True,
             )
             subprocess.run(
-                ["git", "reset", "--hard", "origin/sqlite-model"],
+                ["git", "reset", "--hard", "origin/main"],
                 cwd=review_sub,
                 capture_output=True,
             )
@@ -537,7 +537,7 @@ class CheckRunnerRole(BaseRole):
         return None
 
     def _get_submodule_commits(self, submodule_path: Path) -> list[str]:
-        """Get commit hashes in the submodule that are ahead of origin/sqlite-model.
+        """Get commit hashes in the submodule that are ahead of origin/main.
 
         Args:
             submodule_path: Path to orchestrator submodule in agent worktree
@@ -546,16 +546,16 @@ class CheckRunnerRole(BaseRole):
             List of commit hashes (oldest first)
         """
         try:
-            # Fetch to ensure we have origin/sqlite-model
+            # Fetch to ensure we have origin/main
             subprocess.run(
-                ["git", "fetch", "origin", "sqlite-model"],
+                ["git", "fetch", "origin", "main"],
                 cwd=submodule_path,
                 capture_output=True,
                 timeout=60,
             )
 
             result = subprocess.run(
-                ["git", "log", "--format=%H", "origin/sqlite-model..HEAD"],
+                ["git", "log", "--format=%H", "origin/main..HEAD"],
                 cwd=submodule_path,
                 capture_output=True,
                 text=True,
@@ -579,7 +579,7 @@ class CheckRunnerRole(BaseRole):
         """Set up a clean submodule state in the review worktree.
 
         Fetches from the agent's submodule as a remote, then resets to
-        origin/sqlite-model for a clean base.
+        origin/main for a clean base.
 
         Args:
             review_sub: Path to review worktree's orchestrator submodule
@@ -589,18 +589,18 @@ class CheckRunnerRole(BaseRole):
             Tuple of (success, error_message)
         """
         try:
-            # Fetch origin to get latest sqlite-model
+            # Fetch origin to get latest main
             subprocess.run(
-                ["git", "fetch", "origin", "sqlite-model"],
+                ["git", "fetch", "origin", "main"],
                 cwd=review_sub,
                 capture_output=True,
                 timeout=60,
                 check=True,
             )
 
-            # Reset to origin/sqlite-model
+            # Reset to origin/main
             subprocess.run(
-                ["git", "reset", "--hard", "origin/sqlite-model"],
+                ["git", "reset", "--hard", "origin/main"],
                 cwd=review_sub,
                 capture_output=True,
                 timeout=30,

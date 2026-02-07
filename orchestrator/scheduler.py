@@ -406,7 +406,7 @@ def get_role_constraints(role: str) -> str:
 - Key files: orchestrator/orchestrator/db.py, queue_utils.py, scheduler.py
 - CRITICAL: Commit ONLY in the worktree's orchestrator/ submodule, not the main repo root
 - Use `git -C orchestrator/ commit` to ensure commits go to the submodule
-- Do NOT create a PR in the main repo — commit directly to the sqlite-model branch
+- Do NOT create a PR in the main repo — commit to a feature branch in the submodule
 - Do NOT use absolute paths to /Users/.../dev/boxen/orchestrator/ — that is a DIFFERENT git repo
 """,
         "tester": """
@@ -922,10 +922,24 @@ def run_scheduler() -> None:
                             text=True,
                             timeout=120,
                         )
-                        # Checkout sqlite-model in the submodule
+                        # Checkout main in the submodule and fetch latest
                         sub_path = worktree_path / "orchestrator"
                         subprocess.run(
-                            ["git", "checkout", "sqlite-model"],
+                            ["git", "checkout", "main"],
+                            cwd=sub_path,
+                            capture_output=True,
+                            text=True,
+                            timeout=30,
+                        )
+                        subprocess.run(
+                            ["git", "fetch", "origin", "main"],
+                            cwd=sub_path,
+                            capture_output=True,
+                            text=True,
+                            timeout=60,
+                        )
+                        subprocess.run(
+                            ["git", "reset", "--hard", "origin/main"],
                             cwd=sub_path,
                             capture_output=True,
                             text=True,

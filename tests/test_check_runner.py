@@ -882,7 +882,7 @@ class TestGkTestingCheck:
                 role._find_agent_worktree = MagicMock(return_value=agent_dir)
                 role._get_submodule_commits = MagicMock(return_value=["abc123", "def456"])
                 role._setup_clean_submodule = MagicMock(return_value=(True, ""))
-                role._check_divergence = MagicMock(return_value="2 commit(s) landed on sqlite-model")
+                role._check_divergence = MagicMock(return_value="2 commit(s) landed on main")
                 role._rebase_commits = MagicMock(
                     return_value=(False, "Conflict applying commit `abc123` (feat: add thing)")
                 )
@@ -894,7 +894,7 @@ class TestGkTestingCheck:
                 assert result["status"] == "fail"
                 assert "Rebase Failed" in result["summary"]
                 assert "Conflict" in result["summary"]
-                assert "sqlite-model" in result["summary"]
+                assert "main" in result["summary"]
 
     def test_gk_testing_fails_test_failure(self, mock_config, initialized_db):
         """gk-testing-octopoid records fail with test output on pytest failure."""
@@ -1017,7 +1017,7 @@ class TestGkTestingCheck:
                 role._find_agent_worktree = MagicMock(return_value=agent_dir)
                 role._get_submodule_commits = MagicMock(return_value=["abc123"])
                 role._setup_clean_submodule = MagicMock(return_value=(True, ""))
-                role._check_divergence = MagicMock(return_value="3 commit(s) landed on sqlite-model")
+                role._check_divergence = MagicMock(return_value="3 commit(s) landed on main")
                 role._rebase_commits = MagicMock(return_value=(True, ""))
                 role._run_pytest = MagicMock(return_value=(True, "all passed"))
 
@@ -1100,7 +1100,7 @@ class TestGkTestingCheck:
                 role._find_agent_worktree = MagicMock(return_value=agent_dir)
                 role._get_submodule_commits = MagicMock(return_value=["abc123"])
                 role._setup_clean_submodule = MagicMock(return_value=(True, ""))
-                role._check_divergence = MagicMock(return_value="5 commit(s) landed on sqlite-model")
+                role._check_divergence = MagicMock(return_value="5 commit(s) landed on main")
                 role._rebase_commits = MagicMock(return_value=(True, ""))
                 role._run_pytest = MagicMock(return_value=(False, "FAILED test_foo::test_bar"))
 

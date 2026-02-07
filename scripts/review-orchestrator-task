@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Review local submodule commits for an orchestrator specialist task.
 
-Shows what an agent committed to the orchestrator submodule's sqlite-model
+Shows what an agent committed to the orchestrator submodule's main
 branch that hasn't been pushed to origin yet.
 
 Usage:

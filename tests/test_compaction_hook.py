@@ -265,6 +265,7 @@ class TestImplementerSetsTaskId:
                 patch("orchestrator.roles.implementer.create_pull_request", return_value="https://pr"),
                 patch("orchestrator.roles.implementer.is_db_enabled", return_value=False),
                 patch("orchestrator.roles.implementer.complete_task"),
+                patch.object(role, "_check_for_continuation_work", return_value=None),
             ):
                 role.run()
 

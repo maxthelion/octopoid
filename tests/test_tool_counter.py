@@ -161,8 +161,8 @@ class TestToolCounterInImplementer:
             counter_path.write_bytes(b"." * 57)
             return (0, "done", "")
 
-        with patch.object(role, "invoke_claude", side_effect=fake_invoke):
-            with patch.object(role, "read_instructions", return_value=""):
+        with patch.object(role, "invoke_claude", side_effect=fake_invoke), \
+             patch.object(role, "read_instructions", return_value=""):
                 role.run()
 
         # Verify save_task_notes was called with actual count, not 100
@@ -233,8 +233,8 @@ class TestToolCounterInImplementer:
                 counter_path.unlink()
             return (0, "done", "")
 
-        with patch.object(role, "invoke_claude", side_effect=fake_invoke):
-            with patch.object(role, "read_instructions", return_value=""):
+        with patch.object(role, "invoke_claude", side_effect=fake_invoke), \
+             patch.object(role, "read_instructions", return_value=""):
                 role.run()
 
         # Verify fallback to 100
@@ -319,8 +319,9 @@ class TestToolCounterInOrchestratorImpl:
             counter_path.write_bytes(b"." * 123)
             return (0, "done", "")
 
-        with patch.object(role, "invoke_claude", side_effect=fake_invoke):
-            with patch.object(role, "read_instructions", return_value=""):
+        with patch.object(role, "invoke_claude", side_effect=fake_invoke), \
+             patch.object(role, "read_instructions", return_value=""), \
+             patch.object(role, "_create_submodule_branch"):
                 role.run()
 
         # Verify actual count used, not 200
@@ -377,8 +378,9 @@ class TestToolCounterInOrchestratorImpl:
                 counter_path.unlink()
             return (0, "done", "")
 
-        with patch.object(role, "invoke_claude", side_effect=fake_invoke):
-            with patch.object(role, "read_instructions", return_value=""):
+        with patch.object(role, "invoke_claude", side_effect=fake_invoke), \
+             patch.object(role, "read_instructions", return_value=""), \
+             patch.object(role, "_create_submodule_branch"):
                 role.run()
 
         mock_submit.assert_called_once()
