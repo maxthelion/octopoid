@@ -46,8 +46,10 @@ def _gather_work() -> dict[str, list[dict[str, Any]]]:
     incoming = [_format_task(t) for t in list_tasks("incoming")]
     claimed = [_format_task(t) for t in list_tasks("claimed")]
 
-    # "in_review" combines provisional tasks
+    # Split provisional into "checking" (has checks) and "in_review" (ready for human)
     provisional = [_format_task(t) for t in list_tasks("provisional")]
+    checking = [t for t in provisional if t.get("checks")]
+    in_review = [t for t in provisional if not t.get("checks")]
 
     # "done_today" — tasks completed in the last 24 hours
     done_all = list_tasks("done")
@@ -57,7 +59,8 @@ def _gather_work() -> dict[str, list[dict[str, Any]]]:
     return {
         "incoming": incoming,
         "in_progress": claimed,
-        "in_review": provisional,
+        "checking": checking,
+        "in_review": in_review,
         "done_today": done_today,
     }
 
@@ -87,6 +90,7 @@ def _format_task(task: dict[str, Any]) -> dict[str, Any]:
         "project_id": task.get("project_id"),
         "attempt_count": task.get("attempt_count", 0),
         "rejection_count": task.get("rejection_count", 0),
+        "checks": task.get("checks", []),
     }
 
 
@@ -317,6 +321,17 @@ def _extract_title_from_file(file_path: str | None) -> str:
         return "untitled"
     try:
         path = Path(file_path)
+        # file_path in DB may be stale (points to incoming/ but file moved)
+        if not path.exists():
+            # Search across queue directories for the same filename
+            queue_root = path.parent.parent
+            if queue_root.exists():
+                for subdir in queue_root.iterdir():
+                    if subdir.is_dir():
+                        candidate = subdir / path.name
+                        if candidate.exists():
+                            path = candidate
+                            break
         if path.exists():
             content = path.read_text()
             match = re.search(r"^#\s*\[TASK-[^\]]+\]\s*(.+)$", content, re.MULTILINE)

@@ -450,10 +450,9 @@ def render_work_tab(win, report: dict[str, Any], state: "DashboardState"):
     columns = [
         ("QUEUED", work.get("incoming", []), Colors.WARNING, False),
         ("IN PROGRESS", work.get("in_progress", []), Colors.RUNNING, True),
+        ("CHECKS", work.get("checking", []), Colors.PAUSED, False),
         ("IN REVIEW", work.get("in_review", []), Colors.HEADER, False),
-        ("DONE", work.get("done_today", []), Colors.SUCCESS, False),
     ]
-
     col_width = max(15, (max_x - 1) // len(columns))
     content_start_y = 0
 
@@ -490,46 +489,47 @@ def render_work_tab(win, report: dict[str, Any], state: "DashboardState"):
 
             _render_task_card(win, card_y, col_x + 1, inner_width, task,
                               show_progress_bar=show_bar)
-            card_y += _card_height(task) + 1  # +1 for spacing
+            card_y += _card_height(task, show_agent=show_bar) + 1  # +1 for spacing
 
 
-def _card_height(task: dict[str, Any]) -> int:
+
+def _card_height(task: dict[str, Any], show_agent: bool = False) -> int:
     """Calculate card height in lines."""
-    h = 1  # title
-    if task.get("agent"):
+    h = 2  # id line + title line
+    if show_agent and task.get("agent"):
         h += 1  # agent + progress
-    if task.get("pr_number"):
-        h += 1  # PR info
-    return max(h, 1)
+    return max(h, 2)
 
 
 def _render_task_card(win, y: int, x: int, width: int, task: dict[str, Any],
                       show_progress_bar: bool = True):
     """Render a single task card."""
+    task_id = task.get("id", "")[:8]
     title = task.get("title", "untitled")
     role = task.get("role", "")
     agent = task.get("agent")
     turns = task.get("turns", 0)
     turn_limit = task.get("turn_limit", MAX_TURNS)
-    pr = task.get("pr_number")
-    created = task.get("created")
     is_orch = role in ("orchestrator_impl", "breakdown", "recycler", "inbox_poller")
 
-    # Title line with role badge
+    # Line 1: ID with role badge
     if is_orch:
         safe_addstr(win, y, x, "ORCH", curses.color_pair(Colors.PAUSED) | curses.A_BOLD)
-        safe_addstr(win, y, x + 5, title[:width - 6], curses.color_pair(Colors.DEFAULT))
+        safe_addstr(win, y, x + 5, task_id, curses.color_pair(Colors.DIM))
     else:
-        safe_addstr(win, y, x, title[:width], curses.color_pair(Colors.DEFAULT))
+        safe_addstr(win, y, x, task_id, curses.color_pair(Colors.DIM))
 
-    row = y + 1
+    # Line 2: Title
+    safe_addstr(win, y + 1, x, title[:width], curses.color_pair(Colors.DEFAULT))
 
-    # Agent line — progress bar for in-progress tasks, text for done/review
-    if agent:
+    row = y + 2
+
+    # Agent + progress — only shown when show_progress_bar is True (in-progress column)
+    if show_progress_bar and agent:
         agent_text = agent[:12]
         safe_addstr(win, row, x, agent_text, curses.color_pair(Colors.DIM))
 
-        if show_progress_bar and turn_limit > 0:
+        if turn_limit > 0:
             bar_x = x + len(agent_text) + 1
             bar_width = min(12, width - len(agent_text) - 1)
             if bar_width >= 5:
@@ -538,20 +538,6 @@ def _render_task_card(win, y: int, x: int, width: int, task: dict[str, Any],
                 turn_text = f" {turns}/{turn_limit}t"
                 safe_addstr(win, row, bar_x + bar_width + 1, turn_text,
                             curses.color_pair(Colors.DIM))
-        elif turns:
-            # Done/review: show turn count as plain text
-            turn_text = f" {turns}t"
-            safe_addstr(win, row, x + len(agent_text) + 1, turn_text,
-                        curses.color_pair(Colors.DIM))
-        row += 1
-
-    # PR info + wait time
-    if pr:
-        age = format_age(created)
-        pr_text = f"PR #{pr}"
-        if age:
-            pr_text += f" {age}"
-        safe_addstr(win, row, x, pr_text, curses.color_pair(Colors.HEADER))
         row += 1
 
 
