@@ -98,6 +98,26 @@ class BaseRole(ABC):
         """Send a question to the user (agent needs human input)."""
         return message_utils.question(title, body, self.agent_name, self.current_task_id)
 
+    def _build_claude_env(self) -> dict[str, str]:
+        """Build environment dict for Claude Code subprocess.
+
+        Inherits the current process environment and ensures agent-specific
+        variables are set. This makes AGENT_NAME (and related vars) available
+        to Claude Code hooks, which run as shell commands spawned by Claude.
+
+        Returns:
+            Environment dict for subprocess calls
+        """
+        env = os.environ.copy()
+        env["AGENT_NAME"] = self.agent_name
+        env["AGENT_ID"] = str(self.agent_id)
+        env["AGENT_ROLE"] = self.agent_role
+        env["PARENT_PROJECT"] = str(self.parent_project)
+        env["WORKTREE"] = str(self.worktree)
+        env["SHARED_DIR"] = str(self.shared_dir)
+        env["ORCHESTRATOR_DIR"] = str(self.orchestrator_dir)
+        return env
+
     def invoke_claude(
         self,
         prompt: str,
@@ -131,6 +151,8 @@ class BaseRole(ABC):
         if output_format != "text":
             cmd.extend(["--output-format", output_format])
 
+        env = self._build_claude_env()
+
         self.log(f"Invoking Claude: {' '.join(cmd[:5])}...")
         self.debug_log(f"Full command: {cmd}")
         self.debug_log(f"Working directory: {self.worktree}")
@@ -141,11 +163,12 @@ class BaseRole(ABC):
         if stdout_log:
             # Stream stdout to file in real-time, so output survives crashes
             stdout_log.parent.mkdir(parents=True, exist_ok=True)
-            return self._invoke_with_streaming(cmd, stdout_log)
+            return self._invoke_with_streaming(cmd, stdout_log, env)
         else:
             result = subprocess.run(
                 cmd,
                 cwd=self.worktree,
+                env=env,
                 capture_output=True,
                 text=True,
                 timeout=3600,  # 60 minute timeout
@@ -160,7 +183,7 @@ class BaseRole(ABC):
             return result.returncode, result.stdout, result.stderr
 
     def _invoke_with_streaming(
-        self, cmd: list[str], stdout_log: Path
+        self, cmd: list[str], stdout_log: Path, env: dict[str, str] | None = None
     ) -> tuple[int, str, str]:
         """Invoke Claude with stdout streamed to a log file.
 
@@ -179,6 +202,7 @@ class BaseRole(ABC):
         proc = subprocess.Popen(
             cmd,
             cwd=self.worktree,
+            env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
