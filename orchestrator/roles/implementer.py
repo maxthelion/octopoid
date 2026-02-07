@@ -86,18 +86,21 @@ Use these to avoid repeating the same exploration and mistakes.
 {notes_section}
 ## Progress Notes
 
-As you work, periodically write your progress and findings to this file:
+Write your progress and findings to this file as you work:
 `{notes_path}`
 
-Use the Write tool to update this file with:
+Update this file regularly with:
 - Key files you've identified and their purposes
-- Approaches you've tried and their outcomes
+- Approaches you've tried and their outcomes (including dead ends)
 - What you've completed so far
 - Any blockers or issues discovered
 - What remains to be done
+- Decisions you made and why
 
-This helps the next agent if your session is interrupted. Write notes
-after significant exploration or before attempting a complex change.
+Good notes are valuable even when things go well — they help reviewers
+understand your reasoning and help future agents working on related tasks.
+Write notes after significant exploration, before attempting a complex
+change, and when you discover something non-obvious about the codebase.
 
 ## Instructions
 
