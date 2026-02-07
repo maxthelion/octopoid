@@ -1,0 +1,99 @@
+#!/usr/bin/env python3
+"""Delete a project and all its tasks."""
+
+import argparse
+import sys
+from pathlib import Path
+
+# Add parent to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from orchestrator.db import get_connection
+from orchestrator.config import is_db_enabled, get_orchestrator_dir
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Delete a project and its tasks')
+    parser.add_argument('project_id', help='Project ID (PROJ-xxx)')
+    parser.add_argument('--force', '-f', action='store_true',
+                        help='Skip confirmation')
+    args = parser.parse_args()
+
+    if not is_db_enabled():
+        print("Error: Database mode required")
+        sys.exit(1)
+
+    project_id = args.project_id
+    if not project_id.startswith('PROJ-'):
+        project_id = f"PROJ-{project_id}"
+
+    with get_connection() as conn:
+        # Get project info
+        cursor = conn.execute(
+            "SELECT id, title, status FROM projects WHERE id = ?",
+            (project_id,)
+        )
+        project = cursor.fetchone()
+
+        if not project:
+            print(f"Project not found: {project_id}")
+            sys.exit(1)
+
+        # Get task count
+        cursor = conn.execute(
+            "SELECT COUNT(*) as count FROM tasks WHERE project_id = ?",
+            (project_id,)
+        )
+        task_count = cursor.fetchone()['count']
+
+        print(f"Project: {project['id']}")
+        print(f"Title: {project['title']}")
+        print(f"Status: {project['status']}")
+        print(f"Tasks: {task_count}")
+        print()
+
+        if not args.force:
+            confirm = input("Delete this project and all tasks? [y/N] ")
+            if confirm.lower() != 'y':
+                print("Cancelled.")
+                sys.exit(0)
+
+        # Delete tasks
+        cursor = conn.execute(
+            "SELECT id FROM tasks WHERE project_id = ?",
+            (project_id,)
+        )
+        task_ids = [row['id'] for row in cursor.fetchall()]
+
+        conn.execute("DELETE FROM tasks WHERE project_id = ?", (project_id,))
+        conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+
+        print(f"Deleted project and {task_count} tasks from DB")
+
+        # Delete task files
+        queue_dir = get_orchestrator_dir() / "shared" / "queue"
+        deleted_files = 0
+        for subdir in ['incoming', 'claimed', 'done', 'failed', 'breakdown', 'provisional']:
+            for task_id in task_ids:
+                task_file = queue_dir / subdir / f"TASK-{task_id}.md"
+                if task_file.exists():
+                    task_file.unlink()
+                    deleted_files += 1
+
+        print(f"Deleted {deleted_files} task files")
+
+        # Delete breakdown file
+        breakdown_file = get_orchestrator_dir() / "shared" / "breakdowns" / f"{project_id}-breakdown.md"
+        if breakdown_file.exists():
+            breakdown_file.unlink()
+            print(f"Deleted breakdown file")
+
+        # Delete project file
+        project_file = get_orchestrator_dir() / "shared" / "projects" / f"{project_id}.yaml"
+        if project_file.exists():
+            project_file.unlink()
+            print(f"Deleted project file")
+
+
+if __name__ == "__main__":
+    main()

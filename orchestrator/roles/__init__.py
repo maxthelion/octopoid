@@ -1,10 +1,12 @@
 """Agent roles for the orchestrator."""
 
 from .base import BaseRole
+from .check_runner import CheckRunnerRole
 from .curator import CuratorRole
 from .gatekeeper import GatekeeperRole
 from .gatekeeper_coordinator import GatekeeperCoordinatorRole
 from .implementer import ImplementerRole
+from .orchestrator_impl import OrchestratorImplRole
 from .pr_coordinator import PRCoordinatorRole
 from .product_manager import ProductManagerRole
 from .proposer import ProposerRole
@@ -20,6 +22,8 @@ __all__ = [
     # Proposal model (v2)
     "ProposerRole",
     "CuratorRole",
+    # Check system
+    "CheckRunnerRole",
     # Gatekeeper system
     "GatekeeperRole",
     "GatekeeperCoordinatorRole",
@@ -27,6 +31,7 @@ __all__ = [
     "PRCoordinatorRole",
     # Execution layer (both models)
     "ImplementerRole",
+    "OrchestratorImplRole",
     "TesterRole",
     "ReviewerRole",
 ]

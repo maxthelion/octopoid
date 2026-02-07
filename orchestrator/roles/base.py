@@ -99,12 +99,35 @@ class BaseRole(ABC):
         """Send a question to the user (agent needs human input)."""
         return message_utils.question(title, body, self.agent_name, self.current_task_id)
 
+    def _build_claude_env(self) -> dict[str, str]:
+        """Build environment dict for Claude Code subprocess.
+
+        Inherits the current process environment and ensures agent-specific
+        variables are set. This makes AGENT_NAME (and related vars) available
+        to Claude Code hooks, which run as shell commands spawned by Claude.
+
+        Returns:
+            Environment dict for subprocess calls
+        """
+        env = os.environ.copy()
+        env["AGENT_NAME"] = self.agent_name
+        env["AGENT_ID"] = str(self.agent_id)
+        env["AGENT_ROLE"] = self.agent_role
+        env["PARENT_PROJECT"] = str(self.parent_project)
+        env["WORKTREE"] = str(self.worktree)
+        env["SHARED_DIR"] = str(self.shared_dir)
+        env["ORCHESTRATOR_DIR"] = str(self.orchestrator_dir)
+        if self.current_task_id:
+            env["CURRENT_TASK_ID"] = self.current_task_id
+        return env
+
     def invoke_claude(
         self,
         prompt: str,
         allowed_tools: list[str] | None = None,
         max_turns: int | None = None,
         output_format: str = "text",
+        stdout_log: Path | None = None,
     ) -> tuple[int, str, str]:
         """Invoke Claude Code CLI with a prompt.
 
@@ -113,6 +136,9 @@ class BaseRole(ABC):
             allowed_tools: List of allowed tools (e.g., ["Read", "Write", "Bash"])
             max_turns: Maximum number of turns before stopping
             output_format: Output format ("text", "json", "stream-json")
+            stdout_log: If provided, stream stdout to this file in real-time.
+                        The file captures output incrementally so it survives
+                        timeouts and crashes.
 
         Returns:
             Tuple of (exit_code, stdout, stderr)
@@ -128,6 +154,8 @@ class BaseRole(ABC):
         if output_format != "text":
             cmd.extend(["--output-format", output_format])
 
+        env = self._build_claude_env()
+
         self.log(f"Invoking Claude: {' '.join(cmd[:5])}...")
         self.debug_log(f"Full command: {cmd}")
         self.debug_log(f"Working directory: {self.worktree}")
@@ -135,21 +163,129 @@ class BaseRole(ABC):
         self.debug_log(f"Max turns: {max_turns}")
         self.debug_log(f"Prompt length: {len(prompt)} chars")
 
-        result = subprocess.run(
+        if stdout_log:
+            # Stream stdout to file in real-time, so output survives crashes
+            stdout_log.parent.mkdir(parents=True, exist_ok=True)
+            return self._invoke_with_streaming(cmd, stdout_log, env)
+        else:
+            result = subprocess.run(
+                cmd,
+                cwd=self.worktree,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=3600,  # 60 minute timeout
+            )
+
+            self.debug_log(f"Claude exit code: {result.returncode}")
+            self.debug_log(f"Stdout length: {len(result.stdout)} chars")
+            self.debug_log(f"Stderr length: {len(result.stderr)} chars")
+            if result.returncode != 0:
+                self.debug_log(f"Stderr: {result.stderr[:1000]}")
+
+            return result.returncode, result.stdout, result.stderr
+
+    def _invoke_with_streaming(
+        self, cmd: list[str], stdout_log: Path, env: dict[str, str] | None = None
+    ) -> tuple[int, str, str]:
+        """Invoke Claude with stdout streamed to a log file.
+
+        Uses Popen so output is written incrementally. If the process
+        is killed or times out, whatever was written so far is preserved.
+
+        Args:
+            cmd: Command to run
+            stdout_log: Path to write stdout to
+
+        Returns:
+            Tuple of (exit_code, stdout, stderr)
+        """
+        import threading
+
+        proc = subprocess.Popen(
             cmd,
             cwd=self.worktree,
-            capture_output=True,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=600,  # 10 minute timeout
         )
 
-        self.debug_log(f"Claude exit code: {result.returncode}")
-        self.debug_log(f"Stdout length: {len(result.stdout)} chars")
-        self.debug_log(f"Stderr length: {len(result.stderr)} chars")
-        if result.returncode != 0:
-            self.debug_log(f"Stderr: {result.stderr[:1000]}")
+        stdout_chunks: list[str] = []
+        stderr_chunks: list[str] = []
 
-        return result.returncode, result.stdout, result.stderr
+        def read_stdout():
+            with open(stdout_log, "w") as log:
+                for line in proc.stdout:
+                    log.write(line)
+                    log.flush()
+                    stdout_chunks.append(line)
+
+        def read_stderr():
+            for line in proc.stderr:
+                stderr_chunks.append(line)
+
+        t_out = threading.Thread(target=read_stdout, daemon=True)
+        t_err = threading.Thread(target=read_stderr, daemon=True)
+        t_out.start()
+        t_err.start()
+
+        try:
+            proc.wait(timeout=3600)  # 60 minute timeout
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+            self.log("Claude process timed out after 60 minutes")
+
+        t_out.join(timeout=5)
+        t_err.join(timeout=5)
+
+        stdout = "".join(stdout_chunks)
+        stderr = "".join(stderr_chunks)
+
+        self.debug_log(f"Claude exit code: {proc.returncode}")
+        self.debug_log(f"Stdout length: {len(stdout)} chars")
+        self.debug_log(f"Stderr length: {len(stderr)} chars")
+        if proc.returncode != 0:
+            self.debug_log(f"Stderr: {stderr[:1000]}")
+
+        return proc.returncode, stdout, stderr
+
+    def get_tool_counter_path(self) -> Path:
+        """Get path to the tool counter file for this agent.
+
+        Returns:
+            Path to .orchestrator/agents/<name>/tool_counter
+        """
+        return self.orchestrator_dir / "agents" / self.agent_name / "tool_counter"
+
+    def read_tool_count(self) -> int | None:
+        """Read the tool call count from the counter file.
+
+        The PostToolUse hook appends one byte per tool call.
+        File size in bytes = number of tool calls.
+
+        Returns:
+            Number of tool calls, or None if counter file doesn't exist
+        """
+        counter_path = self.get_tool_counter_path()
+        try:
+            return counter_path.stat().st_size
+        except FileNotFoundError:
+            return None
+
+    def reset_tool_counter(self) -> None:
+        """Reset the tool counter file by truncating it.
+
+        Called when claiming a new task to start counting from zero.
+        """
+        counter_path = self.get_tool_counter_path()
+        try:
+            counter_path.parent.mkdir(parents=True, exist_ok=True)
+            counter_path.write_bytes(b"")
+            self.debug_log(f"Reset tool counter: {counter_path}")
+        except OSError as e:
+            self.debug_log(f"Failed to reset tool counter: {e}")
 
     def read_instructions(self) -> str:
         """Read the agent instructions file.

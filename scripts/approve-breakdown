@@ -1,0 +1,39 @@
+#!/usr/bin/env python3
+"""Approve a breakdown and create tasks from it."""
+
+import sys
+from pathlib import Path
+
+# Add parent to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from orchestrator.queue_utils import approve_breakdown, list_pending_breakdowns
+
+
+def main():
+    if len(sys.argv) < 2:
+        print("Usage: approve-breakdown <project-id or filename>")
+        print()
+        print("Pending breakdowns:")
+        for b in list_pending_breakdowns():
+            print(f"  {b['project_id'] or b['path'].stem}: {b['title']} ({b['task_count']} tasks)")
+        sys.exit(1)
+
+    identifier = sys.argv[1]
+
+    try:
+        result = approve_breakdown(identifier)
+        print(f"Approved breakdown: {result['breakdown_file']}")
+        print(f"Created {result['tasks_created']} tasks:")
+        for task_id in result['task_ids']:
+            print(f"  - TASK-{task_id}")
+    except FileNotFoundError as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+    except ValueError as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

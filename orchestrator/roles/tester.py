@@ -30,6 +30,7 @@ class TesterRole(BaseRole):
         task_id = task["id"]
         task_title = task["title"]
         task_path = task["path"]
+        self.current_task_id = task_id
 
         self.log(f"Claimed test task {task_id}: {task_title}")
 

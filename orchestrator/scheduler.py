@@ -10,14 +10,20 @@ from datetime import datetime
 from pathlib import Path
 from string import Template
 
+
+
+from .backpressure import check_backpressure_for_role
 from .config import (
     find_parent_project,
     get_agents,
     get_agents_runtime_dir,
     get_commands_dir,
+    get_gatekeeper_config,
     get_global_instructions_path,
     get_orchestrator_dir,
     get_templates_dir,
+    is_db_enabled,
+    is_gatekeeper_enabled,
     is_system_paused,
 )
 from .git_utils import ensure_worktree, get_worktree_path
@@ -60,6 +66,7 @@ def debug_log(message: str) -> None:
             f.write(log_line)
     except OSError:
         pass
+
 
 
 def run_pre_check(agent_name: str, agent_config: dict) -> bool:
@@ -111,6 +118,103 @@ def run_pre_check(agent_name: str, agent_config: dict) -> bool:
     except Exception as e:
         debug_log(f"Pre-check for {agent_name} failed: {e}, spawning anyway")
         return True
+
+
+def _verify_submodule_isolation(sub_path: Path, agent_name: str) -> None:
+    """Verify that a worktree's submodule has its own git object store.
+
+    Orchestrator_impl agents work in a submodule inside their worktree.
+    The worktree's submodule and the main checkout's submodule have
+    SEPARATE git object stores. A commit in one is invisible from the
+    other. This function verifies the submodule .git pointer is correct.
+
+    If the submodule's .git points to the main checkout's object store
+    (instead of the worktree's), the agent would commit to the wrong
+    location and the approve script would not find the commits.
+
+    Args:
+        sub_path: Path to the submodule directory in the worktree
+        agent_name: Agent name for logging
+    """
+    git_pointer = sub_path / ".git"
+    if not git_pointer.exists():
+        debug_log(f"WARNING: {agent_name} submodule has no .git at {git_pointer}")
+        return
+
+    content = git_pointer.read_text().strip()
+
+    # A submodule .git is a file containing "gitdir: <path>"
+    if not content.startswith("gitdir:"):
+        debug_log(f"WARNING: {agent_name} submodule .git is not a gitdir pointer: {content[:80]}")
+        return
+
+    gitdir = content.split("gitdir:", 1)[1].strip()
+
+    # The gitdir should reference the worktree's modules directory, NOT
+    # the main checkout's modules. A healthy worktree submodule points to
+    # something like: ../../.git/worktrees/<name>/modules/orchestrator
+    # A BROKEN one would point to: ../../.git/modules/orchestrator
+    # (which is the main checkout's object store).
+    if "worktrees" in gitdir or "worktree" in gitdir:
+        debug_log(f"{agent_name} submodule .git correctly points to worktree store: {gitdir}")
+    else:
+        # This is the dangerous case — submodule shares the main checkout's store
+        debug_log(
+            f"WARNING: {agent_name} submodule .git points to MAIN checkout store: {gitdir}. "
+            f"Commits may go to the wrong location! "
+            f"Expected a path containing 'worktrees/' for isolated worktree storage."
+        )
+        print(
+            f"WARNING: Agent {agent_name} submodule may share git store with main checkout. "
+            f"gitdir={gitdir}"
+        )
+
+
+def peek_task_branch(role: str) -> str | None:
+    """Peek at the next task for a role and return its branch.
+
+    Used by the scheduler to create worktrees on the correct branch.
+    For breakdown agents, this peeks at the breakdown queue.
+    For implement agents, this peeks at incoming queue.
+
+    orchestrator_impl agents always use a Boxen worktree based on main.
+    They work inside the orchestrator/ submodule within that worktree,
+    so the worktree itself must be on main (not a submodule branch).
+
+    Args:
+        role: Agent role (breakdown, implement, etc.)
+
+    Returns:
+        Branch name if a task is available, None otherwise
+    """
+    # orchestrator_impl always uses main — the agent works inside the
+    # orchestrator/ submodule, not on a Boxen feature branch.
+    if role == "orchestrator_impl":
+        return None
+
+    if not is_db_enabled():
+        return None
+
+    from . import db
+
+    # Map roles to the queues they pull from
+    role_queues = {
+        "breakdown": "breakdown",
+        "implement": "incoming",
+        "test": "incoming",
+    }
+
+    queue = role_queues.get(role)
+    if not queue:
+        return None
+
+    tasks = db.list_tasks(queue=queue)
+    if not tasks:
+        return None
+
+    # Return the branch of the first (highest priority) task
+    branch = tasks[0].get("branch")
+    return branch if branch and branch != "main" else None
 
 
 def get_scheduler_lock_path() -> Path:
@@ -293,6 +397,18 @@ def get_role_constraints(role: str) -> str:
 - Write tests for new functionality
 - Create a PR when work is complete
 """,
+        "orchestrator_impl": """
+- You work on the orchestrator infrastructure (Python), NOT the Boxen app
+- All code is in the orchestrator/ submodule directory (already initialized by the scheduler)
+- Work inside orchestrator/ for all edits and commits
+- Run tests: cd orchestrator && ./venv/bin/python -m pytest tests/ -v
+- Do NOT run `pip install -e .` — it will corrupt the shared scheduler venv. Just edit code and run tests.
+- Key files: orchestrator/orchestrator/db.py, queue_utils.py, scheduler.py
+- CRITICAL: Commit ONLY in the worktree's orchestrator/ submodule, not the main repo root
+- Use `git -C orchestrator/ commit` to ensure commits go to the submodule
+- Do NOT create a PR in the main repo — commit directly to the sqlite-model branch
+- Do NOT use absolute paths to /Users/.../dev/boxen/orchestrator/ — that is a DIFFERENT git repo
+""",
         "tester": """
 - You may read all files
 - You may modify test files only
@@ -306,6 +422,31 @@ def get_role_constraints(role: str) -> str:
 - Leave constructive feedback
 - Approve or request changes via PR review
 - Do not modify code directly
+""",
+        # Validation layer
+        "validator": """
+- You do NOT need a worktree (lightweight agent)
+- Check provisional tasks for commits
+- Accept tasks with valid commits
+- Reject tasks without commits (increment retry count)
+- Escalate to planning after max retries
+- Reset stuck claimed tasks
+- This role runs without Claude invocation
+""",
+        "recycler": """
+- You do NOT need a worktree (lightweight agent)
+- Poll provisional queue for burned-out tasks (0 commits, high turns)
+- Recycle burned-out tasks to the breakdown queue with project context
+- Accept depth-capped tasks for human review
+- This role runs without Claude invocation
+""",
+        "check_runner": """
+- You do NOT need a worktree (lightweight agent)
+- Run automated checks on provisional tasks with pending checks
+- For pytest-submodule: cherry-pick agent commits, run pytest
+- Record pass/fail results in the DB check_results field
+- Reject failed tasks back to agents with test output
+- This role runs without Claude invocation
 """,
     }
     return constraints.get(role, "- Follow standard development practices")
@@ -370,7 +511,14 @@ def spawn_agent(agent_name: str, agent_id: int, role: str, agent_config: dict) -
     Returns:
         Process ID of spawned agent
     """
-    worktree_path = get_worktree_path(agent_name)
+    # Determine working directory - lightweight agents use parent project
+    is_lightweight = agent_config.get("lightweight", False)
+    if is_lightweight:
+        cwd = find_parent_project()
+        worktree_path = cwd  # For env var
+    else:
+        worktree_path = get_worktree_path(agent_name)
+        cwd = worktree_path
 
     # Build environment
     env = os.environ.copy()
@@ -395,6 +543,13 @@ def spawn_agent(agent_name: str, agent_id: int, role: str, agent_config: dict) -
     if role in ("proposer", "gatekeeper") and "focus" in agent_config:
         env["AGENT_FOCUS"] = agent_config["focus"]
 
+    # Pass gatekeeper review context
+    if role == "gatekeeper":
+        if "review_task_id" in agent_config:
+            env["REVIEW_TASK_ID"] = agent_config["review_task_id"]
+        if "review_check_name" in agent_config:
+            env["REVIEW_CHECK_NAME"] = agent_config["review_check_name"]
+
     # Pass debug mode to agents
     if DEBUG:
         env["ORCHESTRATOR_DEBUG"] = "1"
@@ -405,28 +560,34 @@ def spawn_agent(agent_name: str, agent_id: int, role: str, agent_config: dict) -
     # Determine the role module to run
     role_module = f"orchestrator.roles.{role}"
 
-    debug_log(f"Spawning agent {agent_name}: module={role_module}, cwd={worktree_path}")
+    debug_log(f"Spawning agent {agent_name}: module={role_module}, cwd={cwd}, lightweight={is_lightweight}")
     debug_log(f"Agent env: AGENT_FOCUS={env.get('AGENT_FOCUS', 'N/A')}, ports={port_vars}")
 
-    # Create log files for agent stdout/stderr
-    # Using files instead of PIPE prevents blocking when buffer fills
+    # Set up log files for agent output
     agent_dir = get_agents_runtime_dir() / agent_name
-    stdout_path = agent_dir / "stdout.log"
-    stderr_path = agent_dir / "stderr.log"
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    stdout_log = agent_dir / "stdout.log"
+    stderr_log = agent_dir / "stderr.log"
 
-    with open(stdout_path, "w") as stdout_log, open(stderr_path, "w") as stderr_log:
-        # Spawn the role as a subprocess
-        # File handles are inherited by child and remain open after parent closes them
-        process = subprocess.Popen(
-            [sys.executable, "-m", role_module],
-            cwd=worktree_path,
-            env=env,
-            stdout=stdout_log,
-            stderr=stderr_log,
-            start_new_session=True,  # Detach from parent
-        )
+    # Open log files (truncate on each run to keep them manageable)
+    stdout_file = open(stdout_log, "w")
+    stderr_file = open(stderr_log, "w")
 
-    debug_log(f"Agent {agent_name} spawned with PID {process.pid}, logs: {agent_dir}")
+    # Spawn the role as a subprocess
+    process = subprocess.Popen(
+        [sys.executable, "-m", role_module],
+        cwd=cwd,
+        env=env,
+        stdout=stdout_file,
+        stderr=stderr_file,
+        start_new_session=True,  # Detach from parent
+    )
+
+    # Note: We don't close the files here - the subprocess will write to them
+    # and they'll be closed when the subprocess exits. The file descriptors
+    # are inherited by the child process.
+
+    debug_log(f"Agent {agent_name} spawned with PID {process.pid}, logs: {stderr_log}")
     return process.pid
 
 
@@ -451,6 +612,136 @@ def read_agent_exit_code(agent_name: str) -> int | None:
         return exit_code
     except (ValueError, OSError):
         return None
+
+
+def process_auto_accept_tasks() -> None:
+    """Process provisional tasks that have auto_accept enabled.
+
+    Moves tasks from provisional to done if auto_accept is true
+    (either on the task itself or its parent project).
+    """
+    if not is_db_enabled():
+        return
+
+    try:
+        from . import db
+
+        # Get all provisional tasks
+        provisional_tasks = db.list_tasks(queue="provisional")
+
+        for task in provisional_tasks:
+            task_id = task["id"]
+            auto_accept = task.get("auto_accept", False)
+
+            # Check project-level auto_accept if task doesn't have it
+            if not auto_accept and task.get("project_id"):
+                project = db.get_project(task["project_id"])
+                if project:
+                    auto_accept = project.get("auto_accept", False)
+
+            if auto_accept:
+                debug_log(f"Auto-accepting task {task_id}")
+                db.accept_completion(task_id, validator="scheduler")
+                print(f"[{datetime.now().isoformat()}] Auto-accepted task {task_id}")
+
+    except Exception as e:
+        debug_log(f"Error processing auto-accept tasks: {e}")
+
+
+def process_gatekeeper_reviews() -> None:
+    """Process provisional tasks that need gatekeeper review.
+
+    For each provisional task with commits (validated but not yet reviewed):
+    1. Check if gatekeeper review tracking already exists
+    2. If not, initialize review tracking
+    3. If all checks complete, apply pass/fail decision
+    """
+    if not is_db_enabled() or not is_gatekeeper_enabled():
+        return
+
+    try:
+        from . import db
+        from .review_utils import (
+            all_reviews_complete,
+            all_reviews_passed,
+            cleanup_review,
+            get_review_feedback,
+            has_active_review,
+            init_task_review,
+        )
+        from .queue_utils import review_reject_task
+
+        gk_config = get_gatekeeper_config()
+        required_checks = gk_config.get("required_checks", ["architecture", "testing", "qa"])
+        max_rejections = gk_config.get("max_rejections", 3)
+
+        # Get all provisional tasks with commits
+        provisional_tasks = db.list_tasks(queue="provisional")
+
+        for task in provisional_tasks:
+            task_id = task["id"]
+            commits = task.get("commits_count", 0)
+            auto_accept = task.get("auto_accept", False)
+
+            # Skip auto-accept tasks (handled by process_auto_accept_tasks)
+            if auto_accept:
+                continue
+
+            # Skip tasks without commits (validator handles these)
+            if commits == 0:
+                continue
+
+            # Check if review is already initialized
+            if has_active_review(task_id):
+                # Check if all reviews are complete
+                if all_reviews_complete(task_id):
+                    passed, failed_checks = all_reviews_passed(task_id)
+                    task_file_path = task.get("file_path", "")
+
+                    if passed:
+                        # All checks passed — accept the task
+                        debug_log(f"All gatekeeper checks passed for task {task_id}")
+                        db.accept_completion(task_id, validator="gatekeeper")
+                        cleanup_review(task_id)
+                        print(f"[{datetime.now().isoformat()}] Gatekeeper approved task {task_id}")
+                    else:
+                        # Some checks failed — reject with feedback
+                        feedback = get_review_feedback(task_id)
+                        debug_log(f"Gatekeeper checks failed for task {task_id}: {failed_checks}")
+
+                        if task_file_path:
+                            review_reject_task(
+                                task_file_path,
+                                feedback,
+                                rejected_by="gatekeeper",
+                                max_rejections=max_rejections,
+                            )
+                        else:
+                            # No file path, just update DB
+                            db.review_reject_completion(
+                                task_id,
+                                reason=f"Failed checks: {', '.join(failed_checks)}",
+                                reviewer="gatekeeper",
+                            )
+
+                        cleanup_review(task_id)
+                        print(f"[{datetime.now().isoformat()}] Gatekeeper rejected task {task_id}: {failed_checks}")
+            else:
+                # Initialize review tracking for this task
+                branch = task.get("branch", "main")
+                debug_log(f"Initializing gatekeeper review for task {task_id} (branch: {branch})")
+                init_task_review(
+                    task_id,
+                    branch=branch,
+                    base_branch="main",
+                    required_checks=required_checks,
+                )
+                print(f"[{datetime.now().isoformat()}] Initialized gatekeeper review for task {task_id}")
+
+    except Exception as e:
+        debug_log(f"Error processing gatekeeper reviews: {e}")
+        import traceback
+        debug_log(traceback.format_exc())
 
 
 def check_and_update_finished_agents() -> None:
@@ -480,6 +771,15 @@ def check_and_update_finished_agents() -> None:
 
                 new_state = mark_finished(state, exit_code)
                 save_state(new_state, state_path)
+
+                # Also update DB if enabled
+                if is_db_enabled():
+                    try:
+                        from . import db
+                        db.mark_agent_finished(agent_name)
+                    except Exception as e:
+                        debug_log(f"Failed to update agent {agent_name} in DB: {e}")
+
                 print(f"[{datetime.now().isoformat()}] Agent {agent_name} finished (exit code: {exit_code})")
 
 
@@ -496,6 +796,12 @@ def run_scheduler() -> None:
 
     # Check for finished agents first
     check_and_update_finished_agents()
+
+    # Process auto-accept tasks in provisional queue
+    process_auto_accept_tasks()
+
+    # Process gatekeeper reviews for provisional tasks
+    process_gatekeeper_reviews()
 
     # Load agent configuration
     try:
@@ -561,7 +867,24 @@ def run_scheduler() -> None:
                 debug_log(f"Agent {agent_name} not due yet")
                 continue
 
-            # Run pre-check if configured (cheap check for work availability)
+            # Check role-based backpressure (runs before spawning any process)
+            can_proceed, blocked_reason = check_backpressure_for_role(role)
+            if not can_proceed:
+                print(f"Agent {agent_name} blocked: {blocked_reason}")
+                debug_log(f"Agent {agent_name} blocked by backpressure: {blocked_reason}")
+                # Update state to track blocked status
+                state.extra["blocked_reason"] = blocked_reason
+                state.extra["blocked_at"] = datetime.now().isoformat()
+                save_state(state, state_path)
+                continue
+
+            # Clear any previous blocked status
+            if "blocked_reason" in state.extra:
+                del state.extra["blocked_reason"]
+            if "blocked_at" in state.extra:
+                del state.extra["blocked_at"]
+
+            # Run pre-check if configured (additional cheap check for work availability)
             if not run_pre_check(agent_name, agent_config):
                 print(f"Agent {agent_name} pre-check: no work available")
                 debug_log(f"Agent {agent_name} pre-check returned no work")
@@ -570,18 +893,60 @@ def run_scheduler() -> None:
             print(f"[{datetime.now().isoformat()}] Starting agent {agent_name} (role: {role})")
             debug_log(f"Starting agent {agent_name} (role: {role})")
 
-            # Ensure worktree exists
-            base_branch = agent_config.get("base_branch", "main")
-            debug_log(f"Ensuring worktree for {agent_name} on branch {base_branch}")
-            ensure_worktree(agent_name, base_branch)
+            # Check if this is a lightweight agent (no worktree needed)
+            is_lightweight = agent_config.get("lightweight", False)
 
-            # Setup commands in worktree
-            debug_log(f"Setting up commands for {agent_name}")
-            setup_agent_commands(agent_name, role)
+            if not is_lightweight:
+                # Determine base branch for worktree
+                base_branch = agent_config.get("base_branch", "main")
 
-            # Generate agent instructions
-            debug_log(f"Generating instructions for {agent_name}")
-            generate_agent_instructions(agent_name, role, agent_config)
+                # For agents that work on specific queues, peek at the next task's branch
+                # This avoids agents wasting turns on git checkout
+                task_branch = peek_task_branch(role)
+                if task_branch:
+                    debug_log(f"Peeked task branch for {agent_name}: {task_branch}")
+                    base_branch = task_branch
+
+                debug_log(f"Ensuring worktree for {agent_name} on branch {base_branch}")
+                ensure_worktree(agent_name, base_branch)
+
+                # Initialize submodule for orchestrator_impl agents
+                if role == "orchestrator_impl":
+                    worktree_path = get_worktree_path(agent_name)
+                    debug_log(f"Initializing submodule in worktree for {agent_name}")
+                    try:
+                        subprocess.run(
+                            ["git", "submodule", "update", "--init", "orchestrator"],
+                            cwd=worktree_path,
+                            capture_output=True,
+                            text=True,
+                            timeout=120,
+                        )
+                        # Checkout sqlite-model in the submodule
+                        sub_path = worktree_path / "orchestrator"
+                        subprocess.run(
+                            ["git", "checkout", "sqlite-model"],
+                            cwd=sub_path,
+                            capture_output=True,
+                            text=True,
+                            timeout=30,
+                        )
+                        # Verify the submodule has its own git object store
+                        # (not sharing with the main checkout's submodule)
+                        _verify_submodule_isolation(sub_path, agent_name)
+                        debug_log(f"Submodule initialized for {agent_name}")
+                    except Exception as e:
+                        debug_log(f"Submodule init failed for {agent_name}: {e}")
+
+                # Setup commands in worktree
+                debug_log(f"Setting up commands for {agent_name}")
+                setup_agent_commands(agent_name, role)
+
+                # Generate agent instructions
+                debug_log(f"Generating instructions for {agent_name}")
+                generate_agent_instructions(agent_name, role, agent_config)
+            else:
+                debug_log(f"Agent {agent_name} is lightweight, skipping worktree setup")
 
             # Write env file
             debug_log(f"Writing env file for {agent_name}")
@@ -590,9 +955,18 @@ def run_scheduler() -> None:
             # Spawn agent
             pid = spawn_agent(agent_name, agent_id, role, agent_config)
 
-            # Update state
+            # Update JSON state
             new_state = mark_started(state, pid)
             save_state(new_state, state_path)
+
+            # Also update DB if enabled
+            if is_db_enabled():
+                try:
+                    from . import db
+                    db.upsert_agent(agent_name, role=role, running=True, pid=pid)
+                    db.mark_agent_started(agent_name, pid)
+                except Exception as e:
+                    debug_log(f"Failed to update agent {agent_name} in DB: {e}")
 
             print(f"Agent {agent_name} started with PID {pid}")
 
@@ -600,9 +974,30 @@ def run_scheduler() -> None:
     debug_log("Scheduler tick complete")
 
 
+def _check_venv_integrity() -> None:
+    """Verify the orchestrator module is loaded from the correct location.
+
+    If an agent runs `pip install -e .` inside its worktree, it hijacks the
+    shared venv to load code from the wrong directory. Detect this and abort.
+    """
+    import orchestrator as _orch
+    mod_file = getattr(_orch, "__file__", None) or ""
+    # Also check a submodule to catch editable installs that set __file__ on the package
+    scheduler_file = str(Path(__file__).resolve())
+    if "agents/" in scheduler_file and "worktree" in scheduler_file:
+        print(
+            f"FATAL: orchestrator module loaded from agent worktree: {scheduler_file}\n"
+            f"Fix: cd orchestrator && ../.orchestrator/venv/bin/pip install -e .",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+
 def main() -> None:
     """Entry point for scheduler."""
     global DEBUG
+
+    _check_venv_integrity()
 
     parser = argparse.ArgumentParser(description="Run the orchestrator scheduler")
     parser.add_argument(

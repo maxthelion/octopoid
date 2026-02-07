@@ -1,0 +1,110 @@
+#!/usr/bin/env python3
+"""View a task's details."""
+
+import sys
+from pathlib import Path
+
+# Add parent to path for imports
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from orchestrator.config import is_db_enabled, get_orchestrator_dir
+
+
+def resolve_task_id(task_id: str) -> str | None:
+    """Resolve a partial task ID prefix to a full task ID via DB lookup.
+
+    Returns the full ID if found, or None.
+    """
+    from orchestrator.db import get_connection
+
+    with get_connection() as conn:
+        cursor = conn.execute(
+            "SELECT id FROM tasks WHERE id LIKE ?",
+            (f"{task_id}%",),
+        )
+        row = cursor.fetchone()
+        return row["id"] if row else None
+
+
+def main():
+    if len(sys.argv) < 2:
+        print("Usage: view-task <task-id>")
+        sys.exit(1)
+
+    task_id = sys.argv[1]
+    # Strip TASK- prefix if provided
+    if task_id.startswith("TASK-"):
+        task_id = task_id[5:]
+
+    if is_db_enabled():
+        # Resolve prefix to full ID
+        full_id = resolve_task_id(task_id)
+        if full_id:
+            task_id = full_id
+
+        # Use queue_utils for title extraction, db.get_task for DB-only fields
+        from orchestrator.db import get_task
+        from orchestrator.queue_utils import get_task_by_id
+
+        task = get_task_by_id(task_id)
+        db_task = get_task(task_id)
+        if task:
+            # Supplement with DB-only fields not in file format
+            queue = (db_task or {}).get('queue', 'N/A')
+            claimed_at = (db_task or {}).get('claimed_at', 'N/A')
+            created_at = task.get('created') or (db_task or {}).get('created_at', 'N/A')
+
+            print(f"Task:     TASK-{task['id']}")
+            print(f"Title:    {task.get('title', task['id'])}")
+            print(f"Queue:    {queue}")
+            print(f"Role:     {task.get('role', 'N/A')}")
+            print(f"Priority: {task.get('priority', 'N/A')}")
+            print(f"Project:  {task.get('project_id') or 'N/A'}")
+            print(f"Branch:   {task.get('branch', 'N/A')}")
+            print(f"Created:  {created_at}")
+            if task.get('claimed_by'):
+                print(f"Claimed:  {task['claimed_by']} at {claimed_at}")
+            if task.get('blocked_by'):
+                print(f"Blocked:  {task['blocked_by']}")
+            if task.get('attempt_count', 0) > 0:
+                print(f"Attempts: {task['attempt_count']}")
+            if task.get('rejection_count', 0) > 0:
+                print(f"Rejections: {task['rejection_count']}")
+            if task.get('pr_url'):
+                print(f"PR:       {task['pr_url']}")
+            if task.get('checks'):
+                checks = task['checks']
+                check_results = task.get('check_results', {})
+                check_strs = []
+                for c in checks:
+                    result = check_results.get(c, {})
+                    status = result.get('status', 'pending')
+                    check_strs.append(f"{c}={status}")
+                print(f"Checks:   {', '.join(check_strs)}")
+            print()
+
+            # Show file content
+            file_path = task.get('path')
+            if file_path and Path(file_path).exists():
+                print("--- File Content ---")
+                print(Path(file_path).read_text())
+            return
+
+    # Fallback to file search
+    queue_dir = get_orchestrator_dir() / "shared" / "queue"
+    for subdir in ['incoming', 'claimed', 'done', 'failed', 'breakdown', 'provisional', 'recycled', 'escalated', 'rejected']:
+        subdir_path = queue_dir / subdir
+        if not subdir_path.exists():
+            continue
+        for f in subdir_path.glob(f"TASK-{task_id}*.md"):
+            print(f"Found: {f} (queue: {subdir})")
+            print()
+            print(f.read_text())
+            return
+
+    print(f"Task not found: {task_id}")
+    sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

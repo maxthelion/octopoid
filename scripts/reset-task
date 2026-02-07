@@ -1,0 +1,67 @@
+#!/usr/bin/env python3
+"""Reset a task to a different queue."""
+
+import argparse
+import sys
+from pathlib import Path
+
+# Add parent to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from orchestrator.db import get_connection
+from orchestrator.config import is_db_enabled
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Reset a task to a different queue')
+    parser.add_argument('task_id', help='Task ID (short or full)')
+    parser.add_argument('queue', choices=['incoming', 'breakdown', 'claimed', 'provisional'],
+                        help='Target queue')
+    parser.add_argument('--unclaim', '-u', action='store_true',
+                        help='Also clear claimed_by and claimed_at')
+    args = parser.parse_args()
+
+    if not is_db_enabled():
+        print("Error: Database mode required")
+        sys.exit(1)
+
+    task_id = args.task_id
+
+    with get_connection() as conn:
+        # Find the task
+        cursor = conn.execute(
+            "SELECT id, title, queue FROM tasks WHERE id LIKE ?",
+            (f"{task_id}%",)
+        )
+        row = cursor.fetchone()
+
+        if not row:
+            print(f"Task not found: {task_id}")
+            sys.exit(1)
+
+        full_id = row['id']
+        title = row['title']
+        old_queue = row['queue']
+
+        # Update the task
+        if args.unclaim:
+            conn.execute(
+                """UPDATE tasks
+                   SET queue = ?, claimed_by = NULL, claimed_at = NULL
+                   WHERE id = ?""",
+                (args.queue, full_id)
+            )
+        else:
+            conn.execute(
+                "UPDATE tasks SET queue = ? WHERE id = ?",
+                (args.queue, full_id)
+            )
+
+        print(f"Reset task {full_id[:8]}: {title}")
+        print(f"  {old_queue} -> {args.queue}")
+        if args.unclaim:
+            print("  Cleared claim info")
+
+
+if __name__ == "__main__":
+    main()
