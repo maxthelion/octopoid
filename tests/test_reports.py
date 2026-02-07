@@ -461,8 +461,10 @@ class TestGatherAgents:
     @patch("orchestrator.config.get_agents")
     @patch("orchestrator.config.get_agents_runtime_dir")
     @patch("orchestrator.config.get_notes_dir")
+    @patch("orchestrator.state_utils.is_process_running", return_value=True)
     def test_running_agent_shows_running_status(
-        self, mock_notes_dir, mock_runtime_dir, mock_agents, mock_recent, tmp_path
+        self, mock_pid_check, mock_notes_dir, mock_runtime_dir, mock_agents,
+        mock_recent, tmp_path
     ):
         mock_agents.return_value = [
             {"name": "agent-1", "role": "implementer", "paused": False},
@@ -470,7 +472,7 @@ class TestGatherAgents:
         runtime_dir = tmp_path / "agents"
         (runtime_dir / "agent-1").mkdir(parents=True)
         (runtime_dir / "agent-1" / "state.json").write_text(
-            json.dumps({"running": True, "current_task": "task123"})
+            json.dumps({"running": True, "pid": 12345, "current_task": "task123"})
         )
         mock_runtime_dir.return_value = runtime_dir
         mock_notes_dir.return_value = tmp_path / "notes"
@@ -479,6 +481,32 @@ class TestGatherAgents:
         agents = _gather_agents()
         assert agents[0]["status"] == "running"
         assert agents[0]["current_task"] == "task123"
+
+    @patch("orchestrator.reports._get_recent_tasks_for_agent", return_value=[])
+    @patch("orchestrator.config.get_agents")
+    @patch("orchestrator.config.get_agents_runtime_dir")
+    @patch("orchestrator.config.get_notes_dir")
+    @patch("orchestrator.state_utils.is_process_running", return_value=False)
+    def test_stale_running_flag_shows_idle(
+        self, mock_pid_check, mock_notes_dir, mock_runtime_dir, mock_agents,
+        mock_recent, tmp_path
+    ):
+        """Agent with running=True but dead process should show idle."""
+        mock_agents.return_value = [
+            {"name": "agent-1", "role": "implementer", "paused": False},
+        ]
+        runtime_dir = tmp_path / "agents"
+        (runtime_dir / "agent-1").mkdir(parents=True)
+        (runtime_dir / "agent-1" / "state.json").write_text(
+            json.dumps({"running": True, "pid": 99999, "current_task": "task123"})
+        )
+        mock_runtime_dir.return_value = runtime_dir
+        mock_notes_dir.return_value = tmp_path / "notes"
+        (tmp_path / "notes").mkdir()
+
+        agents = _gather_agents()
+        assert agents[0]["status"] == "idle"
+        assert agents[0]["current_task"] is None
 
 
 # ---------------------------------------------------------------------------

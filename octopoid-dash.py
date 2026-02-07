@@ -222,64 +222,67 @@ def _generate_demo_report() -> dict[str, Any]:
     work = {
         "incoming": [
             {"id": "a1b2c3d4", "title": "Snap system point fork unification", "role": "implement",
-             "priority": "P1", "agent": None, "turns": 0, "commits": 0, "pr_number": None,
-             "created": (now - timedelta(hours=3)).isoformat(), "project_id": None},
+             "priority": "P1", "agent": None, "turns": 0, "turn_limit": 100, "commits": 0,
+             "pr_number": None, "created": (now - timedelta(hours=3)).isoformat(),
+             "project_id": None},
             {"id": "e5f6g7h8", "title": "Queue manipulation scripts", "role": "orchestrator_impl",
-             "priority": "P2", "agent": None, "turns": 0, "commits": 0, "pr_number": None,
-             "created": (now - timedelta(hours=1)).isoformat(), "project_id": None},
+             "priority": "P2", "agent": None, "turns": 0, "turn_limit": 200, "commits": 0,
+             "pr_number": None, "created": (now - timedelta(hours=1)).isoformat(),
+             "project_id": None},
             {"id": "i9j0k1l2", "title": "Center line replacement", "role": "implement",
-             "priority": "P2", "agent": None, "turns": 0, "commits": 0, "pr_number": None,
-             "created": (now - timedelta(hours=5)).isoformat(), "project_id": None},
+             "priority": "P2", "agent": None, "turns": 0, "turn_limit": 100, "commits": 0,
+             "pr_number": None, "created": (now - timedelta(hours=5)).isoformat(),
+             "project_id": None},
         ],
         "in_progress": [
             {"id": "m3n4o5p6", "title": "Gatekeeper review D1+D2", "role": "orchestrator_impl",
-             "priority": "P1", "agent": "orch-impl-1", "turns": 74, "commits": 3,
-             "pr_number": None, "created": (now - timedelta(hours=2)).isoformat(),
-             "project_id": "PROJ-gate"},
+             "priority": "P1", "agent": "orch-impl-1", "turns": 74, "turn_limit": 200,
+             "commits": 3, "pr_number": None,
+             "created": (now - timedelta(hours=2)).isoformat(), "project_id": "PROJ-gate"},
             {"id": "q7r8s9t0", "title": "Void transparency fix", "role": "implement",
-             "priority": "P1", "agent": "impl-agent-1", "turns": 45, "commits": 2,
-             "pr_number": None, "created": (now - timedelta(hours=1)).isoformat(),
-             "project_id": None},
+             "priority": "P1", "agent": "impl-agent-1", "turns": 45, "turn_limit": 100,
+             "commits": 2, "pr_number": None,
+             "created": (now - timedelta(hours=1)).isoformat(), "project_id": None},
         ],
         "in_review": [
             {"id": "u1v2w3x4", "title": "Fix z-fighting on bounding box", "role": "implement",
-             "priority": "P1", "agent": "impl-agent-1", "turns": 120, "commits": 4,
-             "pr_number": 50, "created": (now - timedelta(hours=15)).isoformat(),
-             "project_id": None},
+             "priority": "P1", "agent": "impl-agent-1", "turns": 120, "turn_limit": 100,
+             "commits": 4, "pr_number": 50,
+             "created": (now - timedelta(hours=15)).isoformat(), "project_id": None},
             {"id": "y5z6a7b8", "title": "Rename Inset tool to Offset", "role": "implement",
-             "priority": "P2", "agent": "impl-agent-2", "turns": 35, "commits": 2,
-             "pr_number": 52, "created": (now - timedelta(hours=15)).isoformat(),
-             "project_id": None},
+             "priority": "P2", "agent": "impl-agent-2", "turns": 35, "turn_limit": 100,
+             "commits": 2, "pr_number": 52,
+             "created": (now - timedelta(hours=15)).isoformat(), "project_id": None},
             {"id": "c9d0e1f2", "title": "Axis arrow replacement", "role": "implement",
-             "priority": "P2", "agent": "impl-agent-1", "turns": 90, "commits": 5,
-             "pr_number": 49, "created": (now - timedelta(hours=16)).isoformat(),
-             "project_id": None},
+             "priority": "P2", "agent": "impl-agent-1", "turns": 90, "turn_limit": 100,
+             "commits": 5, "pr_number": 49,
+             "created": (now - timedelta(hours=16)).isoformat(), "project_id": None},
             {"id": "g3h4i5j6", "title": "Void mesh transparency", "role": "implement",
-             "priority": "P2", "agent": "impl-agent-2", "turns": 55, "commits": 3,
-             "pr_number": 51, "created": (now - timedelta(hours=15)).isoformat(),
-             "project_id": None},
+             "priority": "P2", "agent": "impl-agent-2", "turns": 55, "turn_limit": 100,
+             "commits": 3, "pr_number": 51,
+             "created": (now - timedelta(hours=15)).isoformat(), "project_id": None},
         ],
         "done_today": [
             {"id": "k7l8m9n0", "title": "Toggle face buttons", "role": "implement",
-             "priority": "P1", "agent": "impl-agent-1", "turns": 60, "commits": 3,
-             "pr_number": 53, "created": (now - timedelta(hours=4)).isoformat(),
-             "project_id": None},
+             "priority": "P1", "agent": "impl-agent-1", "turns": 60, "turn_limit": 100,
+             "commits": 3, "pr_number": 53,
+             "created": (now - timedelta(hours=4)).isoformat(), "project_id": None},
             {"id": "o1p2q3r4", "title": "Task templates system", "role": "implement",
-             "priority": "P2", "agent": "impl-agent-2", "turns": 40, "commits": 2,
-             "pr_number": 47, "created": (now - timedelta(hours=6)).isoformat(),
-             "project_id": None},
+             "priority": "P2", "agent": "impl-agent-2", "turns": 40, "turn_limit": 100,
+             "commits": 2, "pr_number": 47,
+             "created": (now - timedelta(hours=6)).isoformat(), "project_id": None},
             {"id": "s5t6u7v8", "title": "Whats-next script", "role": "orchestrator_impl",
-             "priority": "P2", "agent": "orch-impl-1", "turns": 30, "commits": 1,
-             "pr_number": None, "created": (now - timedelta(hours=8)).isoformat(),
-             "project_id": None},
+             "priority": "P2", "agent": "orch-impl-1", "turns": 30, "turn_limit": 200,
+             "commits": 1, "pr_number": None,
+             "created": (now - timedelta(hours=8)).isoformat(), "project_id": None},
             {"id": "w9x0y1z2", "title": "CLAUDE.md role definitions", "role": "implement",
-             "priority": "P2", "agent": "impl-agent-1", "turns": 25, "commits": 1,
-             "pr_number": 46, "created": (now - timedelta(hours=10)).isoformat(),
-             "project_id": None},
+             "priority": "P2", "agent": "impl-agent-1", "turns": 25, "turn_limit": 100,
+             "commits": 1, "pr_number": 46,
+             "created": (now - timedelta(hours=10)).isoformat(), "project_id": None},
             {"id": "a3b4c5d6", "title": "2D snap system", "role": "implement",
-             "priority": "P1", "agent": "impl-agent-2", "turns": 85, "commits": 5,
-             "pr_number": 48, "created": (now - timedelta(hours=12)).isoformat(),
-             "project_id": None},
+             "priority": "P1", "agent": "impl-agent-2", "turns": 85, "turn_limit": 100,
+             "commits": 5, "pr_number": 48,
+             "created": (now - timedelta(hours=12)).isoformat(), "project_id": None},
         ],
     }
 
@@ -445,16 +448,16 @@ def render_work_tab(win, report: dict[str, Any], state: "DashboardState"):
     work = report.get("work", {})
 
     columns = [
-        ("QUEUED", work.get("incoming", []), Colors.WARNING),
-        ("IN PROGRESS", work.get("in_progress", []), Colors.RUNNING),
-        ("IN REVIEW", work.get("in_review", []), Colors.HEADER),
-        ("DONE", work.get("done_today", []), Colors.SUCCESS),
+        ("QUEUED", work.get("incoming", []), Colors.WARNING, False),
+        ("IN PROGRESS", work.get("in_progress", []), Colors.RUNNING, True),
+        ("IN REVIEW", work.get("in_review", []), Colors.HEADER, False),
+        ("DONE", work.get("done_today", []), Colors.SUCCESS, False),
     ]
 
     col_width = max(15, (max_x - 1) // len(columns))
     content_start_y = 0
 
-    for col_idx, (col_title, tasks, title_color) in enumerate(columns):
+    for col_idx, (col_title, tasks, title_color, show_bar) in enumerate(columns):
         col_x = col_idx * col_width
         right_edge = min(col_x + col_width - 1, max_x - 1)
         inner_width = right_edge - col_x - 1
@@ -485,7 +488,8 @@ def render_work_tab(win, report: dict[str, Any], state: "DashboardState"):
                                 curses.color_pair(Colors.DIM))
                 break
 
-            _render_task_card(win, card_y, col_x + 1, inner_width, task)
+            _render_task_card(win, card_y, col_x + 1, inner_width, task,
+                              show_progress_bar=show_bar)
             card_y += _card_height(task) + 1  # +1 for spacing
 
 
@@ -499,20 +503,20 @@ def _card_height(task: dict[str, Any]) -> int:
     return max(h, 1)
 
 
-def _render_task_card(win, y: int, x: int, width: int, task: dict[str, Any]):
+def _render_task_card(win, y: int, x: int, width: int, task: dict[str, Any],
+                      show_progress_bar: bool = True):
     """Render a single task card."""
     title = task.get("title", "untitled")
     role = task.get("role", "")
     agent = task.get("agent")
     turns = task.get("turns", 0)
+    turn_limit = task.get("turn_limit", MAX_TURNS)
     pr = task.get("pr_number")
     created = task.get("created")
     is_orch = role in ("orchestrator_impl", "breakdown", "recycler", "inbox_poller")
 
     # Title line with role badge
-    line = ""
     if is_orch:
-        line = "ORCH "
         safe_addstr(win, y, x, "ORCH", curses.color_pair(Colors.PAUSED) | curses.A_BOLD)
         safe_addstr(win, y, x + 5, title[:width - 6], curses.color_pair(Colors.DEFAULT))
     else:
@@ -520,17 +524,24 @@ def _render_task_card(win, y: int, x: int, width: int, task: dict[str, Any]):
 
     row = y + 1
 
-    # Agent + progress bar
+    # Agent line — progress bar for in-progress tasks, text for done/review
     if agent:
         agent_text = agent[:12]
         safe_addstr(win, row, x, agent_text, curses.color_pair(Colors.DIM))
-        bar_x = x + len(agent_text) + 1
-        bar_width = min(12, width - len(agent_text) - 1)
-        if bar_width >= 5:
-            progress = min(1.0, turns / MAX_TURNS) if MAX_TURNS > 0 else 0
-            draw_progress_bar(win, row, bar_x, bar_width, progress, Colors.RUNNING)
+
+        if show_progress_bar and turn_limit > 0:
+            bar_x = x + len(agent_text) + 1
+            bar_width = min(12, width - len(agent_text) - 1)
+            if bar_width >= 5:
+                progress = min(1.0, (turns or 0) / turn_limit)
+                draw_progress_bar(win, row, bar_x, bar_width, progress, Colors.RUNNING)
+                turn_text = f" {turns}/{turn_limit}t"
+                safe_addstr(win, row, bar_x + bar_width + 1, turn_text,
+                            curses.color_pair(Colors.DIM))
+        elif turns:
+            # Done/review: show turn count as plain text
             turn_text = f" {turns}t"
-            safe_addstr(win, row, bar_x + bar_width + 1, turn_text,
+            safe_addstr(win, row, x + len(agent_text) + 1, turn_text,
                         curses.color_pair(Colors.DIM))
         row += 1
 
@@ -787,6 +798,7 @@ def _render_agent_detail(win, y: int, x: int, width: int, max_height: int,
             age = format_age(last_started)
             status_text += f" \u00b7 {age} elapsed"
         turns = 0
+        turn_limit = MAX_TURNS
         # Try to find current task turns from work data
         if current_task_id:
             for cat in report.get("work", {}).values():
@@ -794,9 +806,10 @@ def _render_agent_detail(win, y: int, x: int, width: int, max_height: int,
                     for t in cat:
                         if t.get("id") == current_task_id:
                             turns = t.get("turns", 0)
+                            turn_limit = t.get("turn_limit", MAX_TURNS)
                             break
         if turns:
-            status_text += f" \u00b7 {turns}/{MAX_TURNS} turns"
+            status_text += f" \u00b7 {turns}/{turn_limit} turns"
     elif status.startswith("idle("):
         reason = status[5:-1] if status.endswith(")") else status[5:]
         status_text = f"BLOCKED \u00b7 {reason}"
@@ -844,18 +857,20 @@ def _render_agent_detail(win, y: int, x: int, width: int, max_height: int,
 
             commits = task_info.get("commits", 0)
             turns = task_info.get("turns", 0)
+            task_turn_limit = task_info.get("turn_limit", MAX_TURNS)
             safe_addstr(win, row, x, f"Commits: {commits}",
                         curses.color_pair(Colors.DIM))
             row += 1
 
             # Progress bar for turns
-            if status == "running" and turns:
+            if status == "running" and turns and task_turn_limit > 0:
                 bar_width = min(25, width - 15)
                 if bar_width >= 5:
                     draw_progress_bar(win, row, x, bar_width,
-                                      min(1.0, turns / MAX_TURNS), Colors.RUNNING)
+                                      min(1.0, turns / task_turn_limit),
+                                      Colors.RUNNING)
                     safe_addstr(win, row, x + bar_width + 1,
-                                f" {turns}/{MAX_TURNS} turns",
+                                f" {turns}/{task_turn_limit} turns",
                                 curses.color_pair(Colors.DIM))
                 row += 1
         else:

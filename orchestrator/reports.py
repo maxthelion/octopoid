@@ -64,15 +64,23 @@ def _gather_work() -> dict[str, list[dict[str, Any]]]:
 
 def _format_task(task: dict[str, Any]) -> dict[str, Any]:
     """Format a task dict into a card-renderable summary."""
+    title = task.get("title")
+    # If title is missing or looks like a raw ID, try extracting from file
+    if not title or (len(title) < 20 and " " not in title):
+        file_path = task.get("path") or task.get("file_path")
+        extracted = _extract_title_from_file(str(file_path) if file_path else None)
+        if extracted and extracted != "untitled":
+            title = extracted
     return {
         "id": task.get("id"),
-        "title": task.get("title"),
+        "title": title,
         "role": task.get("role"),
         "priority": task.get("priority"),
         "branch": task.get("branch"),
         "created": task.get("created"),
         "agent": task.get("claimed_by"),
         "turns": task.get("turns_used", 0),
+        "turn_limit": _turn_limit_for_role(task.get("role")),
         "commits": task.get("commits_count", 0),
         "pr_number": task.get("pr_number"),
         "blocked_by": task.get("blocked_by"),
@@ -95,6 +103,28 @@ def _is_recent(task: dict[str, Any], cutoff: datetime) -> bool:
         return dt >= cutoff
     except (ValueError, TypeError):
         return False
+
+
+# Role → max turns mapping (mirrors values in roles/*.py)
+_ROLE_TURN_LIMITS: dict[str, int] = {
+    "implement": 100,
+    "orchestrator_impl": 200,
+    "breakdown": 50,
+    "decomposition": 10,
+    "reviewer": 20,
+    "gatekeeper": 15,
+    "curator": 30,
+    "tester": 30,
+    "product_manager": 20,
+    "proposer": 20,
+    "inbox_poller": 10,
+    "recycler": 10,
+}
+
+
+def _turn_limit_for_role(role: str | None) -> int:
+    """Return the max turn limit for a given role."""
+    return _ROLE_TURN_LIMITS.get(role or "", 100)
 
 
 # ---------------------------------------------------------------------------
@@ -190,6 +220,7 @@ def _gather_messages() -> list[dict[str, Any]]:
 def _gather_agents() -> list[dict[str, Any]]:
     """Gather agent status from config and state files."""
     from .config import get_agents, get_agents_runtime_dir, get_notes_dir
+    from .state_utils import is_process_running
 
     agents = get_agents()
     runtime_dir = get_agents_runtime_dir()
@@ -204,17 +235,21 @@ def _gather_agents() -> list[dict[str, Any]]:
         # Load state.json
         state = _load_agent_state(runtime_dir / name / "state.json")
 
-        # Determine status
+        # Determine status — verify PID is actually alive when state says running
+        state_says_running = state.get("running", False)
+        pid = state.get("pid")
+        actually_running = state_says_running and is_process_running(pid)
+
         if paused:
             status = "paused"
-        elif state.get("running"):
+        elif actually_running:
             status = "running"
         else:
             blocked = (state.get("extra") or {}).get("blocked_reason", "")
             status = f"idle({blocked[:20]})" if blocked else "idle"
 
-        # Current task
-        current_task = state.get("current_task")
+        # Current task — only valid if agent is actually running
+        current_task = state.get("current_task") if actually_running else None
 
         # Recent tasks: query DB for tasks previously claimed by this agent
         recent_tasks = _get_recent_tasks_for_agent(name)
@@ -320,6 +355,7 @@ def _gather_health() -> dict[str, Any]:
     """Gather system health information."""
     from .config import get_agents, get_orchestrator_dir, is_system_paused
     from .queue_utils import count_queue
+    from .state_utils import is_process_running
 
     agents = get_agents()
 
@@ -337,7 +373,7 @@ def _gather_health() -> dict[str, Any]:
             paused_count += 1
             continue
         state = _load_agent_state(runtime_dir / agent["name"] / "state.json")
-        if state.get("running"):
+        if state.get("running") and is_process_running(state.get("pid")):
             running_count += 1
         else:
             idle_count += 1
