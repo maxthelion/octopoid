@@ -1,84 +1,167 @@
-"""Gatekeeper role - specialized agents that review PRs."""
+"""Gatekeeper role - reviews task branch diffs for quality.
+
+Gatekeepers are specialized agents that review the diff between a task's
+feature branch and its base branch. Each gatekeeper focuses on a specific
+area (architecture, testing, QA) and records pass/fail results.
+
+Environment variables:
+    REVIEW_TASK_ID: Task ID to review
+    REVIEW_CHECK_NAME: Check name (architecture, testing, qa)
+"""
 
 import os
+import subprocess
 
-from ..pr_utils import (
-    get_pr_diff,
-    get_pr_info,
-    load_pr_meta,
-    record_check_result,
-)
+from ..config import get_orchestrator_dir
+from ..review_utils import load_review_meta, record_review_result
 from .base import main_entry
 from .specialist import SpecialistRole
 
 
 class GatekeeperRole(SpecialistRole):
-    """Gatekeeper that reviews PRs from a specialized perspective.
+    """Gatekeeper that reviews task branch diffs from a specialized perspective.
 
-    Gatekeepers are specialized agents with a specific focus area (lint,
-    tests, architecture, style). They run checks against PRs and report
-    results back to the coordinator.
-
-    Inherits from SpecialistRole which provides:
-    - focus area configuration
-    - domain-specific prompt loading
+    Reads REVIEW_TASK_ID and REVIEW_CHECK_NAME from environment to determine
+    what to review. Records results to the review tracking directory.
     """
 
     def __init__(self):
         super().__init__()
-        self.gatekeeper_type = self.agent_name
+        self.review_task_id = os.environ.get("REVIEW_TASK_ID")
+        self.check_name = os.environ.get("REVIEW_CHECK_NAME", self.focus)
+
+    def _get_branch_diff(self, branch: str, base_branch: str) -> str | None:
+        """Get the diff between a task branch and its base.
+
+        Args:
+            branch: Feature branch name
+            base_branch: Base branch to diff against
+
+        Returns:
+            Diff string or None on error
+        """
+        try:
+            # Fetch latest
+            subprocess.run(
+                ["git", "fetch", "origin"],
+                capture_output=True,
+                cwd=self.worktree,
+                timeout=30,
+            )
+
+            result = subprocess.run(
+                ["git", "diff", f"origin/{base_branch}...origin/{branch}"],
+                capture_output=True,
+                text=True,
+                cwd=self.worktree,
+                timeout=60,
+            )
+
+            if result.returncode != 0:
+                self.log(f"git diff failed: {result.stderr}")
+                return None
+
+            return result.stdout
+
+        except (subprocess.TimeoutExpired, subprocess.SubprocessError) as e:
+            self.log(f"Error getting diff: {e}")
+            return None
+
+    def _get_branch_files(self, branch: str, base_branch: str) -> list[str]:
+        """Get list of changed files between branches.
+
+        Args:
+            branch: Feature branch name
+            base_branch: Base branch
+
+        Returns:
+            List of changed file paths
+        """
+        try:
+            result = subprocess.run(
+                ["git", "diff", "--name-only", f"origin/{base_branch}...origin/{branch}"],
+                capture_output=True,
+                text=True,
+                cwd=self.worktree,
+                timeout=30,
+            )
+            if result.returncode == 0:
+                return [f.strip() for f in result.stdout.strip().split("\n") if f.strip()]
+        except (subprocess.TimeoutExpired, subprocess.SubprocessError):
+            pass
+        return []
 
     def run(self) -> int:
-        """Run gatekeeper check on assigned PR.
+        """Run gatekeeper check on a task's branch diff.
 
         Returns:
             Exit code (0 for success)
         """
-        # Get PR number from environment (set by coordinator)
-        pr_number_str = os.environ.get("PR_NUMBER")
-        if not pr_number_str:
-            self.log("No PR_NUMBER in environment, nothing to check")
+        if not self.review_task_id:
+            self.log("No REVIEW_TASK_ID in environment, nothing to review")
             return 0
 
-        try:
-            pr_number = int(pr_number_str)
-        except ValueError:
-            self.log(f"Invalid PR_NUMBER: {pr_number_str}")
-            return 1
+        self.log(f"Reviewing task {self.review_task_id}, check: {self.check_name}")
 
-        # Load PR metadata
-        meta = load_pr_meta(pr_number)
+        # Load review metadata
+        meta = load_review_meta(self.review_task_id)
         if not meta:
-            self.log(f"No metadata found for PR-{pr_number}")
+            self.log(f"No review metadata found for task {self.review_task_id}")
             return 1
 
-        # Get PR info and diff
-        pr_info = get_pr_info(pr_number)
-        if not pr_info:
-            self.log(f"Could not fetch PR-{pr_number} info")
+        branch = meta.get("branch", "")
+        base_branch = meta.get("base_branch", "main")
+
+        if not branch:
+            self.log("No branch in review metadata")
+            record_review_result(
+                self.review_task_id,
+                self.check_name,
+                "fail",
+                "No branch found in review metadata",
+                submitted_by=self.agent_name,
+            )
             return 1
 
-        pr_diff = get_pr_diff(pr_number)
-        if not pr_diff:
-            self.log(f"Could not fetch PR-{pr_number} diff")
+        # Get the diff
+        diff = self._get_branch_diff(branch, base_branch)
+        if not diff:
+            self.log("No diff found (branch may not exist or no changes)")
+            record_review_result(
+                self.review_task_id,
+                self.check_name,
+                "fail",
+                "Could not get branch diff",
+                submitted_by=self.agent_name,
+            )
             return 1
 
-        # Mark check as running
-        record_check_result(
-            pr_number,
-            self.focus,
-            "running",
-            f"Running {self.focus} check...",
-        )
+        # Truncate large diffs
+        max_diff_size = 50000
+        if len(diff) > max_diff_size:
+            diff = diff[:max_diff_size] + f"\n\n[... truncated {len(diff) - max_diff_size} chars ...]"
 
-        # Load domain-specific prompt (from SpecialistRole)
+        # Get changed files list
+        changed_files = self._get_branch_files(branch, base_branch)
+
+        # Load domain-specific prompt
         domain_prompt = self.get_focus_prompt()
         focus_description = self.get_focus_description()
 
-        # Build prompt for Claude
+        # Read task file for context
+        task_file_content = ""
+        task_file_path = get_orchestrator_dir() / "shared" / "queue"
+        # Search across queue directories for the task file
+        for subdir in ["provisional", "incoming", "claimed", "done"]:
+            candidate = task_file_path / subdir / f"TASK-{self.review_task_id}.md"
+            if candidate.exists():
+                task_file_content = candidate.read_text()
+                break
+
+        # Build the review prompt
         instructions = self.read_instructions()
 
-        prompt = f"""You are a gatekeeper agent performing a {self.focus} check on a pull request.
+        prompt = f"""You are a gatekeeper agent performing a **{self.check_name}** review on a task implementation.
 
 **Focus Area:** {focus_description}
 
@@ -86,58 +169,59 @@ class GatekeeperRole(SpecialistRole):
 
 {domain_prompt}
 
-## PR Information
+## Task Being Reviewed
 
-**Title:** {pr_info.get('title', 'Unknown')}
-**Author:** {pr_info.get('author', {}).get('login', 'unknown')}
-**Branch:** {pr_info.get('headRefName', 'unknown')} → {pr_info.get('baseRefName', 'main')}
-**Files Changed:** {pr_info.get('changedFiles', 0)}
-**Additions:** {pr_info.get('additions', 0)}
-**Deletions:** {pr_info.get('deletions', 0)}
+**Task ID:** {self.review_task_id}
+**Branch:** {branch} → {base_branch}
+**Files Changed:** {len(changed_files)}
 
-### Description
-{pr_info.get('body', 'No description provided.')}
+### Task Description
+{task_file_content[:3000] if task_file_content else 'No task file found.'}
 
 ### Changed Files
-{chr(10).join('- ' + f.get('path', '') for f in pr_info.get('files', [])[:20])}
+{chr(10).join('- ' + f for f in changed_files[:30])}
 
 ## Your Task
 
-Review this PR from your specialized perspective ({self.focus}).
+Review this implementation from your specialized perspective (**{self.check_name}**).
 
-Analyze the diff and codebase to determine if the PR passes your check.
+Analyze the diff carefully and determine if it passes your check.
 
-When you've completed your review, use the /record-check skill to record your result.
+When you've completed your review, use the /record-check skill to record your result:
+
+```
+/record-check {self.review_task_id} {self.check_name} <pass|fail> "summary" "details"
+```
 
 ### Guidelines
 
-1. **Be thorough** - Check all relevant aspects of your focus area
-2. **Be specific** - Point to exact files and lines with issues
-3. **Be constructive** - Explain why something is an issue and how to fix it
-4. **Stay focused** - Only evaluate your specific area, not others
+1. **Be thorough** — Check all relevant aspects of your focus area
+2. **Be specific** — Point to exact files and lines with issues
+3. **Be constructive** — Explain why something is an issue and how to fix it
+4. **Stay focused** — Only evaluate your specific area
+5. **Be fair** — Don't reject for stylistic preferences; reject for real issues
 
 ### Recording Results
 
 Use /record-check with:
-- `status`: passed | failed | warning
-- `summary`: One-line summary
-- `details`: Full markdown report (optional)
-- `issues`: List of specific issues (optional)
+- `status`: pass or fail
+- `summary`: One-line summary of your verdict
+- `details`: Full markdown report with specific file paths and line numbers
 
-## PR Diff
+## Branch Diff
 
 ```diff
-{pr_diff[:50000]}
+{diff}
 ```
 """
 
-        # Invoke Claude with appropriate tools
+        # Invoke Claude with review tools
         allowed_tools = [
             "Read",
             "Glob",
             "Grep",
-            "Bash",  # For git/lint commands
-            "Skill",  # For /record-check
+            "Bash",
+            "Skill",
         ]
 
         exit_code, stdout, stderr = self.invoke_claude(
@@ -148,16 +232,16 @@ Use /record-check with:
 
         if exit_code != 0:
             self.log(f"Claude invocation failed: {stderr}")
-            # Record failure
-            record_check_result(
-                pr_number,
-                self.focus,
-                "failed",
-                f"Check failed to run: {stderr[:200]}",
+            record_review_result(
+                self.review_task_id,
+                self.check_name,
+                "fail",
+                f"Review agent failed to complete: {stderr[:200]}",
+                submitted_by=self.agent_name,
             )
             return exit_code
 
-        self.log(f"Gatekeeper check ({self.focus}) complete for PR-{pr_number}")
+        self.log(f"Gatekeeper check ({self.check_name}) complete for task {self.review_task_id}")
         return 0
 
 

@@ -15,7 +15,7 @@ from .config import get_orchestrator_dir
 
 
 # Schema version for migrations
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 def get_database_path() -> Path:
@@ -83,6 +83,9 @@ def init_schema() -> None:
                 plan_id TEXT,
                 project_id TEXT,
                 auto_accept BOOLEAN DEFAULT FALSE,
+                rejection_count INTEGER DEFAULT 0,
+                pr_number INTEGER,
+                pr_url TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (project_id) REFERENCES projects(id)
@@ -241,6 +244,21 @@ def migrate_schema() -> bool:
                 pass  # Column already exists
             try:
                 conn.execute("ALTER TABLE projects ADD COLUMN auto_accept BOOLEAN DEFAULT FALSE")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+
+        # Migration from v3 to v4: Add review rejection tracking columns
+        if current < 4:
+            try:
+                conn.execute("ALTER TABLE tasks ADD COLUMN rejection_count INTEGER DEFAULT 0")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+            try:
+                conn.execute("ALTER TABLE tasks ADD COLUMN pr_number INTEGER")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+            try:
+                conn.execute("ALTER TABLE tasks ADD COLUMN pr_url TEXT")
             except sqlite3.OperationalError:
                 pass  # Column already exists
 
@@ -501,11 +519,14 @@ def claim_task(
 
         # Use a transaction to atomically check and claim
         # LIMIT 1 with ORDER BY gives us the highest priority task
+        # Tasks with rejection_count > 0 are prioritized (review feedback
+        # should be addressed before starting fresh work)
         cursor = conn.execute(
             f"""
             SELECT id FROM tasks
             WHERE {where_clause}
             ORDER BY
+                CASE WHEN rejection_count > 0 THEN 0 ELSE 1 END,
                 CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 ELSE 2 END,
                 created_at ASC
             LIMIT 1
@@ -667,6 +688,55 @@ def reject_completion(
             VALUES (?, 'rejected', ?, ?)
             """,
             (task_id, validator, reason),
+        )
+
+    return get_task(task_id)
+
+
+def review_reject_completion(
+    task_id: str,
+    reason: str,
+    reviewer: str | None = None,
+) -> dict[str, Any] | None:
+    """Reject a task after gatekeeper review.
+
+    Unlike reject_completion() which increments attempt_count (for validation
+    failures like no commits), this increments rejection_count (for code
+    quality issues found by reviewers).
+
+    The task is moved back to incoming for re-implementation. The existing
+    branch is preserved so the implementer can push fixes.
+
+    Args:
+        task_id: Task identifier
+        reason: Review feedback / rejection reason
+        reviewer: Name of the reviewer
+
+    Returns:
+        Updated task or None if not found
+    """
+    now = datetime.now().isoformat()
+
+    with get_connection() as conn:
+        conn.execute(
+            """
+            UPDATE tasks
+            SET queue = 'incoming',
+                claimed_by = NULL,
+                claimed_at = NULL,
+                rejection_count = rejection_count + 1,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (now, task_id),
+        )
+
+        conn.execute(
+            """
+            INSERT INTO task_history (task_id, event, agent, details)
+            VALUES (?, 'review_rejected', ?, ?)
+            """,
+            (task_id, reviewer, reason),
         )
 
     return get_task(task_id)

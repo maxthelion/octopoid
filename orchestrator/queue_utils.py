@@ -202,6 +202,9 @@ def _db_task_to_file_format(db_task: dict[str, Any]) -> dict[str, Any]:
         "turns_used": db_task.get("turns_used", 0),
         "has_plan": db_task.get("has_plan", False),
         "project_id": db_task.get("project_id"),
+        "rejection_count": db_task.get("rejection_count", 0),
+        "pr_number": db_task.get("pr_number"),
+        "pr_url": db_task.get("pr_url"),
     }
 
 
@@ -506,6 +509,128 @@ def reject_completion(
 
     os.rename(task_path, dest)
     return dest
+
+
+def review_reject_task(
+    task_path: Path | str,
+    feedback: str,
+    rejected_by: str | None = None,
+    max_rejections: int = 3,
+) -> tuple[Path, str]:
+    """Reject a provisional task with review feedback from gatekeepers.
+
+    Increments rejection_count (distinct from attempt_count used by validator).
+    If rejection_count reaches max_rejections, escalates to human attention
+    instead of cycling back to the implementer.
+
+    The task's branch is preserved so the implementer can push fixes.
+
+    Args:
+        task_path: Path to the task file (provisional or incoming)
+        feedback: Aggregated review feedback markdown
+        rejected_by: Name of the reviewer/coordinator
+        max_rejections: Maximum rejections before escalation (default 3)
+
+    Returns:
+        Tuple of (new_path, action) where action is 'rejected' or 'escalated'
+    """
+    task_path = Path(task_path)
+    rejection_count = 0
+    task_id = None
+
+    if is_db_enabled():
+        from . import db
+        db_task = db.get_task_by_path(str(task_path))
+        if db_task:
+            task_id = db_task["id"]
+            rejection_count = (db_task.get("rejection_count") or 0) + 1
+
+            if rejection_count >= max_rejections:
+                # Escalate to human
+                db.update_task(
+                    task_id,
+                    queue="escalated",
+                    rejection_count=rejection_count,
+                    claimed_by=None,
+                    claimed_at=None,
+                )
+                db.add_history_event(
+                    task_id,
+                    "review_escalated",
+                    agent=rejected_by,
+                    details=f"rejection_count={rejection_count}, max={max_rejections}",
+                )
+            else:
+                db.review_reject_completion(
+                    task_id,
+                    reason=feedback[:500],
+                    reviewer=rejected_by,
+                )
+
+    # Append feedback to the task file
+    with open(task_path, "a") as f:
+        f.write(f"\n## Review Feedback (rejection #{rejection_count})\n\n")
+        f.write(f"{feedback}\n")
+        f.write(f"\nREVIEW_REJECTED_AT: {datetime.now().isoformat()}\n")
+        if rejected_by:
+            f.write(f"REVIEW_REJECTED_BY: {rejected_by}\n")
+
+    if rejection_count >= max_rejections:
+        # Escalate: move to escalated queue
+        escalated_dir = get_queue_subdir("escalated")
+        dest = escalated_dir / task_path.name
+        os.rename(task_path, dest)
+
+        # Send message to human
+        from . import message_utils
+        message_utils.warning(
+            f"Task {task_id or task_path.stem} escalated after {rejection_count} rejections",
+            f"Task has been rejected {rejection_count} times by reviewers. "
+            f"Human attention required.\n\nLatest feedback:\n{feedback[:1000]}",
+            rejected_by or "gatekeeper",
+            task_id,
+        )
+
+        return dest, "escalated"
+    else:
+        # Move back to incoming for re-implementation
+        incoming_dir = get_queue_subdir("incoming")
+        dest = incoming_dir / task_path.name
+        os.rename(task_path, dest)
+        return dest, "rejected"
+
+
+def get_review_feedback(task_id: str) -> str | None:
+    """Extract review feedback sections from a task's markdown file.
+
+    Reads the task file and extracts all '## Review Feedback' sections.
+
+    Args:
+        task_id: Task identifier
+
+    Returns:
+        Combined feedback text or None if no feedback found
+    """
+    task = get_task_by_id(task_id)
+    if not task:
+        return None
+
+    content = task.get("content", "")
+    if not content:
+        return None
+
+    # Find all review feedback sections
+    import re
+    feedback_sections = re.findall(
+        r'## Review Feedback \(rejection #\d+\)\s*\n(.*?)(?=\n## |\Z)',
+        content,
+        re.DOTALL,
+    )
+
+    if not feedback_sections:
+        return None
+
+    return "\n\n---\n\n".join(section.strip() for section in feedback_sections)
 
 
 def escalate_to_planning(task_path: Path | str, plan_id: str) -> Path:
@@ -1665,6 +1790,73 @@ def recycle_to_breakdown(task_path, reason="too_large") -> dict | None:
         "original_task_id": task_id,
         "action": "recycled",
     }
+
+
+def approve_and_merge(
+    task_id: str,
+    merge_method: str = "merge",
+) -> dict[str, Any]:
+    """Approve a task and merge its PR.
+
+    Moves the task to done and merges the associated PR using gh CLI.
+
+    Args:
+        task_id: Task identifier
+        merge_method: Git merge method (merge, squash, rebase)
+
+    Returns:
+        Dict with result info (merged, pr_url, error)
+    """
+    if not is_db_enabled():
+        raise RuntimeError("approve_and_merge requires database mode")
+
+    from . import db
+
+    task = db.get_task(task_id)
+    if not task:
+        return {"error": f"Task {task_id} not found"}
+
+    pr_number = task.get("pr_number")
+    pr_url = task.get("pr_url")
+
+    result = {"task_id": task_id, "merged": False, "pr_url": pr_url}
+
+    # Try to merge the PR if we have a PR number
+    if pr_number:
+        try:
+            merge_cmd = [
+                "gh", "pr", "merge", str(pr_number),
+                f"--{merge_method}",
+                "--delete-branch",
+            ]
+            merge_result = subprocess.run(
+                merge_cmd,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+
+            if merge_result.returncode == 0:
+                result["merged"] = True
+            else:
+                result["merge_error"] = merge_result.stderr
+        except (subprocess.TimeoutExpired, subprocess.SubprocessError) as e:
+            result["merge_error"] = str(e)
+
+    # Move task to done regardless of merge result
+    task_file_path = task.get("file_path", "")
+    if task_file_path:
+        accept_completion(task_file_path, validator="human")
+    else:
+        db.accept_completion(task_id, validator="human")
+
+    db.add_history_event(task_id, "approved_and_merged", details=f"merged={result['merged']}")
+
+    # Clean up review tracking
+    from .review_utils import cleanup_review
+    cleanup_review(task_id)
+
+    return result
 
 
 def _rewire_dependencies(old_task_id: str, new_task_ids: str | list[str]) -> None:

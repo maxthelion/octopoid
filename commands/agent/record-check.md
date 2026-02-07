@@ -1,78 +1,64 @@
 # Record Check Result
 
-Record the result of a gatekeeper check on a PR.
+Record the result of a gatekeeper check on a task's branch diff.
 
 ## Usage
 
-After completing your review of the PR, use this skill to record your findings by writing a markdown file.
+After completing your review, use this skill to record your findings.
 
 ## Check Statuses
 
-- `passed` - PR passes this check with no issues
-- `failed` - PR has issues that must be fixed before merging
-- `warning` - PR has minor issues but can proceed with caution
+- `pass` - Task passes this check with no issues
+- `fail` - Task has issues that must be fixed
 
 ## Recording a Check Result
 
-### Step 1: Get PR number and check name
+### Step 1: Get task ID and check name
 
-The PR number is in the `PR_NUMBER` environment variable.
-Your focus area (check name) is in the `AGENT_FOCUS` environment variable.
+The task ID is in the `REVIEW_TASK_ID` environment variable.
+Your check name is in the `REVIEW_CHECK_NAME` or `AGENT_FOCUS` environment variable.
 
-### Step 2: Write the check result file
+### Step 2: Write the check result
 
-Write the result to `.orchestrator/shared/prs/PR-{number}/checks/{check_name}.md`:
+Use the review_utils module to record your result:
 
-```bash
-# Get values from environment
-PR_NUMBER="${PR_NUMBER}"
-CHECK_NAME="${AGENT_FOCUS}"
+```python
+import os
+import sys
+from pathlib import Path
 
-# Ensure the directory exists
-mkdir -p ".orchestrator/shared/prs/PR-${PR_NUMBER}/checks"
+# Add orchestrator to path
+project_root = Path(os.environ.get("PARENT_PROJECT", "."))
+sys.path.insert(0, str(project_root / "orchestrator"))
 
-# Write the check result
-cat > ".orchestrator/shared/prs/PR-${PR_NUMBER}/checks/${CHECK_NAME}.md" << 'EOF'
-# ✅ Lint Check
+from orchestrator.review_utils import record_review_result
 
-**Status:** passed
-**Time:** 2024-01-15T10:30:00Z
-**Summary:** All lint checks pass, no style issues found.
+task_id = os.environ.get("REVIEW_TASK_ID")
+check_name = os.environ.get("REVIEW_CHECK_NAME", os.environ.get("AGENT_FOCUS"))
 
-## Details
-
-Analyzed 15 modified files for lint and style issues.
-
-### Findings
-- No ESLint errors
-- No TypeScript type issues
-- Formatting matches project standards
-EOF
+record_review_result(
+    task_id=task_id,
+    check_name=check_name,
+    status="pass",  # or "fail"
+    summary="One-line summary of your verdict",
+    details="Full markdown report with file paths and line numbers",
+    submitted_by=os.environ.get("AGENT_NAME"),
+)
 ```
 
-## Check File Format
+Or write the JSON file directly to:
+`.orchestrator/shared/reviews/TASK-{task_id}/checks/{check_name}.json`
 
-```markdown
-# {emoji} {Check Name} Check
-
-**Status:** passed | failed | warning
-**Time:** {ISO8601_timestamp}
-**Summary:** {one-line summary}
-
-## Details
-
-{detailed markdown report}
-
-## Issues
-
-- **{severity}** `{file}:{line}`: {message}
-- **{severity}** `{file}:{line}`: {message}
+```json
+{
+  "check_name": "architecture",
+  "status": "pass",
+  "summary": "Architecture changes are well-structured",
+  "details": "### Findings\n\n- No boundary violations\n- Patterns followed correctly",
+  "submitted_at": "2026-02-07T10:00:00",
+  "submitted_by": "gk-architecture"
+}
 ```
-
-### Status Emojis
-- `✅` for passed
-- `❌` for failed
-- `⚠️` for warning
 
 ## Guidelines
 
@@ -86,74 +72,9 @@ EOF
 - Reference specific files and lines
 - Suggest solutions when possible
 
-### For Warnings
-- Explain why it's a warning not a failure
-- Indicate if it should block merge or not
-- Suggest improvements for future PRs
-
-## Example: Failed Check
-
-```bash
-cat > ".orchestrator/shared/prs/PR-${PR_NUMBER}/checks/tests.md" << 'EOF'
-# ❌ Tests Check
-
-**Status:** failed
-**Time:** 2024-01-15T10:30:00Z
-**Summary:** 2 test failures in auth module
-
-## Details
-
-## Test Results
-
-**Total:** 127 tests
-**Passed:** 125
-**Failed:** 2
-
-### Failures
-
-1. `test_login_invalid_password` - Expected error message changed
-2. `test_session_expiry` - Timeout assertion off by 1 second
-
-### Recommendation
-The test expectations need to be updated to match the new behavior.
-
-## Issues
-
-- **error** `tests/auth/test_login.py:45`: Expected error message 'Invalid password' but got 'Incorrect password'
-- **error** `tests/auth/test_session.py:78`: Session expiry assertion failed: expected 3600, got 3601
-EOF
-```
-
-## Example: Passed with Notes
-
-```bash
-cat > ".orchestrator/shared/prs/PR-${PR_NUMBER}/checks/architecture.md" << 'EOF'
-# ✅ Architecture Check
-
-**Status:** passed
-**Time:** 2024-01-15T10:30:00Z
-**Summary:** Architecture changes are well-structured
-
-## Details
-
-### Changes Reviewed
-- New service layer for user management
-- Updated dependency injection patterns
-- Modified API boundaries
-
-### Assessment
-The changes follow established patterns and maintain proper separation of concerns.
-The new UserService correctly implements the Repository pattern.
-
-### Recommendations (Non-blocking)
-- Consider adding interface documentation for the new service
-- The service could benefit from caching in future iterations
-EOF
-```
-
 ## After Recording
 
 The check result will be:
-1. Stored in `.orchestrator/shared/prs/PR-{number}/checks/`
-2. Aggregated by the gatekeeper coordinator
-3. Used to determine if PR passes or needs fixes
+1. Stored in `.orchestrator/shared/reviews/TASK-{id}/checks/`
+2. Aggregated by the scheduler's process_gatekeeper_reviews()
+3. Used to determine if the task passes review or gets rejected back to the implementer

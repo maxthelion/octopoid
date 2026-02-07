@@ -14,6 +14,7 @@ from ..queue_utils import (
     claim_task,
     complete_task,
     fail_task,
+    get_review_feedback,
     get_task_notes,
     save_task_notes,
     submit_completion,
@@ -62,6 +63,21 @@ class ImplementerRole(BaseRole):
             # Set up notes file path for this task
             notes_path = get_notes_dir() / f"TASK-{task_id}.md"
 
+            # Check for review feedback from gatekeeper rejections
+            review_feedback = get_review_feedback(task_id)
+            review_section = ""
+            if review_feedback:
+                self.log(f"Injecting review feedback (task was previously rejected by reviewers)")
+                review_section = f"""
+## REVIEW FEEDBACK (IMPORTANT)
+
+This task was previously implemented but rejected by automated reviewers.
+Fix the issues described below. Do NOT start from scratch — work on the
+existing branch and make targeted fixes.
+
+{review_feedback}
+"""
+
             # Check for notes from previous attempts
             previous_notes = get_task_notes(task_id)
             notes_section = ""
@@ -83,7 +99,7 @@ Use these to avoid repeating the same exploration and mistakes.
 ## Task Details
 
 {task_content}
-{notes_section}
+{review_section}{notes_section}
 ## Progress Notes
 
 Write your progress and findings to this file as you work:
