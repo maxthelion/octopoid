@@ -70,7 +70,7 @@ class ValidatorRole(BaseRole):
             # Check if task has commits
             if require_commits and commits_count == 0:
                 # Immediate catch: burned out (0 commits, high turns) -> recycle
-                if is_burned_out(commits_count=commits_count, turns_used=turns_used, role=role):
+                if is_burned_out(commits_count=commits_count, turns_used=turns_used):
                     self._recycle_task(task_id, task_path, turns_used)
                 # Cumulative catch: too many failed attempts -> recycle for project tasks, escalate otherwise
                 elif attempt_count >= max_attempts:

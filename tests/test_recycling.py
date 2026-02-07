@@ -14,8 +14,8 @@ from unittest.mock import patch
 class TestRecyclerNoAutoAcceptOrchestratorImpl:
     """Tests that recycler does NOT auto-accept orchestrator_impl tasks."""
 
-    def test_orchestrator_impl_task_not_auto_accepted(self, mock_config, initialized_db):
-        """An orchestrator_impl task in provisional should NOT be auto-accepted by recycler."""
+    def test_orchestrator_impl_task_below_threshold_stays_provisional(self, mock_config, initialized_db):
+        """An orchestrator_impl task with 0 commits but below threshold stays in provisional."""
         with patch('orchestrator.db.get_database_path', return_value=initialized_db):
             with patch('orchestrator.roles.recycler.is_db_enabled', return_value=True):
                 with patch('orchestrator.queue_utils.is_db_enabled', return_value=True):
@@ -50,10 +50,101 @@ class TestRecyclerNoAutoAcceptOrchestratorImpl:
                             result = role.run()
                             assert result == 0
 
-                            # Task should still be in provisional — NOT auto-accepted
+                            # Task stays in provisional — 50 turns is below burn-out threshold (80)
                             task = get_task("orch0001")
                             assert task["queue"] == "provisional", (
                                 f"Expected orchestrator_impl task to remain in provisional, "
+                                f"but found in {task['queue']}"
+                            )
+
+
+    def test_orchestrator_impl_task_burned_out_gets_recycled(self, mock_config, initialized_db):
+        """An orchestrator_impl task with 0 commits and high turns gets recycled.
+
+        Now that orchestrator_impl correctly counts submodule commits,
+        0 commits + high turns means the agent genuinely produced no work.
+        """
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            with patch('orchestrator.roles.recycler.is_db_enabled', return_value=True):
+                with patch('orchestrator.queue_utils.is_db_enabled', return_value=True):
+                    with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_config / "shared" / "queue"):
+                        with patch.dict(os.environ, {
+                            'AGENT_NAME': 'test-recycler',
+                            'AGENT_ID': '0',
+                            'AGENT_ROLE': 'recycler',
+                            'PARENT_PROJECT': str(mock_config.parent),
+                            'WORKTREE': str(mock_config.parent),
+                            'SHARED_DIR': str(mock_config / 'shared'),
+                            'ORCHESTRATOR_DIR': str(mock_config),
+                        }):
+                            from orchestrator.roles.recycler import RecyclerRole
+                            from orchestrator.db import create_task, update_task_queue, get_task
+
+                            # Create an orchestrator_impl task with 0 commits and 100 turns (burned out)
+                            prov_dir = mock_config / "shared" / "queue" / "provisional"
+                            prov_dir.mkdir(parents=True, exist_ok=True)
+                            task_path = prov_dir / "TASK-orch0002.md"
+                            task_path.write_text(
+                                "# [TASK-orch0002] Burned orchestrator impl task\n\n"
+                                "ROLE: orchestrator_impl\nPRIORITY: P1\nBRANCH: main\n\n"
+                                "## Context\nOrchestrator work that burned out.\n\n"
+                                "## Acceptance Criteria\n- [ ] Done\n"
+                            )
+                            create_task(task_id="orch0002", file_path=str(task_path), role="orchestrator_impl")
+                            update_task_queue("orch0002", "provisional", commits_count=0, turns_used=100)
+
+                            # Run recycler
+                            role = RecyclerRole()
+                            result = role.run()
+                            assert result == 0
+
+                            # Task should be recycled — burned out (0 commits, 100 turns >= 80)
+                            task = get_task("orch0002")
+                            assert task["queue"] == "recycled", (
+                                f"Expected burned orchestrator_impl task to be recycled, "
+                                f"but found in {task['queue']}"
+                            )
+
+    def test_orchestrator_impl_task_with_commits_stays_provisional(self, mock_config, initialized_db):
+        """An orchestrator_impl task with submodule commits is NOT recycled."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            with patch('orchestrator.roles.recycler.is_db_enabled', return_value=True):
+                with patch('orchestrator.queue_utils.is_db_enabled', return_value=True):
+                    with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_config / "shared" / "queue"):
+                        with patch.dict(os.environ, {
+                            'AGENT_NAME': 'test-recycler',
+                            'AGENT_ID': '0',
+                            'AGENT_ROLE': 'recycler',
+                            'PARENT_PROJECT': str(mock_config.parent),
+                            'WORKTREE': str(mock_config.parent),
+                            'SHARED_DIR': str(mock_config / 'shared'),
+                            'ORCHESTRATOR_DIR': str(mock_config),
+                        }):
+                            from orchestrator.roles.recycler import RecyclerRole
+                            from orchestrator.db import create_task, update_task_queue, get_task
+
+                            # Create an orchestrator_impl task WITH submodule commits
+                            prov_dir = mock_config / "shared" / "queue" / "provisional"
+                            prov_dir.mkdir(parents=True, exist_ok=True)
+                            task_path = prov_dir / "TASK-orch0003.md"
+                            task_path.write_text(
+                                "# [TASK-orch0003] Productive orchestrator impl task\n\n"
+                                "ROLE: orchestrator_impl\nPRIORITY: P1\nBRANCH: main\n\n"
+                                "## Context\nOrchestrator work with commits.\n\n"
+                                "## Acceptance Criteria\n- [ ] Done\n"
+                            )
+                            create_task(task_id="orch0003", file_path=str(task_path), role="orchestrator_impl")
+                            update_task_queue("orch0003", "provisional", commits_count=3, turns_used=100)
+
+                            # Run recycler
+                            role = RecyclerRole()
+                            result = role.run()
+                            assert result == 0
+
+                            # Task stays in provisional — has commits, not burned out
+                            task = get_task("orch0003")
+                            assert task["queue"] == "provisional", (
+                                f"Expected orchestrator_impl task with commits to stay in provisional, "
                                 f"but found in {task['queue']}"
                             )
 
@@ -94,6 +185,30 @@ class TestBurnedOutDetection:
         """Task with 3 commits + 100 turns is normal."""
         from orchestrator.queue_utils import is_burned_out
 
+        assert is_burned_out(commits_count=3, turns_used=100) is False
+
+    def test_orchestrator_impl_zero_commits_high_turns_is_burned(self):
+        """orchestrator_impl task with 0 commits + 100 turns IS burned out.
+
+        The orchestrator_impl role counts submodule commits and reports them
+        via submit_completion(). If commits_count is 0, the agent genuinely
+        produced no commits, so burn-out detection applies the same as for
+        regular tasks.
+        """
+        from orchestrator.queue_utils import is_burned_out
+
+        # No role exemption — 0 commits + high turns = burned out
+        assert is_burned_out(commits_count=0, turns_used=100) is True
+
+    def test_orchestrator_impl_with_submodule_commits_not_burned(self):
+        """orchestrator_impl task with submodule commits is NOT burned out.
+
+        When the orchestrator_impl role correctly counts submodule commits,
+        a task with commits should never be considered burned out.
+        """
+        from orchestrator.queue_utils import is_burned_out
+
+        # Submodule commits reported correctly — not burned out
         assert is_burned_out(commits_count=3, turns_used=100) is False
 
 

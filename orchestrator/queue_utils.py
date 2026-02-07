@@ -1972,27 +1972,24 @@ def cleanup_task_notes(task_id: str) -> bool:
 BURNED_OUT_TURN_THRESHOLD = 80
 
 
-def is_burned_out(commits_count: int, turns_used: int, role: str | None = None) -> bool:
+def is_burned_out(commits_count: int, turns_used: int) -> bool:
     """Check if a task is burned out (used many turns without producing commits).
 
     A task is considered burned out when it has zero commits and has used
     a significant number of turns, indicating the task scope is too large
     for a single agent session.
 
-    Note: orchestrator_impl tasks commit to a submodule, so the main repo
-    always sees 0 commits. These tasks are never considered burned out by
-    commit count alone.
+    This applies to all task roles including orchestrator_impl. The
+    orchestrator_impl role correctly counts submodule commits and reports
+    them via submit_completion(), so the commits_count in the DB is accurate.
 
     Args:
         commits_count: Number of commits the agent made
         turns_used: Number of turns the agent used
-        role: Task role (orchestrator_impl tasks are exempt from commit check)
 
     Returns:
         True if the task appears burned out
     """
-    if role == "orchestrator_impl":
-        return False
     return commits_count == 0 and (turns_used or 0) >= BURNED_OUT_TURN_THRESHOLD
 
 

@@ -46,7 +46,7 @@ class RecyclerRole(BaseRole):
             role = task.get("role")
             self.debug_log(f"Checking {task_id}: commits={commits_count}, turns={turns_used}, role={role}")
 
-            if is_burned_out(commits_count=commits_count, turns_used=turns_used, role=role):
+            if is_burned_out(commits_count=commits_count, turns_used=turns_used):
                 self.log(f"Recycling {task_id}: burned out (0 commits, {turns_used} turns)")
                 try:
                     result = recycle_to_breakdown(task_path)
