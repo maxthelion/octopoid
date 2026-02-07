@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+from unittest import mock
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -662,3 +663,515 @@ class TestSchemaMigrationV6:
 
             # Verify schema version
             assert SCHEMA_VERSION == 6
+
+
+# ---------------------------------------------------------------------------
+# VALID_CHECK_TYPES constant
+# ---------------------------------------------------------------------------
+
+
+class TestValidCheckTypes:
+    """Tests for the VALID_CHECK_TYPES constant."""
+
+    def test_valid_check_types_includes_pytest_submodule(self):
+        """VALID_CHECK_TYPES should include pytest-submodule."""
+        from orchestrator.roles.check_runner import VALID_CHECK_TYPES
+
+        assert "pytest-submodule" in VALID_CHECK_TYPES
+
+    def test_valid_check_types_includes_gk_testing(self):
+        """VALID_CHECK_TYPES should include gk-testing."""
+        from orchestrator.roles.check_runner import VALID_CHECK_TYPES
+
+        assert "gk-testing" in VALID_CHECK_TYPES
+
+
+# ---------------------------------------------------------------------------
+# gk-testing check
+# ---------------------------------------------------------------------------
+
+
+class TestGkTestingCheck:
+    """Tests for the gk-testing check type."""
+
+    def test_gk_testing_dispatched_from_run(self, mock_config, initialized_db):
+        """CheckRunnerRole.run() dispatches to _run_gk_testing for gk-testing checks."""
+        with patch("orchestrator.db.get_database_path", return_value=initialized_db):
+            with patch("orchestrator.roles.check_runner.is_db_enabled", return_value=True):
+                with patch("orchestrator.queue_utils.is_db_enabled", return_value=True):
+                    with patch("orchestrator.queue_utils.get_queue_dir", return_value=mock_config / "shared" / "queue"):
+                        with patch.dict(os.environ, {
+                            "AGENT_NAME": "test-check-runner",
+                            "AGENT_ID": "0",
+                            "AGENT_ROLE": "check_runner",
+                            "PARENT_PROJECT": str(mock_config.parent),
+                            "WORKTREE": str(mock_config.parent),
+                            "SHARED_DIR": str(mock_config / "shared"),
+                            "ORCHESTRATOR_DIR": str(mock_config),
+                        }):
+                            from orchestrator.roles.check_runner import CheckRunnerRole
+                            from orchestrator.db import create_task, update_task_queue
+
+                            # Create provisional task with gk-testing check
+                            prov_dir = mock_config / "shared" / "queue" / "provisional"
+                            prov_dir.mkdir(parents=True, exist_ok=True)
+                            fp = prov_dir / "TASK-gkt1.md"
+                            fp.write_text("# [TASK-gkt1] GK test task\nROLE: orchestrator_impl\n")
+
+                            create_task(
+                                task_id="gkt1",
+                                file_path=str(fp),
+                                role="orchestrator_impl",
+                                checks=["gk-testing"],
+                            )
+                            update_task_queue("gkt1", "provisional", commits_count=2)
+
+                            role = CheckRunnerRole()
+                            # Mock _run_gk_testing to verify it gets called
+                            role._run_gk_testing = MagicMock()
+
+                            role.run()
+
+                            role._run_gk_testing.assert_called_once()
+                            call_args = role._run_gk_testing.call_args[0]
+                            assert call_args[0] == "gkt1"
+                            assert call_args[1]["id"] == "gkt1"
+
+    def test_gk_testing_fails_no_worktree(self, mock_config, initialized_db):
+        """gk-testing records fail when agent worktree not found."""
+        with patch("orchestrator.db.get_database_path", return_value=initialized_db):
+            with patch("orchestrator.roles.check_runner.is_db_enabled", return_value=True):
+                with patch("orchestrator.queue_utils.is_db_enabled", return_value=True):
+                    with patch("orchestrator.queue_utils.get_queue_dir", return_value=mock_config / "shared" / "queue"):
+                        with patch.dict(os.environ, {
+                            "AGENT_NAME": "test-check-runner",
+                            "AGENT_ID": "0",
+                            "AGENT_ROLE": "check_runner",
+                            "PARENT_PROJECT": str(mock_config.parent),
+                            "WORKTREE": str(mock_config.parent),
+                            "SHARED_DIR": str(mock_config / "shared"),
+                            "ORCHESTRATOR_DIR": str(mock_config),
+                        }):
+                            from orchestrator.roles.check_runner import CheckRunnerRole
+                            from orchestrator.db import create_task, update_task_queue, get_task
+
+                            # Create provisional task with gk-testing check, no claimed_by
+                            prov_dir = mock_config / "shared" / "queue" / "provisional"
+                            prov_dir.mkdir(parents=True, exist_ok=True)
+                            fp = prov_dir / "TASK-gkt2.md"
+                            fp.write_text("# [TASK-gkt2] GK test task\nROLE: orchestrator_impl\n")
+
+                            create_task(
+                                task_id="gkt2",
+                                file_path=str(fp),
+                                role="orchestrator_impl",
+                                checks=["gk-testing"],
+                            )
+                            update_task_queue("gkt2", "provisional", commits_count=2)
+
+                            role = CheckRunnerRole()
+                            # Mock _find_agent_worktree to return None (no worktree found)
+                            role._find_agent_worktree = MagicMock(return_value=None)
+                            role._run_gk_testing("gkt2", {"id": "gkt2", "claimed_by": None})
+
+                            # Check that the result was recorded as fail
+                            task = get_task("gkt2")
+                            assert task["check_results"]["gk-testing"]["status"] == "fail"
+                            assert "worktree" in task["check_results"]["gk-testing"]["summary"].lower()
+
+    def test_gk_testing_fails_no_submodule(self, mock_config, initialized_db):
+        """gk-testing records fail when orchestrator submodule not found."""
+        with patch("orchestrator.db.get_database_path", return_value=initialized_db):
+            with patch.dict(os.environ, {
+                "AGENT_NAME": "test-check-runner",
+                "AGENT_ID": "0",
+                "AGENT_ROLE": "check_runner",
+                "PARENT_PROJECT": str(mock_config.parent),
+                "WORKTREE": str(mock_config.parent),
+                "SHARED_DIR": str(mock_config / "shared"),
+                "ORCHESTRATOR_DIR": str(mock_config),
+            }):
+                from orchestrator.roles.check_runner import CheckRunnerRole
+                from orchestrator.db import create_task, get_task
+
+                create_task(
+                    task_id="gkt3",
+                    file_path="/gkt3.md",
+                    checks=["gk-testing"],
+                )
+
+                # Create a fake agent worktree WITHOUT orchestrator submodule
+                agent_dir = mock_config / "agents" / "fake-agent" / "worktree"
+                agent_dir.mkdir(parents=True, exist_ok=True)
+
+                role = CheckRunnerRole()
+                # Mock _find_agent_worktree to return our fake worktree
+                role._find_agent_worktree = MagicMock(return_value=agent_dir)
+
+                role._run_gk_testing("gkt3", {"id": "gkt3", "claimed_by": "fake-agent"})
+
+                task = get_task("gkt3")
+                assert task["check_results"]["gk-testing"]["status"] == "fail"
+                assert "submodule" in task["check_results"]["gk-testing"]["summary"].lower()
+
+    def test_gk_testing_fails_no_commits(self, mock_config, initialized_db):
+        """gk-testing records fail when no commits found in submodule."""
+        with patch("orchestrator.db.get_database_path", return_value=initialized_db):
+            with patch.dict(os.environ, {
+                "AGENT_NAME": "test-check-runner",
+                "AGENT_ID": "0",
+                "AGENT_ROLE": "check_runner",
+                "PARENT_PROJECT": str(mock_config.parent),
+                "WORKTREE": str(mock_config.parent),
+                "SHARED_DIR": str(mock_config / "shared"),
+                "ORCHESTRATOR_DIR": str(mock_config),
+            }):
+                from orchestrator.roles.check_runner import CheckRunnerRole
+                from orchestrator.db import create_task, get_task
+
+                create_task(
+                    task_id="gkt4",
+                    file_path="/gkt4.md",
+                    checks=["gk-testing"],
+                )
+
+                # Create a fake agent worktree WITH orchestrator submodule dir
+                agent_dir = mock_config / "agents" / "fake-agent" / "worktree"
+                orch_dir = agent_dir / "orchestrator"
+                orch_dir.mkdir(parents=True, exist_ok=True)
+
+                role = CheckRunnerRole()
+                role._find_agent_worktree = MagicMock(return_value=agent_dir)
+                role._get_submodule_commits = MagicMock(return_value=[])
+
+                role._run_gk_testing("gkt4", {"id": "gkt4", "claimed_by": "fake-agent"})
+
+                task = get_task("gkt4")
+                assert task["check_results"]["gk-testing"]["status"] == "fail"
+                assert "commit" in task["check_results"]["gk-testing"]["summary"].lower()
+
+    def test_gk_testing_fails_rebase_conflict(self, mock_config, initialized_db):
+        """gk-testing records fail with conflict details on rebase failure."""
+        with patch("orchestrator.db.get_database_path", return_value=initialized_db):
+            with patch.dict(os.environ, {
+                "AGENT_NAME": "test-check-runner",
+                "AGENT_ID": "0",
+                "AGENT_ROLE": "check_runner",
+                "PARENT_PROJECT": str(mock_config.parent),
+                "WORKTREE": str(mock_config.parent),
+                "SHARED_DIR": str(mock_config / "shared"),
+                "ORCHESTRATOR_DIR": str(mock_config),
+            }):
+                from orchestrator.roles.check_runner import CheckRunnerRole
+                from orchestrator.db import create_task, get_task
+
+                create_task(
+                    task_id="gkt5",
+                    file_path="/gkt5.md",
+                    checks=["gk-testing"],
+                )
+
+                # Create fake dirs
+                agent_dir = mock_config / "agents" / "fake-agent" / "worktree"
+                orch_dir = agent_dir / "orchestrator"
+                orch_dir.mkdir(parents=True, exist_ok=True)
+                review_dir = mock_config / "agents" / "review-worktree" / "orchestrator"
+                review_dir.mkdir(parents=True, exist_ok=True)
+
+                role = CheckRunnerRole()
+                role._find_agent_worktree = MagicMock(return_value=agent_dir)
+                role._get_submodule_commits = MagicMock(return_value=["abc123", "def456"])
+                role._setup_clean_submodule = MagicMock(return_value=(True, ""))
+                role._check_divergence = MagicMock(return_value="2 commit(s) landed on sqlite-model")
+                role._rebase_commits = MagicMock(
+                    return_value=(False, "Conflict applying commit `abc123` (feat: add thing)")
+                )
+
+                role._run_gk_testing("gkt5", {"id": "gkt5", "claimed_by": "fake-agent"})
+
+                task = get_task("gkt5")
+                result = task["check_results"]["gk-testing"]
+                assert result["status"] == "fail"
+                assert "Rebase Failed" in result["summary"]
+                assert "Conflict" in result["summary"]
+                assert "sqlite-model" in result["summary"]
+
+    def test_gk_testing_fails_test_failure(self, mock_config, initialized_db):
+        """gk-testing records fail with test output on pytest failure."""
+        with patch("orchestrator.db.get_database_path", return_value=initialized_db):
+            with patch.dict(os.environ, {
+                "AGENT_NAME": "test-check-runner",
+                "AGENT_ID": "0",
+                "AGENT_ROLE": "check_runner",
+                "PARENT_PROJECT": str(mock_config.parent),
+                "WORKTREE": str(mock_config.parent),
+                "SHARED_DIR": str(mock_config / "shared"),
+                "ORCHESTRATOR_DIR": str(mock_config),
+            }):
+                from orchestrator.roles.check_runner import CheckRunnerRole
+                from orchestrator.db import create_task, get_task
+
+                create_task(
+                    task_id="gkt6",
+                    file_path="/gkt6.md",
+                    checks=["gk-testing"],
+                )
+
+                # Create fake dirs
+                agent_dir = mock_config / "agents" / "fake-agent" / "worktree"
+                orch_dir = agent_dir / "orchestrator"
+                orch_dir.mkdir(parents=True, exist_ok=True)
+                review_dir = mock_config / "agents" / "review-worktree" / "orchestrator"
+                review_dir.mkdir(parents=True, exist_ok=True)
+
+                role = CheckRunnerRole()
+                role._find_agent_worktree = MagicMock(return_value=agent_dir)
+                role._get_submodule_commits = MagicMock(return_value=["abc123"])
+                role._setup_clean_submodule = MagicMock(return_value=(True, ""))
+                role._check_divergence = MagicMock(return_value="")
+                role._rebase_commits = MagicMock(return_value=(True, ""))
+                role._run_pytest = MagicMock(
+                    return_value=(False, "FAILED test_something.py::test_x - AssertionError")
+                )
+
+                role._run_gk_testing("gkt6", {"id": "gkt6", "claimed_by": "fake-agent"})
+
+                task = get_task("gkt6")
+                result = task["check_results"]["gk-testing"]
+                assert result["status"] == "fail"
+                assert "Test Failures" in result["summary"]
+                assert "FAILED" in result["summary"]
+
+    def test_gk_testing_passes(self, mock_config, initialized_db):
+        """gk-testing records pass when rebase and tests succeed."""
+        with patch("orchestrator.db.get_database_path", return_value=initialized_db):
+            with patch.dict(os.environ, {
+                "AGENT_NAME": "test-check-runner",
+                "AGENT_ID": "0",
+                "AGENT_ROLE": "check_runner",
+                "PARENT_PROJECT": str(mock_config.parent),
+                "WORKTREE": str(mock_config.parent),
+                "SHARED_DIR": str(mock_config / "shared"),
+                "ORCHESTRATOR_DIR": str(mock_config),
+            }):
+                from orchestrator.roles.check_runner import CheckRunnerRole
+                from orchestrator.db import create_task, get_task
+
+                create_task(
+                    task_id="gkt7",
+                    file_path="/gkt7.md",
+                    checks=["gk-testing"],
+                )
+
+                # Create fake dirs
+                agent_dir = mock_config / "agents" / "fake-agent" / "worktree"
+                orch_dir = agent_dir / "orchestrator"
+                orch_dir.mkdir(parents=True, exist_ok=True)
+                review_dir = mock_config / "agents" / "review-worktree" / "orchestrator"
+                review_dir.mkdir(parents=True, exist_ok=True)
+
+                role = CheckRunnerRole()
+                role._find_agent_worktree = MagicMock(return_value=agent_dir)
+                role._get_submodule_commits = MagicMock(return_value=["abc123", "def456"])
+                role._setup_clean_submodule = MagicMock(return_value=(True, ""))
+                role._check_divergence = MagicMock(return_value="")
+                role._rebase_commits = MagicMock(return_value=(True, ""))
+                role._run_pytest = MagicMock(return_value=(True, "3 passed"))
+
+                role._run_gk_testing("gkt7", {"id": "gkt7", "claimed_by": "fake-agent"})
+
+                task = get_task("gkt7")
+                result = task["check_results"]["gk-testing"]
+                assert result["status"] == "pass"
+                assert "2 commit(s)" in result["summary"]
+                assert "passed" in result["summary"].lower()
+
+    def test_gk_testing_pass_with_divergence_note(self, mock_config, initialized_db):
+        """gk-testing pass summary notes when base had diverged."""
+        with patch("orchestrator.db.get_database_path", return_value=initialized_db):
+            with patch.dict(os.environ, {
+                "AGENT_NAME": "test-check-runner",
+                "AGENT_ID": "0",
+                "AGENT_ROLE": "check_runner",
+                "PARENT_PROJECT": str(mock_config.parent),
+                "WORKTREE": str(mock_config.parent),
+                "SHARED_DIR": str(mock_config / "shared"),
+                "ORCHESTRATOR_DIR": str(mock_config),
+            }):
+                from orchestrator.roles.check_runner import CheckRunnerRole
+                from orchestrator.db import create_task, get_task
+
+                create_task(
+                    task_id="gkt8",
+                    file_path="/gkt8.md",
+                    checks=["gk-testing"],
+                )
+
+                agent_dir = mock_config / "agents" / "fake-agent" / "worktree"
+                orch_dir = agent_dir / "orchestrator"
+                orch_dir.mkdir(parents=True, exist_ok=True)
+                review_dir = mock_config / "agents" / "review-worktree" / "orchestrator"
+                review_dir.mkdir(parents=True, exist_ok=True)
+
+                role = CheckRunnerRole()
+                role._find_agent_worktree = MagicMock(return_value=agent_dir)
+                role._get_submodule_commits = MagicMock(return_value=["abc123"])
+                role._setup_clean_submodule = MagicMock(return_value=(True, ""))
+                role._check_divergence = MagicMock(return_value="3 commit(s) landed on sqlite-model")
+                role._rebase_commits = MagicMock(return_value=(True, ""))
+                role._run_pytest = MagicMock(return_value=(True, "all passed"))
+
+                role._run_gk_testing("gkt8", {"id": "gkt8", "claimed_by": "fake-agent"})
+
+                task = get_task("gkt8")
+                result = task["check_results"]["gk-testing"]
+                assert result["status"] == "pass"
+                assert "Rebase succeeded" in result["summary"]
+
+    def test_gk_testing_fails_setup(self, mock_config, initialized_db):
+        """gk-testing records fail when environment setup fails."""
+        with patch("orchestrator.db.get_database_path", return_value=initialized_db):
+            with patch.dict(os.environ, {
+                "AGENT_NAME": "test-check-runner",
+                "AGENT_ID": "0",
+                "AGENT_ROLE": "check_runner",
+                "PARENT_PROJECT": str(mock_config.parent),
+                "WORKTREE": str(mock_config.parent),
+                "SHARED_DIR": str(mock_config / "shared"),
+                "ORCHESTRATOR_DIR": str(mock_config),
+            }):
+                from orchestrator.roles.check_runner import CheckRunnerRole
+                from orchestrator.db import create_task, get_task
+
+                create_task(
+                    task_id="gkt9",
+                    file_path="/gkt9.md",
+                    checks=["gk-testing"],
+                )
+
+                agent_dir = mock_config / "agents" / "fake-agent" / "worktree"
+                orch_dir = agent_dir / "orchestrator"
+                orch_dir.mkdir(parents=True, exist_ok=True)
+                review_dir = mock_config / "agents" / "review-worktree" / "orchestrator"
+                review_dir.mkdir(parents=True, exist_ok=True)
+
+                role = CheckRunnerRole()
+                role._find_agent_worktree = MagicMock(return_value=agent_dir)
+                role._get_submodule_commits = MagicMock(return_value=["abc123"])
+                role._setup_clean_submodule = MagicMock(
+                    return_value=(False, "git fetch failed: permission denied")
+                )
+
+                role._run_gk_testing("gkt9", {"id": "gkt9", "claimed_by": "fake-agent"})
+
+                task = get_task("gkt9")
+                result = task["check_results"]["gk-testing"]
+                assert result["status"] == "fail"
+                assert "set up" in result["summary"].lower()
+
+    def test_gk_testing_test_failure_with_divergence_context(self, mock_config, initialized_db):
+        """gk-testing test failure includes divergence context when base moved."""
+        with patch("orchestrator.db.get_database_path", return_value=initialized_db):
+            with patch.dict(os.environ, {
+                "AGENT_NAME": "test-check-runner",
+                "AGENT_ID": "0",
+                "AGENT_ROLE": "check_runner",
+                "PARENT_PROJECT": str(mock_config.parent),
+                "WORKTREE": str(mock_config.parent),
+                "SHARED_DIR": str(mock_config / "shared"),
+                "ORCHESTRATOR_DIR": str(mock_config),
+            }):
+                from orchestrator.roles.check_runner import CheckRunnerRole
+                from orchestrator.db import create_task, get_task
+
+                create_task(
+                    task_id="gkt10",
+                    file_path="/gkt10.md",
+                    checks=["gk-testing"],
+                )
+
+                agent_dir = mock_config / "agents" / "fake-agent" / "worktree"
+                orch_dir = agent_dir / "orchestrator"
+                orch_dir.mkdir(parents=True, exist_ok=True)
+                review_dir = mock_config / "agents" / "review-worktree" / "orchestrator"
+                review_dir.mkdir(parents=True, exist_ok=True)
+
+                role = CheckRunnerRole()
+                role._find_agent_worktree = MagicMock(return_value=agent_dir)
+                role._get_submodule_commits = MagicMock(return_value=["abc123"])
+                role._setup_clean_submodule = MagicMock(return_value=(True, ""))
+                role._check_divergence = MagicMock(return_value="5 commit(s) landed on sqlite-model")
+                role._rebase_commits = MagicMock(return_value=(True, ""))
+                role._run_pytest = MagicMock(return_value=(False, "FAILED test_foo::test_bar"))
+
+                role._run_gk_testing("gkt10", {"id": "gkt10", "claimed_by": "fake-agent"})
+
+                task = get_task("gkt10")
+                result = task["check_results"]["gk-testing"]
+                assert result["status"] == "fail"
+                assert "upstream" in result["summary"].lower()
+                assert "FAILED" in result["summary"]
+
+
+# ---------------------------------------------------------------------------
+# Default checks for orchestrator_impl
+# ---------------------------------------------------------------------------
+
+
+class TestDefaultChecksForOrchestratorImpl:
+    """Tests that orchestrator_impl tasks get gk-testing by default."""
+
+    def test_create_task_defaults_to_gk_testing(self, mock_config, initialized_db):
+        """create_task with role=orchestrator_impl and no checks defaults to gk-testing."""
+        with patch("orchestrator.db.get_database_path", return_value=initialized_db):
+            with patch("orchestrator.queue_utils.is_db_enabled", return_value=True):
+                with patch("orchestrator.queue_utils.get_queue_dir", return_value=mock_config / "shared" / "queue"):
+                    from orchestrator.queue_utils import create_task
+                    from orchestrator.db import get_task
+
+                    task_path = create_task(
+                        title="Test orch task",
+                        role="orchestrator_impl",
+                        context="Test context",
+                        acceptance_criteria=["Do the thing"],
+                    )
+
+                    # Extract task ID from filename
+                    task_id = task_path.stem.replace("TASK-", "")
+                    task = get_task(task_id)
+
+                    assert task["checks"] == ["gk-testing"]
+
+    def test_create_task_explicit_checks_override_default(self, mock_config, initialized_db):
+        """Explicit checks parameter overrides the default for orchestrator_impl."""
+        with patch("orchestrator.db.get_database_path", return_value=initialized_db):
+            with patch("orchestrator.queue_utils.is_db_enabled", return_value=True):
+                with patch("orchestrator.queue_utils.get_queue_dir", return_value=mock_config / "shared" / "queue"):
+                    from orchestrator.queue_utils import create_task
+                    from orchestrator.db import get_task
+
+                    task_path = create_task(
+                        title="Test orch task with custom checks",
+                        role="orchestrator_impl",
+                        context="Test context",
+                        acceptance_criteria=["Do the thing"],
+                        checks=["pytest-submodule"],
+                    )
+
+                    task_id = task_path.stem.replace("TASK-", "")
+                    task = get_task(task_id)
+
+                    assert task["checks"] == ["pytest-submodule"]
+
+    def test_backpressure_works_with_gk_testing(self, mock_config, initialized_db):
+        """Backpressure check detects pending gk-testing checks."""
+        with patch("orchestrator.db.get_database_path", return_value=initialized_db):
+            with patch("orchestrator.backpressure.is_db_enabled", return_value=True):
+                from orchestrator.db import create_task, update_task_queue
+                from orchestrator.backpressure import check_check_runner_backpressure
+
+                create_task(task_id="bp_gk1", file_path="/bp_gk1.md", checks=["gk-testing"])
+                update_task_queue("bp_gk1", "provisional", commits_count=2)
+
+                can_proceed, reason = check_check_runner_backpressure()
+                assert can_proceed is True

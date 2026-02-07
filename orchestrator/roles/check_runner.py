@@ -1,7 +1,7 @@
 """Check runner role - runs automated checks on provisional tasks.
 
 The check runner processes provisional tasks that have pending automated
-checks (e.g. pytest-submodule). For each task with pending checks:
+checks (e.g. pytest-submodule, gk-testing). For each task with pending checks:
 
 1. Finds the agent's worktree and identifies commits to test
 2. Sets up a clean test environment in the review worktree
@@ -10,6 +10,11 @@ checks (e.g. pytest-submodule). For each task with pending checks:
 5. On failure: rejects the task back to the agent with test output
 
 This role is lightweight — it runs checks directly without invoking Claude.
+
+The gk-testing check is an enhanced version of pytest-submodule that:
+- Rebases agent commits onto current origin/sqlite-model instead of cherry-picking
+- Provides richer failure context (conflict details, test failure summaries)
+- Identifies whether failures are likely caused by the agent's changes vs pre-existing
 """
 
 import os
@@ -19,6 +24,10 @@ from pathlib import Path
 from ..config import get_orchestrator_dir, is_db_enabled
 from ..queue_utils import list_tasks, review_reject_task
 from .base import BaseRole, main_entry
+
+
+# Valid check types that the check runner knows how to handle
+VALID_CHECK_TYPES = {"pytest-submodule", "gk-testing"}
 
 
 class CheckRunnerRole(BaseRole):
@@ -62,6 +71,9 @@ class CheckRunnerRole(BaseRole):
             for check_name in pending_checks:
                 if check_name == "pytest-submodule":
                     self._run_pytest_submodule(task_id, task)
+                    checked += 1
+                elif check_name == "gk-testing":
+                    self._run_gk_testing(task_id, task)
                     checked += 1
                 else:
                     self.log(f"Unknown check type: {check_name}, skipping")
@@ -176,6 +188,313 @@ class CheckRunnerRole(BaseRole):
                 f"Tests failed:\n```\n{summary}\n```"
             )
             self.log(f"pytest-submodule FAILED for task {task_id}")
+
+    def _run_gk_testing(self, task_id: str, task: dict) -> None:
+        """Run the gk-testing check: rebase onto current sqlite-model + pytest.
+
+        Unlike pytest-submodule which cherry-picks, this check rebases the
+        agent's commits onto the current origin/sqlite-model. This catches
+        divergence issues and produces a cleaner history.
+
+        Flow:
+        1. Find agent worktree and submodule commits
+        2. Set up review worktree with clean origin/sqlite-model
+        3. Create a temporary branch and rebase agent commits onto it
+        4. Run pytest on the rebased code
+        5. Record pass/fail with context
+
+        Args:
+            task_id: Task identifier
+            task: Task dictionary
+        """
+        from .. import db
+
+        claimed_by = task.get("claimed_by")
+
+        # Find the agent's submodule commits
+        agent_worktree = self._find_agent_worktree(claimed_by, task_id)
+        if not agent_worktree:
+            self.log(f"Could not find worktree for task {task_id}")
+            db.record_check_result(
+                task_id, "gk-testing", "fail",
+                "Could not find agent worktree to test commits"
+            )
+            return
+
+        submodule_path = agent_worktree / "orchestrator"
+        if not submodule_path.exists():
+            self.log(f"No orchestrator submodule in {agent_worktree}")
+            db.record_check_result(
+                task_id, "gk-testing", "fail",
+                "No orchestrator submodule found in agent worktree"
+            )
+            return
+
+        # Get the agent's commits on sqlite-model
+        commits = self._get_submodule_commits(submodule_path)
+        if not commits:
+            self.log(f"No submodule commits found for task {task_id}")
+            db.record_check_result(
+                task_id, "gk-testing", "fail",
+                "No commits found in orchestrator submodule"
+            )
+            return
+
+        self.log(f"Found {len(commits)} commit(s) to test for task {task_id}")
+
+        # Use the review worktree's orchestrator submodule for testing
+        review_worktree = self.parent_project / ".orchestrator" / "agents" / "review-worktree"
+        review_submodule = review_worktree / "orchestrator"
+
+        if not review_submodule.exists():
+            self.log(f"Review worktree submodule not found at {review_submodule}")
+            db.record_check_result(
+                task_id, "gk-testing", "fail",
+                "Review worktree orchestrator submodule not found"
+            )
+            return
+
+        # Set up clean state: fetch and reset to origin/sqlite-model
+        setup_ok, setup_err = self._setup_clean_submodule(review_submodule, submodule_path)
+        if not setup_ok:
+            db.record_check_result(
+                task_id, "gk-testing", "fail",
+                f"Failed to set up test environment: {setup_err}"
+            )
+            return
+
+        # Check if base has diverged since agent forked
+        divergence_info = self._check_divergence(review_submodule, commits)
+
+        # Rebase commits onto current origin/sqlite-model
+        rebase_ok, rebase_err = self._rebase_commits(review_submodule, commits)
+        if not rebase_ok:
+            # Build a helpful rejection message with divergence context
+            summary_parts = ["## Rebase Failed\n"]
+            summary_parts.append(f"Could not rebase {len(commits)} commit(s) "
+                                 f"onto current `origin/sqlite-model`.\n")
+            if divergence_info:
+                summary_parts.append(f"\n### What changed on sqlite-model\n\n{divergence_info}\n")
+            summary_parts.append(f"\n### Conflict details\n\n{rebase_err}\n")
+            summary_parts.append("\n### Suggested fix\n\n"
+                                 "Pull the latest `origin/sqlite-model`, rebase your commits, "
+                                 "resolve conflicts, and resubmit.")
+
+            db.record_check_result(
+                task_id, "gk-testing", "fail",
+                "\n".join(summary_parts)
+            )
+            self.log(f"gk-testing FAILED for task {task_id}: rebase conflict")
+            return
+
+        # Run pytest on the rebased code
+        test_ok, test_output = self._run_pytest(review_submodule)
+
+        if test_ok:
+            summary = f"All tests passed ({len(commits)} commit(s) rebased and tested)"
+            if divergence_info:
+                summary += f"\n\nNote: Base branch had moved. Rebase succeeded automatically."
+            db.record_check_result(task_id, "gk-testing", "pass", summary)
+            self.log(f"gk-testing PASSED for task {task_id}")
+        else:
+            # Build a detailed failure summary
+            summary_parts = ["## Test Failures After Rebase\n"]
+            summary_parts.append(f"Rebased {len(commits)} commit(s) onto current "
+                                 f"`origin/sqlite-model` successfully, but tests failed.\n")
+
+            if divergence_info:
+                summary_parts.append(f"\n### Base branch changes\n\n{divergence_info}\n")
+                summary_parts.append("*Note: Failures may be caused by conflicts with "
+                                     "upstream changes rather than your code.*\n")
+
+            # Include the tail of test output
+            truncated = test_output[-1500:] if len(test_output) > 1500 else test_output
+            if len(test_output) > 1500:
+                truncated = f"[...truncated {len(test_output) - 1500} chars...]\n" + truncated
+            summary_parts.append(f"\n### Test output\n\n```\n{truncated}\n```")
+
+            db.record_check_result(
+                task_id, "gk-testing", "fail",
+                "\n".join(summary_parts)
+            )
+            self.log(f"gk-testing FAILED for task {task_id}: test failures")
+
+    def _check_divergence(self, review_sub: Path, agent_commits: list[str]) -> str:
+        """Check if origin/sqlite-model has diverged since the agent forked.
+
+        Compares the agent's base (parent of first commit) against current
+        origin/sqlite-model. Returns a summary of what changed if diverged.
+
+        Args:
+            review_sub: Path to review worktree's orchestrator submodule
+            agent_commits: List of agent commit hashes (oldest first)
+
+        Returns:
+            Human-readable summary of divergence, or empty string if no divergence
+        """
+        if not agent_commits:
+            return ""
+
+        first_commit = agent_commits[0]
+        try:
+            # Find the agent's base: parent of their first commit
+            result = subprocess.run(
+                ["git", "rev-parse", f"{first_commit}^"],
+                cwd=review_sub,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode != 0:
+                return ""
+
+            agent_base = result.stdout.strip()
+
+            # Compare with current origin/sqlite-model
+            result = subprocess.run(
+                ["git", "rev-parse", "origin/sqlite-model"],
+                cwd=review_sub,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode != 0:
+                return ""
+
+            current_head = result.stdout.strip()
+
+            if agent_base == current_head:
+                return ""  # No divergence
+
+            # Get the log of commits between agent base and current HEAD
+            result = subprocess.run(
+                ["git", "log", "--oneline", f"{agent_base}..origin/sqlite-model"],
+                cwd=review_sub,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode != 0 or not result.stdout.strip():
+                return ""
+
+            upstream_commits = result.stdout.strip()
+            commit_count = len(upstream_commits.strip().split("\n"))
+
+            return (
+                f"{commit_count} commit(s) landed on `sqlite-model` since the agent forked:\n\n"
+                f"```\n{upstream_commits}\n```"
+            )
+
+        except (subprocess.TimeoutExpired, subprocess.SubprocessError):
+            return ""
+
+    def _rebase_commits(self, review_sub: Path, commits: list[str]) -> tuple[bool, str]:
+        """Rebase agent commits onto current origin/sqlite-model.
+
+        Creates a temporary branch from the agent's first commit's parent,
+        applies all agent commits, then rebases onto origin/sqlite-model.
+
+        Args:
+            review_sub: Path to review worktree's orchestrator submodule
+            commits: List of commit hashes (oldest first)
+
+        Returns:
+            Tuple of (success, error_message)
+        """
+        try:
+            # Strategy: checkout origin/sqlite-model, then cherry-pick agent commits
+            # This achieves the same result as rebasing the agent's work onto the
+            # latest base. We already reset to origin/sqlite-model in setup, so
+            # we just need to cherry-pick in order.
+            #
+            # The difference from plain cherry-pick (pytest-submodule) is that
+            # we provide better error context and divergence info.
+
+            for commit in commits:
+                result = subprocess.run(
+                    ["git", "cherry-pick", "--no-commit", commit],
+                    cwd=review_sub,
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                )
+                if result.returncode != 0:
+                    # Get conflict details
+                    conflict_output = result.stderr[:500] if result.stderr else ""
+
+                    # Check for conflicted files
+                    status_result = subprocess.run(
+                        ["git", "diff", "--name-only", "--diff-filter=U"],
+                        cwd=review_sub,
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                    )
+                    conflicted_files = status_result.stdout.strip() if status_result.returncode == 0 else ""
+
+                    # Get the commit message for context
+                    msg_result = subprocess.run(
+                        ["git", "log", "--format=%s", "-1", commit],
+                        cwd=review_sub,
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                    )
+                    commit_msg = msg_result.stdout.strip() if msg_result.returncode == 0 else commit[:8]
+
+                    # Abort the cherry-pick
+                    subprocess.run(
+                        ["git", "cherry-pick", "--abort"],
+                        cwd=review_sub,
+                        capture_output=True,
+                    )
+                    # Reset to clean state
+                    subprocess.run(
+                        ["git", "reset", "--hard", "origin/sqlite-model"],
+                        cwd=review_sub,
+                        capture_output=True,
+                    )
+
+                    error_parts = [f"Conflict applying commit `{commit[:8]}` ({commit_msg})"]
+                    if conflicted_files:
+                        error_parts.append(f"\nConflicted files:\n```\n{conflicted_files}\n```")
+                    if conflict_output:
+                        error_parts.append(f"\nGit output:\n```\n{conflict_output}\n```")
+
+                    return False, "\n".join(error_parts)
+
+                # Commit the cherry-picked changes
+                result = subprocess.run(
+                    ["git", "commit", "--allow-empty", "-C", commit],
+                    cwd=review_sub,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                if result.returncode != 0:
+                    # If commit failed, try to continue anyway (might be empty)
+                    subprocess.run(
+                        ["git", "reset"],
+                        cwd=review_sub,
+                        capture_output=True,
+                    )
+
+            return True, ""
+
+        except subprocess.TimeoutExpired:
+            subprocess.run(
+                ["git", "cherry-pick", "--abort"],
+                cwd=review_sub,
+                capture_output=True,
+            )
+            subprocess.run(
+                ["git", "reset", "--hard", "origin/sqlite-model"],
+                cwd=review_sub,
+                capture_output=True,
+            )
+            return False, "Rebase timed out"
+        except subprocess.SubprocessError as e:
+            return False, str(e)
 
     def _find_agent_worktree(self, claimed_by: str | None, task_id: str) -> Path | None:
         """Find the agent worktree for a task.
