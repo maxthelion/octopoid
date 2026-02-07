@@ -343,7 +343,7 @@ def get_role_constraints(role: str) -> str:
 - All code is in the orchestrator/ submodule directory
 - Work inside orchestrator/ for all edits and commits
 - Run tests: cd orchestrator && ./venv/bin/python -m pytest tests/ -v
-- After changes: pip install -e . in the orchestrator venv
+- Do NOT run `pip install -e .` — it will corrupt the shared scheduler venv. Just edit code and run tests.
 - Key files: orchestrator/orchestrator/db.py, queue_utils.py, scheduler.py
 - Commit in the submodule (orchestrator/), not the main repo root
 - Do NOT create a PR in the main repo — commit directly to the sqlite-model branch
