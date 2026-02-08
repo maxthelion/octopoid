@@ -813,10 +813,12 @@ def fail_task(task_path: Path | str, error: str) -> Path:
     failed_dir = get_queue_subdir("failed")
     dest = failed_dir / task_path.name
 
-    # Append error info
+    # Append error info (truncate to avoid bloating the task file —
+    # the full error is already in the agent stderr log)
+    error_summary = error[:500] + ("..." if len(error) > 500 else "")
     with open(task_path, "a") as f:
         f.write(f"\nFAILED_AT: {datetime.now().isoformat()}\n")
-        f.write(f"\n## Error\n```\n{error}\n```\n")
+        f.write(f"\n## Error\n```\n{error_summary}\n```\n")
 
     os.rename(task_path, dest)
     return dest
@@ -2035,8 +2037,14 @@ def recycle_to_breakdown(task_path, reason="too_large") -> dict | None:
 
     task_id = db_task["id"]
 
-    # Read the original task content
+    # Read the original task content, stripping agent metadata and error
+    # sections to keep re-breakdown tasks lean (only human-written content)
     task_content = task_path.read_text() if task_path.exists() else ""
+    for marker in ["CLAIMED_BY:", "CLAIMED_AT:", "SUBMITTED_AT:", "COMMITS_COUNT:", "TURNS_USED:", "FAILED_AT:", "## Error"]:
+        idx = task_content.find(marker)
+        if idx > 0:
+            task_content = task_content[:idx].rstrip()
+            break
 
     # Check depth cap - don't recycle tasks that are already re-breakdowns
     depth_match = re.search(r"RE_BREAKDOWN_DEPTH:\s*(\d+)", task_content)

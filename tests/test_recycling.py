@@ -297,6 +297,38 @@ class TestRecycleToBreakdown:
                     assert "Run the tests, debug failures, add edge case coverage" in content
                     assert "burn0001" in content
 
+    def test_recycle_strips_agent_metadata(self, mock_config, sample_project_with_tasks):
+        """Breakdown task should not contain CLAIMED_BY or other agent metadata."""
+        with patch('orchestrator.db.get_database_path', return_value=sample_project_with_tasks["completed_tasks"][0]["path"].parent.parent.parent.parent / "state.db"):
+            with patch('orchestrator.queue_utils.is_db_enabled', return_value=True):
+                with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_config / "shared" / "queue"):
+                    from orchestrator.queue_utils import recycle_to_breakdown
+
+                    burned = sample_project_with_tasks["burned_task"]
+
+                    # Append agent metadata and error to the task file (simulating
+                    # what fail_task() would have written)
+                    with open(burned["path"], "a") as f:
+                        f.write("\nCLAIMED_BY: impl-agent-1\n")
+                        f.write("CLAIMED_AT: 2026-02-08T10:00:00\n")
+                        f.write("SUBMITTED_AT: 2026-02-08T11:00:00\n")
+                        f.write("\n## Error\n```\nSome long error message\n```\n")
+
+                    result = recycle_to_breakdown(burned["path"])
+
+                    breakdown_dir = mock_config / "shared" / "queue" / "breakdown"
+                    breakdown_files = list(breakdown_dir.glob("TASK-*.md"))
+                    bd_content = breakdown_files[0].read_text()
+
+                    # Should still include the human-written task description
+                    assert "Run the tests, debug failures, add edge case coverage" in bd_content
+
+                    # Should NOT include agent metadata
+                    assert "CLAIMED_BY:" not in bd_content
+                    assert "CLAIMED_AT:" not in bd_content
+                    assert "SUBMITTED_AT:" not in bd_content
+                    assert "Some long error message" not in bd_content
+
     def test_recycle_moves_original_to_recycled(self, mock_config, sample_project_with_tasks):
         """Original task moves to recycled queue state."""
         with patch('orchestrator.db.get_database_path', return_value=sample_project_with_tasks["completed_tasks"][0]["path"].parent.parent.parent.parent / "state.db"):

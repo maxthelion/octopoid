@@ -357,6 +357,33 @@ class TestFailTask:
                 assert "FAILED_AT:" in content
                 assert "Something went wrong" in content
 
+    def test_fail_task_truncates_long_error(self, mock_orchestrator_dir, sample_task_file):
+        """A 10,000-char error should be truncated so the error section is <= 600 chars."""
+        claimed_dir = mock_orchestrator_dir / "shared" / "queue" / "claimed"
+        claimed_path = claimed_dir / sample_task_file.name
+        sample_task_file.rename(claimed_path)
+
+        long_error = "X" * 10_000
+
+        with patch('orchestrator.queue_utils.is_db_enabled', return_value=False):
+            with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "shared" / "queue"):
+                from orchestrator.queue_utils import fail_task
+
+                result_path = fail_task(claimed_path, error=long_error)
+
+                content = result_path.read_text()
+                assert "FAILED_AT:" in content
+
+                # Extract just the error section
+                error_start = content.find("## Error")
+                assert error_start != -1, "Error section not found"
+                error_section = content[error_start:]
+                assert len(error_section) <= 600, (
+                    f"Error section is {len(error_section)} chars, expected <= 600"
+                )
+                # Should end with truncation marker
+                assert "..." in error_section
+
 
 class TestRejectTask:
     """Tests for reject_task function."""
