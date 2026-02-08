@@ -55,14 +55,30 @@ class OrchestratorImplRole(ImplementerRole):
             cmd, capture_output=True, text=True, cwd=cwd, timeout=timeout
         )
 
+    def _parse_failed_tests(self, pytest_output: str) -> set[str]:
+        """Extract the set of failed test names from pytest output.
+
+        Looks for lines like 'FAILED tests/test_foo.py::TestBar::test_baz'
+        in the short test summary section.
+        """
+        failed = set()
+        for line in pytest_output.splitlines():
+            line = line.strip()
+            if line.startswith("FAILED "):
+                # "FAILED tests/test_foo.py::TestBar::test_baz - AssertionError..."
+                test_id = line.split(" ")[1].split(" - ")[0]
+                failed.add(test_id)
+        return failed
+
     def _try_merge_to_main(self, submodule_path: Path, task_id: str) -> bool:
         """Try to rebase, test, and fast-forward merge the agent's work to main.
 
         Steps:
-        1. Rebase orch/<task-id> onto main (in the agent's worktree submodule)
-        2. Run pytest on the rebased branch
-        3. Fast-forward merge to main in the agent's worktree submodule
-        4. Fetch the result into the main checkout's submodule and ff-merge
+        1. Run pytest on main to capture baseline failures
+        2. Rebase orch/<task-id> onto main (in the agent's worktree submodule)
+        3. Run pytest on the rebased branch — only block on NEW failures
+        4. Fast-forward merge to main in the agent's worktree submodule
+        5. Fetch the result into the main checkout's submodule and ff-merge
 
         Returns True if all steps succeed, False on any failure.
         On failure, the caller should fall back to submit_completion().
@@ -70,7 +86,25 @@ class OrchestratorImplRole(ImplementerRole):
         sub_branch = f"orch/{task_id}"
         main_checkout_sub = self.parent_project / "orchestrator"
 
-        # Step 1: Rebase onto main
+        venv_python = self._find_venv_python(submodule_path)
+        if not venv_python:
+            self.log("Self-merge: no venv found, skipping tests")
+            return False
+
+        # Step 1: Capture baseline test failures on main
+        self.log("Self-merge: running baseline pytest on main...")
+        self._run_cmd(["git", "checkout", "main"], cwd=submodule_path)
+        baseline_result = self._run_cmd(
+            [str(venv_python), "-m", "pytest", "tests/", "-v", "--tb=short"],
+            cwd=submodule_path,
+            timeout=300,
+        )
+        baseline_failures = self._parse_failed_tests(baseline_result.stdout)
+        if baseline_failures:
+            self.log(f"Self-merge: {len(baseline_failures)} pre-existing failure(s) on main")
+        self._run_cmd(["git", "checkout", sub_branch], cwd=submodule_path)
+
+        # Step 2: Rebase onto main
         self.log(f"Self-merge: rebasing {sub_branch} onto main...")
         result = self._run_cmd(
             ["git", "rebase", "main"], cwd=submodule_path
@@ -80,26 +114,25 @@ class OrchestratorImplRole(ImplementerRole):
             self._run_cmd(["git", "rebase", "--abort"], cwd=submodule_path)
             return False
 
-        # Step 2: Run pytest on the rebased branch
-        self.log("Self-merge: running pytest...")
-        venv_python = self._find_venv_python(submodule_path)
-        if not venv_python:
-            self.log("Self-merge: no venv found, skipping tests")
-            # No venv = can't verify, fall back to manual review
-            return False
-
+        # Step 3: Run pytest on the rebased branch
+        self.log("Self-merge: running pytest on rebased branch...")
         result = self._run_cmd(
             [str(venv_python), "-m", "pytest", "tests/", "-v", "--tb=short"],
             cwd=submodule_path,
             timeout=300,
         )
         if result.returncode != 0:
-            self.log(f"Self-merge: tests failed (exit {result.returncode})")
-            # Log last few lines of test output for diagnostics
-            lines = result.stdout.strip().splitlines()
-            for line in lines[-10:]:
-                self.debug_log(f"  {line}")
-            return False
+            branch_failures = self._parse_failed_tests(result.stdout)
+            new_failures = branch_failures - baseline_failures
+            if new_failures:
+                self.log(f"Self-merge: {len(new_failures)} NEW test failure(s):")
+                for f in sorted(new_failures):
+                    self.log(f"  - {f}")
+                return False
+            else:
+                self.log(
+                    f"Self-merge: {len(branch_failures)} failure(s) all pre-existing, proceeding"
+                )
         self.log("Self-merge: tests passed")
 
         # Step 3: Fast-forward merge to main in agent's worktree submodule
@@ -250,6 +283,16 @@ class OrchestratorImplRole(ImplementerRole):
             # Create feature branch in main repo (for tracking/worktree purposes)
             branch_name = create_feature_branch(self.worktree, task_id, base_branch)
             self.log(f"Created branch: {branch_name}")
+
+            # Ensure submodule is on main before creating new feature branch.
+            # After a failed self-merge, the submodule may be left on a
+            # previous task's branch (orch/<old-task>), which would cause
+            # the new branch to include stale commits.
+            self._run_cmd(["git", "checkout", "main"], cwd=submodule_path)
+            self._run_cmd(
+                ["git", "reset", "--hard", "origin/main"],
+                cwd=submodule_path,
+            )
 
             # Create feature branch in the SUBMODULE so commits stay isolated
             # until approved. This prevents commits from bleeding between tasks.

@@ -145,6 +145,7 @@ class TestOrchestratorImplPrompt:
                  patch.object(role, 'read_instructions', return_value=''), \
                  patch.object(role, 'reset_tool_counter'), \
                  patch.object(role, 'read_tool_count', return_value=5), \
+                 patch.object(role, '_run_cmd', return_value=_make_completed_result(0)), \
                  patch.object(role, '_create_submodule_branch'), \
                  patch.object(role, '_try_merge_to_main', return_value=False), \
                  patch('orchestrator.git_utils.create_feature_branch', return_value='agent/test'), \
@@ -187,6 +188,7 @@ class TestOrchestratorImplPrompt:
                  patch.object(role, 'read_instructions', return_value=''), \
                  patch.object(role, 'reset_tool_counter'), \
                  patch.object(role, 'read_tool_count', return_value=5), \
+                 patch.object(role, '_run_cmd', return_value=_make_completed_result(0)), \
                  patch.object(role, '_create_submodule_branch'), \
                  patch.object(role, '_try_merge_to_main', return_value=False), \
                  patch('orchestrator.git_utils.create_feature_branch', return_value='agent/test'), \
@@ -226,6 +228,7 @@ class TestOrchestratorImplCommitCounting:
                  patch.object(role, 'read_instructions', return_value=''), \
                  patch.object(role, 'reset_tool_counter'), \
                  patch.object(role, 'read_tool_count', return_value=5), \
+                 patch.object(role, '_run_cmd', return_value=_make_completed_result(0)), \
                  patch.object(role, '_create_submodule_branch'), \
                  patch.object(role, '_try_merge_to_main', return_value=False), \
                  patch('orchestrator.git_utils.create_feature_branch', return_value='agent/test'), \
@@ -264,6 +267,7 @@ class TestOrchestratorImplCommitCounting:
                  patch.object(role, 'read_instructions', return_value=''), \
                  patch.object(role, 'reset_tool_counter'), \
                  patch.object(role, 'read_tool_count', return_value=5), \
+                 patch.object(role, '_run_cmd', return_value=_make_completed_result(0)), \
                  patch.object(role, '_create_submodule_branch'), \
                  patch.object(role, '_try_merge_to_main', return_value=False), \
                  patch('orchestrator.git_utils.create_feature_branch', return_value='agent/test'), \
@@ -304,6 +308,7 @@ class TestOrchestratorImplNoPR:
                  patch.object(role, 'read_instructions', return_value=''), \
                  patch.object(role, 'reset_tool_counter'), \
                  patch.object(role, 'read_tool_count', return_value=5), \
+                 patch.object(role, '_run_cmd', return_value=_make_completed_result(0)), \
                  patch.object(role, '_create_submodule_branch'), \
                  patch.object(role, '_try_merge_to_main', return_value=False), \
                  patch('orchestrator.git_utils.create_feature_branch', return_value='agent/test'), \
@@ -411,16 +416,26 @@ class TestTryMergeToMain:
 
             assert result is False
 
-    def test_test_failure_returns_false(self):
-        """If pytest fails, returns False."""
+    def test_new_test_failure_returns_false(self):
+        """If the branch introduces NEW test failures, returns False."""
         with patch.dict('os.environ', _ENV):
             role = self._make_role()
             sub_path = Path('/fake/agents/test-orch/worktree/orchestrator')
             venv_python = Path('/fake/venv/bin/python')
 
+            pytest_call_count = [0]
+
             def mock_run_cmd(cmd, cwd, timeout=120):
                 if 'pytest' in cmd:
-                    return _make_completed_result(1, stdout='FAILED test_foo')
+                    pytest_call_count[0] += 1
+                    if pytest_call_count[0] == 1:
+                        # Baseline on main: no failures
+                        return _make_completed_result(0, stdout='5 passed')
+                    else:
+                        # Branch: new failure
+                        return _make_completed_result(
+                            1, stdout='FAILED tests/test_foo.py::test_new_bug\n4 passed, 1 failed'
+                        )
                 return _make_completed_result(0)
 
             with patch.object(role, '_run_cmd', side_effect=mock_run_cmd), \
@@ -428,6 +443,27 @@ class TestTryMergeToMain:
                 result = role._try_merge_to_main(sub_path, 'abc12345')
 
             assert result is False
+
+    def test_preexisting_failure_still_merges(self):
+        """If all test failures are pre-existing (same on main), merge proceeds."""
+        with patch.dict('os.environ', _ENV):
+            role = self._make_role()
+            sub_path = Path('/fake/agents/test-orch/worktree/orchestrator')
+            venv_python = Path('/fake/venv/bin/python')
+
+            def mock_run_cmd(cmd, cwd, timeout=120):
+                if 'pytest' in cmd:
+                    # Same failure on both baseline and branch
+                    return _make_completed_result(
+                        1, stdout='FAILED tests/test_known.py::test_flaky\n4 passed, 1 failed'
+                    )
+                return _make_completed_result(0)
+
+            with patch.object(role, '_run_cmd', side_effect=mock_run_cmd), \
+                 patch.object(role, '_find_venv_python', return_value=venv_python):
+                result = role._try_merge_to_main(sub_path, 'abc12345')
+
+            assert result is True
 
     def test_no_venv_returns_false(self):
         """If no venv is found, returns False (can't verify)."""
@@ -475,6 +511,7 @@ class TestSelfMergeIntegration:
         stack.enter_context(patch.object(role, 'read_instructions', return_value=''))
         stack.enter_context(patch.object(role, 'reset_tool_counter'))
         stack.enter_context(patch.object(role, 'read_tool_count', return_value=5))
+        stack.enter_context(patch.object(role, '_run_cmd', return_value=_make_completed_result(0)))
         stack.enter_context(patch.object(role, '_create_submodule_branch'))
         stack.enter_context(patch.object(role, '_try_merge_to_main', return_value=mock_merge_result))
         stack.enter_context(patch('orchestrator.git_utils.create_feature_branch', return_value='agent/test'))
@@ -529,6 +566,7 @@ class TestSelfMergeIntegration:
                  patch.object(role, 'read_instructions', return_value=''), \
                  patch.object(role, 'reset_tool_counter'), \
                  patch.object(role, 'read_tool_count', return_value=5), \
+                 patch.object(role, '_run_cmd', return_value=_make_completed_result(0)), \
                  patch.object(role, '_create_submodule_branch'), \
                  patch.object(role, '_try_merge_to_main', mock_merge), \
                  patch('orchestrator.git_utils.create_feature_branch', return_value='agent/test'), \

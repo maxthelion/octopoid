@@ -142,13 +142,15 @@ def find_agent_submodule(task_info: dict[str, Any]) -> Path | None:
 # ---------------------------------------------------------------------------
 
 
-def find_agent_commits(agent_sub: Path, local_sub: Path) -> list[str]:
+def find_agent_commits(agent_sub: Path, local_sub: Path, task_id: str | None = None) -> list[str]:
     """Return commit SHAs from agent submodule that are not in local_sub.
 
-    We detect the agent's current branch (which may be a feature branch
-    like orch/<task-id> or main), fetch it, then compare FETCH_HEAD
-    against the local main HEAD.  Returns a list of SHAs in
-    topological order (oldest first), ready for cherry-pick.
+    If task_id is provided, fetches the ``orch/<task-id>`` branch directly
+    (reliable even when the agent has moved on to a different task).
+    Falls back to the agent's current branch if the task branch doesn't exist.
+
+    Returns a list of SHAs in topological order (oldest first), ready
+    for cherry-pick.
     """
     # Get local HEAD
     local_head = run(
@@ -158,13 +160,26 @@ def find_agent_commits(agent_sub: Path, local_sub: Path) -> list[str]:
         return []
     local_sha = local_head.stdout.strip()
 
-    # Detect the agent's current branch (could be orch/<task-id> or main)
-    agent_branch_result = run(
-        ["git", "branch", "--show-current"], cwd=agent_sub, check=False
-    )
-    agent_branch = agent_branch_result.stdout.strip() if agent_branch_result.returncode == 0 else ""
+    # Prefer orch/<task-id> branch (stable) over whatever the agent is currently on
+    agent_branch = None
+    if task_id:
+        task_branch = f"orch/{task_id}"
+        # Verify the branch exists in the agent's submodule
+        check = run(
+            ["git", "rev-parse", "--verify", task_branch],
+            cwd=agent_sub, check=False,
+        )
+        if check.returncode == 0:
+            agent_branch = task_branch
+
     if not agent_branch:
-        agent_branch = "HEAD"  # Detached HEAD fallback
+        # Fallback: detect the agent's current branch
+        agent_branch_result = run(
+            ["git", "branch", "--show-current"], cwd=agent_sub, check=False
+        )
+        agent_branch = agent_branch_result.stdout.strip() if agent_branch_result.returncode == 0 else ""
+        if not agent_branch:
+            agent_branch = "HEAD"  # Detached HEAD fallback
     print(f"  Agent submodule branch: {agent_branch}")
 
     # Fetch from agent submodule so we can compare
@@ -588,7 +603,7 @@ def approve_orchestrator_task(task_id_prefix: str) -> int:
 
     # Step 3: Find agent commits
     print("\n2. Finding agent commits...")
-    commits = find_agent_commits(agent_sub, local_sub)
+    commits = find_agent_commits(agent_sub, local_sub, task_id=task_id)
 
     if not commits:
         print("   WARNING: No new commits found in agent submodule")

@@ -319,8 +319,12 @@ class TestToolCounterInOrchestratorImpl:
             counter_path.write_bytes(b"." * 123)
             return (0, "done", "")
 
+        from subprocess import CompletedProcess
+        mock_cmd_result = CompletedProcess(args=[], returncode=0, stdout='', stderr='')
+
         with patch.object(role, "invoke_claude", side_effect=fake_invoke), \
              patch.object(role, "read_instructions", return_value=""), \
+             patch.object(role, "_run_cmd", return_value=mock_cmd_result), \
              patch.object(role, "_create_submodule_branch"), \
              patch.object(role, "_try_merge_to_main", return_value=False):
                 role.run()
@@ -379,8 +383,12 @@ class TestToolCounterInOrchestratorImpl:
                 counter_path.unlink()
             return (0, "done", "")
 
+        from subprocess import CompletedProcess
+        mock_cmd_result = CompletedProcess(args=[], returncode=0, stdout='', stderr='')
+
         with patch.object(role, "invoke_claude", side_effect=fake_invoke), \
              patch.object(role, "read_instructions", return_value=""), \
+             patch.object(role, "_run_cmd", return_value=mock_cmd_result), \
              patch.object(role, "_create_submodule_branch"), \
              patch.object(role, "_try_merge_to_main", return_value=False):
                 role.run()
