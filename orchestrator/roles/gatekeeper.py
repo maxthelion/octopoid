@@ -12,8 +12,7 @@ Environment variables:
 import os
 import subprocess
 
-from ..config import get_orchestrator_dir
-from ..review_utils import load_review_meta, record_review_result
+from ..config import get_orchestrator_dir, is_db_enabled
 from .base import main_entry
 from .specialist import SpecialistRole
 
@@ -22,7 +21,7 @@ class GatekeeperRole(SpecialistRole):
     """Gatekeeper that reviews task branch diffs from a specialized perspective.
 
     Reads REVIEW_TASK_ID and REVIEW_CHECK_NAME from environment to determine
-    what to review. Records results to the review tracking directory.
+    what to review. Records results to the DB via db.record_check_result().
     """
 
     def __init__(self):
@@ -91,6 +90,27 @@ class GatekeeperRole(SpecialistRole):
             pass
         return []
 
+    def _record_check(self, status: str, summary: str) -> None:
+        """Record a check result in the DB.
+
+        Args:
+            status: 'pass' or 'fail'
+            summary: Brief description of the result
+        """
+        if is_db_enabled():
+            from .. import db
+            db.record_check_result(self.review_task_id, self.check_name, status, summary)
+        else:
+            # Fallback to filesystem for non-DB setups
+            from ..review_utils import record_review_result
+            record_review_result(
+                self.review_task_id,
+                self.check_name,
+                status,
+                summary,
+                submitted_by=self.agent_name,
+            )
+
     def run(self) -> int:
         """Run gatekeeper check on a task's branch diff.
 
@@ -103,37 +123,39 @@ class GatekeeperRole(SpecialistRole):
 
         self.log(f"Reviewing task {self.review_task_id}, check: {self.check_name}")
 
-        # Load review metadata
-        meta = load_review_meta(self.review_task_id)
-        if not meta:
-            self.log(f"No review metadata found for task {self.review_task_id}")
-            return 1
-
-        branch = meta.get("branch", "")
-        base_branch = meta.get("base_branch", "main")
+        # Load task from DB to get branch info
+        branch = ""
+        base_branch = "main"
+        if is_db_enabled():
+            from .. import db
+            task = db.get_task(self.review_task_id)
+            if task:
+                branch = task.get("branch", "")
+                # base_branch defaults to "main"
+            else:
+                self.log(f"No task found in DB for {self.review_task_id}")
+                return 1
+        else:
+            # Fallback to filesystem review metadata
+            from ..review_utils import load_review_meta
+            meta = load_review_meta(self.review_task_id)
+            if meta:
+                branch = meta.get("branch", "")
+                base_branch = meta.get("base_branch", "main")
+            else:
+                self.log(f"No review metadata found for task {self.review_task_id}")
+                return 1
 
         if not branch:
-            self.log("No branch in review metadata")
-            record_review_result(
-                self.review_task_id,
-                self.check_name,
-                "fail",
-                "No branch found in review metadata",
-                submitted_by=self.agent_name,
-            )
+            self.log("No branch found for task")
+            self._record_check("fail", "No branch found for task")
             return 1
 
         # Get the diff
         diff = self._get_branch_diff(branch, base_branch)
         if not diff:
             self.log("No diff found (branch may not exist or no changes)")
-            record_review_result(
-                self.review_task_id,
-                self.check_name,
-                "fail",
-                "Could not get branch diff",
-                submitted_by=self.agent_name,
-            )
+            self._record_check("fail", "Could not get branch diff")
             return 1
 
         # Truncate large diffs
@@ -232,13 +254,7 @@ Use /record-check with:
 
         if exit_code != 0:
             self.log(f"Claude invocation failed: {stderr}")
-            record_review_result(
-                self.review_task_id,
-                self.check_name,
-                "fail",
-                f"Review agent failed to complete: {stderr[:200]}",
-                submitted_by=self.agent_name,
-            )
+            self._record_check("fail", f"Review agent failed to complete: {stderr[:200]}")
             return exit_code
 
         self.log(f"Gatekeeper check ({self.check_name}) complete for task {self.review_task_id}")

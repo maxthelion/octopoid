@@ -20,7 +20,7 @@ Your check name is in the `REVIEW_CHECK_NAME` or `AGENT_FOCUS` environment varia
 
 ### Step 2: Write the check result
 
-Use the review_utils module to record your result:
+Use the DB module to record your result:
 
 ```python
 import os
@@ -31,33 +31,17 @@ from pathlib import Path
 project_root = Path(os.environ.get("PARENT_PROJECT", "."))
 sys.path.insert(0, str(project_root / "orchestrator"))
 
-from orchestrator.review_utils import record_review_result
+from orchestrator.db import record_check_result
 
 task_id = os.environ.get("REVIEW_TASK_ID")
 check_name = os.environ.get("REVIEW_CHECK_NAME", os.environ.get("AGENT_FOCUS"))
 
-record_review_result(
+record_check_result(
     task_id=task_id,
     check_name=check_name,
     status="pass",  # or "fail"
-    summary="One-line summary of your verdict",
-    details="Full markdown report with file paths and line numbers",
-    submitted_by=os.environ.get("AGENT_NAME"),
+    summary="One-line summary of your verdict and detailed findings",
 )
-```
-
-Or write the JSON file directly to:
-`.orchestrator/shared/reviews/TASK-{task_id}/checks/{check_name}.json`
-
-```json
-{
-  "check_name": "architecture",
-  "status": "pass",
-  "summary": "Architecture changes are well-structured",
-  "details": "### Findings\n\n- No boundary violations\n- Patterns followed correctly",
-  "submitted_at": "2026-02-07T10:00:00",
-  "submitted_by": "gk-architecture"
-}
 ```
 
 ## Guidelines
@@ -75,6 +59,6 @@ Or write the JSON file directly to:
 ## After Recording
 
 The check result will be:
-1. Stored in `.orchestrator/shared/reviews/TASK-{id}/checks/`
-2. Aggregated by the scheduler's process_gatekeeper_reviews()
+1. Stored in the DB's `check_results` JSON field on the task
+2. Processed by the scheduler's `process_gatekeeper_reviews()`
 3. Used to determine if the task passes review or gets rejected back to the implementer

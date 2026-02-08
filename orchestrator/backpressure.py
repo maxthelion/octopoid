@@ -225,30 +225,37 @@ def check_check_runner_backpressure() -> Tuple[bool, str]:
 def check_gatekeeper_backpressure() -> Tuple[bool, str]:
     """Backpressure check for gatekeeper agents.
 
-    Only proceed if there are active reviews with pending checks.
+    Only proceed if there are provisional tasks with pending non-mechanical checks.
+    Uses the DB check system (task.checks + task.check_results).
 
     Returns:
         Tuple of (can_proceed, reason)
     """
+    if not is_db_enabled():
+        return False, "gatekeeper_requires_db"
+
     try:
-        from .review_utils import get_reviews_dir, load_review_meta
+        from . import db
+        from .roles.check_runner import VALID_CHECK_TYPES as MECHANICAL_CHECK_TYPES
 
-        reviews_dir = get_reviews_dir()
-        if not reviews_dir.exists():
-            return False, "no_reviews"
-
-        # Check if any reviews have pending checks
-        for review_dir in reviews_dir.iterdir():
-            if not review_dir.is_dir():
+        tasks = db.list_tasks(queue="provisional")
+        for task in tasks:
+            checks = task.get("checks", [])
+            if not checks:
                 continue
-            task_id = review_dir.name.replace("TASK-", "")
-            meta = load_review_meta(task_id)
-            if meta and meta.get("status") == "in_progress":
-                return True, ""
+            if task.get("commits_count", 0) == 0:
+                continue
+            check_results = task.get("check_results", {})
+            # Look for pending checks that are NOT mechanical
+            for check_name in checks:
+                if check_name in MECHANICAL_CHECK_TYPES:
+                    continue
+                if check_name not in check_results or check_results[check_name].get("status") not in ("pass", "fail"):
+                    return True, ""
 
-        return False, "no_pending_reviews"
+        return False, "no_pending_gatekeeper_checks"
     except Exception:
-        return False, "review_check_error"
+        return False, "gatekeeper_check_error"
 
 
 # Map role to backpressure check function

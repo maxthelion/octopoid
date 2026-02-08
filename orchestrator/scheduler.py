@@ -19,6 +19,7 @@ from .config import (
     get_agents_runtime_dir,
     get_commands_dir,
     get_gatekeeper_config,
+    get_gatekeepers,
     get_global_instructions_path,
     get_orchestrator_dir,
     get_templates_dir,
@@ -26,6 +27,7 @@ from .config import (
     is_gatekeeper_enabled,
     is_system_paused,
 )
+from .roles.check_runner import VALID_CHECK_TYPES as MECHANICAL_CHECK_TYPES
 from .git_utils import ensure_worktree, get_worktree_path
 from .lock_utils import locked_or_skip
 from .port_utils import get_port_env_vars
@@ -747,6 +749,160 @@ def process_gatekeeper_reviews() -> None:
         debug_log(traceback.format_exc())
 
 
+def dispatch_gatekeeper_agents() -> None:
+    """Dispatch gatekeeper agents for provisional tasks with pending non-mechanical checks.
+
+    For each provisional task that has checks not handled by the mechanical
+    check_runner (MECHANICAL_CHECK_TYPES), find the first pending check and
+    spawn a gatekeeper agent to evaluate it.
+
+    Sequential execution: only one pending check is dispatched at a time per task.
+    The next check will be dispatched on the following scheduler tick after the
+    first one completes.
+    """
+    if not is_db_enabled():
+        return
+
+    try:
+        from . import db
+
+        # Get configured gatekeeper agents
+        gk_agents = get_gatekeepers()
+        if not gk_agents:
+            debug_log("No gatekeeper agents configured, skipping dispatch")
+            return
+
+        # Get currently running agents to avoid double-dispatch
+        running_agents = db.list_agents(running_only=True)
+        # Build a set of (task_id, check_name) pairs that are already being reviewed
+        active_reviews: set[tuple[str, str]] = set()
+        for agent in running_agents:
+            if agent.get("role") == "gatekeeper" and agent.get("current_task_id"):
+                # We track which task the gatekeeper is reviewing via current_task_id.
+                # We can't easily track the check_name from DB alone, but since
+                # we only dispatch one check at a time per task, knowing the task_id
+                # is sufficient to avoid duplicate dispatch.
+                active_reviews.add((agent["current_task_id"], ""))
+
+        provisional_tasks = db.list_tasks(queue="provisional")
+
+        for task in provisional_tasks:
+            task_id = task["id"]
+            checks = task.get("checks", [])
+            check_results = task.get("check_results", {})
+            commits = task.get("commits_count", 0)
+
+            # Skip tasks without commits
+            if commits == 0:
+                continue
+
+            # Skip tasks with no checks
+            if not checks:
+                continue
+
+            # Skip if a gatekeeper is already reviewing this task
+            if any(tid == task_id for tid, _ in active_reviews):
+                debug_log(f"Gatekeeper already active for task {task_id}, skipping")
+                continue
+
+            # Find the first pending check that is NOT mechanical
+            pending_gk_check = None
+            for check_name in checks:
+                if check_name in MECHANICAL_CHECK_TYPES:
+                    # check_runner handles this one
+                    continue
+                if check_name in check_results and check_results[check_name].get("status") in ("pass", "fail"):
+                    # Already completed
+                    continue
+                pending_gk_check = check_name
+                break  # Sequential: only dispatch the first pending one
+
+            if not pending_gk_check:
+                continue
+
+            debug_log(f"Need gatekeeper for task {task_id}, check: {pending_gk_check}")
+
+            # Find an available gatekeeper agent to dispatch
+            dispatched = False
+            for gk_config in gk_agents:
+                gk_name = gk_config.get("name")
+                if not gk_name:
+                    continue
+
+                # Check if this gatekeeper is currently running
+                gk_state_path = get_agent_state_path(gk_name)
+                gk_state = load_state(gk_state_path)
+                if gk_state.running and gk_state.pid and is_process_running(gk_state.pid):
+                    debug_log(f"Gatekeeper {gk_name} is busy, trying next")
+                    continue
+
+                # If was running but process died, mark finished
+                if gk_state.running:
+                    gk_state = mark_finished(gk_state, 1)
+                    save_state(gk_state, gk_state_path)
+
+                # Check interval
+                interval = gk_config.get("interval_seconds", 300)
+                if not is_overdue(gk_state, interval):
+                    debug_log(f"Gatekeeper {gk_name} not due yet, trying next")
+                    continue
+
+                # Check if paused
+                if gk_config.get("paused", False):
+                    debug_log(f"Gatekeeper {gk_name} is paused, trying next")
+                    continue
+
+                # Spawn the gatekeeper with review context
+                debug_log(f"Dispatching {gk_name} for task {task_id} check {pending_gk_check}")
+
+                # Build config with review context for spawn_agent
+                dispatch_config = dict(gk_config)
+                dispatch_config["review_task_id"] = task_id
+                dispatch_config["review_check_name"] = pending_gk_check
+
+                # Set up worktree
+                is_lightweight = dispatch_config.get("lightweight", False)
+                if not is_lightweight:
+                    base_branch = dispatch_config.get("base_branch", "main")
+                    task_branch = task.get("branch")
+                    if task_branch and task_branch != "main":
+                        base_branch = task_branch
+                    ensure_worktree(gk_name, base_branch)
+                    setup_agent_commands(gk_name, "gatekeeper")
+                    generate_agent_instructions(gk_name, "gatekeeper", dispatch_config)
+
+                # Find agent_id from config
+                all_agents = get_agents()
+                agent_id = next(
+                    (i for i, a in enumerate(all_agents) if a.get("name") == gk_name),
+                    0,
+                )
+
+                write_agent_env(gk_name, agent_id, "gatekeeper", dispatch_config)
+                pid = spawn_agent(gk_name, agent_id, "gatekeeper", dispatch_config)
+
+                # Update state
+                new_state = mark_started(gk_state, pid)
+                save_state(new_state, gk_state_path)
+
+                # Update DB
+                db.upsert_agent(gk_name, role="gatekeeper", running=True, pid=pid, current_task_id=task_id)
+                db.mark_agent_started(gk_name, pid, task_id=task_id)
+
+                print(f"[{datetime.now().isoformat()}] Dispatched gatekeeper {gk_name} for task {task_id} check {pending_gk_check}")
+
+                dispatched = True
+                break  # One gatekeeper per task
+
+            if not dispatched:
+                debug_log(f"No available gatekeeper for task {task_id} check {pending_gk_check}")
+
+    except Exception as e:
+        debug_log(f"Error dispatching gatekeeper agents: {e}")
+        import traceback
+        debug_log(traceback.format_exc())
+
+
 def check_and_update_finished_agents() -> None:
     """Check for agents that have finished and update their state."""
     agents_dir = get_agents_runtime_dir()
@@ -918,6 +1074,9 @@ def run_scheduler() -> None:
 
     # Process gatekeeper reviews for provisional tasks
     process_gatekeeper_reviews()
+
+    # Dispatch gatekeeper agents for pending non-mechanical checks
+    dispatch_gatekeeper_agents()
 
     # Check for stale branches that need rebasing
     check_stale_branches()

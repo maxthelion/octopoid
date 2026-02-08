@@ -999,26 +999,47 @@ class TestApproveAndMerge:
 
 
 class TestGatekeeperBackpressure:
-    """Tests for gatekeeper backpressure check."""
+    """Tests for gatekeeper backpressure check (DB-based)."""
 
-    def test_no_reviews_blocks(self, mock_config):
-        """Test that no active reviews blocks gatekeeper spawn."""
-        with patch('orchestrator.review_utils.get_orchestrator_dir', return_value=mock_config):
+    def test_no_pending_checks_blocks(self, mock_config, initialized_db):
+        """Test that no pending gatekeeper checks blocks gatekeeper spawn."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
             from orchestrator.backpressure import check_gatekeeper_backpressure
 
             can_proceed, reason = check_gatekeeper_backpressure()
             assert can_proceed is False
 
-    def test_active_reviews_allows(self, mock_config):
-        """Test that active reviews allow gatekeeper spawn."""
-        with patch('orchestrator.review_utils.get_orchestrator_dir', return_value=mock_config):
-            from orchestrator.review_utils import init_task_review
+    def test_pending_non_mechanical_check_allows(self, mock_config, initialized_db):
+        """Test that a pending non-mechanical check allows gatekeeper spawn."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, update_task_queue
             from orchestrator.backpressure import check_gatekeeper_backpressure
 
-            init_task_review("bp1", branch="b")
+            create_task(
+                task_id="bp_task",
+                file_path="/bp_task.md",
+                checks=["architecture-review"],  # non-mechanical check
+            )
+            update_task_queue("bp_task", "provisional", commits_count=1)
 
             can_proceed, reason = check_gatekeeper_backpressure()
             assert can_proceed is True
+
+    def test_only_mechanical_checks_blocks(self, mock_config, initialized_db):
+        """Test that only mechanical checks blocks gatekeeper spawn."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, update_task_queue
+            from orchestrator.backpressure import check_gatekeeper_backpressure
+
+            create_task(
+                task_id="bp_mech",
+                file_path="/bp_mech.md",
+                checks=["gk-testing-octopoid"],  # mechanical only
+            )
+            update_task_queue("bp_mech", "provisional", commits_count=1)
+
+            can_proceed, reason = check_gatekeeper_backpressure()
+            assert can_proceed is False
 
 
 # =============================================================================

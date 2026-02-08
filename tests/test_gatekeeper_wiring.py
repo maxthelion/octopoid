@@ -1,11 +1,12 @@
 """End-to-end tests for gatekeeper wiring into task submission lifecycle.
 
 Tests the full flow: task creation → check assignment → check result recording →
-scheduler processing → correct final state.
+scheduler processing → correct final state.  Also tests scheduler dispatch of
+gatekeeper agents for non-mechanical checks.
 """
 
 import pytest
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 
 class TestOrchestratorImplChecksAutoAssigned:
@@ -232,3 +233,226 @@ class TestDashboardCheckDisplay:
 
                 review_ids = [t["id"] for t in work["in_review"]]
                 assert "dash_nocheck" in review_ids
+
+
+class TestSchedulerGatekeeperDispatch:
+    """Tests for scheduler dispatching gatekeeper agents for non-mechanical checks."""
+
+    def _make_idle_state(self):
+        """Create an idle AgentState for mocking."""
+        from orchestrator.state_utils import AgentState
+        return AgentState(running=False, pid=None, last_finished=None, last_exit_code=None, extra={})
+
+    def test_dispatch_skips_mechanical_checks(self, mock_config, initialized_db):
+        """Scheduler does not dispatch gatekeepers for checks handled by check_runner."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, update_task_queue
+            from orchestrator.scheduler import dispatch_gatekeeper_agents
+
+            # Task with only a mechanical check (gk-testing-octopoid)
+            create_task(
+                task_id="mech_only",
+                file_path="/mech_only.md",
+                role="orchestrator_impl",
+                checks=["gk-testing-octopoid"],
+            )
+            update_task_queue("mech_only", "provisional", commits_count=2)
+
+            with patch('orchestrator.scheduler.get_gatekeepers', return_value=[
+                {"name": "gk-test", "role": "gatekeeper", "focus": "testing"},
+            ]):
+                with patch('orchestrator.scheduler.spawn_agent') as mock_spawn:
+                    dispatch_gatekeeper_agents()
+                    # Should NOT spawn — gk-testing-octopoid is mechanical
+                    mock_spawn.assert_not_called()
+
+    def test_dispatch_spawns_for_non_mechanical_check(self, mock_config, initialized_db):
+        """Scheduler dispatches a gatekeeper for a non-mechanical check."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, update_task_queue
+            from orchestrator.scheduler import dispatch_gatekeeper_agents
+
+            # Task with a non-mechanical check (e.g., "architecture-review")
+            create_task(
+                task_id="need_gk",
+                file_path="/need_gk.md",
+                role="implement",
+                checks=["architecture-review"],
+                branch="feature/test",
+            )
+            update_task_queue("need_gk", "provisional", commits_count=1)
+
+            idle_state = self._make_idle_state()
+
+            with patch('orchestrator.scheduler.get_gatekeepers', return_value=[
+                {"name": "gk-arch", "role": "gatekeeper", "focus": "architecture"},
+            ]):
+                with patch('orchestrator.scheduler.get_agents', return_value=[
+                    {"name": "gk-arch", "role": "gatekeeper", "focus": "architecture"},
+                ]):
+                    with patch('orchestrator.scheduler.load_state', return_value=idle_state):
+                        with patch('orchestrator.scheduler.is_overdue', return_value=True):
+                            with patch('orchestrator.scheduler.spawn_agent', return_value=12345) as mock_spawn:
+                                with patch('orchestrator.scheduler.save_state'):
+                                    with patch('orchestrator.scheduler.ensure_worktree'):
+                                        with patch('orchestrator.scheduler.setup_agent_commands'):
+                                            with patch('orchestrator.scheduler.generate_agent_instructions'):
+                                                with patch('orchestrator.scheduler.write_agent_env'):
+                                                    with patch('orchestrator.scheduler.is_process_running', return_value=False):
+                                                        dispatch_gatekeeper_agents()
+
+                                                        # Should spawn gatekeeper with review context
+                                                        mock_spawn.assert_called_once()
+                                                        call_args = mock_spawn.call_args
+                                                        config = call_args[0][3]  # 4th positional arg is agent_config
+                                                        assert config["review_task_id"] == "need_gk"
+                                                        assert config["review_check_name"] == "architecture-review"
+
+    def test_dispatch_sequential_only_first_pending(self, mock_config, initialized_db):
+        """Scheduler only dispatches the first pending non-mechanical check per task."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, update_task_queue
+            from orchestrator.scheduler import dispatch_gatekeeper_agents
+
+            # Task with two non-mechanical checks
+            create_task(
+                task_id="multi_check",
+                file_path="/multi_check.md",
+                role="implement",
+                checks=["architecture-review", "qa-review"],
+                branch="feature/test",
+            )
+            update_task_queue("multi_check", "provisional", commits_count=1)
+
+            idle_state = self._make_idle_state()
+
+            with patch('orchestrator.scheduler.get_gatekeepers', return_value=[
+                {"name": "gk-1", "role": "gatekeeper", "focus": "architecture"},
+                {"name": "gk-2", "role": "gatekeeper", "focus": "qa"},
+            ]):
+                with patch('orchestrator.scheduler.get_agents', return_value=[
+                    {"name": "gk-1", "role": "gatekeeper", "focus": "architecture"},
+                    {"name": "gk-2", "role": "gatekeeper", "focus": "qa"},
+                ]):
+                    with patch('orchestrator.scheduler.load_state', return_value=idle_state):
+                        with patch('orchestrator.scheduler.is_overdue', return_value=True):
+                            with patch('orchestrator.scheduler.spawn_agent', return_value=12345) as mock_spawn:
+                                with patch('orchestrator.scheduler.save_state'):
+                                    with patch('orchestrator.scheduler.ensure_worktree'):
+                                        with patch('orchestrator.scheduler.setup_agent_commands'):
+                                            with patch('orchestrator.scheduler.generate_agent_instructions'):
+                                                with patch('orchestrator.scheduler.write_agent_env'):
+                                                    with patch('orchestrator.scheduler.is_process_running', return_value=False):
+                                                        dispatch_gatekeeper_agents()
+
+                                                        # Should only spawn once — for the first check
+                                                        assert mock_spawn.call_count == 1
+                                                        call_args = mock_spawn.call_args
+                                                        config = call_args[0][3]
+                                                        assert config["review_check_name"] == "architecture-review"
+
+    def test_dispatch_skips_already_completed_checks(self, mock_config, initialized_db):
+        """Scheduler skips checks that already have results."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, update_task_queue, record_check_result
+            from orchestrator.scheduler import dispatch_gatekeeper_agents
+
+            # Task with two checks, first already passed
+            create_task(
+                task_id="partial_done",
+                file_path="/partial_done.md",
+                role="implement",
+                checks=["architecture-review", "qa-review"],
+                branch="feature/test",
+            )
+            update_task_queue("partial_done", "provisional", commits_count=1)
+            record_check_result("partial_done", "architecture-review", "pass", "Looks good")
+
+            idle_state = self._make_idle_state()
+
+            with patch('orchestrator.scheduler.get_gatekeepers', return_value=[
+                {"name": "gk-1", "role": "gatekeeper", "focus": "qa"},
+            ]):
+                with patch('orchestrator.scheduler.get_agents', return_value=[
+                    {"name": "gk-1", "role": "gatekeeper", "focus": "qa"},
+                ]):
+                    with patch('orchestrator.scheduler.load_state', return_value=idle_state):
+                        with patch('orchestrator.scheduler.is_overdue', return_value=True):
+                            with patch('orchestrator.scheduler.spawn_agent', return_value=12345) as mock_spawn:
+                                with patch('orchestrator.scheduler.save_state'):
+                                    with patch('orchestrator.scheduler.ensure_worktree'):
+                                        with patch('orchestrator.scheduler.setup_agent_commands'):
+                                            with patch('orchestrator.scheduler.generate_agent_instructions'):
+                                                with patch('orchestrator.scheduler.write_agent_env'):
+                                                    with patch('orchestrator.scheduler.is_process_running', return_value=False):
+                                                        dispatch_gatekeeper_agents()
+
+                                                        # Should dispatch for qa-review (architecture already done)
+                                                        mock_spawn.assert_called_once()
+                                                        config = mock_spawn.call_args[0][3]
+                                                        assert config["review_check_name"] == "qa-review"
+
+    def test_dispatch_skips_tasks_without_commits(self, mock_config, initialized_db):
+        """Scheduler does not dispatch gatekeepers for tasks with 0 commits."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, update_task_queue
+            from orchestrator.scheduler import dispatch_gatekeeper_agents
+
+            create_task(
+                task_id="no_commits",
+                file_path="/no_commits.md",
+                role="implement",
+                checks=["architecture-review"],
+            )
+            update_task_queue("no_commits", "provisional", commits_count=0)
+
+            with patch('orchestrator.scheduler.get_gatekeepers', return_value=[
+                {"name": "gk-1", "role": "gatekeeper"},
+            ]):
+                with patch('orchestrator.scheduler.spawn_agent') as mock_spawn:
+                    dispatch_gatekeeper_agents()
+                    mock_spawn.assert_not_called()
+
+    def test_dispatch_skips_when_gatekeeper_already_active(self, mock_config, initialized_db):
+        """Scheduler skips dispatch if a gatekeeper is already reviewing the task."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, update_task_queue, upsert_agent
+            from orchestrator.scheduler import dispatch_gatekeeper_agents
+
+            create_task(
+                task_id="active_review",
+                file_path="/active_review.md",
+                role="implement",
+                checks=["architecture-review"],
+                branch="feature/test",
+            )
+            update_task_queue("active_review", "provisional", commits_count=1)
+
+            # Simulate a gatekeeper already running for this task
+            upsert_agent("gk-arch", role="gatekeeper", running=True, pid=99999, current_task_id="active_review")
+
+            with patch('orchestrator.scheduler.get_gatekeepers', return_value=[
+                {"name": "gk-arch", "role": "gatekeeper", "focus": "architecture"},
+            ]):
+                with patch('orchestrator.scheduler.spawn_agent') as mock_spawn:
+                    dispatch_gatekeeper_agents()
+                    mock_spawn.assert_not_called()
+
+    def test_dispatch_no_gatekeepers_configured(self, mock_config, initialized_db):
+        """Scheduler gracefully handles no gatekeeper agents configured."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, update_task_queue
+            from orchestrator.scheduler import dispatch_gatekeeper_agents
+
+            create_task(
+                task_id="no_gk_config",
+                file_path="/no_gk_config.md",
+                role="implement",
+                checks=["architecture-review"],
+            )
+            update_task_queue("no_gk_config", "provisional", commits_count=1)
+
+            with patch('orchestrator.scheduler.get_gatekeepers', return_value=[]):
+                with patch('orchestrator.scheduler.spawn_agent') as mock_spawn:
+                    dispatch_gatekeeper_agents()
+                    mock_spawn.assert_not_called()
