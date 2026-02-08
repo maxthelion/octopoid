@@ -2259,7 +2259,7 @@ def approve_and_merge(
     # Always use db.accept_completion(task_id) directly — the stored file_path
     # can be stale (e.g. still pointing to incoming/ when the file has moved
     # to provisional/), causing path-based lookup to silently fail.
-    db.accept_completion(task_id, validator="human")
+    db.accept_completion(task_id, accepted_by="human")
 
     # Move the task file to done/ if we can find it
     task_file_path = task.get("file_path", "")
