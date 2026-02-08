@@ -930,6 +930,68 @@ class TestApproveAndMerge:
                 result = approve_and_merge("doesnotexist")
                 assert "error" in result
 
+    def test_approve_with_stale_file_path(self, mock_config, initialized_db):
+        """Test approve_and_merge works when DB file_path is stale.
+
+        Reproduces the bug where file_path in DB still points to incoming/
+        but the file has been moved to provisional/ by the scheduler.
+        The DB queue field should still be updated to 'done'.
+        """
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            with patch('orchestrator.review_utils.get_orchestrator_dir', return_value=mock_config):
+                from orchestrator.db import create_task, get_task
+                from orchestrator.queue_utils import approve_and_merge
+
+                # Create directories
+                incoming_dir = mock_config / "shared" / "queue" / "incoming"
+                prov_dir = mock_config / "shared" / "queue" / "provisional"
+                done_dir = mock_config / "shared" / "queue" / "done"
+                incoming_dir.mkdir(parents=True, exist_ok=True)
+                prov_dir.mkdir(parents=True, exist_ok=True)
+                done_dir.mkdir(parents=True, exist_ok=True)
+
+                # Create task with file_path pointing to incoming/ (stale)
+                stale_path = incoming_dir / "TASK-stale1.md"
+                create_task(task_id="stale1", file_path=str(stale_path))
+
+                # But the actual file is in provisional/ (scheduler moved it)
+                actual_path = prov_dir / "TASK-stale1.md"
+                actual_path.write_text("# [TASK-stale1] Test stale path\n")
+                # stale_path does NOT exist on disk
+
+                result = approve_and_merge("stale1")
+
+                assert result["task_id"] == "stale1"
+                # DB should be updated to done despite stale path
+                task = get_task("stale1")
+                assert task["queue"] == "done"
+                # File should have been found in provisional/ and moved to done/
+                assert (done_dir / "TASK-stale1.md").exists()
+                assert not actual_path.exists()
+
+    def test_approve_with_stale_path_no_file(self, mock_config, initialized_db):
+        """Test approve_and_merge works even when file is missing entirely.
+
+        The DB queue should still be updated to 'done'.
+        """
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            with patch('orchestrator.review_utils.get_orchestrator_dir', return_value=mock_config):
+                from orchestrator.db import create_task, get_task
+                from orchestrator.queue_utils import approve_and_merge
+
+                done_dir = mock_config / "shared" / "queue" / "done"
+                done_dir.mkdir(parents=True, exist_ok=True)
+
+                # Create task with a file_path that doesn't exist
+                create_task(task_id="ghost1", file_path="/nonexistent/TASK-ghost1.md")
+
+                result = approve_and_merge("ghost1")
+
+                assert result["task_id"] == "ghost1"
+                # DB should still be updated to done
+                task = get_task("ghost1")
+                assert task["queue"] == "done"
+
 
 # =============================================================================
 # Gatekeeper Backpressure Tests

@@ -540,6 +540,11 @@ def accept_completion(
     if is_db_enabled():
         from . import db
         db_task = db.get_task_by_path(str(task_path))
+        if not db_task:
+            # Path-based lookup failed (stale path) — fall back to task ID from filename
+            match = re.match(r"TASK-(.+)\.md", task_path.name)
+            if match:
+                db_task = db.get_task(match.group(1))
         if db_task:
             task_id = db_task["id"]
             db.accept_completion(task_id, validator=validator)
@@ -549,12 +554,13 @@ def accept_completion(
     dest = done_dir / task_path.name
 
     # Append acceptance info
-    with open(task_path, "a") as f:
-        f.write(f"\nACCEPTED_AT: {datetime.now().isoformat()}\n")
-        if validator:
-            f.write(f"ACCEPTED_BY: {validator}\n")
+    if task_path.exists():
+        with open(task_path, "a") as f:
+            f.write(f"\nACCEPTED_AT: {datetime.now().isoformat()}\n")
+            if validator:
+                f.write(f"ACCEPTED_BY: {validator}\n")
 
-    os.rename(task_path, dest)
+        os.rename(task_path, dest)
 
     # Update file_path in DB to reflect new location
     if task_id:
@@ -2146,6 +2152,58 @@ def recycle_to_breakdown(task_path, reason="too_large") -> dict | None:
     }
 
 
+def _move_task_file_to_done(task_id: str, stored_file_path: str) -> Path | None:
+    """Find and move a task's markdown file to the done/ directory.
+
+    Searches for the task file across queue directories because the DB's
+    stored file_path may be stale. Updates the DB file_path after moving.
+
+    Args:
+        task_id: Task identifier (used for filename matching and DB update)
+        stored_file_path: The file_path from the DB (may be stale)
+
+    Returns:
+        New path in done/ directory, or None if file not found
+    """
+    from . import db
+
+    done_dir = get_queue_subdir("done")
+    filename = f"TASK-{task_id}.md"
+
+    # Try the stored path first
+    source = Path(stored_file_path) if stored_file_path else None
+    if source and source.exists():
+        dest = done_dir / source.name
+        try:
+            with open(source, "a") as f:
+                f.write(f"\nACCEPTED_AT: {datetime.now().isoformat()}\n")
+                f.write("ACCEPTED_BY: human\n")
+            os.rename(source, dest)
+            db.update_task(task_id, file_path=str(dest))
+            cleanup_task_notes(task_id)
+            return dest
+        except OSError:
+            pass
+
+    # Stored path is stale — search queue directories for the file
+    for subdir in ["provisional", "claimed", "incoming"]:
+        candidate = get_queue_subdir(subdir) / filename
+        if candidate.exists():
+            dest = done_dir / filename
+            try:
+                with open(candidate, "a") as f:
+                    f.write(f"\nACCEPTED_AT: {datetime.now().isoformat()}\n")
+                    f.write("ACCEPTED_BY: human\n")
+                os.rename(candidate, dest)
+                db.update_task(task_id, file_path=str(dest))
+                cleanup_task_notes(task_id)
+                return dest
+            except OSError:
+                pass
+
+    return None
+
+
 def approve_and_merge(
     task_id: str,
     merge_method: str = "merge",
@@ -2197,12 +2255,15 @@ def approve_and_merge(
         except (subprocess.TimeoutExpired, subprocess.SubprocessError) as e:
             result["merge_error"] = str(e)
 
-    # Move task to done regardless of merge result
+    # Move task to done regardless of merge result.
+    # Always use db.accept_completion(task_id) directly — the stored file_path
+    # can be stale (e.g. still pointing to incoming/ when the file has moved
+    # to provisional/), causing path-based lookup to silently fail.
+    db.accept_completion(task_id, validator="human")
+
+    # Move the task file to done/ if we can find it
     task_file_path = task.get("file_path", "")
-    if task_file_path:
-        accept_completion(task_file_path, validator="human")
-    else:
-        db.accept_completion(task_id, validator="human")
+    _move_task_file_to_done(task_id, task_file_path)
 
     db.add_history_event(task_id, "approved_and_merged", details=f"merged={result['merged']}")
 
