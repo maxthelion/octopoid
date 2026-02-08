@@ -440,6 +440,15 @@ def get_role_constraints(role: str) -> str:
 - Accept depth-capped tasks for human review
 - This role runs without Claude invocation
 """,
+        "rebaser": """
+- You do NOT need a worktree (lightweight agent)
+- Rebase stale task branches onto current main
+- Re-run tests after rebase; escalate if tests fail
+- Force-push rebased branches with --force-with-lease
+- Skip orchestrator_impl tasks (v1 limitation)
+- Add notes to task files when human intervention is needed
+- This role runs without Claude invocation
+""",
         "check_runner": """
 - You do NOT need a worktree (lightweight agent)
 - Run automated checks on provisional tasks with pending checks
@@ -783,6 +792,119 @@ def check_and_update_finished_agents() -> None:
                 print(f"[{datetime.now().isoformat()}] Agent {agent_name} finished (exit code: {exit_code})")
 
 
+
+def check_stale_branches(commits_behind_threshold: int = 5) -> None:
+    """Check provisional/review tasks for branch staleness and mark for rebase.
+
+    Compares each task's branch against current origin/main. If the branch
+    is behind by N+ commits, sets needs_rebase=True in the DB.
+
+    Skips:
+    - Tasks already marked for rebase
+    - orchestrator_impl tasks (v1 limitation)
+    - Tasks without a branch (or on main)
+
+    Args:
+        commits_behind_threshold: Number of commits behind main before
+            marking for rebase (default 5)
+    """
+    if not is_db_enabled():
+        return
+
+    try:
+        from . import db
+        from .config import find_parent_project
+
+        parent_project = find_parent_project()
+
+        # Fetch latest main
+        subprocess.run(
+            ['git', 'fetch', 'origin', 'main'],
+            cwd=parent_project,
+            capture_output=True,
+            timeout=60,
+        )
+
+        # Check tasks in provisional queue (review/pending tasks)
+        for queue in ('provisional', 'incoming'):
+            tasks = db.list_tasks(queue=queue)
+
+            for task in tasks:
+                task_id = task['id']
+
+                # Skip if already marked
+                if task.get('needs_rebase'):
+                    continue
+
+                # Skip orchestrator_impl tasks (v1)
+                if task.get('role') == 'orchestrator_impl':
+                    continue
+
+                # Skip tasks on main or without a branch
+                branch = task.get('branch', 'main')
+                if branch == 'main' or not branch:
+                    continue
+
+                # Check how far behind the branch is
+                commits_behind = _count_commits_behind(parent_project, branch)
+                if commits_behind is None:
+                    continue  # Branch not found remotely
+
+                if commits_behind >= commits_behind_threshold:
+                    debug_log(
+                        f'Task {task_id} branch {branch} is {commits_behind} '
+                        f'commits behind main (threshold: {commits_behind_threshold})'
+                    )
+                    db.mark_for_rebase(task_id, reason=f'stale ({commits_behind} commits behind)')
+                    print(
+                        f'[{datetime.now().isoformat()}] Marked task {task_id} '
+                        f'for rebase ({commits_behind} commits behind main)'
+                    )
+
+    except Exception as e:
+        debug_log(f'Error checking stale branches: {e}')
+
+
+def _count_commits_behind(parent_project: Path, branch: str) -> int | None:
+    """Count how many commits a branch is behind origin/main.
+
+    Args:
+        parent_project: Path to the git repo
+        branch: Branch name to check
+
+    Returns:
+        Number of commits behind, or None if branch not found
+    """
+    try:
+        # Check that the remote branch exists
+        result = subprocess.run(
+            ['git', 'rev-parse', '--verify', f'origin/{branch}'],
+            cwd=parent_project,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode != 0:
+            return None
+
+        # Count commits on main that are not on the branch
+        result = subprocess.run(
+            ['git', 'rev-list', '--count', f'origin/{branch}..origin/main'],
+            cwd=parent_project,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+
+        if result.returncode != 0:
+            return None
+
+        return int(result.stdout.strip())
+
+    except (subprocess.TimeoutExpired, subprocess.SubprocessError, ValueError):
+        return None
+
+
 def run_scheduler() -> None:
     """Main scheduler loop - evaluate and spawn agents."""
     print(f"[{datetime.now().isoformat()}] Scheduler starting")
@@ -802,6 +924,9 @@ def run_scheduler() -> None:
 
     # Process gatekeeper reviews for provisional tasks
     process_gatekeeper_reviews()
+
+    # Check for stale branches that need rebasing
+    check_stale_branches()
 
     # Load agent configuration
     try:
