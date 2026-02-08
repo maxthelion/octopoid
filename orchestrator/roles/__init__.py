@@ -10,6 +10,7 @@ from .orchestrator_impl import OrchestratorImplRole
 from .pr_coordinator import PRCoordinatorRole
 from .product_manager import ProductManagerRole
 from .proposer import ProposerRole
+from .rebaser import RebaserRole
 from .reviewer import ReviewerRole
 from .specialist import SpecialistRole
 from .tester import TesterRole
@@ -24,6 +25,7 @@ __all__ = [
     "CuratorRole",
     # Check system
     "CheckRunnerRole",
+    "RebaserRole",
     # Gatekeeper system
     "GatekeeperRole",
     "GatekeeperCoordinatorRole",
