@@ -287,8 +287,13 @@ class OrchestratorImplRole(ImplementerRole):
             # Ensure submodule is on main before creating new feature branch.
             # After a failed self-merge, the submodule may be left on a
             # previous task's branch (orch/<old-task>), which would cause
-            # the new branch to include stale commits.
+            # the new branch to include stale commits. Feature branches
+            # (orch/<task-id>) are NOT affected — only main is reset.
             self._run_cmd(["git", "checkout", "main"], cwd=submodule_path)
+            self._run_cmd(
+                ["git", "fetch", "origin", "main"],
+                cwd=submodule_path,
+            )
             self._run_cmd(
                 ["git", "reset", "--hard", "origin/main"],
                 cwd=submodule_path,
