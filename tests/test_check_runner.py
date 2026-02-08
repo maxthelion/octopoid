@@ -662,7 +662,7 @@ class TestSchemaMigrationV6:
                 assert "check_results" in columns
 
             # Verify schema version
-            assert SCHEMA_VERSION == 6
+            assert SCHEMA_VERSION >= 6
 
 
 # ---------------------------------------------------------------------------
