@@ -393,6 +393,8 @@ Remember:
 - Test your changes with the orchestrator test suite
 - Create atomic, well-described commits
 - Do NOT create a pull request — the orchestrator handles PR creation
+- Before finishing, check `docs/architecture.md` in the submodule for sections
+  affected by your changes and update them to reflect the current state
 """
 
             stdout_log = get_notes_dir() / f"TASK-{task_id}.stdout.log"
