@@ -658,37 +658,33 @@ def process_auto_accept_tasks() -> None:
 
 
 def process_gatekeeper_reviews() -> None:
-    """Process provisional tasks that need gatekeeper review.
+    """Process provisional tasks that have per-task checks.
 
-    For each provisional task with commits (passed pre-check but not yet reviewed):
-    1. Check if gatekeeper review tracking already exists
-    2. If not, initialize review tracking
-    3. If all checks complete, apply pass/fail decision
+    Uses the DB-based check system (task.checks + task.check_results) rather
+    than the old review_utils filesystem.  check_runner records results and
+    rejects failures; this function acts as a safety-net pass that catches
+    any failed tasks check_runner may have missed (e.g. if it crashed between
+    recording a result and calling review_reject_task).
+
+    Tasks with all checks passed are left in provisional for human review —
+    they are NOT auto-accepted here.
     """
-    if not is_db_enabled() or not is_gatekeeper_enabled():
+    if not is_db_enabled():
         return
 
     try:
         from . import db
-        from .review_utils import (
-            all_reviews_complete,
-            all_reviews_passed,
-            cleanup_review,
-            get_review_feedback,
-            has_active_review,
-            init_task_review,
-        )
         from .queue_utils import review_reject_task
 
         gk_config = get_gatekeeper_config()
-        required_checks = gk_config.get("required_checks", ["architecture", "testing", "qa"])
         max_rejections = gk_config.get("max_rejections", 3)
 
-        # Get all provisional tasks with commits
         provisional_tasks = db.list_tasks(queue="provisional")
 
         for task in provisional_tasks:
             task_id = task["id"]
+            checks = task.get("checks", [])
+            check_results = task.get("check_results", {})
             commits = task.get("commits_count", 0)
             auto_accept = task.get("auto_accept", False)
 
@@ -700,52 +696,50 @@ def process_gatekeeper_reviews() -> None:
             if commits == 0:
                 continue
 
-            # Check if review is already initialized
-            if has_active_review(task_id):
-                # Check if all reviews are complete
-                if all_reviews_complete(task_id):
-                    passed, failed_checks = all_reviews_passed(task_id)
-                    task_file_path = task.get("file_path", "")
+            # Skip tasks with no checks defined — they go straight to human review
+            if not checks:
+                continue
 
-                    if passed:
-                        # All checks passed — accept the task
-                        debug_log(f"All gatekeeper checks passed for task {task_id}")
-                        db.accept_completion(task_id, accepted_by="gatekeeper")
-                        cleanup_review(task_id)
-                        print(f"[{datetime.now().isoformat()}] Gatekeeper approved task {task_id}")
-                    else:
-                        # Some checks failed — reject with feedback
-                        feedback = get_review_feedback(task_id)
-                        debug_log(f"Gatekeeper checks failed for task {task_id}: {failed_checks}")
+            # Check if all checks have been run
+            all_run = all(
+                c in check_results and check_results[c].get("status") in ("pass", "fail")
+                for c in checks
+            )
 
-                        if task_file_path:
-                            review_reject_task(
-                                task_file_path,
-                                feedback,
-                                rejected_by="gatekeeper",
-                                max_rejections=max_rejections,
-                            )
-                        else:
-                            # No file path, just update DB
-                            db.review_reject_completion(
-                                task_id,
-                                reason=f"Failed checks: {', '.join(failed_checks)}",
-                                reviewer="gatekeeper",
-                            )
+            if not all_run:
+                # Checks still pending — check_runner will handle them
+                continue
 
-                        cleanup_review(task_id)
-                        print(f"[{datetime.now().isoformat()}] Gatekeeper rejected task {task_id}: {failed_checks}")
+            # All checks have been run — check results
+            all_passed, failed_checks = db.all_checks_passed(task_id)
+
+            if all_passed:
+                # All checks passed — leave in provisional for human review.
+                # reports.py will show this task in "in_review" section.
+                debug_log(f"All checks passed for task {task_id} — awaiting human review")
             else:
-                # Initialize review tracking for this task
-                branch = task.get("branch", "main")
-                debug_log(f"Initializing gatekeeper review for task {task_id} (branch: {branch})")
-                init_task_review(
-                    task_id,
-                    branch=branch,
-                    base_branch="main",
-                    required_checks=required_checks,
-                )
-                print(f"[{datetime.now().isoformat()}] Initialized gatekeeper review for task {task_id}")
+                # Safety net: reject tasks with failed checks that check_runner
+                # may have missed.  check_runner normally handles this, but if
+                # it crashed we catch it here.
+                feedback = db.get_check_feedback(task_id)
+                debug_log(f"Checks failed for task {task_id}: {failed_checks}")
+
+                task_file_path = task.get("file_path") or task.get("path", "")
+                if task_file_path:
+                    review_reject_task(
+                        str(task_file_path),
+                        feedback,
+                        rejected_by="gatekeeper",
+                        max_rejections=max_rejections,
+                    )
+                else:
+                    db.review_reject_completion(
+                        task_id,
+                        reason=f"Failed checks: {', '.join(failed_checks)}",
+                        reviewer="gatekeeper",
+                    )
+
+                print(f"[{datetime.now().isoformat()}] Gatekeeper rejected task {task_id}: {failed_checks}")
 
     except Exception as e:
         debug_log(f"Error processing gatekeeper reviews: {e}")

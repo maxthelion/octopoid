@@ -1027,157 +1027,172 @@ class TestGatekeeperBackpressure:
 
 
 class TestProcessGatekeeperReviews:
-    """Tests for process_gatekeeper_reviews() in scheduler.py."""
+    """Tests for process_gatekeeper_reviews() using DB-based checks."""
 
-    def test_initializes_review_for_provisional_task(self, mock_config, initialized_db):
-        """Test that process_gatekeeper_reviews initializes review for new provisional tasks."""
+    def test_leaves_passed_task_in_provisional_for_human_review(self, mock_config, initialized_db):
+        """Task with all DB checks passed stays in provisional (awaiting human review)."""
         with patch('orchestrator.db.get_database_path', return_value=initialized_db):
-            with patch('orchestrator.review_utils.get_orchestrator_dir', return_value=mock_config):
-                with patch('orchestrator.config.is_gatekeeper_enabled', return_value=True):
-                    with patch('orchestrator.config.get_gatekeeper_config', return_value={
-                        'enabled': True,
-                        'required_checks': ['architecture', 'testing'],
-                        'max_rejections': 3,
-                    }):
-                        from orchestrator.db import create_task, update_task_queue
-                        from orchestrator.scheduler import process_gatekeeper_reviews
-                        from orchestrator.review_utils import has_active_review
+            with patch('orchestrator.config.get_gatekeeper_config', return_value={
+                'max_rejections': 3,
+            }):
+                from orchestrator.db import create_task, update_task_queue, record_check_result, get_task
+                from orchestrator.scheduler import process_gatekeeper_reviews
 
-                        # Create a provisional task with commits
-                        create_task(task_id="gk1", file_path="/gk1.md", branch="agent/gk1")
-                        update_task_queue("gk1", "provisional", commits_count=3)
+                create_task(
+                    task_id="gkpass",
+                    file_path="/gkpass.md",
+                    branch="agent/gkpass",
+                    checks=["gk-testing-octopoid"],
+                )
+                update_task_queue("gkpass", "provisional", commits_count=2)
 
-                        process_gatekeeper_reviews()
+                # Record passing check result in DB
+                record_check_result("gkpass", "gk-testing-octopoid", "pass", "All tests pass")
 
-                        # Review should be initialized
-                        assert has_active_review("gk1") is True
+                process_gatekeeper_reviews()
 
-    def test_accepts_task_when_all_checks_pass(self, mock_config, initialized_db):
-        """Test that task is accepted when all gatekeeper checks pass."""
-        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
-            with patch('orchestrator.review_utils.get_orchestrator_dir', return_value=mock_config):
-                with patch('orchestrator.config.is_gatekeeper_enabled', return_value=True):
-                    with patch('orchestrator.config.get_gatekeeper_config', return_value={
-                        'enabled': True,
-                        'required_checks': ['architecture', 'testing'],
-                        'max_rejections': 3,
-                    }):
-                        from orchestrator.db import create_task, update_task_queue, get_task
-                        from orchestrator.review_utils import (
-                            init_task_review, record_review_result,
-                        )
-                        from orchestrator.scheduler import process_gatekeeper_reviews
-
-                        create_task(task_id="gkpass", file_path="/gkpass.md", branch="agent/gkpass")
-                        update_task_queue("gkpass", "provisional", commits_count=2)
-
-                        # Init review and mark all as passed
-                        init_task_review("gkpass", branch="agent/gkpass", required_checks=["architecture", "testing"])
-                        record_review_result("gkpass", "architecture", "pass", "All good")
-                        record_review_result("gkpass", "testing", "pass", "Tests solid")
-
-                        process_gatekeeper_reviews()
-
-                        task = get_task("gkpass")
-                        assert task["queue"] == "done"
+                task = get_task("gkpass")
+                # Should stay in provisional for human review — NOT auto-accepted
+                assert task["queue"] == "provisional"
 
     def test_rejects_task_when_check_fails(self, mock_config, initialized_db):
-        """Test that task is rejected when a gatekeeper check fails."""
+        """Task with a failed DB check is rejected back to incoming."""
         with patch('orchestrator.db.get_database_path', return_value=initialized_db):
-            with patch('orchestrator.review_utils.get_orchestrator_dir', return_value=mock_config):
-                with patch('orchestrator.config.is_gatekeeper_enabled', return_value=True):
-                    with patch('orchestrator.config.get_gatekeeper_config', return_value={
-                        'enabled': True,
-                        'required_checks': ['architecture', 'testing'],
-                        'max_rejections': 3,
-                    }):
-                        from orchestrator.db import create_task, update_task_queue, get_task
-                        from orchestrator.review_utils import (
-                            init_task_review, record_review_result,
-                        )
-                        from orchestrator.scheduler import process_gatekeeper_reviews
+            with patch('orchestrator.config.get_gatekeeper_config', return_value={
+                'max_rejections': 3,
+            }):
+                from orchestrator.db import create_task, update_task_queue, record_check_result, get_task
+                from orchestrator.scheduler import process_gatekeeper_reviews
 
-                        # Create task file so review_reject_task can write to it
-                        prov_dir = mock_config / "shared" / "queue" / "provisional"
-                        prov_dir.mkdir(parents=True, exist_ok=True)
-                        incoming_dir = mock_config / "shared" / "queue" / "incoming"
-                        incoming_dir.mkdir(parents=True, exist_ok=True)
+                # Create task file so review_reject_task can write to it
+                prov_dir = mock_config / "shared" / "queue" / "provisional"
+                prov_dir.mkdir(parents=True, exist_ok=True)
+                incoming_dir = mock_config / "shared" / "queue" / "incoming"
+                incoming_dir.mkdir(parents=True, exist_ok=True)
 
-                        task_path = prov_dir / "TASK-gkfail.md"
-                        task_path.write_text("# [TASK-gkfail] Test\n")
+                task_path = prov_dir / "TASK-gkfail.md"
+                task_path.write_text("# [TASK-gkfail] Test\n")
 
-                        create_task(task_id="gkfail", file_path=str(task_path), branch="agent/gkfail")
-                        update_task_queue("gkfail", "provisional", commits_count=1)
+                create_task(
+                    task_id="gkfail",
+                    file_path=str(task_path),
+                    branch="agent/gkfail",
+                    checks=["gk-testing-octopoid"],
+                )
+                update_task_queue("gkfail", "provisional", commits_count=1)
 
-                        # Init review, pass one, fail one
-                        init_task_review("gkfail", branch="agent/gkfail", required_checks=["architecture", "testing"])
-                        record_review_result("gkfail", "architecture", "pass", "ok")
-                        record_review_result("gkfail", "testing", "fail", "Tests missing", details="No unit tests found")
+                # Record failing check result in DB
+                record_check_result("gkfail", "gk-testing-octopoid", "fail", "Tests failing")
 
-                        process_gatekeeper_reviews()
+                process_gatekeeper_reviews()
 
-                        task = get_task("gkfail")
-                        assert task["queue"] == "incoming"
-                        assert task["rejection_count"] == 1
+                task = get_task("gkfail")
+                assert task["queue"] == "incoming"
+                assert task["rejection_count"] == 1
+
+    def test_skips_tasks_with_pending_checks(self, mock_config, initialized_db):
+        """Tasks where checks haven't been run yet are skipped."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            with patch('orchestrator.config.get_gatekeeper_config', return_value={
+                'max_rejections': 3,
+            }):
+                from orchestrator.db import create_task, update_task_queue, get_task
+                from orchestrator.scheduler import process_gatekeeper_reviews
+
+                create_task(
+                    task_id="pending1",
+                    file_path="/pending1.md",
+                    branch="agent/pending1",
+                    checks=["gk-testing-octopoid"],
+                )
+                update_task_queue("pending1", "provisional", commits_count=2)
+
+                # No check results recorded — still pending
+                process_gatekeeper_reviews()
+
+                task = get_task("pending1")
+                # Should stay in provisional, untouched
+                assert task["queue"] == "provisional"
+
+    def test_skips_tasks_without_checks(self, mock_config, initialized_db):
+        """Tasks with no checks defined go straight to human review (no gatekeeper action)."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            with patch('orchestrator.config.get_gatekeeper_config', return_value={
+                'max_rejections': 3,
+            }):
+                from orchestrator.db import create_task, update_task_queue, get_task
+                from orchestrator.scheduler import process_gatekeeper_reviews
+
+                create_task(task_id="nocheck1", file_path="/nocheck1.md", branch="agent/nocheck1")
+                update_task_queue("nocheck1", "provisional", commits_count=3)
+
+                process_gatekeeper_reviews()
+
+                task = get_task("nocheck1")
+                assert task["queue"] == "provisional"
 
     def test_skips_auto_accept_tasks(self, mock_config, initialized_db):
-        """Test that auto_accept tasks are skipped by gatekeeper reviews."""
+        """Auto_accept tasks are skipped by gatekeeper reviews."""
         with patch('orchestrator.db.get_database_path', return_value=initialized_db):
-            with patch('orchestrator.review_utils.get_orchestrator_dir', return_value=mock_config):
-                with patch('orchestrator.config.is_gatekeeper_enabled', return_value=True):
-                    with patch('orchestrator.config.get_gatekeeper_config', return_value={
-                        'enabled': True,
-                        'required_checks': ['architecture'],
-                        'max_rejections': 3,
-                    }):
-                        from orchestrator.db import create_task, update_task_queue
-                        from orchestrator.scheduler import process_gatekeeper_reviews
-                        from orchestrator.review_utils import has_active_review
+            with patch('orchestrator.config.get_gatekeeper_config', return_value={
+                'max_rejections': 3,
+            }):
+                from orchestrator.db import create_task, update_task_queue, get_task
+                from orchestrator.scheduler import process_gatekeeper_reviews
 
-                        create_task(task_id="auto1", file_path="/auto1.md", auto_accept=True)
-                        update_task_queue("auto1", "provisional", commits_count=1)
+                create_task(
+                    task_id="auto1",
+                    file_path="/auto1.md",
+                    auto_accept=True,
+                    checks=["gk-testing-octopoid"],
+                )
+                update_task_queue("auto1", "provisional", commits_count=1)
 
-                        process_gatekeeper_reviews()
+                process_gatekeeper_reviews()
 
-                        # Should NOT have initialized review
-                        assert has_active_review("auto1") is False
+                task = get_task("auto1")
+                # Should remain in provisional, not touched by gatekeeper
+                assert task["queue"] == "provisional"
 
     def test_skips_tasks_without_commits(self, mock_config, initialized_db):
-        """Test that tasks without commits are skipped (pre-check handles them)."""
+        """Tasks without commits are skipped (pre-check handles them)."""
         with patch('orchestrator.db.get_database_path', return_value=initialized_db):
-            with patch('orchestrator.review_utils.get_orchestrator_dir', return_value=mock_config):
-                with patch('orchestrator.config.is_gatekeeper_enabled', return_value=True):
-                    with patch('orchestrator.config.get_gatekeeper_config', return_value={
-                        'enabled': True,
-                        'required_checks': ['architecture'],
-                        'max_rejections': 3,
-                    }):
-                        from orchestrator.db import create_task, update_task_queue
-                        from orchestrator.scheduler import process_gatekeeper_reviews
-                        from orchestrator.review_utils import has_active_review
-
-                        create_task(task_id="nocom1", file_path="/nocom1.md")
-                        update_task_queue("nocom1", "provisional", commits_count=0)
-
-                        process_gatekeeper_reviews()
-
-                        assert has_active_review("nocom1") is False
-
-    def test_disabled_gatekeeper_noop(self, mock_config, initialized_db):
-        """Test that disabled gatekeeper system is a no-op."""
-        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
-            with patch('orchestrator.scheduler.is_gatekeeper_enabled', return_value=False):
-                from orchestrator.db import create_task, update_task_queue
+            with patch('orchestrator.config.get_gatekeeper_config', return_value={
+                'max_rejections': 3,
+            }):
+                from orchestrator.db import create_task, update_task_queue, get_task
                 from orchestrator.scheduler import process_gatekeeper_reviews
-                from orchestrator.review_utils import has_active_review
 
-                create_task(task_id="dis1", file_path="/dis1.md")
+                create_task(
+                    task_id="nocom1",
+                    file_path="/nocom1.md",
+                    checks=["gk-testing-octopoid"],
+                )
+                update_task_queue("nocom1", "provisional", commits_count=0)
+
+                process_gatekeeper_reviews()
+
+                task = get_task("nocom1")
+                assert task["queue"] == "provisional"
+
+    def test_db_disabled_noop(self, mock_config, initialized_db):
+        """When DB is disabled, process_gatekeeper_reviews is a no-op."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            with patch('orchestrator.scheduler.is_db_enabled', return_value=False):
+                from orchestrator.db import create_task, update_task_queue, get_task
+                from orchestrator.scheduler import process_gatekeeper_reviews
+
+                create_task(
+                    task_id="dis1",
+                    file_path="/dis1.md",
+                    checks=["gk-testing-octopoid"],
+                )
                 update_task_queue("dis1", "provisional", commits_count=2)
 
-                # Should be a no-op when disabled
-                with patch('orchestrator.review_utils.get_orchestrator_dir', return_value=mock_config):
-                    process_gatekeeper_reviews()
-                    assert has_active_review("dis1") is False
+                process_gatekeeper_reviews()
+
+                task = get_task("dis1")
+                assert task["queue"] == "provisional"
 
 
 # =============================================================================
