@@ -91,6 +91,11 @@ class OrchestratorImplRole(ImplementerRole):
             self.log("Self-merge: no venv found, skipping tests")
             return False
 
+        # Ensure we're on the feature branch before starting.
+        # Claude may have switched branches during work (e.g., checkout main
+        # to compare). If HEAD isn't on the feature branch, rebase will fail.
+        self._run_cmd(["git", "checkout", sub_branch], cwd=submodule_path)
+
         # Step 1: Capture baseline test failures on main
         self.log("Self-merge: running baseline pytest on main...")
         self._run_cmd(["git", "checkout", "main"], cwd=submodule_path)
@@ -409,14 +414,17 @@ Remember:
                 stdout_log=stdout_log,
             )
 
-            # Count commits from the SUBMODULE, not the main repo.
-            # This was a key bug: the old code counted main repo commits
-            # (always 0) while the agent committed in the submodule.
-            if head_before:
-                commits_made = get_commit_count(submodule_path, since_ref=head_before)
-            else:
-                commits_made = get_commit_count(submodule_path)
-            self.debug_log(f"Submodule commits made this session: {commits_made}")
+            # Count commits from the SUBMODULE feature branch, not HEAD.
+            # Claude may switch branches during work (e.g., checkout main to
+            # compare). If HEAD ends up on main, rev-list main..HEAD = 0 even
+            # though commits exist on orch/<task-id>. Always check the feature
+            # branch explicitly.
+            commits_made = get_commit_count(
+                submodule_path,
+                since_ref=head_before or "origin/main",
+                branch=sub_branch,
+            )
+            self.debug_log(f"Submodule commits on {sub_branch}: {commits_made}")
 
             # Read actual tool call count (falls back to max_turns if counter missing)
             tool_count = self.read_tool_count()

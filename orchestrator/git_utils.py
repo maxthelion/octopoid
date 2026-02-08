@@ -554,22 +554,30 @@ def stage_submodule_pointer(worktree_path: Path, submodule_name: str = "orchestr
         return False
 
 
-def get_commit_count(worktree_path: Path, since_ref: str | None = None) -> int:
-    """Count commits in the current branch.
+def get_commit_count(
+    worktree_path: Path,
+    since_ref: str | None = None,
+    branch: str | None = None,
+) -> int:
+    """Count commits on a branch.
 
     Args:
         worktree_path: Path to the worktree
         since_ref: Optional ref to count commits since (e.g., 'main', 'HEAD~5')
                    If None, counts commits since the branch diverged from main
+        branch: Optional branch name to check instead of HEAD.
+                Use this when the agent may have switched branches during work
+                (e.g., orchestrator_impl agents working on orch/<task-id>).
 
     Returns:
         Number of commits
     """
+    target = branch or "HEAD"
     try:
         if since_ref:
             # Count commits since the given ref
             result = run_git(
-                ["rev-list", "--count", f"{since_ref}..HEAD"],
+                ["rev-list", "--count", f"{since_ref}..{target}"],
                 cwd=worktree_path,
                 check=False,
             )
@@ -577,21 +585,21 @@ def get_commit_count(worktree_path: Path, since_ref: str | None = None) -> int:
             # Count commits since diverging from main
             # First find the merge base
             merge_base_result = run_git(
-                ["merge-base", "HEAD", "main"],
+                ["merge-base", target, "main"],
                 cwd=worktree_path,
                 check=False,
             )
             if merge_base_result.returncode != 0:
                 # No common ancestor, count all commits
                 result = run_git(
-                    ["rev-list", "--count", "HEAD"],
+                    ["rev-list", "--count", target],
                     cwd=worktree_path,
                     check=False,
                 )
             else:
                 merge_base = merge_base_result.stdout.strip()
                 result = run_git(
-                    ["rev-list", "--count", f"{merge_base}..HEAD"],
+                    ["rev-list", "--count", f"{merge_base}..{target}"],
                     cwd=worktree_path,
                     check=False,
                 )
