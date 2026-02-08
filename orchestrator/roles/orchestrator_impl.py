@@ -4,8 +4,11 @@ This is a variant of the implementer role that:
 - Claims tasks with role='orchestrator_impl' (not 'implement')
 - Works on the orchestrator Python codebase (submodule)
 - Commits to the submodule's main branch (not the main repo)
-- Does NOT create PRs — approval is via approve_orch.py
+- Self-merges to main when tests pass; falls back to provisional queue on failure
 """
+
+import subprocess
+from pathlib import Path
 
 from .implementer import ImplementerRole
 from ..queue_utils import claim_task
@@ -44,6 +47,149 @@ class OrchestratorImplRole(ImplementerRole):
         """
         return self.worktree / "orchestrator"
 
+    def _run_cmd(
+        self, cmd: list[str], cwd: Path, timeout: int = 120
+    ) -> subprocess.CompletedProcess:
+        """Run a subprocess command, capturing output."""
+        return subprocess.run(
+            cmd, capture_output=True, text=True, cwd=cwd, timeout=timeout
+        )
+
+    def _try_merge_to_main(self, submodule_path: Path, task_id: str) -> bool:
+        """Try to rebase, test, and fast-forward merge the agent's work to main.
+
+        Steps:
+        1. Rebase orch/<task-id> onto main (in the agent's worktree submodule)
+        2. Run pytest on the rebased branch
+        3. Fast-forward merge to main in the agent's worktree submodule
+        4. Fetch the result into the main checkout's submodule and ff-merge
+
+        Returns True if all steps succeed, False on any failure.
+        On failure, the caller should fall back to submit_completion().
+        """
+        sub_branch = f"orch/{task_id}"
+        main_checkout_sub = self.parent_project / "orchestrator"
+
+        # Step 1: Rebase onto main
+        self.log(f"Self-merge: rebasing {sub_branch} onto main...")
+        result = self._run_cmd(
+            ["git", "rebase", "main"], cwd=submodule_path
+        )
+        if result.returncode != 0:
+            self.log(f"Self-merge: rebase failed: {result.stderr.strip()}")
+            self._run_cmd(["git", "rebase", "--abort"], cwd=submodule_path)
+            return False
+
+        # Step 2: Run pytest on the rebased branch
+        self.log("Self-merge: running pytest...")
+        venv_python = self._find_venv_python(submodule_path)
+        if not venv_python:
+            self.log("Self-merge: no venv found, skipping tests")
+            # No venv = can't verify, fall back to manual review
+            return False
+
+        result = self._run_cmd(
+            [str(venv_python), "-m", "pytest", "tests/", "-v", "--tb=short"],
+            cwd=submodule_path,
+            timeout=300,
+        )
+        if result.returncode != 0:
+            self.log(f"Self-merge: tests failed (exit {result.returncode})")
+            # Log last few lines of test output for diagnostics
+            lines = result.stdout.strip().splitlines()
+            for line in lines[-10:]:
+                self.debug_log(f"  {line}")
+            return False
+        self.log("Self-merge: tests passed")
+
+        # Step 3: Fast-forward merge to main in agent's worktree submodule
+        result = self._run_cmd(
+            ["git", "checkout", "main"], cwd=submodule_path
+        )
+        if result.returncode != 0:
+            self.log(f"Self-merge: checkout main failed: {result.stderr.strip()}")
+            return False
+
+        result = self._run_cmd(
+            ["git", "merge", "--ff-only", sub_branch], cwd=submodule_path
+        )
+        if result.returncode != 0:
+            self.log(f"Self-merge: ff-merge failed: {result.stderr.strip()}")
+            # Go back to the feature branch so state is clean for fallback
+            self._run_cmd(["git", "checkout", sub_branch], cwd=submodule_path)
+            return False
+        self.log("Self-merge: merged to main in agent worktree submodule")
+
+        # Step 4: Propagate to main checkout's submodule
+        # Fetch from agent's worktree submodule into the main checkout's submodule
+        result = self._run_cmd(
+            ["git", "fetch", str(submodule_path), "main"],
+            cwd=main_checkout_sub,
+        )
+        if result.returncode != 0:
+            self.log(f"Self-merge: fetch into main checkout failed: {result.stderr.strip()}")
+            return False
+
+        result = self._run_cmd(
+            ["git", "merge", "--ff-only", "FETCH_HEAD"],
+            cwd=main_checkout_sub,
+        )
+        if result.returncode != 0:
+            self.log(f"Self-merge: ff-merge in main checkout failed: {result.stderr.strip()}")
+            return False
+        self.log("Self-merge: updated main checkout submodule")
+
+        # Step 5: Push submodule main to origin
+        result = self._run_cmd(
+            ["git", "push", "origin", "main"],
+            cwd=main_checkout_sub,
+        )
+        if result.returncode != 0:
+            self.log(f"Self-merge: push failed: {result.stderr.strip()}")
+            # Non-fatal — the commits are local, human can push later
+            # But we still count this as a success for acceptance
+            self.log("Self-merge: push failed but local merge succeeded, continuing")
+
+        # Step 6: Update submodule ref in main repo
+        main_repo = self.parent_project
+        self._run_cmd(["git", "add", "orchestrator"], cwd=main_repo)
+        diff = self._run_cmd(
+            ["git", "diff", "--cached", "--quiet"], cwd=main_repo
+        )
+        if diff.returncode != 0:
+            # There's a diff — commit the submodule pointer update
+            result = self._run_cmd(
+                ["git", "commit", "-m",
+                 f"chore: update orchestrator submodule (self-merge {task_id[:8]})"],
+                cwd=main_repo,
+            )
+            if result.returncode != 0:
+                self.log(f"Self-merge: submodule ref commit failed: {result.stderr.strip()}")
+                # Non-fatal — human can commit later
+            else:
+                # Push main repo
+                push = self._run_cmd(
+                    ["git", "push", "origin", "main"], cwd=main_repo
+                )
+                if push.returncode != 0:
+                    self.log("Self-merge: main repo push failed (human can push later)")
+
+        return True
+
+    def _find_venv_python(self, submodule_path: Path) -> Path | None:
+        """Find the venv Python executable for running tests."""
+        # Check submodule's own venv first
+        venv_python = submodule_path / "venv" / "bin" / "python"
+        if venv_python.exists():
+            return venv_python
+
+        # Try the .orchestrator venv in the parent project
+        venv_python = self.parent_project / ".orchestrator" / "venv" / "bin" / "python"
+        if venv_python.exists():
+            return venv_python
+
+        return None
+
     def run(self) -> int:
         """Claim an orchestrator task and implement it.
 
@@ -77,6 +223,7 @@ class OrchestratorImplRole(ImplementerRole):
             get_head_ref,
         )
         from ..queue_utils import (
+            accept_completion,
             complete_task,
             fail_task,
             get_task_notes,
@@ -240,21 +387,36 @@ Remember:
                 fail_task(task_path, f"Claude invocation failed with exit code {exit_code}\n{stderr}")
                 return exit_code
 
-            # orchestrator_impl tasks do NOT create PRs — they commit
-            # directly to the submodule's main branch. Approval
-            # is handled by approve_orch.py which cherry-picks from the
-            # agent's worktree submodule to the canonical main.
-            self.log("Skipping PR creation (orchestrator_impl uses approve_orch.py)")
+            # orchestrator_impl tasks do NOT create PRs. When tests pass,
+            # the agent self-merges to main. On failure, falls back to
+            # the provisional queue for manual review via approve_orch.py.
+            self.log("Skipping PR creation (orchestrator_impl self-merges or uses approve_orch.py)")
 
             result_msg = f"Implementation complete ({commits_made} submodule commits)"
 
             if is_db_enabled():
-                submit_completion(
-                    task_path,
-                    commits_count=commits_made,
-                    turns_used=turns_used,
-                )
-                self.log(f"Submitted for pre-check ({commits_made} submodule commits)")
+                if commits_made > 0:
+                    merged = self._try_merge_to_main(submodule_path, task_id)
+                    if merged:
+                        accept_completion(
+                            task_path,
+                            accepted_by="self-merge",
+                        )
+                        self.log(f"Self-merged to main ({commits_made} submodule commits)")
+                    else:
+                        submit_completion(
+                            task_path,
+                            commits_count=commits_made,
+                            turns_used=turns_used,
+                        )
+                        self.log(f"Self-merge failed, submitted for review ({commits_made} commits)")
+                else:
+                    submit_completion(
+                        task_path,
+                        commits_count=0,
+                        turns_used=turns_used,
+                    )
+                    self.log("No commits, submitted for pre-check")
             else:
                 complete_task(task_path, result_msg)
 

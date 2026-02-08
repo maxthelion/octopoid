@@ -1,4 +1,11 @@
-"""Full approval automation for orchestrator specialist tasks.
+"""Manual fallback for approving orchestrator specialist tasks.
+
+NOTE: As of 2026-02-08, orchestrator_impl agents self-merge their work
+to main when pytest passes (see OrchestratorImplRole._try_merge_to_main).
+This script is now primarily used for:
+- Manual approval of tasks where self-merge failed (test failures, conflicts)
+- Re-running approval after manually fixing conflicts
+- Recovering from partial failures (e.g., push failed but merge succeeded)
 
 Orchestrator specialist agents (role=orchestrator_impl) commit to the
 orchestrator submodule's main branch inside their worktree.

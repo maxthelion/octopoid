@@ -321,7 +321,8 @@ class TestToolCounterInOrchestratorImpl:
 
         with patch.object(role, "invoke_claude", side_effect=fake_invoke), \
              patch.object(role, "read_instructions", return_value=""), \
-             patch.object(role, "_create_submodule_branch"):
+             patch.object(role, "_create_submodule_branch"), \
+             patch.object(role, "_try_merge_to_main", return_value=False):
                 role.run()
 
         # Verify actual count used, not 200
@@ -380,7 +381,8 @@ class TestToolCounterInOrchestratorImpl:
 
         with patch.object(role, "invoke_claude", side_effect=fake_invoke), \
              patch.object(role, "read_instructions", return_value=""), \
-             patch.object(role, "_create_submodule_branch"):
+             patch.object(role, "_create_submodule_branch"), \
+             patch.object(role, "_try_merge_to_main", return_value=False):
                 role.run()
 
         mock_submit.assert_called_once()
