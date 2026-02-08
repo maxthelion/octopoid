@@ -929,6 +929,348 @@ def check_and_update_finished_agents() -> None:
 
 
 
+def ensure_rebaser_worktree() -> Path | None:
+    """Ensure the dedicated rebaser worktree exists.
+
+    Creates .orchestrator/agents/rebaser-worktree/ on first use,
+    detached at HEAD. Runs npm install if node_modules is missing.
+
+    Returns:
+        Path to the rebaser worktree, or None on failure
+    """
+    parent_project = find_parent_project()
+    worktree_path = get_orchestrator_dir() / "agents" / "rebaser-worktree"
+
+    if worktree_path.exists() and (worktree_path / ".git").exists():
+        return worktree_path
+
+    debug_log("Creating dedicated rebaser worktree")
+
+    try:
+        # Create the worktree detached at HEAD
+        result = subprocess.run(
+            ["git", "worktree", "add", "--detach", str(worktree_path), "HEAD"],
+            cwd=parent_project,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+        if result.returncode != 0:
+            debug_log(f"Failed to create rebaser worktree: {result.stderr}")
+            return None
+
+        # Run npm install
+        debug_log("Running npm install in rebaser worktree")
+        subprocess.run(
+            ["npm", "install"],
+            cwd=worktree_path,
+            capture_output=True,
+            timeout=120,
+        )
+
+        print(f"[{datetime.now().isoformat()}] Created rebaser worktree at {worktree_path}")
+        return worktree_path
+
+    except (subprocess.TimeoutExpired, subprocess.SubprocessError) as e:
+        debug_log(f"Error creating rebaser worktree: {e}")
+        return None
+
+
+def check_branch_freshness() -> None:
+    """Check provisional app tasks for stale branches and rebase them.
+
+    For each provisional task where role='implement' and pr_url is set:
+    - Uses git merge-base --is-ancestor to check if main is ancestor of branch
+    - If main is NOT an ancestor, the branch is stale
+    - Skips branches that were rebased recently (throttled by last_rebase_attempt_at)
+    - Skips orchestrator_impl tasks (self-merge handles those)
+    - Calls rebase_stale_branch() directly for stale branches
+    """
+    if not is_db_enabled():
+        return
+
+    try:
+        from . import db
+
+        parent_project = find_parent_project()
+
+        # Fetch latest main
+        subprocess.run(
+            ['git', 'fetch', 'origin', 'main'],
+            cwd=parent_project,
+            capture_output=True,
+            timeout=60,
+        )
+
+        # Check tasks in provisional queue
+        tasks = db.list_tasks(queue='provisional')
+
+        for task in tasks:
+            task_id = task['id']
+
+            # Skip orchestrator_impl tasks (self-merge handles these)
+            if task.get('role') == 'orchestrator_impl':
+                continue
+
+            # Skip tasks on main or without a branch
+            branch = task.get('branch', 'main')
+            if branch == 'main' or not branch:
+                continue
+
+            # Skip tasks without a PR
+            if not task.get('pr_url'):
+                continue
+
+            # Throttle: skip if rebased recently
+            if db.is_rebase_throttled(task_id, cooldown_minutes=10):
+                debug_log(f'Task {task_id} rebase throttled (recent attempt)')
+                continue
+
+            # Check freshness using merge-base --is-ancestor
+            is_fresh = _is_branch_fresh(parent_project, branch)
+            if is_fresh is None:
+                continue  # Branch not found or error
+            if is_fresh:
+                continue  # Branch is up to date
+
+            debug_log(f'Task {task_id} branch {branch} is stale (main is not ancestor)')
+            print(f'[{datetime.now().isoformat()}] Task {task_id} branch {branch} is stale, rebasing')
+
+            rebase_stale_branch(task_id, branch)
+
+    except Exception as e:
+        debug_log(f'Error checking branch freshness: {e}')
+
+
+def _is_branch_fresh(parent_project: Path, branch: str) -> bool | None:
+    """Check if origin/main is an ancestor of the branch (i.e. branch is fresh).
+
+    Uses `git merge-base --is-ancestor origin/main origin/<branch>`.
+
+    Args:
+        parent_project: Path to the git repo
+        branch: Branch name to check
+
+    Returns:
+        True if branch is fresh (main is ancestor), False if stale,
+        None if branch not found or error
+    """
+    try:
+        # Check that the remote branch exists
+        result = subprocess.run(
+            ['git', 'rev-parse', '--verify', f'origin/{branch}'],
+            cwd=parent_project,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode != 0:
+            return None
+
+        # Check if origin/main is an ancestor of the branch
+        result = subprocess.run(
+            ['git', 'merge-base', '--is-ancestor', 'origin/main', f'origin/{branch}'],
+            cwd=parent_project,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+
+        # Exit code 0 means main IS ancestor (branch is fresh)
+        # Exit code 1 means main is NOT ancestor (branch is stale)
+        return result.returncode == 0
+
+    except (subprocess.TimeoutExpired, subprocess.SubprocessError):
+        return None
+
+
+def rebase_stale_branch(task_id: str, branch: str) -> bool:
+    """Rebase a stale branch onto main, run tests, and force-push.
+
+    On conflict: rebase --abort, reject task back to agent with conflict details.
+    On test failure: reject task back to agent with test output.
+    On success: force-push with --force-with-lease, log success.
+
+    Args:
+        task_id: Task identifier
+        branch: Branch name to rebase
+
+    Returns:
+        True if rebase succeeded and was pushed
+    """
+    if not is_db_enabled():
+        return False
+
+    from . import db
+    from .queue_utils import review_reject_task
+
+    # Record the attempt for throttling
+    db.record_rebase_attempt(task_id)
+
+    # Ensure the rebaser worktree exists
+    worktree = ensure_rebaser_worktree()
+    if not worktree:
+        debug_log(f'Cannot rebase task {task_id}: rebaser worktree not available')
+        return False
+
+    try:
+        # Step 1: Fetch latest
+        subprocess.run(
+            ['git', 'fetch', 'origin'],
+            cwd=worktree,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=True,
+        )
+
+        # Step 2: Checkout the task branch
+        subprocess.run(
+            ['git', 'checkout', '-B', branch, f'origin/{branch}'],
+            cwd=worktree,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=True,
+        )
+
+        # Step 3: Attempt rebase onto origin/main
+        rebase_result = subprocess.run(
+            ['git', 'rebase', 'origin/main'],
+            cwd=worktree,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+
+        if rebase_result.returncode != 0:
+            # Rebase failed — get conflict details
+            error_output = rebase_result.stderr + '\n' + rebase_result.stdout
+
+            # Try to get list of conflicted files
+            status_result = subprocess.run(
+                ['git', 'diff', '--name-only', '--diff-filter=U'],
+                cwd=worktree,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            conflicted = status_result.stdout.strip() if status_result.returncode == 0 else ''
+
+            # Abort the rebase
+            subprocess.run(
+                ['git', 'rebase', '--abort'],
+                cwd=worktree,
+                capture_output=True,
+                timeout=30,
+            )
+
+            # Build feedback for the agent
+            feedback = (
+                f'## Rebase Conflict\n\n'
+                f'Branch `{branch}` has conflicts when rebased onto `main`.\n\n'
+            )
+            if conflicted:
+                feedback += f'**Conflicted files:**\n```\n{conflicted}\n```\n\n'
+            feedback += f'**Git output:**\n```\n{error_output[:500]}\n```\n\n'
+            feedback += 'Please resolve the conflicts and push an updated branch.'
+
+            debug_log(f'Rebase conflict for task {task_id}: {conflicted}')
+
+            # Reject task back to agent
+            task = db.get_task(task_id)
+            if task and task.get('file_path'):
+                review_reject_task(
+                    task['file_path'],
+                    feedback,
+                    rejected_by='rebaser',
+                )
+
+            print(f'[{datetime.now().isoformat()}] Rebase conflict for task {task_id}, rejected back to agent')
+            return False
+
+        # Step 4: Run tests
+        # Check if node_modules exists; if not, install
+        if not (worktree / 'node_modules').exists():
+            subprocess.run(
+                ['npm', 'install'],
+                cwd=worktree,
+                capture_output=True,
+                timeout=120,
+            )
+
+        test_result = subprocess.run(
+            ['npx', 'vitest', 'run'],
+            cwd=worktree,
+            capture_output=True,
+            text=True,
+            timeout=300,  # 5 minute timeout
+        )
+
+        if test_result.returncode != 0:
+            test_output = test_result.stdout + '\n' + test_result.stderr
+
+            feedback = (
+                f'## Post-Rebase Test Failure\n\n'
+                f'Branch `{branch}` was rebased onto `main` successfully, '
+                f'but tests failed after rebase.\n\n'
+                f'**Test output (tail):**\n```\n{test_output[-1000:]}\n```\n\n'
+                f'The rebase may have introduced incompatibilities. '
+                f'Please fix the tests and push an updated branch.'
+            )
+
+            debug_log(f'Tests failed after rebase for task {task_id}')
+
+            # Reject task back to agent
+            task = db.get_task(task_id)
+            if task and task.get('file_path'):
+                review_reject_task(
+                    task['file_path'],
+                    feedback,
+                    rejected_by='rebaser',
+                )
+
+            print(f'[{datetime.now().isoformat()}] Tests failed after rebase for task {task_id}, rejected back to agent')
+            return False
+
+        # Step 5: Force-push the rebased branch
+        push_result = subprocess.run(
+            ['git', 'push', '--force-with-lease', 'origin', branch],
+            cwd=worktree,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+        if push_result.returncode != 0:
+            debug_log(f'Force-push failed for task {task_id}: {push_result.stderr}')
+            return False
+
+        # Success — clear the needs_rebase flag if it was set
+        if db.get_task(task_id).get('needs_rebase'):
+            db.clear_rebase_flag(task_id)
+
+        print(f'[{datetime.now().isoformat()}] Successfully rebased task {task_id} branch {branch}')
+        return True
+
+    except subprocess.CalledProcessError as e:
+        debug_log(f'Git command failed for task {task_id}: {e}')
+        return False
+    except subprocess.TimeoutExpired:
+        debug_log(f'Timeout during rebase for task {task_id}')
+        # Abort any in-progress rebase
+        subprocess.run(
+            ['git', 'rebase', '--abort'],
+            cwd=worktree,
+            capture_output=True,
+        )
+        return False
+    except Exception as e:
+        debug_log(f'Unexpected error rebasing task {task_id}: {e}')
+        return False
+
+
 def check_stale_branches(commits_behind_threshold: int = 5) -> None:
     """Check provisional/review tasks for branch staleness and mark for rebase.
 
@@ -1066,6 +1408,9 @@ def run_scheduler() -> None:
 
     # Check for stale branches that need rebasing
     check_stale_branches()
+
+    # Check branch freshness and auto-rebase stale provisional branches
+    check_branch_freshness()
 
     # Load agent configuration
     try:

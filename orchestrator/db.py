@@ -18,7 +18,7 @@ from .config import get_orchestrator_dir
 _SENTINEL = object()
 
 # Schema version for migrations
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 
 def get_database_path() -> Path:
@@ -92,6 +92,7 @@ def init_schema() -> None:
                 checks TEXT,
                 check_results TEXT,
                 needs_rebase BOOLEAN DEFAULT FALSE,
+                last_rebase_attempt_at DATETIME,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (project_id) REFERENCES projects(id)
@@ -287,6 +288,13 @@ def migrate_schema() -> bool:
         if current < 7:
             try:
                 conn.execute("ALTER TABLE tasks ADD COLUMN needs_rebase BOOLEAN DEFAULT FALSE")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+
+        # Migration from v7 to v8: Add last_rebase_attempt_at column
+        if current < 8:
+            try:
+                conn.execute("ALTER TABLE tasks ADD COLUMN last_rebase_attempt_at DATETIME")
             except sqlite3.OperationalError:
                 pass  # Column already exists
 
@@ -1262,6 +1270,47 @@ def clear_rebase_flag(task_id: str) -> dict[str, Any] | None:
     )
 
     return result
+
+
+def record_rebase_attempt(task_id: str) -> dict[str, Any] | None:
+    """Record that a rebase was attempted for a task.
+
+    Sets last_rebase_attempt_at to the current time.
+
+    Args:
+        task_id: Task identifier
+
+    Returns:
+        Updated task or None if not found
+    """
+    now = datetime.now().isoformat()
+    return update_task(task_id, last_rebase_attempt_at=now)
+
+
+def is_rebase_throttled(task_id: str, cooldown_minutes: int = 10) -> bool:
+    """Check if a task's rebase is throttled (attempted too recently).
+
+    Args:
+        task_id: Task identifier
+        cooldown_minutes: Minutes to wait between rebase attempts
+
+    Returns:
+        True if the task should not be rebased yet
+    """
+    task = get_task(task_id)
+    if not task:
+        return False
+
+    last_attempt = task.get("last_rebase_attempt_at")
+    if not last_attempt:
+        return False
+
+    try:
+        last_dt = datetime.fromisoformat(last_attempt)
+        elapsed = (datetime.now() - last_dt).total_seconds()
+        return elapsed < (cooldown_minutes * 60)
+    except (ValueError, TypeError):
+        return False
 
 
 def get_tasks_needing_rebase(

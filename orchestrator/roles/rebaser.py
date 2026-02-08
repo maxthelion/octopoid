@@ -3,16 +3,17 @@
 The rebaser processes tasks that have been marked as needing rebase
 (via the needs_rebase flag in the DB). For each task:
 
-1. Finds the task's branch in the agent's worktree or by branch name
+1. Finds the task's branch in the parent project repo
 2. Fetches the latest main
-3. Attempts to rebase the branch onto main
-4. If rebase succeeds: re-runs tests (npm run test:run), force-pushes
+3. Attempts to rebase the branch onto main in the dedicated rebaser worktree
+4. If rebase succeeds: re-runs tests (npx vitest run), force-pushes
 5. If tests pass: clears the needs_rebase flag
-6. If rebase fails (non-trivial conflicts) or tests fail: adds a note
-   to the task and leaves needs_rebase set for human attention
+6. If rebase fails (conflicts): aborts, rejects task back to agent
+7. If tests fail after rebase: rejects task back to agent
 
 This role is lightweight — it runs git operations directly without
-invoking Claude.
+invoking Claude. It uses the dedicated rebaser worktree at
+.orchestrator/agents/rebaser-worktree/ (separate from the review worktree).
 
 v1 limitations:
 - Only handles regular app tasks (not orchestrator_impl / submodule tasks)
@@ -26,8 +27,20 @@ from ..config import get_orchestrator_dir, is_db_enabled
 from .base import BaseRole, main_entry
 
 
+REBASER_WORKTREE_NAME = "rebaser-worktree"
+
+
 class RebaserRole(BaseRole):
     """Rebases stale task branches onto current main."""
+
+    def _get_rebaser_worktree(self) -> Path | None:
+        """Get or create the dedicated rebaser worktree.
+
+        Returns:
+            Path to the rebaser worktree, or None if creation fails
+        """
+        from ..scheduler import ensure_rebaser_worktree
+        return ensure_rebaser_worktree()
 
     def run(self) -> int:
         """Process tasks needing rebase.
@@ -55,6 +68,12 @@ class RebaserRole(BaseRole):
             # v1: Skip orchestrator_impl tasks (submodule rebasing is trickier)
             if role == "orchestrator_impl":
                 self.log(f"Skipping orchestrator_impl task {task_id} (v1 limitation)")
+                skipped += 1
+                continue
+
+            # Throttle: skip if rebased recently
+            if db.is_rebase_throttled(task_id, cooldown_minutes=10):
+                self.log(f"Skipping task {task_id} (throttled)")
                 skipped += 1
                 continue
 
@@ -100,9 +119,6 @@ class RebaserRole(BaseRole):
             f"agent/{task_id}",
             f"feature/{task_id}",
         ]
-
-        # Also check the PR if one exists
-        pr_number = task.get("pr_number")
 
         try:
             # Fetch latest refs
@@ -150,6 +166,9 @@ class RebaserRole(BaseRole):
     def _rebase_task(self, task_id: str, branch: str) -> bool:
         """Rebase a task branch onto main and re-run tests.
 
+        Uses the dedicated rebaser worktree. On conflict or test failure,
+        rejects the task back to the implementing agent with feedback.
+
         Args:
             task_id: Task identifier
             branch: Branch name to rebase
@@ -158,54 +177,81 @@ class RebaserRole(BaseRole):
             True if rebase + tests succeeded
         """
         from .. import db
+        from ..queue_utils import review_reject_task
 
-        # Use the review worktree for the rebase operation
-        review_worktree = self.parent_project / ".orchestrator" / "agents" / "review-worktree"
+        # Record the attempt for throttling
+        db.record_rebase_attempt(task_id)
 
-        if not review_worktree.exists():
-            self.log(f"Review worktree not found at {review_worktree}")
+        # Use the dedicated rebaser worktree
+        rebaser_worktree = self._get_rebaser_worktree()
+
+        if not rebaser_worktree:
+            self.log("Rebaser worktree not available")
             self._add_task_note(
                 task_id,
-                "Rebaser: review worktree not found. Cannot rebase.",
+                "Rebaser: dedicated worktree not available. Cannot rebase.",
             )
             return False
 
         try:
             # Step 1: Fetch latest
-            self._run_git(review_worktree, ["fetch", "origin"])
+            self._run_git(rebaser_worktree, ["fetch", "origin"])
 
             # Step 2: Checkout the task branch
-            self._run_git(review_worktree, ["checkout", "-B", branch, f"origin/{branch}"])
+            self._run_git(rebaser_worktree, ["checkout", "-B", branch, f"origin/{branch}"])
 
             # Step 3: Attempt rebase onto origin/main
-            rebase_ok, rebase_err = self._attempt_rebase(review_worktree)
+            rebase_ok, rebase_err = self._attempt_rebase(rebaser_worktree)
 
             if not rebase_ok:
                 self.log(f"Rebase failed for task {task_id}: {rebase_err}")
-                self._add_task_note(
-                    task_id,
-                    f"Rebaser: rebase onto main failed (non-trivial conflicts).\n\n"
-                    f"Details:\n```\n{rebase_err[:500]}\n```\n\n"
-                    f"Human intervention needed to resolve conflicts.",
+
+                feedback = (
+                    f"## Rebase Conflict\n\n"
+                    f"Branch `{branch}` has conflicts when rebased onto `main`.\n\n"
+                    f"**Details:**\n```\n{rebase_err[:500]}\n```\n\n"
+                    f"Please resolve the conflicts and push an updated branch."
                 )
+
+                # Reject task back to agent
+                task = db.get_task(task_id)
+                if task and task.get("file_path"):
+                    review_reject_task(
+                        task["file_path"],
+                        feedback,
+                        rejected_by="rebaser",
+                    )
+
                 return False
 
             # Step 4: Run tests
-            test_ok, test_output = self._run_tests(review_worktree)
+            test_ok, test_output = self._run_tests(rebaser_worktree)
 
             if not test_ok:
                 self.log(f"Tests failed after rebase for task {task_id}")
-                self._add_task_note(
-                    task_id,
-                    f"Rebaser: tests failed after rebasing onto main.\n\n"
-                    f"Test output (tail):\n```\n{test_output[-1000:]}\n```\n\n"
-                    f"Human intervention needed.",
+
+                feedback = (
+                    f"## Post-Rebase Test Failure\n\n"
+                    f"Branch `{branch}` was rebased onto `main` successfully, "
+                    f"but tests failed after rebase.\n\n"
+                    f"**Test output (tail):**\n```\n{test_output[-1000:]}\n```\n\n"
+                    f"The rebase may have introduced incompatibilities. "
+                    f"Please fix the tests and push an updated branch."
                 )
-                # Abort: don't push a broken rebase
+
+                # Reject task back to agent
+                task = db.get_task(task_id)
+                if task and task.get("file_path"):
+                    review_reject_task(
+                        task["file_path"],
+                        feedback,
+                        rejected_by="rebaser",
+                    )
+
                 return False
 
             # Step 5: Force-push the rebased branch
-            push_ok = self._force_push(review_worktree, branch)
+            push_ok = self._force_push(rebaser_worktree, branch)
 
             if not push_ok:
                 self.log(f"Force-push failed for task {task_id}")
@@ -308,7 +354,7 @@ class RebaserRole(BaseRole):
                 )
 
             result = subprocess.run(
-                ["npm", "run", "test:run"],
+                ["npx", "vitest", "run"],
                 cwd=worktree,
                 capture_output=True,
                 text=True,
