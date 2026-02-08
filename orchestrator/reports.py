@@ -108,6 +108,7 @@ def _format_task(task: dict[str, Any]) -> dict[str, Any]:
         "rejection_count": task.get("rejection_count", 0),
         "checks": task.get("checks", []),
         "check_results": task.get("check_results", {}),
+        "staging_url": task.get("staging_url"),
     }
 
 
@@ -154,7 +155,11 @@ def _turn_limit_for_role(role: str | None) -> int:
 
 
 def _gather_prs() -> list[dict[str, Any]]:
-    """Gather open pull requests via gh CLI."""
+    """Gather open pull requests via gh CLI.
+
+    For each PR, also attempts to extract a Cloudflare Pages branch preview URL
+    from the PR comments and store it as staging_url on the associated task.
+    """
     try:
         result = subprocess.run(
             [
@@ -168,20 +173,98 @@ def _gather_prs() -> list[dict[str, Any]]:
             return []
 
         prs = json.loads(result.stdout)
-        return [
-            {
-                "number": pr.get("number"),
+        pr_list = []
+        for pr in prs:
+            pr_number = pr.get("number")
+            staging_url = None
+
+            # Try to extract Cloudflare Pages branch preview URL from PR comments
+            if pr_number:
+                staging_url = _extract_staging_url(pr_number)
+
+            # If we found a staging URL, try to store it on the associated task
+            if staging_url and pr_number:
+                _store_staging_url(pr_number, staging_url)
+
+            pr_list.append({
+                "number": pr_number,
                 "title": pr.get("title"),
                 "branch": pr.get("headRefName"),
                 "author": (pr.get("author") or {}).get("login"),
                 "url": pr.get("url"),
                 "created_at": pr.get("createdAt"),
                 "updated_at": pr.get("updatedAt"),
-            }
-            for pr in prs
-        ]
+                "staging_url": staging_url,
+            })
+        return pr_list
     except (subprocess.SubprocessError, json.JSONDecodeError, FileNotFoundError):
         return []
+
+
+def _extract_staging_url(pr_number: int) -> str | None:
+    """Extract Cloudflare Pages branch preview URL from a PR's comments.
+
+    Looks for the Cloudflare bot comment containing a Branch Preview URL
+    in a table row like: | Branch Preview | https://xxx.pages.dev |
+
+    Args:
+        pr_number: PR number to check
+
+    Returns:
+        Branch preview URL or None if not found
+    """
+    try:
+        result = subprocess.run(
+            [
+                "gh", "pr", "view", str(pr_number),
+                "--json", "comments",
+                "--jq", ".comments[].body",
+            ],
+            capture_output=True, text=True, timeout=15,
+        )
+        if result.returncode != 0:
+            return None
+
+        # Look for the Cloudflare Pages branch preview URL
+        # Format: | Branch Preview | https://xxx.pages.dev |
+        # or: | **Branch Preview** | [Visit Preview](https://xxx.pages.dev) |
+        for line in result.stdout.splitlines():
+            match = re.search(
+                r"Branch Preview.*?(https://[a-zA-Z0-9._-]+\.pages\.dev)",
+                line, re.IGNORECASE,
+            )
+            if match:
+                return match.group(1)
+
+        return None
+    except (subprocess.SubprocessError, FileNotFoundError):
+        return None
+
+
+def _store_staging_url(pr_number: int, staging_url: str) -> None:
+    """Store a staging URL on the task associated with a PR number.
+
+    Args:
+        pr_number: PR number to look up
+        staging_url: URL to store
+    """
+    try:
+        from .config import is_db_enabled
+        if not is_db_enabled():
+            return
+
+        from . import db
+        # Find task by pr_number
+        with db.get_connection() as conn:
+            cursor = conn.execute(
+                "SELECT id FROM tasks WHERE pr_number = ?",
+                (pr_number,),
+            )
+            row = cursor.fetchone()
+            if row:
+                db.update_task(row["id"], staging_url=staging_url)
+    except Exception:
+        pass  # Best-effort — don't break PR gathering
 
 
 # ---------------------------------------------------------------------------

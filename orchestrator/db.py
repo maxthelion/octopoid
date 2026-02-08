@@ -18,7 +18,7 @@ from .config import get_orchestrator_dir
 _SENTINEL = object()
 
 # Schema version for migrations
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 
 def get_database_path() -> Path:
@@ -93,6 +93,7 @@ def init_schema() -> None:
                 check_results TEXT,
                 needs_rebase BOOLEAN DEFAULT FALSE,
                 last_rebase_attempt_at DATETIME,
+                staging_url TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (project_id) REFERENCES projects(id)
@@ -298,6 +299,13 @@ def migrate_schema() -> bool:
             except sqlite3.OperationalError:
                 pass  # Column already exists
 
+        # Migration from v8 to v9: Add staging_url column
+        if current < 9:
+            try:
+                conn.execute("ALTER TABLE tasks ADD COLUMN staging_url TEXT")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+
         # Update schema version
         conn.execute(
             "INSERT OR REPLACE INTO schema_info (key, value) VALUES (?, ?)",
@@ -323,6 +331,7 @@ def create_task(
     project_id: str | None = None,
     auto_accept: bool | None = None,
     checks: list[str] | None = None,
+    staging_url: str | None = None,
 ) -> dict[str, Any]:
     """Create a new task in the database.
 
@@ -337,6 +346,7 @@ def create_task(
         project_id: Optional parent project ID
         auto_accept: Skip provisional queue, go straight to done (inherits from project if None)
         checks: Optional list of check names (e.g. ['gk-testing-octopoid'])
+        staging_url: Optional staging/preview URL
 
     Returns:
         Created task as dictionary
@@ -363,10 +373,10 @@ def create_task(
     with get_connection() as conn:
         conn.execute(
             """
-            INSERT INTO tasks (id, file_path, priority, role, branch, complexity, blocked_by, project_id, auto_accept, checks)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO tasks (id, file_path, priority, role, branch, complexity, blocked_by, project_id, auto_accept, checks, staging_url)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (task_id, file_path, priority, role, branch, complexity, blocked_by, project_id, auto_accept, checks_str),
+            (task_id, file_path, priority, role, branch, complexity, blocked_by, project_id, auto_accept, checks_str, staging_url),
         )
 
         # Log creation event

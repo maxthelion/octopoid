@@ -257,6 +257,7 @@ def _db_task_to_file_format(db_task: dict[str, Any]) -> dict[str, Any]:
         "pr_url": db_task.get("pr_url"),
         "checks": checks,
         "check_results": check_results,
+        "staging_url": db_task.get("staging_url"),
     }
 
 

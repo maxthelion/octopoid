@@ -609,6 +609,13 @@ def render_prs_tab(win, report: dict[str, Any], state: "DashboardState"):
 
         y += 1
 
+        # Show staging URL on a second line if available
+        staging_url = pr.get("staging_url")
+        if staging_url and y < max_y - 3:
+            safe_addstr(win, y, 8, staging_url[:max_x - 10],
+                        curses.color_pair(Colors.DIM))
+            y += 1
+
     # Action hints
     hint_y = max_y - 2
     safe_hline(win, hint_y - 1, 1, curses.ACS_HLINE, max_x - 2,

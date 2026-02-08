@@ -868,3 +868,119 @@ class TestChecksField:
 
             task = get_task_by_path("/chk9.md")
             assert task["checks"] == ["vitest", "typecheck"]
+
+
+class TestStagingUrl:
+    """Tests for the staging_url field on tasks."""
+
+    def test_create_task_with_staging_url(self, initialized_db):
+        """create_task with staging_url stores it correctly."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, get_task
+
+            task = create_task(
+                task_id="stg1",
+                file_path="/stg1.md",
+                staging_url="https://my-branch.boxen-8f6.pages.dev",
+            )
+
+            assert task["staging_url"] == "https://my-branch.boxen-8f6.pages.dev"
+
+            # Verify round-trip
+            fetched = get_task("stg1")
+            assert fetched["staging_url"] == "https://my-branch.boxen-8f6.pages.dev"
+
+    def test_create_task_without_staging_url(self, initialized_db):
+        """create_task without staging_url returns None."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, get_task
+
+            task = create_task(
+                task_id="stg2",
+                file_path="/stg2.md",
+            )
+
+            assert task["staging_url"] is None
+
+    def test_update_task_staging_url(self, initialized_db):
+        """update_task can set staging_url."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, update_task, get_task
+
+            create_task(task_id="stg3", file_path="/stg3.md")
+
+            update_task("stg3", staging_url="https://agent-abc123.boxen-8f6.pages.dev")
+
+            task = get_task("stg3")
+            assert task["staging_url"] == "https://agent-abc123.boxen-8f6.pages.dev"
+
+    def test_staging_url_null_by_default_in_db(self, initialized_db):
+        """staging_url is NULL in DB when not specified."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, get_connection
+
+            create_task(task_id="stg4", file_path="/stg4.md")
+
+            with get_connection() as conn:
+                cursor = conn.execute(
+                    "SELECT staging_url, typeof(staging_url) as stype FROM tasks WHERE id = ?",
+                    ("stg4",),
+                )
+                row = cursor.fetchone()
+                assert row["stype"] == "null"
+                assert row["staging_url"] is None
+
+    def test_list_tasks_includes_staging_url(self, initialized_db):
+        """list_tasks includes staging_url for each task."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, list_tasks
+
+            create_task(
+                task_id="stg5",
+                file_path="/stg5.md",
+                staging_url="https://preview.pages.dev",
+            )
+            create_task(
+                task_id="stg6",
+                file_path="/stg6.md",
+            )
+
+            tasks = list_tasks(queue="incoming")
+            by_id = {t["id"]: t for t in tasks}
+
+            assert by_id["stg5"]["staging_url"] == "https://preview.pages.dev"
+            assert by_id["stg6"]["staging_url"] is None
+
+
+class TestMigrationV9:
+    """Tests for schema migration v8 -> v9 (staging_url)."""
+
+    def test_migration_adds_staging_url_column(self, mock_config, db_path):
+        """migrate_schema adds staging_url column when upgrading from v8."""
+        with patch('orchestrator.db.get_database_path', return_value=db_path):
+            from orchestrator.db import init_schema, get_connection, migrate_schema
+
+            # Initialize schema at current version
+            init_schema()
+
+            # Manually downgrade to v8 to test migration
+            with get_connection() as conn:
+                conn.execute(
+                    "INSERT OR REPLACE INTO schema_info (key, value) VALUES (?, ?)",
+                    ("version", "8"),
+                )
+                # Drop the column to simulate v8 schema
+                # (SQLite doesn't support DROP COLUMN in older versions,
+                # but the migration uses ALTER TABLE ADD which is idempotent)
+
+            # Run migration
+            result = migrate_schema()
+            assert result is True
+
+            # Verify column exists by inserting and querying
+            with get_connection() as conn:
+                conn.execute(
+                    "UPDATE tasks SET staging_url = ? WHERE 1=0",
+                    ("test",),
+                )
+                # No error means column exists

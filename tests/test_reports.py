@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from orchestrator.reports import (
+    _extract_staging_url,
     _format_task,
     _gather_agents,
     _gather_health,
@@ -19,6 +20,7 @@ from orchestrator.reports import (
     _get_recent_tasks_for_agent,
     _is_recent,
     _load_agent_state,
+    _store_staging_url,
     get_project_report,
 )
 
@@ -665,3 +667,171 @@ class TestRecentTasksForAgent:
     def test_returns_empty_when_db_disabled(self, mock_db):
         tasks = _get_recent_tasks_for_agent("any-agent")
         assert tasks == []
+
+
+# ---------------------------------------------------------------------------
+# Staging URL extraction
+# ---------------------------------------------------------------------------
+
+
+class TestExtractStagingUrl:
+    """Tests for _extract_staging_url()."""
+
+    @patch("subprocess.run")
+    def test_extracts_url_from_cloudflare_table_row(self, mock_run):
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout="| Branch Preview | https://abc123.boxen-app.pages.dev |\n",
+        )
+
+        url = _extract_staging_url(55)
+        assert url == "https://abc123.boxen-app.pages.dev"
+
+    @patch("subprocess.run")
+    def test_extracts_url_from_bold_markdown_format(self, mock_run):
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout="| **Branch Preview** | [Visit Preview](https://feature-branch.boxen-app.pages.dev) |\n",
+        )
+
+        url = _extract_staging_url(55)
+        assert url == "https://feature-branch.boxen-app.pages.dev"
+
+    @patch("subprocess.run")
+    def test_returns_none_when_no_cloudflare_comment(self, mock_run):
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout="Just a regular comment\nAnother comment\n",
+        )
+
+        url = _extract_staging_url(55)
+        assert url is None
+
+    @patch("subprocess.run")
+    def test_returns_none_on_gh_failure(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=1, stdout="")
+
+        url = _extract_staging_url(55)
+        assert url is None
+
+    @patch("subprocess.run", side_effect=FileNotFoundError("gh not found"))
+    def test_returns_none_when_gh_not_installed(self, mock_run):
+        url = _extract_staging_url(55)
+        assert url is None
+
+    @patch("subprocess.run")
+    def test_handles_multiple_comments_finds_first(self, mock_run):
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout=(
+                "Some unrelated comment\n"
+                "| Branch Preview | https://first.boxen-app.pages.dev |\n"
+                "| Branch Preview | https://second.boxen-app.pages.dev |\n"
+            ),
+        )
+
+        url = _extract_staging_url(55)
+        assert url == "https://first.boxen-app.pages.dev"
+
+
+class TestStoreStagingUrl:
+    """Tests for _store_staging_url()."""
+
+    def test_stores_url_on_matching_task(self, mock_config, initialized_db):
+        from orchestrator.db import create_task, get_connection, update_task
+
+        with patch("orchestrator.db.get_database_path", return_value=initialized_db):
+            task_dir = mock_config / "shared" / "queue" / "incoming"
+            task_dir.mkdir(parents=True, exist_ok=True)
+            fp = task_dir / "TASK-store01.md"
+            fp.write_text("# [TASK-store01] Test task\n")
+            create_task(task_id="store01", file_path=str(fp), role="implement")
+            update_task("store01", pr_number=77)
+
+            _store_staging_url(77, "https://preview.pages.dev")
+
+            with get_connection() as conn:
+                row = conn.execute(
+                    "SELECT staging_url FROM tasks WHERE id = ?", ("store01",)
+                ).fetchone()
+                assert row["staging_url"] == "https://preview.pages.dev"
+
+    def test_no_error_when_no_matching_task(self, mock_config, initialized_db):
+        with patch("orchestrator.db.get_database_path", return_value=initialized_db):
+            # Should not raise - best effort
+            _store_staging_url(9999, "https://preview.pages.dev")
+
+    @patch("orchestrator.config.is_db_enabled", return_value=False)
+    def test_noop_when_db_disabled(self, mock_db):
+        # Should not raise
+        _store_staging_url(55, "https://preview.pages.dev")
+
+
+class TestGatherPrsStagingUrl:
+    """Tests for staging_url integration in _gather_prs()."""
+
+    @patch("orchestrator.reports._store_staging_url")
+    @patch("orchestrator.reports._extract_staging_url")
+    @patch("subprocess.run")
+    def test_pr_includes_staging_url(self, mock_run, mock_extract, mock_store):
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout=json.dumps([{
+                "number": 55,
+                "title": "Feature PR",
+                "headRefName": "agent/abc123",
+                "author": {"login": "bot"},
+                "updatedAt": "2026-02-07T10:00:00Z",
+                "createdAt": "2026-02-07T09:00:00Z",
+                "url": "https://github.com/owner/repo/pull/55",
+            }]),
+        )
+        mock_extract.return_value = "https://abc123.pages.dev"
+
+        prs = _gather_prs()
+
+        assert len(prs) == 1
+        assert prs[0]["staging_url"] == "https://abc123.pages.dev"
+        mock_store.assert_called_once_with(55, "https://abc123.pages.dev")
+
+    @patch("orchestrator.reports._store_staging_url")
+    @patch("orchestrator.reports._extract_staging_url")
+    @patch("subprocess.run")
+    def test_pr_staging_url_none_when_not_found(self, mock_run, mock_extract, mock_store):
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout=json.dumps([{
+                "number": 55,
+                "title": "Feature PR",
+                "headRefName": "agent/abc123",
+                "author": {"login": "bot"},
+                "updatedAt": "2026-02-07T10:00:00Z",
+                "createdAt": "2026-02-07T09:00:00Z",
+                "url": "https://github.com/owner/repo/pull/55",
+            }]),
+        )
+        mock_extract.return_value = None
+
+        prs = _gather_prs()
+
+        assert len(prs) == 1
+        assert prs[0]["staging_url"] is None
+        mock_store.assert_not_called()
+
+
+class TestFormatTaskStagingUrl:
+    """Tests for staging_url in _format_task()."""
+
+    def test_includes_staging_url_when_present(self):
+        task = {
+            "id": "abc123",
+            "title": "Test task",
+            "staging_url": "https://preview.pages.dev",
+        }
+        result = _format_task(task)
+        assert result["staging_url"] == "https://preview.pages.dev"
+
+    def test_staging_url_none_when_absent(self):
+        task = {"id": "abc123", "title": "Test task"}
+        result = _format_task(task)
+        assert result["staging_url"] is None
