@@ -747,14 +747,14 @@ class TestChecksField:
             task = create_task(
                 task_id="chk1",
                 file_path="/chk1.md",
-                checks=["pytest-submodule", "vitest"],
+                checks=["gk-testing-octopoid", "vitest"],
             )
 
-            assert task["checks"] == ["pytest-submodule", "vitest"]
+            assert task["checks"] == ["gk-testing-octopoid", "vitest"]
 
             # Verify round-trip
             fetched = get_task("chk1")
-            assert fetched["checks"] == ["pytest-submodule", "vitest"]
+            assert fetched["checks"] == ["gk-testing-octopoid", "vitest"]
 
     def test_create_task_without_checks(self, initialized_db):
         """create_task without checks returns empty list."""
@@ -792,10 +792,10 @@ class TestChecksField:
             task = create_task(
                 task_id="chk4",
                 file_path="/chk4.md",
-                checks=["pytest-submodule"],
+                checks=["gk-testing-octopoid"],
             )
 
-            assert task["checks"] == ["pytest-submodule"]
+            assert task["checks"] == ["gk-testing-octopoid"]
 
     def test_checks_stored_as_comma_separated_in_db(self, initialized_db):
         """Verify the raw DB value is a comma-separated string."""
@@ -805,7 +805,7 @@ class TestChecksField:
             create_task(
                 task_id="chk5",
                 file_path="/chk5.md",
-                checks=["pytest-submodule", "vitest"],
+                checks=["gk-testing-octopoid", "vitest"],
             )
 
             with get_connection() as conn:
@@ -813,7 +813,7 @@ class TestChecksField:
                     "SELECT checks FROM tasks WHERE id = ?", ("chk5",)
                 )
                 row = cursor.fetchone()
-                assert row["checks"] == "pytest-submodule,vitest"
+                assert row["checks"] == "gk-testing-octopoid,vitest"
 
     def test_checks_null_when_none(self, initialized_db):
         """Verify checks is NULL in DB when not specified."""
@@ -842,7 +842,7 @@ class TestChecksField:
             create_task(
                 task_id="chk7",
                 file_path="/chk7.md",
-                checks=["pytest-submodule"],
+                checks=["gk-testing-octopoid"],
             )
             create_task(
                 task_id="chk8",
@@ -852,7 +852,7 @@ class TestChecksField:
             tasks = list_tasks(queue="incoming")
             by_id = {t["id"]: t for t in tasks}
 
-            assert by_id["chk7"]["checks"] == ["pytest-submodule"]
+            assert by_id["chk7"]["checks"] == ["gk-testing-octopoid"]
             assert by_id["chk8"]["checks"] == []
 
     def test_get_task_by_path_returns_checks_as_list(self, initialized_db):

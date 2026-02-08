@@ -89,7 +89,7 @@ class TestFullCheckLifecycle:
                 assert task["queue"] == "provisional"
                 assert task["checks"] == ["gk-testing-octopoid"]
 
-                # Step 3: check_runner records a passing result
+                # Step 3: Gatekeeper records a passing result
                 record_check_result("e2e_pass", "gk-testing-octopoid", "pass", "All tests pass")
 
                 # Step 4: Scheduler processes gatekeeper reviews
@@ -132,7 +132,7 @@ class TestFullCheckLifecycle:
                 # Step 2: Move to provisional
                 update_task_queue("e2e_fail", "provisional", commits_count=1)
 
-                # Step 3: check_runner records failure
+                # Step 3: Gatekeeper records failure
                 record_check_result(
                     "e2e_fail", "gk-testing-octopoid", "fail",
                     "3 tests failing: test_foo, test_bar, test_baz"
@@ -243,28 +243,46 @@ class TestSchedulerGatekeeperDispatch:
         from orchestrator.state_utils import AgentState
         return AgentState(running=False, pid=None, last_finished=None, last_exit_code=None, extra={})
 
-    def test_dispatch_skips_mechanical_checks(self, mock_config, initialized_db):
-        """Scheduler does not dispatch gatekeepers for checks handled by check_runner."""
+    def test_dispatch_dispatches_gk_testing_octopoid(self, mock_config, initialized_db):
+        """Scheduler dispatches gatekeeper for gk-testing-octopoid check."""
         with patch('orchestrator.db.get_database_path', return_value=initialized_db):
             from orchestrator.db import create_task, update_task_queue
             from orchestrator.scheduler import dispatch_gatekeeper_agents
 
-            # Task with only a mechanical check (gk-testing-octopoid)
+            # Task with gk-testing-octopoid check
             create_task(
-                task_id="mech_only",
-                file_path="/mech_only.md",
+                task_id="gk_dispatch",
+                file_path="/gk_dispatch.md",
                 role="orchestrator_impl",
                 checks=["gk-testing-octopoid"],
+                branch="main",
             )
-            update_task_queue("mech_only", "provisional", commits_count=2)
+            update_task_queue("gk_dispatch", "provisional", commits_count=2)
+
+            idle_state = self._make_idle_state()
 
             with patch('orchestrator.scheduler.get_gatekeepers', return_value=[
                 {"name": "gk-test", "role": "gatekeeper", "focus": "testing"},
             ]):
-                with patch('orchestrator.scheduler.spawn_agent') as mock_spawn:
-                    dispatch_gatekeeper_agents()
-                    # Should NOT spawn — gk-testing-octopoid is mechanical
-                    mock_spawn.assert_not_called()
+                with patch('orchestrator.scheduler.get_agents', return_value=[
+                    {"name": "gk-test", "role": "gatekeeper", "focus": "testing"},
+                ]):
+                    with patch('orchestrator.scheduler.load_state', return_value=idle_state):
+                        with patch('orchestrator.scheduler.is_overdue', return_value=True):
+                            with patch('orchestrator.scheduler.spawn_agent', return_value=12345) as mock_spawn:
+                                with patch('orchestrator.scheduler.save_state'):
+                                    with patch('orchestrator.scheduler.ensure_worktree'):
+                                        with patch('orchestrator.scheduler.setup_agent_commands'):
+                                            with patch('orchestrator.scheduler.generate_agent_instructions'):
+                                                with patch('orchestrator.scheduler.write_agent_env'):
+                                                    with patch('orchestrator.scheduler.is_process_running', return_value=False):
+                                                        dispatch_gatekeeper_agents()
+
+                                                        # Should spawn — gk-testing-octopoid is now a gatekeeper check
+                                                        mock_spawn.assert_called_once()
+                                                        config = mock_spawn.call_args[0][3]
+                                                        assert config["review_task_id"] == "gk_dispatch"
+                                                        assert config["review_check_name"] == "gk-testing-octopoid"
 
     def test_dispatch_spawns_for_non_mechanical_check(self, mock_config, initialized_db):
         """Scheduler dispatches a gatekeeper for a non-mechanical check."""

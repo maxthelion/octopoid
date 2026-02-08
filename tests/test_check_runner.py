@@ -1,4 +1,4 @@
-"""Tests for the check_runner role and check_results DB functions."""
+"""Tests for check_results DB functions and gatekeeper integration."""
 
 import json
 import os
@@ -35,34 +35,34 @@ class TestCheckResultsDB:
             create_task(
                 task_id="cr1",
                 file_path="/cr1.md",
-                checks=["pytest-submodule"],
+                checks=["gk-testing-octopoid"],
             )
 
-            result = record_check_result("cr1", "pytest-submodule", "pass", "All tests passed")
+            result = record_check_result("cr1", "gk-testing-octopoid", "pass", "All tests passed")
 
             assert result is not None
-            assert result["check_results"]["pytest-submodule"]["status"] == "pass"
-            assert result["check_results"]["pytest-submodule"]["summary"] == "All tests passed"
-            assert "timestamp" in result["check_results"]["pytest-submodule"]
+            assert result["check_results"]["gk-testing-octopoid"]["status"] == "pass"
+            assert result["check_results"]["gk-testing-octopoid"]["summary"] == "All tests passed"
+            assert "timestamp" in result["check_results"]["gk-testing-octopoid"]
 
     def test_record_check_result_fail(self, initialized_db):
         """record_check_result stores a failing result."""
         with patch("orchestrator.db.get_database_path", return_value=initialized_db):
             from orchestrator.db import create_task, record_check_result, get_task
 
-            create_task(task_id="cr2", file_path="/cr2.md", checks=["pytest-submodule"])
+            create_task(task_id="cr2", file_path="/cr2.md", checks=["gk-testing-octopoid"])
 
-            result = record_check_result("cr2", "pytest-submodule", "fail", "3 tests failed")
+            result = record_check_result("cr2", "gk-testing-octopoid", "fail", "3 tests failed")
 
-            assert result["check_results"]["pytest-submodule"]["status"] == "fail"
-            assert "3 tests failed" in result["check_results"]["pytest-submodule"]["summary"]
+            assert result["check_results"]["gk-testing-octopoid"]["status"] == "fail"
+            assert "3 tests failed" in result["check_results"]["gk-testing-octopoid"]["summary"]
 
     def test_record_check_result_nonexistent_task(self, initialized_db):
         """record_check_result returns None for missing task."""
         with patch("orchestrator.db.get_database_path", return_value=initialized_db):
             from orchestrator.db import record_check_result
 
-            result = record_check_result("nonexistent", "pytest-submodule", "pass")
+            result = record_check_result("nonexistent", "gk-testing-octopoid", "pass")
             assert result is None
 
     def test_record_multiple_check_results(self, initialized_db):
@@ -73,13 +73,13 @@ class TestCheckResultsDB:
             create_task(
                 task_id="cr3",
                 file_path="/cr3.md",
-                checks=["pytest-submodule", "vitest"],
+                checks=["gk-testing-octopoid", "vitest"],
             )
 
-            record_check_result("cr3", "pytest-submodule", "pass", "OK")
+            record_check_result("cr3", "gk-testing-octopoid", "pass", "OK")
             result = record_check_result("cr3", "vitest", "fail", "2 failures")
 
-            assert result["check_results"]["pytest-submodule"]["status"] == "pass"
+            assert result["check_results"]["gk-testing-octopoid"]["status"] == "pass"
             assert result["check_results"]["vitest"]["status"] == "fail"
 
     def test_record_check_result_overwrites_previous(self, initialized_db):
@@ -87,57 +87,57 @@ class TestCheckResultsDB:
         with patch("orchestrator.db.get_database_path", return_value=initialized_db):
             from orchestrator.db import create_task, record_check_result
 
-            create_task(task_id="cr4", file_path="/cr4.md", checks=["pytest-submodule"])
+            create_task(task_id="cr4", file_path="/cr4.md", checks=["gk-testing-octopoid"])
 
-            record_check_result("cr4", "pytest-submodule", "fail", "first run failed")
-            result = record_check_result("cr4", "pytest-submodule", "pass", "retry passed")
+            record_check_result("cr4", "gk-testing-octopoid", "fail", "first run failed")
+            result = record_check_result("cr4", "gk-testing-octopoid", "pass", "retry passed")
 
-            assert result["check_results"]["pytest-submodule"]["status"] == "pass"
-            assert result["check_results"]["pytest-submodule"]["summary"] == "retry passed"
+            assert result["check_results"]["gk-testing-octopoid"]["status"] == "pass"
+            assert result["check_results"]["gk-testing-octopoid"]["summary"] == "retry passed"
 
     def test_record_check_result_records_history(self, initialized_db):
         """record_check_result adds a history event."""
         with patch("orchestrator.db.get_database_path", return_value=initialized_db):
             from orchestrator.db import create_task, record_check_result, get_task_history
 
-            create_task(task_id="cr5", file_path="/cr5.md", checks=["pytest-submodule"])
-            record_check_result("cr5", "pytest-submodule", "pass", "All passed")
+            create_task(task_id="cr5", file_path="/cr5.md", checks=["gk-testing-octopoid"])
+            record_check_result("cr5", "gk-testing-octopoid", "pass", "All passed")
 
             history = get_task_history("cr5")
             check_events = [h for h in history if h["event"] == "check_pass"]
             assert len(check_events) == 1
-            assert "pytest-submodule" in check_events[0]["details"]
+            assert "gk-testing-octopoid" in check_events[0]["details"]
 
     def test_check_results_round_trip_via_get_task(self, initialized_db):
         """check_results stored in DB round-trips correctly through get_task."""
         with patch("orchestrator.db.get_database_path", return_value=initialized_db):
             from orchestrator.db import create_task, record_check_result, get_task
 
-            create_task(task_id="cr6", file_path="/cr6.md", checks=["pytest-submodule"])
-            record_check_result("cr6", "pytest-submodule", "pass", "OK")
+            create_task(task_id="cr6", file_path="/cr6.md", checks=["gk-testing-octopoid"])
+            record_check_result("cr6", "gk-testing-octopoid", "pass", "OK")
 
             task = get_task("cr6")
             assert isinstance(task["check_results"], dict)
-            assert task["check_results"]["pytest-submodule"]["status"] == "pass"
+            assert task["check_results"]["gk-testing-octopoid"]["status"] == "pass"
 
     def test_check_results_round_trip_via_list_tasks(self, initialized_db):
         """check_results round-trips correctly through list_tasks."""
         with patch("orchestrator.db.get_database_path", return_value=initialized_db):
             from orchestrator.db import create_task, record_check_result, list_tasks
 
-            create_task(task_id="cr7", file_path="/cr7.md", checks=["pytest-submodule"])
-            record_check_result("cr7", "pytest-submodule", "fail", "broken")
+            create_task(task_id="cr7", file_path="/cr7.md", checks=["gk-testing-octopoid"])
+            record_check_result("cr7", "gk-testing-octopoid", "fail", "broken")
 
             tasks = list_tasks(queue="incoming")
             by_id = {t["id"]: t for t in tasks}
-            assert by_id["cr7"]["check_results"]["pytest-submodule"]["status"] == "fail"
+            assert by_id["cr7"]["check_results"]["gk-testing-octopoid"]["status"] == "fail"
 
     def test_empty_check_results_returns_empty_dict(self, initialized_db):
         """Task with no check results returns empty dict."""
         with patch("orchestrator.db.get_database_path", return_value=initialized_db):
             from orchestrator.db import create_task, get_task
 
-            create_task(task_id="cr8", file_path="/cr8.md", checks=["pytest-submodule"])
+            create_task(task_id="cr8", file_path="/cr8.md", checks=["gk-testing-octopoid"])
 
             task = get_task("cr8")
             assert task["check_results"] == {}
@@ -151,8 +151,8 @@ class TestAllChecksPassed:
         with patch("orchestrator.db.get_database_path", return_value=initialized_db):
             from orchestrator.db import create_task, record_check_result, all_checks_passed
 
-            create_task(task_id="acp1", file_path="/acp1.md", checks=["pytest-submodule"])
-            record_check_result("acp1", "pytest-submodule", "pass")
+            create_task(task_id="acp1", file_path="/acp1.md", checks=["gk-testing-octopoid"])
+            record_check_result("acp1", "gk-testing-octopoid", "pass")
 
             passed, not_passed = all_checks_passed("acp1")
             assert passed is True
@@ -163,8 +163,8 @@ class TestAllChecksPassed:
         with patch("orchestrator.db.get_database_path", return_value=initialized_db):
             from orchestrator.db import create_task, record_check_result, all_checks_passed
 
-            create_task(task_id="acp2", file_path="/acp2.md", checks=["pytest-submodule", "vitest"])
-            record_check_result("acp2", "pytest-submodule", "pass")
+            create_task(task_id="acp2", file_path="/acp2.md", checks=["gk-testing-octopoid", "vitest"])
+            record_check_result("acp2", "gk-testing-octopoid", "pass")
             record_check_result("acp2", "vitest", "fail")
 
             passed, not_passed = all_checks_passed("acp2")
@@ -176,11 +176,11 @@ class TestAllChecksPassed:
         with patch("orchestrator.db.get_database_path", return_value=initialized_db):
             from orchestrator.db import create_task, all_checks_passed
 
-            create_task(task_id="acp3", file_path="/acp3.md", checks=["pytest-submodule"])
+            create_task(task_id="acp3", file_path="/acp3.md", checks=["gk-testing-octopoid"])
 
             passed, not_passed = all_checks_passed("acp3")
             assert passed is False
-            assert "pytest-submodule" in not_passed
+            assert "gk-testing-octopoid" in not_passed
 
     def test_no_checks_defined(self, initialized_db):
         """Returns True when task has no checks defined."""
@@ -210,11 +210,11 @@ class TestGetCheckFeedback:
         with patch("orchestrator.db.get_database_path", return_value=initialized_db):
             from orchestrator.db import create_task, record_check_result, get_check_feedback
 
-            create_task(task_id="gcf1", file_path="/gcf1.md", checks=["pytest-submodule"])
-            record_check_result("gcf1", "pytest-submodule", "fail", "3 tests failed")
+            create_task(task_id="gcf1", file_path="/gcf1.md", checks=["gk-testing-octopoid"])
+            record_check_result("gcf1", "gk-testing-octopoid", "fail", "3 tests failed")
 
             feedback = get_check_feedback("gcf1")
-            assert "pytest-submodule" in feedback
+            assert "gk-testing-octopoid" in feedback
             assert "FAILED" in feedback
             assert "3 tests failed" in feedback
 
@@ -223,8 +223,8 @@ class TestGetCheckFeedback:
         with patch("orchestrator.db.get_database_path", return_value=initialized_db):
             from orchestrator.db import create_task, record_check_result, get_check_feedback
 
-            create_task(task_id="gcf2", file_path="/gcf2.md", checks=["pytest-submodule"])
-            record_check_result("gcf2", "pytest-submodule", "pass", "OK")
+            create_task(task_id="gcf2", file_path="/gcf2.md", checks=["gk-testing-octopoid"])
+            record_check_result("gcf2", "gk-testing-octopoid", "pass", "OK")
 
             feedback = get_check_feedback("gcf2")
             assert feedback == ""
@@ -257,7 +257,7 @@ class TestReportsCheckingSplit:
 
             fp = prov_dir / "TASK-rck1.md"
             fp.write_text("# [TASK-rck1] Task with check\nROLE: orchestrator_impl\n")
-            create_task(task_id="rck1", file_path=str(fp), role="orchestrator_impl", checks=["pytest-submodule"])
+            create_task(task_id="rck1", file_path=str(fp), role="orchestrator_impl", checks=["gk-testing-octopoid"])
             update_task_queue("rck1", "provisional", commits_count=2)
 
             work = _gather_work()
@@ -278,9 +278,9 @@ class TestReportsCheckingSplit:
 
             fp = prov_dir / "TASK-rck2.md"
             fp.write_text("# [TASK-rck2] Task with passed check\nROLE: orchestrator_impl\n")
-            create_task(task_id="rck2", file_path=str(fp), role="orchestrator_impl", checks=["pytest-submodule"])
+            create_task(task_id="rck2", file_path=str(fp), role="orchestrator_impl", checks=["gk-testing-octopoid"])
             update_task_queue("rck2", "provisional", commits_count=3)
-            record_check_result("rck2", "pytest-submodule", "pass", "All tests passed")
+            record_check_result("rck2", "gk-testing-octopoid", "pass", "All tests passed")
 
             work = _gather_work()
 
@@ -321,9 +321,9 @@ class TestReportsCheckingSplit:
 
             fp = prov_dir / "TASK-rck4.md"
             fp.write_text("# [TASK-rck4] Failed check task\nROLE: orchestrator_impl\n")
-            create_task(task_id="rck4", file_path=str(fp), role="orchestrator_impl", checks=["pytest-submodule"])
+            create_task(task_id="rck4", file_path=str(fp), role="orchestrator_impl", checks=["gk-testing-octopoid"])
             update_task_queue("rck4", "provisional", commits_count=2)
-            record_check_result("rck4", "pytest-submodule", "fail", "Tests broken")
+            record_check_result("rck4", "gk-testing-octopoid", "fail", "Tests broken")
 
             work = _gather_work()
 
@@ -339,13 +339,13 @@ class TestReportsCheckingSplit:
         task = {
             "id": "ft1",
             "title": "Test task",
-            "checks": ["pytest-submodule"],
-            "check_results": {"pytest-submodule": {"status": "pass", "summary": "OK"}},
+            "checks": ["gk-testing-octopoid"],
+            "check_results": {"gk-testing-octopoid": {"status": "pass", "summary": "OK"}},
         }
 
         result = _format_task(task)
-        assert result["checks"] == ["pytest-submodule"]
-        assert result["check_results"]["pytest-submodule"]["status"] == "pass"
+        assert result["checks"] == ["gk-testing-octopoid"]
+        assert result["check_results"]["gk-testing-octopoid"]["status"] == "pass"
 
 
 # ---------------------------------------------------------------------------
@@ -381,29 +381,25 @@ class TestPreCheckSkipsPendingChecks:
                                     create_task, claim_task, submit_completion, get_task,
                                 )
 
-                                # Create task with checks, submit with commits
                                 create_task(
                                     task_id="vskip1",
                                     file_path=str(mock_config / "shared" / "queue" / "provisional" / "TASK-vskip1.md"),
                                     role="orchestrator_impl",
-                                    checks=["pytest-submodule"],
+                                    checks=["gk-testing-octopoid"],
                                 )
                                 claim_task()
                                 submit_completion("vskip1", commits_count=3, turns_used=20)
 
-                                # Create task file
                                 prov_dir = mock_config / "shared" / "queue" / "provisional"
                                 prov_dir.mkdir(parents=True, exist_ok=True)
                                 (prov_dir / "TASK-vskip1.md").write_text(
                                     "# [TASK-vskip1] Orch task\nROLE: orchestrator_impl\n"
                                 )
 
-                                # Run pre-check
                                 role = PreCheckRole()
                                 result = role.run()
                                 assert result == 0
 
-                                # Task should STILL be in provisional (not moved to done or incoming)
                                 task = get_task("vskip1")
                                 assert task["queue"] == "provisional", (
                                     f"Pre-check should skip task with pending checks, "
@@ -436,207 +432,28 @@ class TestPreCheckSkipsPendingChecks:
                                     record_check_result, get_task,
                                 )
 
-                                # Create task, submit, and mark check as passed
                                 create_task(
                                     task_id="vskip2",
                                     file_path=str(mock_config / "shared" / "queue" / "provisional" / "TASK-vskip2.md"),
                                     role="orchestrator_impl",
-                                    checks=["pytest-submodule"],
+                                    checks=["gk-testing-octopoid"],
                                 )
                                 claim_task()
                                 submit_completion("vskip2", commits_count=3, turns_used=20)
-                                record_check_result("vskip2", "pytest-submodule", "pass", "OK")
+                                record_check_result("vskip2", "gk-testing-octopoid", "pass", "OK")
 
-                                # Create task file
                                 prov_dir = mock_config / "shared" / "queue" / "provisional"
                                 prov_dir.mkdir(parents=True, exist_ok=True)
                                 (prov_dir / "TASK-vskip2.md").write_text(
                                     "# [TASK-vskip2] Orch task\nROLE: orchestrator_impl\n"
                                 )
 
-                                # Run pre-check
                                 role = PreCheckRole()
                                 result = role.run()
                                 assert result == 0
 
-                                # Task should be accepted (all checks passed, has commits)
                                 task = get_task("vskip2")
                                 assert task["queue"] == "done"
-
-
-# ---------------------------------------------------------------------------
-# Backpressure: check_runner
-# ---------------------------------------------------------------------------
-
-
-class TestCheckRunnerBackpressure:
-    """Tests for check_runner backpressure function."""
-
-    def test_no_provisional_tasks_blocks(self, mock_config, initialized_db):
-        """Check runner should be blocked when no provisional tasks exist."""
-        with patch("orchestrator.db.get_database_path", return_value=initialized_db):
-            with patch("orchestrator.backpressure.is_db_enabled", return_value=True):
-                from orchestrator.backpressure import check_check_runner_backpressure
-
-                can_proceed, reason = check_check_runner_backpressure()
-                assert can_proceed is False
-                assert "no_pending_checks" in reason
-
-    def test_provisional_task_with_pending_check_allows(self, mock_config, initialized_db):
-        """Check runner should proceed when there's a task with pending checks."""
-        with patch("orchestrator.db.get_database_path", return_value=initialized_db):
-            with patch("orchestrator.backpressure.is_db_enabled", return_value=True):
-                from orchestrator.db import create_task, update_task_queue
-                from orchestrator.backpressure import check_check_runner_backpressure
-
-                create_task(task_id="bp1", file_path="/bp1.md", checks=["pytest-submodule"])
-                update_task_queue("bp1", "provisional", commits_count=2)
-
-                can_proceed, reason = check_check_runner_backpressure()
-                assert can_proceed is True
-
-    def test_provisional_task_with_all_checks_done_blocks(self, mock_config, initialized_db):
-        """Check runner should be blocked when all checks are already done."""
-        with patch("orchestrator.db.get_database_path", return_value=initialized_db):
-            with patch("orchestrator.backpressure.is_db_enabled", return_value=True):
-                from orchestrator.db import create_task, update_task_queue, record_check_result
-                from orchestrator.backpressure import check_check_runner_backpressure
-
-                create_task(task_id="bp2", file_path="/bp2.md", checks=["pytest-submodule"])
-                update_task_queue("bp2", "provisional", commits_count=2)
-                record_check_result("bp2", "pytest-submodule", "pass", "OK")
-
-                can_proceed, reason = check_check_runner_backpressure()
-                assert can_proceed is False
-
-    def test_provisional_task_without_checks_blocks(self, mock_config, initialized_db):
-        """Check runner should be blocked when provisional tasks have no checks defined."""
-        with patch("orchestrator.db.get_database_path", return_value=initialized_db):
-            with patch("orchestrator.backpressure.is_db_enabled", return_value=True):
-                from orchestrator.db import create_task, update_task_queue
-                from orchestrator.backpressure import check_check_runner_backpressure
-
-                create_task(task_id="bp3", file_path="/bp3.md")  # No checks
-                update_task_queue("bp3", "provisional", commits_count=1)
-
-                can_proceed, reason = check_check_runner_backpressure()
-                assert can_proceed is False
-
-    def test_db_disabled_blocks(self):
-        """Check runner should be blocked when DB is not enabled."""
-        with patch("orchestrator.backpressure.is_db_enabled", return_value=False):
-            from orchestrator.backpressure import check_check_runner_backpressure
-
-            can_proceed, reason = check_check_runner_backpressure()
-            assert can_proceed is False
-            assert "requires_db" in reason
-
-    def test_role_checks_map_includes_check_runner(self):
-        """ROLE_CHECKS map should include check_runner."""
-        from orchestrator.backpressure import ROLE_CHECKS
-
-        assert "check_runner" in ROLE_CHECKS
-
-
-# ---------------------------------------------------------------------------
-# CheckRunnerRole unit tests
-# ---------------------------------------------------------------------------
-
-
-class TestCheckRunnerRole:
-    """Tests for the CheckRunnerRole class."""
-
-    def test_check_runner_requires_db(self, mock_config):
-        """Check runner returns early if DB not enabled."""
-        with patch("orchestrator.roles.check_runner.is_db_enabled", return_value=False):
-            with patch.dict(os.environ, {
-                "AGENT_NAME": "test-check-runner",
-                "AGENT_ID": "0",
-                "AGENT_ROLE": "check_runner",
-                "PARENT_PROJECT": str(mock_config.parent),
-                "WORKTREE": str(mock_config.parent),
-                "SHARED_DIR": str(mock_config / "shared"),
-                "ORCHESTRATOR_DIR": str(mock_config),
-            }):
-                from orchestrator.roles.check_runner import CheckRunnerRole
-
-                role = CheckRunnerRole()
-                result = role.run()
-                assert result == 0
-
-    def test_check_runner_skips_tasks_without_checks(self, mock_config, initialized_db):
-        """Check runner should skip provisional tasks that have no checks defined."""
-        with patch("orchestrator.db.get_database_path", return_value=initialized_db):
-            with patch("orchestrator.roles.check_runner.is_db_enabled", return_value=True):
-                with patch("orchestrator.queue_utils.is_db_enabled", return_value=True):
-                    with patch("orchestrator.queue_utils.get_queue_dir", return_value=mock_config / "shared" / "queue"):
-                        with patch.dict(os.environ, {
-                            "AGENT_NAME": "test-check-runner",
-                            "AGENT_ID": "0",
-                            "AGENT_ROLE": "check_runner",
-                            "PARENT_PROJECT": str(mock_config.parent),
-                            "WORKTREE": str(mock_config.parent),
-                            "SHARED_DIR": str(mock_config / "shared"),
-                            "ORCHESTRATOR_DIR": str(mock_config),
-                        }):
-                            from orchestrator.roles.check_runner import CheckRunnerRole
-                            from orchestrator.db import create_task, update_task_queue, get_task
-
-                            # Create provisional task with NO checks
-                            create_task(task_id="ckr1", file_path=str(mock_config / "shared" / "queue" / "provisional" / "TASK-ckr1.md"))
-                            update_task_queue("ckr1", "provisional", commits_count=1)
-
-                            prov_dir = mock_config / "shared" / "queue" / "provisional"
-                            prov_dir.mkdir(parents=True, exist_ok=True)
-                            (prov_dir / "TASK-ckr1.md").write_text("# [TASK-ckr1] No check task\n")
-
-                            role = CheckRunnerRole()
-                            result = role.run()
-                            assert result == 0
-
-                            # Task should still be in provisional, untouched
-                            task = get_task("ckr1")
-                            assert task["queue"] == "provisional"
-                            assert task["check_results"] == {}
-
-    def test_check_runner_skips_already_checked_tasks(self, mock_config, initialized_db):
-        """Check runner should skip tasks where all checks have been run."""
-        with patch("orchestrator.db.get_database_path", return_value=initialized_db):
-            with patch("orchestrator.roles.check_runner.is_db_enabled", return_value=True):
-                with patch("orchestrator.queue_utils.is_db_enabled", return_value=True):
-                    with patch("orchestrator.queue_utils.get_queue_dir", return_value=mock_config / "shared" / "queue"):
-                        with patch.dict(os.environ, {
-                            "AGENT_NAME": "test-check-runner",
-                            "AGENT_ID": "0",
-                            "AGENT_ROLE": "check_runner",
-                            "PARENT_PROJECT": str(mock_config.parent),
-                            "WORKTREE": str(mock_config.parent),
-                            "SHARED_DIR": str(mock_config / "shared"),
-                            "ORCHESTRATOR_DIR": str(mock_config),
-                        }):
-                            from orchestrator.roles.check_runner import CheckRunnerRole
-                            from orchestrator.db import create_task, update_task_queue, record_check_result, get_task
-
-                            # Create provisional task with check already passed
-                            create_task(
-                                task_id="ckr2",
-                                file_path=str(mock_config / "shared" / "queue" / "provisional" / "TASK-ckr2.md"),
-                                checks=["pytest-submodule"],
-                            )
-                            update_task_queue("ckr2", "provisional", commits_count=2)
-                            record_check_result("ckr2", "pytest-submodule", "pass", "OK")
-
-                            prov_dir = mock_config / "shared" / "queue" / "provisional"
-                            prov_dir.mkdir(parents=True, exist_ok=True)
-                            (prov_dir / "TASK-ckr2.md").write_text("# [TASK-ckr2] Checked task\n")
-
-                            role = CheckRunnerRole()
-                            result = role.run()
-                            assert result == 0
-
-                            # Task should still be in provisional (not rejected, not re-checked)
-                            task = get_task("ckr2")
-                            assert task["queue"] == "provisional"
 
 
 # ---------------------------------------------------------------------------
@@ -645,472 +462,21 @@ class TestCheckRunnerRole:
 
 
 class TestSchemaMigrationV6:
-    """Tests for the v5→v6 migration adding check_results column."""
+    """Tests for the v5->v6 migration adding check_results column."""
 
     def test_migrate_from_v5_adds_check_results(self, mock_config, db_path):
         """Migrating from v5 to v6 adds the check_results column."""
         with patch("orchestrator.db.get_database_path", return_value=db_path):
             from orchestrator.db import init_schema, get_connection, SCHEMA_VERSION
 
-            # Initialize the schema (creates v6 directly)
             init_schema()
 
-            # Verify check_results column exists
             with get_connection() as conn:
                 cursor = conn.execute("PRAGMA table_info(tasks)")
                 columns = {row["name"]: row for row in cursor.fetchall()}
                 assert "check_results" in columns
 
-            # Verify schema version
             assert SCHEMA_VERSION >= 6
-
-
-# ---------------------------------------------------------------------------
-# VALID_CHECK_TYPES constant
-# ---------------------------------------------------------------------------
-
-
-class TestValidCheckTypes:
-    """Tests for the VALID_CHECK_TYPES constant."""
-
-    def test_valid_check_types_includes_pytest_submodule(self):
-        """VALID_CHECK_TYPES should include pytest-submodule."""
-        from orchestrator.roles.check_runner import VALID_CHECK_TYPES
-
-        assert "pytest-submodule" in VALID_CHECK_TYPES
-
-    def test_valid_check_types_includes_gk_testing(self):
-        """VALID_CHECK_TYPES should include gk-testing-octopoid."""
-        from orchestrator.roles.check_runner import VALID_CHECK_TYPES
-
-        assert "gk-testing-octopoid" in VALID_CHECK_TYPES
-
-
-# ---------------------------------------------------------------------------
-# gk-testing-octopoid check
-# ---------------------------------------------------------------------------
-
-
-class TestGkTestingCheck:
-    """Tests for the gk-testing-octopoid check type."""
-
-    def test_gk_testing_dispatched_from_run(self, mock_config, initialized_db):
-        """CheckRunnerRole.run() dispatches to _run_gk_testing for gk-testing-octopoid checks."""
-        with patch("orchestrator.db.get_database_path", return_value=initialized_db):
-            with patch("orchestrator.roles.check_runner.is_db_enabled", return_value=True):
-                with patch("orchestrator.queue_utils.is_db_enabled", return_value=True):
-                    with patch("orchestrator.queue_utils.get_queue_dir", return_value=mock_config / "shared" / "queue"):
-                        with patch.dict(os.environ, {
-                            "AGENT_NAME": "test-check-runner",
-                            "AGENT_ID": "0",
-                            "AGENT_ROLE": "check_runner",
-                            "PARENT_PROJECT": str(mock_config.parent),
-                            "WORKTREE": str(mock_config.parent),
-                            "SHARED_DIR": str(mock_config / "shared"),
-                            "ORCHESTRATOR_DIR": str(mock_config),
-                        }):
-                            from orchestrator.roles.check_runner import CheckRunnerRole
-                            from orchestrator.db import create_task, update_task_queue
-
-                            # Create provisional task with gk-testing-octopoid check
-                            prov_dir = mock_config / "shared" / "queue" / "provisional"
-                            prov_dir.mkdir(parents=True, exist_ok=True)
-                            fp = prov_dir / "TASK-gkt1.md"
-                            fp.write_text("# [TASK-gkt1] GK test task\nROLE: orchestrator_impl\n")
-
-                            create_task(
-                                task_id="gkt1",
-                                file_path=str(fp),
-                                role="orchestrator_impl",
-                                checks=["gk-testing-octopoid"],
-                            )
-                            update_task_queue("gkt1", "provisional", commits_count=2)
-
-                            role = CheckRunnerRole()
-                            # Mock _run_gk_testing to verify it gets called
-                            role._run_gk_testing = MagicMock()
-
-                            role.run()
-
-                            role._run_gk_testing.assert_called_once()
-                            call_args = role._run_gk_testing.call_args[0]
-                            assert call_args[0] == "gkt1"
-                            assert call_args[1]["id"] == "gkt1"
-
-    def test_gk_testing_fails_no_worktree(self, mock_config, initialized_db):
-        """gk-testing-octopoid records fail when agent worktree not found."""
-        with patch("orchestrator.db.get_database_path", return_value=initialized_db):
-            with patch("orchestrator.roles.check_runner.is_db_enabled", return_value=True):
-                with patch("orchestrator.queue_utils.is_db_enabled", return_value=True):
-                    with patch("orchestrator.queue_utils.get_queue_dir", return_value=mock_config / "shared" / "queue"):
-                        with patch.dict(os.environ, {
-                            "AGENT_NAME": "test-check-runner",
-                            "AGENT_ID": "0",
-                            "AGENT_ROLE": "check_runner",
-                            "PARENT_PROJECT": str(mock_config.parent),
-                            "WORKTREE": str(mock_config.parent),
-                            "SHARED_DIR": str(mock_config / "shared"),
-                            "ORCHESTRATOR_DIR": str(mock_config),
-                        }):
-                            from orchestrator.roles.check_runner import CheckRunnerRole
-                            from orchestrator.db import create_task, update_task_queue, get_task
-
-                            # Create provisional task with gk-testing-octopoid check, no claimed_by
-                            prov_dir = mock_config / "shared" / "queue" / "provisional"
-                            prov_dir.mkdir(parents=True, exist_ok=True)
-                            fp = prov_dir / "TASK-gkt2.md"
-                            fp.write_text("# [TASK-gkt2] GK test task\nROLE: orchestrator_impl\n")
-
-                            create_task(
-                                task_id="gkt2",
-                                file_path=str(fp),
-                                role="orchestrator_impl",
-                                checks=["gk-testing-octopoid"],
-                            )
-                            update_task_queue("gkt2", "provisional", commits_count=2)
-
-                            role = CheckRunnerRole()
-                            # Mock _find_agent_worktree to return None (no worktree found)
-                            role._find_agent_worktree = MagicMock(return_value=None)
-                            role._run_gk_testing("gkt2", {"id": "gkt2", "claimed_by": None})
-
-                            # Check that the result was recorded as fail
-                            task = get_task("gkt2")
-                            assert task["check_results"]["gk-testing-octopoid"]["status"] == "fail"
-                            assert "worktree" in task["check_results"]["gk-testing-octopoid"]["summary"].lower()
-
-    def test_gk_testing_fails_no_submodule(self, mock_config, initialized_db):
-        """gk-testing-octopoid records fail when orchestrator submodule not found."""
-        with patch("orchestrator.db.get_database_path", return_value=initialized_db):
-            with patch.dict(os.environ, {
-                "AGENT_NAME": "test-check-runner",
-                "AGENT_ID": "0",
-                "AGENT_ROLE": "check_runner",
-                "PARENT_PROJECT": str(mock_config.parent),
-                "WORKTREE": str(mock_config.parent),
-                "SHARED_DIR": str(mock_config / "shared"),
-                "ORCHESTRATOR_DIR": str(mock_config),
-            }):
-                from orchestrator.roles.check_runner import CheckRunnerRole
-                from orchestrator.db import create_task, get_task
-
-                create_task(
-                    task_id="gkt3",
-                    file_path="/gkt3.md",
-                    checks=["gk-testing-octopoid"],
-                )
-
-                # Create a fake agent worktree WITHOUT orchestrator submodule
-                agent_dir = mock_config / "agents" / "fake-agent" / "worktree"
-                agent_dir.mkdir(parents=True, exist_ok=True)
-
-                role = CheckRunnerRole()
-                # Mock _find_agent_worktree to return our fake worktree
-                role._find_agent_worktree = MagicMock(return_value=agent_dir)
-
-                role._run_gk_testing("gkt3", {"id": "gkt3", "claimed_by": "fake-agent"})
-
-                task = get_task("gkt3")
-                assert task["check_results"]["gk-testing-octopoid"]["status"] == "fail"
-                assert "submodule" in task["check_results"]["gk-testing-octopoid"]["summary"].lower()
-
-    def test_gk_testing_fails_no_commits(self, mock_config, initialized_db):
-        """gk-testing-octopoid records fail when no commits found in submodule."""
-        with patch("orchestrator.db.get_database_path", return_value=initialized_db):
-            with patch.dict(os.environ, {
-                "AGENT_NAME": "test-check-runner",
-                "AGENT_ID": "0",
-                "AGENT_ROLE": "check_runner",
-                "PARENT_PROJECT": str(mock_config.parent),
-                "WORKTREE": str(mock_config.parent),
-                "SHARED_DIR": str(mock_config / "shared"),
-                "ORCHESTRATOR_DIR": str(mock_config),
-            }):
-                from orchestrator.roles.check_runner import CheckRunnerRole
-                from orchestrator.db import create_task, get_task
-
-                create_task(
-                    task_id="gkt4",
-                    file_path="/gkt4.md",
-                    checks=["gk-testing-octopoid"],
-                )
-
-                # Create a fake agent worktree WITH orchestrator submodule dir
-                agent_dir = mock_config / "agents" / "fake-agent" / "worktree"
-                orch_dir = agent_dir / "orchestrator"
-                orch_dir.mkdir(parents=True, exist_ok=True)
-
-                role = CheckRunnerRole()
-                role._find_agent_worktree = MagicMock(return_value=agent_dir)
-                role._get_submodule_commits = MagicMock(return_value=[])
-
-                role._run_gk_testing("gkt4", {"id": "gkt4", "claimed_by": "fake-agent"})
-
-                task = get_task("gkt4")
-                assert task["check_results"]["gk-testing-octopoid"]["status"] == "fail"
-                assert "commit" in task["check_results"]["gk-testing-octopoid"]["summary"].lower()
-
-    def test_gk_testing_fails_rebase_conflict(self, mock_config, initialized_db):
-        """gk-testing-octopoid records fail with conflict details on rebase failure."""
-        with patch("orchestrator.db.get_database_path", return_value=initialized_db):
-            with patch.dict(os.environ, {
-                "AGENT_NAME": "test-check-runner",
-                "AGENT_ID": "0",
-                "AGENT_ROLE": "check_runner",
-                "PARENT_PROJECT": str(mock_config.parent),
-                "WORKTREE": str(mock_config.parent),
-                "SHARED_DIR": str(mock_config / "shared"),
-                "ORCHESTRATOR_DIR": str(mock_config),
-            }):
-                from orchestrator.roles.check_runner import CheckRunnerRole
-                from orchestrator.db import create_task, get_task
-
-                create_task(
-                    task_id="gkt5",
-                    file_path="/gkt5.md",
-                    checks=["gk-testing-octopoid"],
-                )
-
-                # Create fake dirs
-                agent_dir = mock_config / "agents" / "fake-agent" / "worktree"
-                orch_dir = agent_dir / "orchestrator"
-                orch_dir.mkdir(parents=True, exist_ok=True)
-                review_dir = mock_config / "agents" / "review-worktree" / "orchestrator"
-                review_dir.mkdir(parents=True, exist_ok=True)
-
-                role = CheckRunnerRole()
-                role._find_agent_worktree = MagicMock(return_value=agent_dir)
-                role._get_submodule_commits = MagicMock(return_value=["abc123", "def456"])
-                role._setup_clean_submodule = MagicMock(return_value=(True, ""))
-                role._check_divergence = MagicMock(return_value="2 commit(s) landed on main")
-                role._rebase_commits = MagicMock(
-                    return_value=(False, "Conflict applying commit `abc123` (feat: add thing)")
-                )
-
-                role._run_gk_testing("gkt5", {"id": "gkt5", "claimed_by": "fake-agent"})
-
-                task = get_task("gkt5")
-                result = task["check_results"]["gk-testing-octopoid"]
-                assert result["status"] == "fail"
-                assert "Rebase Failed" in result["summary"]
-                assert "Conflict" in result["summary"]
-                assert "main" in result["summary"]
-
-    def test_gk_testing_fails_test_failure(self, mock_config, initialized_db):
-        """gk-testing-octopoid records fail with test output on pytest failure."""
-        with patch("orchestrator.db.get_database_path", return_value=initialized_db):
-            with patch.dict(os.environ, {
-                "AGENT_NAME": "test-check-runner",
-                "AGENT_ID": "0",
-                "AGENT_ROLE": "check_runner",
-                "PARENT_PROJECT": str(mock_config.parent),
-                "WORKTREE": str(mock_config.parent),
-                "SHARED_DIR": str(mock_config / "shared"),
-                "ORCHESTRATOR_DIR": str(mock_config),
-            }):
-                from orchestrator.roles.check_runner import CheckRunnerRole
-                from orchestrator.db import create_task, get_task
-
-                create_task(
-                    task_id="gkt6",
-                    file_path="/gkt6.md",
-                    checks=["gk-testing-octopoid"],
-                )
-
-                # Create fake dirs
-                agent_dir = mock_config / "agents" / "fake-agent" / "worktree"
-                orch_dir = agent_dir / "orchestrator"
-                orch_dir.mkdir(parents=True, exist_ok=True)
-                review_dir = mock_config / "agents" / "review-worktree" / "orchestrator"
-                review_dir.mkdir(parents=True, exist_ok=True)
-
-                role = CheckRunnerRole()
-                role._find_agent_worktree = MagicMock(return_value=agent_dir)
-                role._get_submodule_commits = MagicMock(return_value=["abc123"])
-                role._setup_clean_submodule = MagicMock(return_value=(True, ""))
-                role._check_divergence = MagicMock(return_value="")
-                role._rebase_commits = MagicMock(return_value=(True, ""))
-                role._run_pytest = MagicMock(
-                    return_value=(False, "FAILED test_something.py::test_x - AssertionError")
-                )
-
-                role._run_gk_testing("gkt6", {"id": "gkt6", "claimed_by": "fake-agent"})
-
-                task = get_task("gkt6")
-                result = task["check_results"]["gk-testing-octopoid"]
-                assert result["status"] == "fail"
-                assert "Test Failures" in result["summary"]
-                assert "FAILED" in result["summary"]
-
-    def test_gk_testing_passes(self, mock_config, initialized_db):
-        """gk-testing-octopoid records pass when rebase and tests succeed."""
-        with patch("orchestrator.db.get_database_path", return_value=initialized_db):
-            with patch.dict(os.environ, {
-                "AGENT_NAME": "test-check-runner",
-                "AGENT_ID": "0",
-                "AGENT_ROLE": "check_runner",
-                "PARENT_PROJECT": str(mock_config.parent),
-                "WORKTREE": str(mock_config.parent),
-                "SHARED_DIR": str(mock_config / "shared"),
-                "ORCHESTRATOR_DIR": str(mock_config),
-            }):
-                from orchestrator.roles.check_runner import CheckRunnerRole
-                from orchestrator.db import create_task, get_task
-
-                create_task(
-                    task_id="gkt7",
-                    file_path="/gkt7.md",
-                    checks=["gk-testing-octopoid"],
-                )
-
-                # Create fake dirs
-                agent_dir = mock_config / "agents" / "fake-agent" / "worktree"
-                orch_dir = agent_dir / "orchestrator"
-                orch_dir.mkdir(parents=True, exist_ok=True)
-                review_dir = mock_config / "agents" / "review-worktree" / "orchestrator"
-                review_dir.mkdir(parents=True, exist_ok=True)
-
-                role = CheckRunnerRole()
-                role._find_agent_worktree = MagicMock(return_value=agent_dir)
-                role._get_submodule_commits = MagicMock(return_value=["abc123", "def456"])
-                role._setup_clean_submodule = MagicMock(return_value=(True, ""))
-                role._check_divergence = MagicMock(return_value="")
-                role._rebase_commits = MagicMock(return_value=(True, ""))
-                role._run_pytest = MagicMock(return_value=(True, "3 passed"))
-
-                role._run_gk_testing("gkt7", {"id": "gkt7", "claimed_by": "fake-agent"})
-
-                task = get_task("gkt7")
-                result = task["check_results"]["gk-testing-octopoid"]
-                assert result["status"] == "pass"
-                assert "2 commit(s)" in result["summary"]
-                assert "passed" in result["summary"].lower()
-
-    def test_gk_testing_pass_with_divergence_note(self, mock_config, initialized_db):
-        """gk-testing-octopoid pass summary notes when base had diverged."""
-        with patch("orchestrator.db.get_database_path", return_value=initialized_db):
-            with patch.dict(os.environ, {
-                "AGENT_NAME": "test-check-runner",
-                "AGENT_ID": "0",
-                "AGENT_ROLE": "check_runner",
-                "PARENT_PROJECT": str(mock_config.parent),
-                "WORKTREE": str(mock_config.parent),
-                "SHARED_DIR": str(mock_config / "shared"),
-                "ORCHESTRATOR_DIR": str(mock_config),
-            }):
-                from orchestrator.roles.check_runner import CheckRunnerRole
-                from orchestrator.db import create_task, get_task
-
-                create_task(
-                    task_id="gkt8",
-                    file_path="/gkt8.md",
-                    checks=["gk-testing-octopoid"],
-                )
-
-                agent_dir = mock_config / "agents" / "fake-agent" / "worktree"
-                orch_dir = agent_dir / "orchestrator"
-                orch_dir.mkdir(parents=True, exist_ok=True)
-                review_dir = mock_config / "agents" / "review-worktree" / "orchestrator"
-                review_dir.mkdir(parents=True, exist_ok=True)
-
-                role = CheckRunnerRole()
-                role._find_agent_worktree = MagicMock(return_value=agent_dir)
-                role._get_submodule_commits = MagicMock(return_value=["abc123"])
-                role._setup_clean_submodule = MagicMock(return_value=(True, ""))
-                role._check_divergence = MagicMock(return_value="3 commit(s) landed on main")
-                role._rebase_commits = MagicMock(return_value=(True, ""))
-                role._run_pytest = MagicMock(return_value=(True, "all passed"))
-
-                role._run_gk_testing("gkt8", {"id": "gkt8", "claimed_by": "fake-agent"})
-
-                task = get_task("gkt8")
-                result = task["check_results"]["gk-testing-octopoid"]
-                assert result["status"] == "pass"
-                assert "Rebase succeeded" in result["summary"]
-
-    def test_gk_testing_fails_setup(self, mock_config, initialized_db):
-        """gk-testing-octopoid records fail when environment setup fails."""
-        with patch("orchestrator.db.get_database_path", return_value=initialized_db):
-            with patch.dict(os.environ, {
-                "AGENT_NAME": "test-check-runner",
-                "AGENT_ID": "0",
-                "AGENT_ROLE": "check_runner",
-                "PARENT_PROJECT": str(mock_config.parent),
-                "WORKTREE": str(mock_config.parent),
-                "SHARED_DIR": str(mock_config / "shared"),
-                "ORCHESTRATOR_DIR": str(mock_config),
-            }):
-                from orchestrator.roles.check_runner import CheckRunnerRole
-                from orchestrator.db import create_task, get_task
-
-                create_task(
-                    task_id="gkt9",
-                    file_path="/gkt9.md",
-                    checks=["gk-testing-octopoid"],
-                )
-
-                agent_dir = mock_config / "agents" / "fake-agent" / "worktree"
-                orch_dir = agent_dir / "orchestrator"
-                orch_dir.mkdir(parents=True, exist_ok=True)
-                review_dir = mock_config / "agents" / "review-worktree" / "orchestrator"
-                review_dir.mkdir(parents=True, exist_ok=True)
-
-                role = CheckRunnerRole()
-                role._find_agent_worktree = MagicMock(return_value=agent_dir)
-                role._get_submodule_commits = MagicMock(return_value=["abc123"])
-                role._setup_clean_submodule = MagicMock(
-                    return_value=(False, "git fetch failed: permission denied")
-                )
-
-                role._run_gk_testing("gkt9", {"id": "gkt9", "claimed_by": "fake-agent"})
-
-                task = get_task("gkt9")
-                result = task["check_results"]["gk-testing-octopoid"]
-                assert result["status"] == "fail"
-                assert "set up" in result["summary"].lower()
-
-    def test_gk_testing_test_failure_with_divergence_context(self, mock_config, initialized_db):
-        """gk-testing-octopoid test failure includes divergence context when base moved."""
-        with patch("orchestrator.db.get_database_path", return_value=initialized_db):
-            with patch.dict(os.environ, {
-                "AGENT_NAME": "test-check-runner",
-                "AGENT_ID": "0",
-                "AGENT_ROLE": "check_runner",
-                "PARENT_PROJECT": str(mock_config.parent),
-                "WORKTREE": str(mock_config.parent),
-                "SHARED_DIR": str(mock_config / "shared"),
-                "ORCHESTRATOR_DIR": str(mock_config),
-            }):
-                from orchestrator.roles.check_runner import CheckRunnerRole
-                from orchestrator.db import create_task, get_task
-
-                create_task(
-                    task_id="gkt10",
-                    file_path="/gkt10.md",
-                    checks=["gk-testing-octopoid"],
-                )
-
-                agent_dir = mock_config / "agents" / "fake-agent" / "worktree"
-                orch_dir = agent_dir / "orchestrator"
-                orch_dir.mkdir(parents=True, exist_ok=True)
-                review_dir = mock_config / "agents" / "review-worktree" / "orchestrator"
-                review_dir.mkdir(parents=True, exist_ok=True)
-
-                role = CheckRunnerRole()
-                role._find_agent_worktree = MagicMock(return_value=agent_dir)
-                role._get_submodule_commits = MagicMock(return_value=["abc123"])
-                role._setup_clean_submodule = MagicMock(return_value=(True, ""))
-                role._check_divergence = MagicMock(return_value="5 commit(s) landed on main")
-                role._rebase_commits = MagicMock(return_value=(True, ""))
-                role._run_pytest = MagicMock(return_value=(False, "FAILED test_foo::test_bar"))
-
-                role._run_gk_testing("gkt10", {"id": "gkt10", "claimed_by": "fake-agent"})
-
-                task = get_task("gkt10")
-                result = task["check_results"]["gk-testing-octopoid"]
-                assert result["status"] == "fail"
-                assert "upstream" in result["summary"].lower()
-                assert "FAILED" in result["summary"]
 
 
 # ---------------------------------------------------------------------------
@@ -1136,7 +502,6 @@ class TestDefaultChecksForOrchestratorImpl:
                         acceptance_criteria=["Do the thing"],
                     )
 
-                    # Extract task ID from filename
                     task_id = task_path.stem.replace("TASK-", "")
                     task = get_task(task_id)
 
@@ -1155,23 +520,10 @@ class TestDefaultChecksForOrchestratorImpl:
                         role="orchestrator_impl",
                         context="Test context",
                         acceptance_criteria=["Do the thing"],
-                        checks=["pytest-submodule"],
+                        checks=["custom-gatekeeper"],
                     )
 
                     task_id = task_path.stem.replace("TASK-", "")
                     task = get_task(task_id)
 
-                    assert task["checks"] == ["pytest-submodule"]
-
-    def test_backpressure_works_with_gk_testing(self, mock_config, initialized_db):
-        """Backpressure check detects pending gk-testing-octopoid checks."""
-        with patch("orchestrator.db.get_database_path", return_value=initialized_db):
-            with patch("orchestrator.backpressure.is_db_enabled", return_value=True):
-                from orchestrator.db import create_task, update_task_queue
-                from orchestrator.backpressure import check_check_runner_backpressure
-
-                create_task(task_id="bp_gk1", file_path="/bp_gk1.md", checks=["gk-testing-octopoid"])
-                update_task_queue("bp_gk1", "provisional", commits_count=2)
-
-                can_proceed, reason = check_check_runner_backpressure()
-                assert can_proceed is True
+                    assert task["checks"] == ["custom-gatekeeper"]

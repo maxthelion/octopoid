@@ -1009,8 +1009,8 @@ class TestGatekeeperBackpressure:
             can_proceed, reason = check_gatekeeper_backpressure()
             assert can_proceed is False
 
-    def test_pending_non_mechanical_check_allows(self, mock_config, initialized_db):
-        """Test that a pending non-mechanical check allows gatekeeper spawn."""
+    def test_pending_check_allows(self, mock_config, initialized_db):
+        """Test that a pending check allows gatekeeper spawn."""
         with patch('orchestrator.db.get_database_path', return_value=initialized_db):
             from orchestrator.db import create_task, update_task_queue
             from orchestrator.backpressure import check_gatekeeper_backpressure
@@ -1018,28 +1018,28 @@ class TestGatekeeperBackpressure:
             create_task(
                 task_id="bp_task",
                 file_path="/bp_task.md",
-                checks=["architecture-review"],  # non-mechanical check
+                checks=["architecture-review"],
             )
             update_task_queue("bp_task", "provisional", commits_count=1)
 
             can_proceed, reason = check_gatekeeper_backpressure()
             assert can_proceed is True
 
-    def test_only_mechanical_checks_blocks(self, mock_config, initialized_db):
-        """Test that only mechanical checks blocks gatekeeper spawn."""
+    def test_gk_testing_octopoid_allows_gatekeeper(self, mock_config, initialized_db):
+        """Test that gk-testing-octopoid check allows gatekeeper spawn."""
         with patch('orchestrator.db.get_database_path', return_value=initialized_db):
             from orchestrator.db import create_task, update_task_queue
             from orchestrator.backpressure import check_gatekeeper_backpressure
 
             create_task(
-                task_id="bp_mech",
-                file_path="/bp_mech.md",
-                checks=["gk-testing-octopoid"],  # mechanical only
+                task_id="bp_gk",
+                file_path="/bp_gk.md",
+                checks=["gk-testing-octopoid"],
             )
-            update_task_queue("bp_mech", "provisional", commits_count=1)
+            update_task_queue("bp_gk", "provisional", commits_count=1)
 
             can_proceed, reason = check_gatekeeper_backpressure()
-            assert can_proceed is False
+            assert can_proceed is True
 
 
 # =============================================================================

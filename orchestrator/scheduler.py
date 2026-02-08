@@ -27,7 +27,6 @@ from .config import (
     is_gatekeeper_enabled,
     is_system_paused,
 )
-from .roles.check_runner import VALID_CHECK_TYPES as MECHANICAL_CHECK_TYPES
 from .git_utils import ensure_worktree, get_worktree_path
 from .lock_utils import locked_or_skip
 from .port_utils import get_port_env_vars
@@ -451,14 +450,7 @@ def get_role_constraints(role: str) -> str:
 - Add notes to task files when human intervention is needed
 - This role runs without Claude invocation
 """,
-        "check_runner": """
-- You do NOT need a worktree (lightweight agent)
-- Run automated checks on provisional tasks with pending checks
-- For pytest-submodule: cherry-pick agent commits, run pytest
-- Record pass/fail results in the DB check_results field
-- Reject failed tasks back to agents with test output
-- This role runs without Claude invocation
-""",
+
     }
     return constraints.get(role, "- Follow standard development practices")
 
@@ -662,11 +654,9 @@ def process_auto_accept_tasks() -> None:
 def process_gatekeeper_reviews() -> None:
     """Process provisional tasks that have per-task checks.
 
-    Uses the DB-based check system (task.checks + task.check_results) rather
-    than the old review_utils filesystem.  check_runner records results and
-    rejects failures; this function acts as a safety-net pass that catches
-    any failed tasks check_runner may have missed (e.g. if it crashed between
-    recording a result and calling review_reject_task).
+    Uses the DB-based check system (task.checks + task.check_results).
+    Gatekeeper agents record results; this function acts as a safety-net
+    pass that rejects any failed tasks the gatekeeper may have missed.
 
     Tasks with all checks passed are left in provisional for human review —
     they are NOT auto-accepted here.
@@ -709,7 +699,7 @@ def process_gatekeeper_reviews() -> None:
             )
 
             if not all_run:
-                # Checks still pending — check_runner will handle them
+                # Checks still pending — gatekeeper agents will handle them
                 continue
 
             # All checks have been run — check results
@@ -720,9 +710,9 @@ def process_gatekeeper_reviews() -> None:
                 # reports.py will show this task in "in_review" section.
                 debug_log(f"All checks passed for task {task_id} — awaiting human review")
             else:
-                # Safety net: reject tasks with failed checks that check_runner
-                # may have missed.  check_runner normally handles this, but if
-                # it crashed we catch it here.
+                # Safety net: reject tasks with failed checks that gatekeeper
+                # agents may have missed (e.g. if a gatekeeper crashed
+                # between recording a result and rejecting the task).
                 feedback = db.get_check_feedback(task_id)
                 debug_log(f"Checks failed for task {task_id}: {failed_checks}")
 
@@ -750,11 +740,10 @@ def process_gatekeeper_reviews() -> None:
 
 
 def dispatch_gatekeeper_agents() -> None:
-    """Dispatch gatekeeper agents for provisional tasks with pending non-mechanical checks.
+    """Dispatch gatekeeper agents for provisional tasks with pending checks.
 
-    For each provisional task that has checks not handled by the mechanical
-    check_runner (MECHANICAL_CHECK_TYPES), find the first pending check and
-    spawn a gatekeeper agent to evaluate it.
+    For each provisional task that has pending checks, find the first one
+    and spawn a gatekeeper agent to evaluate it.
 
     Sequential execution: only one pending check is dispatched at a time per task.
     The next check will be dispatched on the following scheduler tick after the
@@ -805,12 +794,9 @@ def dispatch_gatekeeper_agents() -> None:
                 debug_log(f"Gatekeeper already active for task {task_id}, skipping")
                 continue
 
-            # Find the first pending check that is NOT mechanical
+            # Find the first pending check
             pending_gk_check = None
             for check_name in checks:
-                if check_name in MECHANICAL_CHECK_TYPES:
-                    # check_runner handles this one
-                    continue
                 if check_name in check_results and check_results[check_name].get("status") in ("pass", "fail"):
                     # Already completed
                     continue
@@ -1075,7 +1061,7 @@ def run_scheduler() -> None:
     # Process gatekeeper reviews for provisional tasks
     process_gatekeeper_reviews()
 
-    # Dispatch gatekeeper agents for pending non-mechanical checks
+    # Dispatch gatekeeper agents for pending checks
     dispatch_gatekeeper_agents()
 
     # Check for stale branches that need rebasing

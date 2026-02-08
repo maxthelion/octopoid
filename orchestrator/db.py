@@ -328,7 +328,7 @@ def create_task(
         blocked_by: Comma-separated list of blocking task IDs
         project_id: Optional parent project ID
         auto_accept: Skip provisional queue, go straight to done (inherits from project if None)
-        checks: Optional list of check names (e.g. ['pytest-submodule', 'vitest'])
+        checks: Optional list of check names (e.g. ['gk-testing-octopoid'])
 
     Returns:
         Created task as dictionary
@@ -919,7 +919,7 @@ def record_check_result(
 
     Args:
         task_id: Task identifier
-        check_name: Name of the check (e.g. 'pytest-submodule')
+        check_name: Name of the check (e.g. 'gk-testing-octopoid')
         status: Result status ('pass' or 'fail')
         summary: Brief description of the result
 

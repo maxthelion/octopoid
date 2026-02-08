@@ -140,7 +140,6 @@ _ROLE_TURN_LIMITS: dict[str, int] = {
     "proposer": 20,
     "inbox_poller": 10,
     "recycler": 10,
-    "check_runner": 10,
 }
 
 

@@ -653,12 +653,12 @@ class TestParseTaskFileChecks:
             "# [TASK-chkparse1] Task with checks\n"
             "ROLE: orchestrator_impl\n"
             "PRIORITY: P1\n"
-            "CHECKS: pytest-submodule,vitest\n"
+            "CHECKS: gk-testing-octopoid,vitest\n"
             "\n## Context\nSome context\n"
         )
 
         task = parse_task_file(task_path)
-        assert task["checks"] == ["pytest-submodule", "vitest"]
+        assert task["checks"] == ["gk-testing-octopoid", "vitest"]
 
     def test_parse_task_with_single_check(self, mock_orchestrator_dir):
         """parse_task_file handles a single check."""
@@ -667,12 +667,12 @@ class TestParseTaskFileChecks:
         task_path = mock_orchestrator_dir / "shared" / "queue" / "incoming" / "TASK-chkparse2.md"
         task_path.write_text(
             "# [TASK-chkparse2] Task with one check\n"
-            "CHECKS: pytest-submodule\n"
+            "CHECKS: gk-testing-octopoid\n"
             "\n## Context\nSome context\n"
         )
 
         task = parse_task_file(task_path)
-        assert task["checks"] == ["pytest-submodule"]
+        assert task["checks"] == ["gk-testing-octopoid"]
 
     def test_parse_task_without_checks(self, mock_orchestrator_dir):
         """parse_task_file returns empty list when no CHECKS line."""
@@ -695,12 +695,12 @@ class TestParseTaskFileChecks:
         task_path = mock_orchestrator_dir / "shared" / "queue" / "incoming" / "TASK-chkparse4.md"
         task_path.write_text(
             "# [TASK-chkparse4] Task with spaced checks\n"
-            "CHECKS: pytest-submodule , vitest , typecheck\n"
+            "CHECKS: gk-testing-octopoid , vitest , typecheck\n"
             "\n## Context\nSome context\n"
         )
 
         task = parse_task_file(task_path)
-        assert task["checks"] == ["pytest-submodule", "vitest", "typecheck"]
+        assert task["checks"] == ["gk-testing-octopoid", "vitest", "typecheck"]
 
 
 class TestCreateTaskChecks:
@@ -717,11 +717,11 @@ class TestCreateTaskChecks:
                     role="orchestrator_impl",
                     context="test context",
                     acceptance_criteria=["test"],
-                    checks=["pytest-submodule", "vitest"],
+                    checks=["gk-testing-octopoid", "vitest"],
                 )
 
                 content = task_path.read_text()
-                assert "CHECKS: pytest-submodule,vitest" in content
+                assert "CHECKS: gk-testing-octopoid,vitest" in content
 
     def test_create_task_without_checks_no_checks_line(self, mock_orchestrator_dir):
         """create_task without checks does not write CHECKS line."""
@@ -751,7 +751,7 @@ class TestCreateTaskChecks:
                     role="orchestrator_impl",
                     context="test context",
                     acceptance_criteria=["test"],
-                    checks=["pytest-submodule"],
+                    checks=["gk-testing-octopoid"],
                 )
 
                 task_id = task_path.stem.replace("TASK-", "")
@@ -762,7 +762,7 @@ class TestCreateTaskChecks:
                     )
                     row = cursor.fetchone()
                     assert row is not None, f"Task {task_id} not found in DB"
-                    assert row["checks"] == "pytest-submodule"
+                    assert row["checks"] == "gk-testing-octopoid"
 
     def test_create_task_checks_roundtrip_file_and_db(self, mock_orchestrator_dir, initialized_db):
         """Full roundtrip: create with checks, verify file has CHECKS line, DB has checks."""
@@ -776,17 +776,17 @@ class TestCreateTaskChecks:
                     role="orchestrator_impl",
                     context="test context",
                     acceptance_criteria=["test"],
-                    checks=["pytest-submodule", "vitest"],
+                    checks=["gk-testing-octopoid", "vitest"],
                 )
 
                 # Verify file
                 file_task = parse_task_file(task_path)
-                assert file_task["checks"] == ["pytest-submodule", "vitest"]
+                assert file_task["checks"] == ["gk-testing-octopoid", "vitest"]
 
                 # Verify DB
                 task_id = task_path.stem.replace("TASK-", "")
                 db_task = get_task(task_id)
-                assert db_task["checks"] == ["pytest-submodule", "vitest"]
+                assert db_task["checks"] == ["gk-testing-octopoid", "vitest"]
 
 
 class TestCreateTaskOrchestratorImplDefaultChecks:
@@ -824,7 +824,7 @@ class TestCreateTaskOrchestratorImplDefaultChecks:
 
                 content = task_path.read_text()
                 assert "CHECKS: custom-check,another-check" in content
-                assert "pytest-submodule" not in content
+                assert "gk-testing-octopoid" not in content
 
     def test_orchestrator_impl_default_checks_in_db(self, mock_orchestrator_dir, initialized_db):
         """Full integration: orchestrator_impl task gets default checks in both file and DB."""

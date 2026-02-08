@@ -1034,7 +1034,7 @@ def create_task(
         project_id: Optional parent project ID
         queue: Queue to create in (default: incoming, can be 'breakdown')
         checks: Optional list of check names that must pass before human review
-            (e.g. ['pytest-submodule', 'vitest'])
+            (e.g. ['gk-testing-octopoid'])
 
     Returns:
         Path to created task file
