@@ -18,7 +18,7 @@ from .config import get_orchestrator_dir
 _SENTINEL = object()
 
 # Schema version for migrations
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 
 def get_database_path() -> Path:
@@ -91,6 +91,7 @@ def init_schema() -> None:
                 pr_url TEXT,
                 checks TEXT,
                 check_results TEXT,
+                needs_rebase BOOLEAN DEFAULT FALSE,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (project_id) REFERENCES projects(id)
@@ -278,6 +279,14 @@ def migrate_schema() -> bool:
         if current < 6:
             try:
                 conn.execute("ALTER TABLE tasks ADD COLUMN check_results TEXT")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+
+
+        # Migration from v6 to v7: Add needs_rebase column
+        if current < 7:
+            try:
+                conn.execute("ALTER TABLE tasks ADD COLUMN needs_rebase BOOLEAN DEFAULT FALSE")
             except sqlite3.OperationalError:
                 pass  # Column already exists
 
@@ -1202,6 +1211,97 @@ def reset_stuck_claimed(timeout_minutes: int = 60) -> list[str]:
         reset_ids.append(task_id)
 
     return reset_ids
+
+
+
+# =============================================================================
+# Rebaser Operations
+# =============================================================================
+
+
+def mark_for_rebase(task_id: str, reason: str = 'stale') -> dict[str, Any] | None:
+    """Mark a task as needing rebase.
+
+    Args:
+        task_id: Task identifier
+        reason: Why rebase is needed (e.g. 'stale', 'manual')
+
+    Returns:
+        Updated task or None if not found
+    """
+    task = get_task(task_id)
+    if not task:
+        return None
+
+    result = update_task(task_id, needs_rebase=True)
+
+    # Record history event
+    add_history_event(
+        task_id,
+        'marked_for_rebase',
+        details=f'reason={reason}',
+    )
+
+    return result
+
+
+def clear_rebase_flag(task_id: str) -> dict[str, Any] | None:
+    """Clear the needs_rebase flag after successful rebase.
+
+    Args:
+        task_id: Task identifier
+
+    Returns:
+        Updated task or None if not found
+    """
+    result = update_task(task_id, needs_rebase=False)
+
+    add_history_event(
+        task_id,
+        'rebase_completed',
+    )
+
+    return result
+
+
+def get_tasks_needing_rebase(
+    queue: str | None = None,
+) -> list[dict[str, Any]]:
+    """Get tasks that have been marked for rebase.
+
+    Args:
+        queue: Optional queue filter (e.g. 'provisional')
+
+    Returns:
+        List of tasks needing rebase
+    """
+    with get_connection() as conn:
+        conditions = ['needs_rebase = TRUE']
+        params: list[Any] = []
+
+        if queue:
+            conditions.append('queue = ?')
+            params.append(queue)
+
+        where_clause = ' AND '.join(conditions)
+        cursor = conn.execute(
+            f"""
+            SELECT * FROM tasks
+            WHERE {where_clause}
+            ORDER BY
+                CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 ELSE 2 END,
+                created_at ASC
+            """,
+            params,
+        )
+
+        tasks = []
+        for row in cursor.fetchall():
+            task = dict(row)
+            task['checks'] = _parse_checks(task.get('checks'))
+            task['check_results'] = _parse_check_results(task.get('check_results'))
+            tasks.append(task)
+        return tasks
 
 
 # =============================================================================
