@@ -379,13 +379,25 @@ git -C {submodule_path} rev-parse --show-toplevel
 # Must show: {submodule_path}
 ```
 
+## Before Starting: Check if Work is Already Done
+
+FIRST, review the acceptance criteria in the task. Check whether each criterion
+is already satisfied by the existing code on main. If ALL criteria are already met:
+1. Write to your notes file: "ALREADY_DONE: All acceptance criteria are met by existing code."
+2. List which criteria you checked and how they're satisfied.
+3. Stop immediately — do not make any commits or changes.
+
+This check should take no more than 3-5 tool calls. Do not proceed to implementation
+if the work is already complete.
+
 ## General Instructions
 
-1. Analyze the orchestrator codebase to understand the context
-2. Implement the changes required by the task
-3. Write or update tests as needed
-4. Commit your changes with clear messages
-5. When done, summarize what you implemented
+1. Check acceptance criteria against existing code (see above)
+2. If work is needed, analyze the orchestrator codebase to understand the context
+3. Implement the changes required by the task
+4. Write or update tests as needed
+5. Commit your changes with clear messages
+6. When done, summarize what you implemented
 
 Remember:
 - Follow existing orchestrator code patterns

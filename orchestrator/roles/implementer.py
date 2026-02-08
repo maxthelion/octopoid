@@ -606,6 +606,16 @@ understand your reasoning and help future agents working on related tasks.
 Write notes after significant exploration, before attempting a complex
 change, and when you discover something non-obvious about the codebase.
 
+## Before Starting: Check if Work is Already Done
+
+FIRST, review the acceptance criteria in the task. Check whether each criterion
+is already satisfied by the existing code. If ALL criteria are already met:
+1. Write to your notes file: "ALREADY_DONE: All acceptance criteria are met by existing code."
+2. List which criteria you checked and how they're satisfied.
+3. Stop immediately — do not make any commits or changes.
+
+This check should take no more than 3-5 tool calls.
+
 ## Instructions
 
 1. **First, create a plan document** at `.orchestrator/agents/{self.agent_name}/plan.md`:
