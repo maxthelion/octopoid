@@ -1099,3 +1099,154 @@ class TestMigrationV9:
                     ("test",),
                 )
                 # No error means column exists
+
+
+class TestEnsureSchemaCurrentAutoMigration:
+    """Tests for ensure_schema_current() auto-migration on first DB access."""
+
+    def test_auto_migrates_stale_schema(self, mock_config, db_path):
+        """Detects stale schema version and runs migration automatically."""
+        import orchestrator.db as db_mod
+        with patch('orchestrator.db.get_database_path', return_value=db_path):
+            # Initialize at current version
+            db_mod.init_schema()
+
+            # Manually downgrade version to simulate a stale DB
+            import sqlite3
+            conn = sqlite3.connect(str(db_path))
+            conn.execute(
+                "INSERT OR REPLACE INTO schema_info (key, value) VALUES (?, ?)",
+                ("version", "7"),
+            )
+            conn.commit()
+            conn.close()
+
+            # Reset the flag so ensure_schema_current() runs again
+            db_mod._schema_checked = False
+
+            # Call ensure_schema_current — it should detect v7 < SCHEMA_VERSION and migrate
+            db_mod.ensure_schema_current()
+
+            # Verify schema is now current
+            version = db_mod.get_schema_version()
+            assert version == db_mod.SCHEMA_VERSION
+
+    def test_no_migration_when_current(self, mock_config, db_path):
+        """Does not run migration when schema is already at current version."""
+        import orchestrator.db as db_mod
+        with patch('orchestrator.db.get_database_path', return_value=db_path):
+            db_mod.init_schema()
+
+            db_mod._schema_checked = False
+
+            with patch('orchestrator.db.migrate_schema') as mock_migrate:
+                db_mod.ensure_schema_current()
+                mock_migrate.assert_not_called()
+
+    def test_flag_prevents_repeated_checks(self, mock_config, db_path):
+        """After first check, subsequent calls are no-ops."""
+        import orchestrator.db as db_mod
+        with patch('orchestrator.db.get_database_path', return_value=db_path):
+            db_mod.init_schema()
+            db_mod._schema_checked = False
+
+            # First call reads schema version
+            db_mod.ensure_schema_current()
+            assert db_mod._schema_checked is True
+
+            # Second call should be a no-op (doesn't touch DB)
+            with patch('orchestrator.db.get_schema_version') as mock_get:
+                db_mod.ensure_schema_current()
+                mock_get.assert_not_called()
+
+    def test_handles_missing_schema_info_table(self, mock_config, db_path):
+        """Handles DB that exists but has no schema_info table."""
+        import orchestrator.db as db_mod
+        with patch('orchestrator.db.get_database_path', return_value=db_path):
+            # Create an empty DB file (no tables at all)
+            import sqlite3
+            conn = sqlite3.connect(str(db_path))
+            conn.execute("CREATE TABLE IF NOT EXISTS _dummy (x TEXT)")
+            conn.commit()
+            conn.close()
+
+            db_mod._schema_checked = False
+
+            # Should not crash — should detect missing version and run init_schema
+            db_mod.ensure_schema_current()
+            assert db_mod._schema_checked is True
+
+            # Verify schema was fully created
+            version = db_mod.get_schema_version()
+            assert version == db_mod.SCHEMA_VERSION
+
+    def test_handles_nonexistent_db(self, mock_config, db_path):
+        """No-op when database file does not exist yet."""
+        import orchestrator.db as db_mod
+        with patch('orchestrator.db.get_database_path', return_value=db_path):
+            # Ensure DB does not exist
+            if db_path.exists():
+                db_path.unlink()
+
+            db_mod._schema_checked = False
+
+            with patch('orchestrator.db.migrate_schema') as mock_migrate:
+                db_mod.ensure_schema_current()
+                mock_migrate.assert_not_called()
+
+            assert db_mod._schema_checked is True
+
+    def test_get_connection_triggers_auto_migration(self, mock_config, db_path):
+        """get_connection() triggers auto-migration on first call."""
+        import orchestrator.db as db_mod
+        with patch('orchestrator.db.get_database_path', return_value=db_path):
+            # Initialize schema at current version
+            db_mod.init_schema()
+
+            # Downgrade version
+            import sqlite3
+            conn = sqlite3.connect(str(db_path))
+            conn.execute(
+                "INSERT OR REPLACE INTO schema_info (key, value) VALUES (?, ?)",
+                ("version", "7"),
+            )
+            conn.commit()
+            conn.close()
+
+            # Reset flag
+            db_mod._schema_checked = False
+
+            # Use get_connection() — should auto-migrate
+            with db_mod.get_connection() as conn:
+                row = conn.execute(
+                    "SELECT value FROM schema_info WHERE key = 'version'"
+                ).fetchone()
+                assert int(row["value"]) == db_mod.SCHEMA_VERSION
+
+    def test_accept_completion_works_after_auto_migration(self, mock_config, db_path):
+        """accept_completion works even with stale schema after auto-migration."""
+        import orchestrator.db as db_mod
+        with patch('orchestrator.db.get_database_path', return_value=db_path):
+            db_mod.init_schema()
+
+            # Create a task
+            db_mod.create_task(task_id="mig_test1", file_path="/tmp/mig1.md", role="orchestrator_impl")
+            db_mod.update_task_queue("mig_test1", "provisional")
+
+            # Downgrade version to simulate stale DB
+            import sqlite3
+            conn = sqlite3.connect(str(db_path))
+            conn.execute(
+                "INSERT OR REPLACE INTO schema_info (key, value) VALUES (?, ?)",
+                ("version", "7"),
+            )
+            conn.commit()
+            conn.close()
+
+            # Reset flag to force re-check
+            db_mod._schema_checked = False
+
+            # accept_completion should work (auto-migrates on first access)
+            result = db_mod.accept_completion("mig_test1", accepted_by="test")
+            assert result is not None
+            assert result["queue"] == "done"

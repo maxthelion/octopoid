@@ -57,9 +57,12 @@ agents: []
 @pytest.fixture
 def mock_config(mock_orchestrator_dir, temp_dir):
     """Patch config functions to use the mock directory."""
+    import orchestrator.db as db_mod
+    db_mod._schema_checked = False
     with patch('orchestrator.config.find_parent_project', return_value=temp_dir):
         with patch('orchestrator.config.get_orchestrator_dir', return_value=mock_orchestrator_dir):
             yield mock_orchestrator_dir
+    db_mod._schema_checked = False
 
 
 @pytest.fixture
@@ -75,9 +78,13 @@ def initialized_db(mock_config, db_path):
     """Initialize the database schema."""
     # Patch get_database_path to use our test path
     with patch('orchestrator.db.get_database_path', return_value=db_path):
-        from orchestrator.db import init_schema
-        init_schema()
+        import orchestrator.db as db_mod
+        # Reset auto-migration flag so each test starts fresh
+        db_mod._schema_checked = False
+        db_mod.init_schema()
         yield db_path
+        # Reset after test to avoid polluting other tests
+        db_mod._schema_checked = False
 
 
 @pytest.fixture

@@ -20,15 +20,71 @@ _SENTINEL = object()
 # Schema version for migrations
 SCHEMA_VERSION = 9
 
+# Module-level flag to avoid checking schema version on every connection.
+# Reset to False if tests need to re-trigger migration.
+_schema_checked = False
+
 
 def get_database_path() -> Path:
     """Get path to the SQLite database file."""
     return get_orchestrator_dir() / "state.db"
 
 
+def ensure_schema_current() -> None:
+    """Auto-detect schema version mismatch and run pending migrations.
+
+    Called once per process on first get_connection() call.  Safe to call
+    multiple times -- subsequent calls are no-ops until _schema_checked is
+    reset (e.g. in tests).
+
+    If the database file does not yet exist, this is a no-op (init_schema()
+    will be called by the caller or migrate.py).
+
+    Uses a raw sqlite3 connection (not get_connection()) to avoid
+    infinite recursion since get_connection() calls us.
+    """
+    global _schema_checked
+    if _schema_checked:
+        return
+
+    db_path = get_database_path()
+    if not db_path.exists():
+        # DB does not exist yet -- nothing to migrate.
+        _schema_checked = True
+        return
+
+    # Read schema version with a raw connection to avoid recursion.
+    current = None
+    try:
+        conn = sqlite3.connect(str(db_path), timeout=10.0)
+        conn.row_factory = sqlite3.Row
+        try:
+            row = conn.execute(
+                "SELECT value FROM schema_info WHERE key = 'version'"
+            ).fetchone()
+            if row:
+                current = int(row["value"])
+        except sqlite3.OperationalError:
+            pass  # schema_info table may not exist
+        finally:
+            conn.close()
+    except Exception:
+        pass  # Cannot connect -- let migrate_schema() handle it.
+
+    # Set flag BEFORE calling migrate_schema() so that
+    # get_connection() calls inside migrate_schema() do not recurse.
+    _schema_checked = True
+
+    if current is None or current < SCHEMA_VERSION:
+        migrate_schema()
+
+
 @contextmanager
 def get_connection() -> Generator[sqlite3.Connection, None, None]:
     """Get a database connection with proper settings.
+
+    On first call per process, checks schema version and runs pending
+    migrations if needed (via ensure_schema_current()).
 
     Configures:
     - WAL mode for better concurrent read/write
@@ -38,6 +94,9 @@ def get_connection() -> Generator[sqlite3.Connection, None, None]:
     Yields:
         SQLite connection with transaction management
     """
+    # Auto-migrate on first access (no-op after first call).
+    ensure_schema_current()
+
     db_path = get_database_path()
     conn = sqlite3.connect(db_path, timeout=30.0)
     conn.row_factory = sqlite3.Row

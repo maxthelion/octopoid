@@ -254,31 +254,79 @@ def rebase_onto_origin(cwd: Path, branch: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
+def _find_venv_python(agent_sub: Path) -> Path | None:
+    """Find the Python executable for running tests.
+
+    Searches (in order):
+    1. agent_sub/venv/bin/python
+    2. <repo_root>/.orchestrator/venv/bin/python
+    3. <submodule_dir>/venv/bin/python
+
+    Returns the path or None if not found.
+    """
+    venv_python = agent_sub / "venv" / "bin" / "python"
+    if venv_python.exists():
+        return venv_python
+    venv_python = _repo_root() / ".orchestrator" / "venv" / "bin" / "python"
+    if venv_python.exists():
+        return venv_python
+    venv_python = _submodule_dir() / "venv" / "bin" / "python"
+    if venv_python.exists():
+        return venv_python
+    return None
+
+
+def _run_pytest(venv_python: Path, cwd: Path) -> subprocess.CompletedProcess:
+    """Run pytest and return the CompletedProcess."""
+    return run(
+        [str(venv_python), "-m", "pytest", "tests/", "-v", "--tb=short"],
+        cwd=cwd,
+        check=False,
+        timeout=300,
+    )
+
+
+def parse_test_failures(pytest_output: str) -> set[str]:
+    """Extract the set of FAILED test node IDs from pytest verbose output.
+
+    Looks for lines matching ``FAILED tests/test_foo.py::TestBar::test_baz``
+    in the short test summary section, or lines containing ``FAILED`` in the
+    per-test result lines.
+
+    Returns a set of test node ID strings (e.g.
+    ``{"tests/test_foo.py::TestBar::test_baz"}``).
+    """
+    import re
+    failures: set[str] = set()
+    for line in pytest_output.splitlines():
+        # Match "FAILED tests/..." lines from the summary section
+        m = re.match(r"^FAILED\s+(\S+)", line.strip())
+        if m:
+            failures.add(m.group(1))
+            continue
+        # Match verbose-mode lines like "tests/test_foo.py::test_bar FAILED"
+        m = re.match(r"^(tests/\S+::\S+)\s+FAILED", line.strip())
+        if m:
+            failures.add(m.group(1))
+    return failures
+
+
 def run_tests(agent_sub: Path) -> bool:
     """Run pytest in the agent's submodule worktree.
 
     Returns True if tests pass, False otherwise.
-    """
-    # Find venv python
-    venv_python = agent_sub / "venv" / "bin" / "python"
-    if not venv_python.exists():
-        # Try parent .orchestrator venv
-        venv_python = _repo_root() / ".orchestrator" / "venv" / "bin" / "python"
-    if not venv_python.exists():
-        # Try main checkout submodule venv
-        venv_python = _submodule_dir() / "venv" / "bin" / "python"
 
-    if not venv_python.exists():
+    Note: This is the simple version that does NOT compare against a
+    baseline.  Use ``run_tests_with_baseline()`` for baseline-aware
+    approval.
+    """
+    venv_python = _find_venv_python(agent_sub)
+    if not venv_python:
         print("  WARNING: No venv found, skipping tests")
         return True
 
     print("  Running tests...")
-    result = run(
-        [str(venv_python), "-m", "pytest", "tests/", "-v", "--tb=short"],
-        cwd=agent_sub,
-        check=False,
-        timeout=300,
-    )
+    result = _run_pytest(venv_python, agent_sub)
 
     if result.returncode != 0:
         print(f"\n  Tests FAILED (exit code {result.returncode})")
@@ -291,6 +339,88 @@ def run_tests(agent_sub: Path) -> bool:
         if "passed" in line:
             print(f"  {line.strip()}")
             break
+
+    return True
+
+
+def run_tests_with_baseline(agent_sub: Path, branch: str) -> bool:
+    """Run pytest on origin/main (baseline) then on the agent branch.
+
+    Only NEW test failures (not present in the baseline) block approval.
+    Pre-existing failures on main are reported but tolerated.
+
+    Args:
+        agent_sub: Path to the agent's submodule worktree.
+        branch: The agent's feature branch (already checked out).
+
+    Returns True if there are no NEW failures compared to baseline.
+    """
+    venv_python = _find_venv_python(agent_sub)
+    if not venv_python:
+        print("  WARNING: No venv found, skipping tests")
+        return True
+
+    # --- Step 1: Capture baseline failures on origin/main ---
+    print("  4a. Capturing baseline test results on origin/main...")
+    # Temporarily check out origin/main
+    stash = run(["git", "stash"], cwd=agent_sub, check=False)
+    checkout_main = run(
+        ["git", "checkout", "origin/main", "--detach"],
+        cwd=agent_sub, check=False,
+    )
+    if checkout_main.returncode != 0:
+        print(f"  WARNING: Cannot checkout origin/main for baseline: {checkout_main.stderr.strip()}")
+        print("  Falling back to simple test run (no baseline comparison).")
+        # Restore branch
+        run(["git", "checkout", branch], cwd=agent_sub, check=False)
+        if stash.returncode == 0 and "No local changes" not in stash.stdout:
+            run(["git", "stash", "pop"], cwd=agent_sub, check=False)
+        return run_tests(agent_sub)
+
+    baseline_result = _run_pytest(venv_python, agent_sub)
+    baseline_failures = parse_test_failures(baseline_result.stdout)
+
+    if baseline_failures:
+        print(f"  Baseline (origin/main): {len(baseline_failures)} pre-existing failure(s)")
+        for f in sorted(baseline_failures):
+            print(f"    [baseline] {f}")
+    else:
+        print("  Baseline (origin/main): all tests pass")
+
+    # --- Step 2: Restore agent branch and run tests ---
+    print(f"  4b. Running tests on {branch}...")
+    run(["git", "checkout", branch], cwd=agent_sub, check=False)
+    if stash.returncode == 0 and "No local changes" not in stash.stdout:
+        run(["git", "stash", "pop"], cwd=agent_sub, check=False)
+
+    branch_result = _run_pytest(venv_python, agent_sub)
+    branch_failures = parse_test_failures(branch_result.stdout)
+
+    # --- Step 3: Compare ---
+    new_failures = branch_failures - baseline_failures
+    fixed_in_branch = baseline_failures - branch_failures
+
+    if fixed_in_branch:
+        print(f"  Branch fixes {len(fixed_in_branch)} previously-failing test(s)")
+
+    if new_failures:
+        print(f"\n  NEW test failures ({len(new_failures)}):")
+        for f in sorted(new_failures):
+            print(f"    [NEW] {f}")
+        # Show tail of output for debugging
+        lines = branch_result.stdout.strip().splitlines()
+        tail = lines[-20:] if len(lines) > 20 else lines
+        print("\n  " + "\n  ".join(tail))
+        return False
+
+    if branch_failures:
+        print(f"  Branch has {len(branch_failures)} failure(s), all pre-existing. Approved.")
+    else:
+        # Print summary line
+        for line in branch_result.stdout.splitlines():
+            if "passed" in line:
+                print(f"  {line.strip()}")
+                break
 
     return True
 
@@ -359,10 +489,28 @@ def accept_in_db(task_id: str) -> bool:
     in the 'done' queue, just ensures claimed_by is cleared.
 
     Uses update_task_queue() to guarantee side effects (unblocking
-    dependents, clearing claimed_by) are always applied.
+    dependents, clearing claimed_by) are always applied.  All error paths
+    use update_task_queue() so that raw SQL is never needed.
     """
     # Check if already done to avoid duplicate history entries
-    task = get_task(task_id)
+    try:
+        task = get_task(task_id)
+    except Exception as exc:
+        print(f"  WARNING: get_task() failed: {exc}")
+        print("  Attempting update_task_queue() directly...")
+        try:
+            update_task_queue(
+                task_id,
+                "done",
+                claimed_by=None,
+                history_event="force_accepted",
+                history_details=f"get_task failed: {exc}",
+            )
+            return True
+        except Exception as exc2:
+            print(f"  ERROR: update_task_queue() also failed: {exc2}")
+            return False
+
     if task and task.get("queue") == "done":
         # Already accepted — just ensure claimed_by is cleared
         if task.get("claimed_by"):
@@ -370,24 +518,47 @@ def accept_in_db(task_id: str) -> bool:
             update_task(task_id, claimed_by=None)
         return True
 
-    accept_completion(task_id, accepted_by="human")
+    try:
+        accept_completion(task_id, accepted_by="human")
+    except Exception as exc:
+        print(f"  WARNING: accept_completion() failed: {exc}")
+        print("  Falling back to update_task_queue()...")
+        try:
+            update_task_queue(
+                task_id,
+                "done",
+                claimed_by=None,
+                history_event="force_accepted",
+                history_details=f"accept_completion failed: {exc}",
+            )
+        except Exception as exc2:
+            print(f"  ERROR: update_task_queue() also failed: {exc2}")
+            return False
 
     # Verify
-    task = get_task(task_id)
+    try:
+        task = get_task(task_id)
+    except Exception as exc:
+        print(f"  WARNING: verification get_task() failed: {exc}")
+        return True  # non-fatal — we already called accept_completion
+
     if not task:
         print("  WARNING: task not found in DB after acceptance")
         return True  # non-fatal
 
     if task.get("queue") != "done":
         print(f"  WARNING: DB shows queue='{task.get('queue')}', fixing...")
-        # Use update_task_queue to ensure side effects fire
-        update_task_queue(
-            task_id,
-            "done",
-            claimed_by=None,
-            history_event="force_accepted",
-            history_details="fixed inconsistent queue state",
-        )
+        try:
+            update_task_queue(
+                task_id,
+                "done",
+                claimed_by=None,
+                history_event="force_accepted",
+                history_details="fixed inconsistent queue state",
+            )
+        except Exception as exc:
+            print(f"  ERROR: force fix failed: {exc}")
+            return False
         return True
 
     if task.get("claimed_by"):
@@ -496,13 +667,13 @@ def approve_orchestrator_task(task_id_prefix: str) -> int:
             return 1
         print("   Rebased")
 
-    # Step 4: Run tests (in agent worktree)
+    # Step 4: Run tests with baseline comparison (in agent worktree)
     if has_sub:
-        print("\n4. Running tests on rebased branch...")
-        if not run_tests(agent_sub):
-            print("   Tests failed. Fix and re-run.")
+        print("\n4. Running tests with baseline comparison...")
+        if not run_tests_with_baseline(agent_sub, sub_branch):
+            print("   NEW test failures detected. Fix and re-run.")
             return 1
-        print("   Tests passed")
+        print("   Tests approved (no new failures)")
     else:
         print("\n4. Skipping tests (no submodule commits)")
 
