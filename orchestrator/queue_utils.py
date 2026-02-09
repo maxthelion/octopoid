@@ -475,13 +475,19 @@ def submit_completion(
     The task stays in provisional until the pre-check accepts or rejects it.
     Only available in DB mode - in file mode, falls back to complete_task().
 
+    Auto-rejects 0-commit submissions from tasks that were previously claimed
+    (attempt_count > 0 or rejection_count > 0), moving them back to incoming
+    with feedback instead of sending them to provisional where they would
+    waste gatekeeper cycles.
+
     Args:
         task_path: Path to the claimed task file
         commits_count: Number of commits made during implementation
         turns_used: Number of Claude turns used
 
     Returns:
-        New path in provisional queue, or None if DB not enabled
+        New path in provisional queue (or incoming if auto-rejected),
+        or None if DB not enabled
     """
     task_path = Path(task_path)
 
@@ -496,8 +502,23 @@ def submit_completion(
         # Task not in DB, fall back to file-based
         return complete_task(task_path, f"commits={commits_count}, turns={turns_used}")
 
+    # Auto-reject 0-commit submissions from previously-claimed tasks.
+    # This prevents empty submissions from flowing to provisional and
+    # wasting gatekeeper cycles on unchanged code.
+    task_id = db_task["id"]
+    attempt_count = db_task.get("attempt_count", 0)
+    rejection_count = db_task.get("rejection_count", 0)
+    previously_claimed = attempt_count > 0 or rejection_count > 0
+
+    if commits_count == 0 and previously_claimed:
+        return reject_completion(
+            task_path,
+            reason="No commits made. Read the task file and rejection feedback, then implement the required changes.",
+            accepted_by="submit_completion",
+        )
+
     # Update DB to provisional
-    db.submit_completion(db_task["id"], commits_count=commits_count, turns_used=turns_used)
+    db.submit_completion(task_id, commits_count=commits_count, turns_used=turns_used)
 
     # Move file to provisional directory
     provisional_dir = get_queue_subdir("provisional")
@@ -513,7 +534,7 @@ def submit_completion(
     os.rename(task_path, dest)
 
     # Update file_path in DB to reflect new location
-    db.update_task(db_task["id"], file_path=str(dest))
+    db.update_task(task_id, file_path=str(dest))
 
     return dest
 
