@@ -281,8 +281,10 @@ class TestToolCounterInOrchestratorImpl:
     @patch("orchestrator.roles.orchestrator_impl.claim_task")
     @patch("orchestrator.config.is_db_enabled", return_value=True)
     @patch("orchestrator.config.get_notes_dir")
+    @patch("orchestrator.db.get_task", return_value=None)
     def test_orch_impl_reads_tool_count(
         self,
+        mock_get_task,
         mock_notes_dir,
         mock_db_enabled,
         mock_claim,
@@ -345,8 +347,10 @@ class TestToolCounterInOrchestratorImpl:
     @patch("orchestrator.roles.orchestrator_impl.claim_task")
     @patch("orchestrator.config.is_db_enabled", return_value=True)
     @patch("orchestrator.config.get_notes_dir")
+    @patch("orchestrator.db.get_task", return_value=None)
     def test_orch_impl_falls_back_to_200_when_no_counter(
         self,
+        mock_get_task,
         mock_notes_dir,
         mock_db_enabled,
         mock_claim,
