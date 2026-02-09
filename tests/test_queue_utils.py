@@ -864,3 +864,252 @@ class TestCreateTaskOrchestratorImplDefaultChecks:
 
                 content = task_path.read_text()
                 assert "CHECKS:" not in content
+
+
+class TestFindTaskFile:
+    """Tests for find_task_file function."""
+
+    def test_find_in_incoming(self, mock_orchestrator_dir):
+        """find_task_file locates a task in incoming/."""
+        incoming = mock_orchestrator_dir / "shared" / "queue" / "incoming"
+        incoming.mkdir(parents=True, exist_ok=True)
+        task_path = incoming / "TASK-find001.md"
+        task_path.write_text("# [TASK-find001] Test\n")
+
+        with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "shared" / "queue"):
+            from orchestrator.queue_utils import find_task_file
+
+            result = find_task_file("find001")
+            assert result is not None
+            assert result == task_path
+
+    def test_find_in_escalated(self, mock_orchestrator_dir):
+        """find_task_file locates a task in escalated/."""
+        escalated = mock_orchestrator_dir / "shared" / "queue" / "escalated"
+        escalated.mkdir(parents=True, exist_ok=True)
+        task_path = escalated / "TASK-find002.md"
+        task_path.write_text("# [TASK-find002] Test\n")
+
+        with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "shared" / "queue"):
+            from orchestrator.queue_utils import find_task_file
+
+            result = find_task_file("find002")
+            assert result is not None
+            assert result == task_path
+
+    def test_find_in_done(self, mock_orchestrator_dir):
+        """find_task_file locates a task in done/."""
+        done = mock_orchestrator_dir / "shared" / "queue" / "done"
+        done.mkdir(parents=True, exist_ok=True)
+        task_path = done / "TASK-find003.md"
+        task_path.write_text("# [TASK-find003] Test\n")
+
+        with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "shared" / "queue"):
+            from orchestrator.queue_utils import find_task_file
+
+            result = find_task_file("find003")
+            assert result is not None
+            assert result == task_path
+
+    def test_find_in_recycled(self, mock_orchestrator_dir):
+        """find_task_file locates a task in recycled/."""
+        recycled = mock_orchestrator_dir / "shared" / "queue" / "recycled"
+        recycled.mkdir(parents=True, exist_ok=True)
+        task_path = recycled / "TASK-find004.md"
+        task_path.write_text("# [TASK-find004] Test\n")
+
+        with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "shared" / "queue"):
+            from orchestrator.queue_utils import find_task_file
+
+            result = find_task_file("find004")
+            assert result is not None
+            assert result == task_path
+
+    def test_find_not_found(self, mock_orchestrator_dir):
+        """find_task_file returns None when task doesn't exist."""
+        with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "shared" / "queue"):
+            from orchestrator.queue_utils import find_task_file
+
+            result = find_task_file("nonexistent")
+            assert result is None
+
+    def test_find_in_breakdown(self, mock_orchestrator_dir):
+        """find_task_file locates a task in breakdown/."""
+        breakdown = mock_orchestrator_dir / "shared" / "queue" / "breakdown"
+        breakdown.mkdir(parents=True, exist_ok=True)
+        task_path = breakdown / "TASK-find005.md"
+        task_path.write_text("# [TASK-find005] Test\n")
+
+        with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "shared" / "queue"):
+            from orchestrator.queue_utils import find_task_file
+
+            result = find_task_file("find005")
+            assert result is not None
+            assert result == task_path
+
+
+class TestResetTask:
+    """Tests for reset_task function."""
+
+    def test_reset_from_provisional(self, mock_orchestrator_dir, initialized_db):
+        """reset_task moves a task from provisional to incoming and resets DB state."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "shared" / "queue"):
+                from orchestrator.queue_utils import reset_task
+                from orchestrator.db import create_task as db_create, update_task_queue, update_task, get_task
+
+                # Set up task in provisional
+                prov_dir = mock_orchestrator_dir / "shared" / "queue" / "provisional"
+                prov_dir.mkdir(parents=True, exist_ok=True)
+                task_path = prov_dir / "TASK-rst001.md"
+                task_path.write_text("# [TASK-rst001] Test reset\n")
+
+                db_create(task_id="rst001", file_path=str(task_path))
+                update_task_queue("rst001", "provisional", claimed_by="agent-1")
+                update_task("rst001", rejection_count=2)
+
+                # Reset
+                result = reset_task("rst001")
+
+                assert result["action"] == "reset"
+                assert "incoming" in result["new_path"]
+
+                # DB should be clean
+                task = get_task("rst001")
+                assert task["queue"] == "incoming"
+                assert task["claimed_by"] is None
+                assert task["rejection_count"] == 0
+
+                # File should be in incoming
+                incoming_path = mock_orchestrator_dir / "shared" / "queue" / "incoming" / "TASK-rst001.md"
+                assert incoming_path.exists()
+
+    def test_reset_from_escalated(self, mock_orchestrator_dir, initialized_db):
+        """reset_task moves a task from escalated to incoming."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "shared" / "queue"):
+                from orchestrator.queue_utils import reset_task
+                from orchestrator.db import create_task as db_create, update_task_queue, get_task
+
+                escalated_dir = mock_orchestrator_dir / "shared" / "queue" / "escalated"
+                escalated_dir.mkdir(parents=True, exist_ok=True)
+                task_path = escalated_dir / "TASK-rst002.md"
+                task_path.write_text("# [TASK-rst002] Test reset from escalated\n")
+
+                db_create(task_id="rst002", file_path=str(task_path))
+                update_task_queue("rst002", "escalated")
+
+                result = reset_task("rst002")
+                assert result["action"] == "reset"
+
+                task = get_task("rst002")
+                assert task["queue"] == "incoming"
+
+    def test_reset_file_not_found(self, mock_orchestrator_dir, initialized_db):
+        """reset_task raises FileNotFoundError when file doesn't exist."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "shared" / "queue"):
+                from orchestrator.queue_utils import reset_task
+
+                with pytest.raises(FileNotFoundError):
+                    reset_task("nonexistent")
+
+    def test_reset_already_in_incoming(self, mock_orchestrator_dir, initialized_db):
+        """reset_task is a no-op for file move when already in incoming."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "shared" / "queue"):
+                from orchestrator.queue_utils import reset_task
+                from orchestrator.db import create_task as db_create, get_task
+
+                incoming_dir = mock_orchestrator_dir / "shared" / "queue" / "incoming"
+                incoming_dir.mkdir(parents=True, exist_ok=True)
+                task_path = incoming_dir / "TASK-rst003.md"
+                task_path.write_text("# [TASK-rst003] Already in incoming\n")
+
+                db_create(task_id="rst003", file_path=str(task_path))
+
+                result = reset_task("rst003")
+                assert result["action"] == "reset"
+                assert task_path.exists()  # file still there
+
+
+class TestHoldTask:
+    """Tests for hold_task function."""
+
+    def test_hold_from_incoming(self, mock_orchestrator_dir, initialized_db):
+        """hold_task moves a task from incoming to escalated."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "shared" / "queue"):
+                from orchestrator.queue_utils import hold_task
+                from orchestrator.db import create_task as db_create, get_task
+
+                incoming_dir = mock_orchestrator_dir / "shared" / "queue" / "incoming"
+                incoming_dir.mkdir(parents=True, exist_ok=True)
+                task_path = incoming_dir / "TASK-hld001.md"
+                task_path.write_text("# [TASK-hld001] Test hold\n")
+
+                db_create(task_id="hld001", file_path=str(task_path))
+
+                result = hold_task("hld001")
+
+                assert result["action"] == "held"
+                assert "escalated" in result["new_path"]
+
+                task = get_task("hld001")
+                assert task["queue"] == "escalated"
+                assert task["claimed_by"] is None
+
+                escalated_path = mock_orchestrator_dir / "shared" / "queue" / "escalated" / "TASK-hld001.md"
+                assert escalated_path.exists()
+
+    def test_hold_from_claimed(self, mock_orchestrator_dir, initialized_db):
+        """hold_task moves a claimed task to escalated and clears claimed_by."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "shared" / "queue"):
+                from orchestrator.queue_utils import hold_task
+                from orchestrator.db import create_task as db_create, update_task_queue, get_task
+
+                claimed_dir = mock_orchestrator_dir / "shared" / "queue" / "claimed"
+                claimed_dir.mkdir(parents=True, exist_ok=True)
+                task_path = claimed_dir / "TASK-hld002.md"
+                task_path.write_text("# [TASK-hld002] Test hold from claimed\n")
+
+                db_create(task_id="hld002", file_path=str(task_path))
+                update_task_queue("hld002", "claimed", claimed_by="agent-1")
+
+                result = hold_task("hld002")
+                assert result["action"] == "held"
+
+                task = get_task("hld002")
+                assert task["queue"] == "escalated"
+                assert task["claimed_by"] is None
+
+    def test_hold_file_not_found(self, mock_orchestrator_dir, initialized_db):
+        """hold_task raises FileNotFoundError when file doesn't exist."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "shared" / "queue"):
+                from orchestrator.queue_utils import hold_task
+
+                with pytest.raises(FileNotFoundError):
+                    hold_task("nonexistent")
+
+    def test_hold_clears_checks(self, mock_orchestrator_dir, initialized_db):
+        """hold_task clears checks and check_results in DB."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "shared" / "queue"):
+                from orchestrator.queue_utils import hold_task
+                from orchestrator.db import create_task as db_create, update_task, record_check_result, get_task
+
+                incoming_dir = mock_orchestrator_dir / "shared" / "queue" / "incoming"
+                incoming_dir.mkdir(parents=True, exist_ok=True)
+                task_path = incoming_dir / "TASK-hld003.md"
+                task_path.write_text("# [TASK-hld003] Test hold clears checks\n")
+
+                db_create(task_id="hld003", file_path=str(task_path), checks=["gk-testing"])
+                record_check_result("hld003", "gk-testing", "fail", "tests failed")
+
+                hold_task("hld003")
+
+                task = get_task("hld003")
+                assert task["checks"] == []
+                assert task["check_results"] == {}

@@ -514,6 +514,19 @@ def update_task(task_id: str, **fields) -> dict[str, Any] | None:
     if "blocked_by" in fields and (not fields["blocked_by"] or fields["blocked_by"] == "None"):
         fields["blocked_by"] = None
 
+    # Serialize JSON-typed fields so SQLite receives strings, not Python objects.
+    # checks: list[str] → comma-separated string (or None)
+    if "checks" in fields:
+        v = fields["checks"]
+        if isinstance(v, list):
+            fields["checks"] = ",".join(v) if v else None
+    # check_results: dict → JSON string (or None)
+    if "check_results" in fields:
+        v = fields["check_results"]
+        if isinstance(v, dict):
+            import json
+            fields["check_results"] = json.dumps(v) if v else None
+
     # Build SET clause dynamically
     set_clause = ", ".join(f"{k} = ?" for k in fields.keys())
     values = list(fields.values())

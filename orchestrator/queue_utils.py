@@ -36,6 +36,38 @@ def get_queue_subdir(subdir: str) -> Path:
     return path
 
 
+# All queue directories that find_task_file searches
+ALL_QUEUE_DIRS = [
+    "incoming", "claimed", "provisional", "done", "failed",
+    "rejected", "escalated", "recycled", "breakdown",
+    "needs_continuation",
+]
+
+
+def find_task_file(task_id: str) -> Path | None:
+    """Find a task's markdown file by scanning all queue directories.
+
+    Searches every queue subdirectory for TASK-<id>.md. This is the
+    canonical way to locate a task file when the DB's file_path may
+    be stale.
+
+    Args:
+        task_id: Task identifier (e.g. "9f5cda4b")
+
+    Returns:
+        Full Path to the task file, or None if not found in any queue
+    """
+    filename = f"TASK-{task_id}.md"
+    queue_dir = get_queue_dir()
+
+    for subdir in ALL_QUEUE_DIRS:
+        candidate = queue_dir / subdir / filename
+        if candidate.exists():
+            return candidate
+
+    return None
+
+
 def get_projects_dir() -> Path:
     """Get the projects directory.
 
@@ -475,13 +507,19 @@ def submit_completion(
     The task stays in provisional until the pre-check accepts or rejects it.
     Only available in DB mode - in file mode, falls back to complete_task().
 
+    Auto-rejects 0-commit submissions from tasks that were previously claimed
+    (attempt_count > 0 or rejection_count > 0), moving them back to incoming
+    with feedback instead of sending them to provisional where they would
+    waste gatekeeper cycles.
+
     Args:
         task_path: Path to the claimed task file
         commits_count: Number of commits made during implementation
         turns_used: Number of Claude turns used
 
     Returns:
-        New path in provisional queue, or None if DB not enabled
+        New path in provisional queue (or incoming if auto-rejected),
+        or None if DB not enabled
     """
     task_path = Path(task_path)
 
@@ -496,8 +534,23 @@ def submit_completion(
         # Task not in DB, fall back to file-based
         return complete_task(task_path, f"commits={commits_count}, turns={turns_used}")
 
+    # Auto-reject 0-commit submissions from previously-claimed tasks.
+    # This prevents empty submissions from flowing to provisional and
+    # wasting gatekeeper cycles on unchanged code.
+    task_id = db_task["id"]
+    attempt_count = db_task.get("attempt_count", 0)
+    rejection_count = db_task.get("rejection_count", 0)
+    previously_claimed = attempt_count > 0 or rejection_count > 0
+
+    if commits_count == 0 and previously_claimed:
+        return reject_completion(
+            task_path,
+            reason="No commits made. Read the task file and rejection feedback, then implement the required changes.",
+            accepted_by="submit_completion",
+        )
+
     # Update DB to provisional
-    db.submit_completion(db_task["id"], commits_count=commits_count, turns_used=turns_used)
+    db.submit_completion(task_id, commits_count=commits_count, turns_used=turns_used)
 
     # Move file to provisional directory
     provisional_dir = get_queue_subdir("provisional")
@@ -513,7 +566,7 @@ def submit_completion(
     os.rename(task_path, dest)
 
     # Update file_path in DB to reflect new location
-    db.update_task(db_task["id"], file_path=str(dest))
+    db.update_task(task_id, file_path=str(dest))
 
     return dest
 
@@ -897,6 +950,127 @@ def retry_task(task_path: Path | str) -> Path:
 
     os.rename(task_path, dest)
     return dest
+
+
+def reset_task(task_id: str) -> dict[str, Any]:
+    """Reset a task to incoming with clean state.
+
+    Locates the task file via find_task_file(), moves it to incoming/,
+    and resets all transient DB fields (queue, claimed_by, checks,
+    check_results, rejection_count).
+
+    Args:
+        task_id: Task identifier (e.g. "9f5cda4b")
+
+    Returns:
+        Dict with 'task_id', 'old_path', 'new_path', 'action'
+
+    Raises:
+        FileNotFoundError: If the task file cannot be found in any queue
+        LookupError: If the task does not exist in the DB (when DB is enabled)
+    """
+    # Locate the file
+    old_path = find_task_file(task_id)
+    if old_path is None:
+        raise FileNotFoundError(f"Task file TASK-{task_id}.md not found in any queue directory")
+
+    incoming_dir = get_queue_subdir("incoming")
+    dest = incoming_dir / old_path.name
+
+    # Move file (skip if already in incoming)
+    if old_path != dest:
+        os.rename(old_path, dest)
+
+    # Reset DB state
+    if is_db_enabled():
+        from . import db
+        db_task = db.get_task(task_id)
+        if not db_task:
+            raise LookupError(f"Task {task_id} not found in database")
+
+        db.update_task_queue(
+            task_id,
+            "incoming",
+            claimed_by=None,
+            claimed_at=None,
+            file_path=str(dest),
+            history_event="reset",
+            history_details="manual reset via reset_task()",
+        )
+        # Clear checks, check_results, rejection_count
+        db.update_task(
+            task_id,
+            checks=None,
+            check_results=None,
+            rejection_count=0,
+        )
+
+    return {
+        "task_id": task_id,
+        "old_path": str(old_path),
+        "new_path": str(dest),
+        "action": "reset",
+    }
+
+
+def hold_task(task_id: str) -> dict[str, Any]:
+    """Park a task in the escalated queue so the scheduler ignores it.
+
+    Locates the task file via find_task_file(), moves it to escalated/,
+    and updates the DB (queue=escalated, clears claimed_by, checks,
+    check_results).
+
+    Args:
+        task_id: Task identifier (e.g. "9f5cda4b")
+
+    Returns:
+        Dict with 'task_id', 'old_path', 'new_path', 'action'
+
+    Raises:
+        FileNotFoundError: If the task file cannot be found in any queue
+        LookupError: If the task does not exist in the DB (when DB is enabled)
+    """
+    # Locate the file
+    old_path = find_task_file(task_id)
+    if old_path is None:
+        raise FileNotFoundError(f"Task file TASK-{task_id}.md not found in any queue directory")
+
+    escalated_dir = get_queue_subdir("escalated")
+    dest = escalated_dir / old_path.name
+
+    # Move file (skip if already in escalated)
+    if old_path != dest:
+        os.rename(old_path, dest)
+
+    # Update DB state
+    if is_db_enabled():
+        from . import db
+        db_task = db.get_task(task_id)
+        if not db_task:
+            raise LookupError(f"Task {task_id} not found in database")
+
+        db.update_task_queue(
+            task_id,
+            "escalated",
+            claimed_by=None,
+            claimed_at=None,
+            file_path=str(dest),
+            history_event="held",
+            history_details="manual hold via hold_task()",
+        )
+        # Clear checks and check_results
+        db.update_task(
+            task_id,
+            checks=None,
+            check_results=None,
+        )
+
+    return {
+        "task_id": task_id,
+        "old_path": str(old_path),
+        "new_path": str(dest),
+        "action": "held",
+    }
 
 
 def mark_needs_continuation(

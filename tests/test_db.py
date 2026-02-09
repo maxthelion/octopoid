@@ -952,6 +952,121 @@ class TestStagingUrl:
             assert by_id["stg6"]["staging_url"] is None
 
 
+class TestUpdateTaskJsonFields:
+    """Tests for update_task() handling of JSON-typed fields (checks, check_results)."""
+
+    def test_update_task_checks_list_serialized(self, initialized_db):
+        """update_task with checks=list serializes to comma-separated string."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, update_task, get_task, get_connection
+
+            create_task(task_id="jf1", file_path="/jf1.md")
+
+            update_task("jf1", checks=["gk-testing", "vitest"])
+
+            task = get_task("jf1")
+            assert task["checks"] == ["gk-testing", "vitest"]
+
+            # Raw DB value should be comma-separated string
+            with get_connection() as conn:
+                cursor = conn.execute(
+                    "SELECT checks FROM tasks WHERE id = ?", ("jf1",)
+                )
+                row = cursor.fetchone()
+                assert row["checks"] == "gk-testing,vitest"
+
+    def test_update_task_checks_empty_list_stores_null(self, initialized_db):
+        """update_task with checks=[] stores NULL."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, update_task, get_task
+
+            create_task(task_id="jf2", file_path="/jf2.md", checks=["old-check"])
+
+            update_task("jf2", checks=[])
+
+            task = get_task("jf2")
+            assert task["checks"] == []
+
+    def test_update_task_checks_none_stores_null(self, initialized_db):
+        """update_task with checks=None stores NULL."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, update_task, get_task, get_connection
+
+            create_task(task_id="jf3", file_path="/jf3.md", checks=["old-check"])
+
+            update_task("jf3", checks=None)
+
+            task = get_task("jf3")
+            assert task["checks"] == []
+
+            with get_connection() as conn:
+                cursor = conn.execute(
+                    "SELECT checks, typeof(checks) as ctype FROM tasks WHERE id = ?",
+                    ("jf3",),
+                )
+                row = cursor.fetchone()
+                assert row["ctype"] == "null"
+
+    def test_update_task_check_results_dict_serialized(self, initialized_db):
+        """update_task with check_results=dict serializes to JSON string."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, update_task, get_task, get_connection
+            import json
+
+            create_task(task_id="jf4", file_path="/jf4.md")
+
+            results = {"gk-testing": {"status": "pass", "summary": "ok"}}
+            update_task("jf4", check_results=results)
+
+            task = get_task("jf4")
+            assert task["check_results"] == results
+
+            # Raw DB value should be JSON string
+            with get_connection() as conn:
+                cursor = conn.execute(
+                    "SELECT check_results FROM tasks WHERE id = ?", ("jf4",)
+                )
+                row = cursor.fetchone()
+                assert json.loads(row["check_results"]) == results
+
+    def test_update_task_check_results_empty_dict_stores_null(self, initialized_db):
+        """update_task with check_results={} stores NULL."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, update_task, get_task
+
+            create_task(task_id="jf5", file_path="/jf5.md")
+
+            update_task("jf5", check_results={})
+
+            task = get_task("jf5")
+            assert task["check_results"] == {}
+
+    def test_update_task_check_results_none_stores_null(self, initialized_db):
+        """update_task with check_results=None stores NULL."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, update_task, get_task
+
+            create_task(task_id="jf6", file_path="/jf6.md")
+
+            update_task("jf6", check_results=None)
+
+            task = get_task("jf6")
+            assert task["check_results"] == {}
+
+    def test_update_task_checks_string_passthrough(self, initialized_db):
+        """update_task with checks=string (already serialized) passes through."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, update_task, get_task
+
+            create_task(task_id="jf7", file_path="/jf7.md")
+
+            # Passing a pre-serialized string should still work
+            update_task("jf7", checks="gk-testing,vitest")
+
+            task = get_task("jf7")
+            assert task["checks"] == ["gk-testing", "vitest"]
+
+
 class TestMigrationV9:
     """Tests for schema migration v8 -> v9 (staging_url)."""
 
