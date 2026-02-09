@@ -18,7 +18,7 @@ from .config import get_orchestrator_dir
 _SENTINEL = object()
 
 # Schema version for migrations
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 
 def get_database_path() -> Path:
@@ -94,6 +94,8 @@ def init_schema() -> None:
                 needs_rebase BOOLEAN DEFAULT FALSE,
                 last_rebase_attempt_at DATETIME,
                 staging_url TEXT,
+                submitted_at TEXT,
+                completed_at TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (project_id) REFERENCES projects(id)
@@ -303,6 +305,17 @@ def migrate_schema() -> bool:
         if current < 9:
             try:
                 conn.execute("ALTER TABLE tasks ADD COLUMN staging_url TEXT")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+
+        # Migration from v9 to v10: Add lifecycle timestamp columns
+        if current < 10:
+            try:
+                conn.execute("ALTER TABLE tasks ADD COLUMN submitted_at TEXT")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+            try:
+                conn.execute("ALTER TABLE tasks ADD COLUMN completed_at TEXT")
             except sqlite3.OperationalError:
                 pass  # Column already exists
 
@@ -555,6 +568,8 @@ def update_task_queue(
     has_plan: bool | None = None,
     plan_id: str | None = None,
     file_path: str | None = None,
+    submitted_at: str | None = _SENTINEL,
+    completed_at: str | None = _SENTINEL,
     history_event: str | None = None,
     history_agent: str | None = None,
     history_details: str | None = None,
@@ -579,6 +594,8 @@ def update_task_queue(
         has_plan: Set has_plan if provided
         plan_id: Set plan_id if provided
         file_path: Set file_path if provided
+        submitted_at: Set submitted_at value (_SENTINEL = don't change)
+        completed_at: Set completed_at value (_SENTINEL = don't change)
         history_event: Event name for task_history (auto-generated if None)
         history_agent: Agent name for history event
         history_details: Details for history event
@@ -630,6 +647,14 @@ def update_task_queue(
     if file_path is not None:
         set_parts.append("file_path = ?")
         params.append(file_path)
+
+    if submitted_at is not _SENTINEL:
+        set_parts.append("submitted_at = ?")
+        params.append(submitted_at)
+
+    if completed_at is not _SENTINEL:
+        set_parts.append("completed_at = ?")
+        params.append(completed_at)
 
     set_clause = ", ".join(set_parts)
     params.append(task_id)  # WHERE clause
@@ -840,11 +865,13 @@ def submit_completion(
     Returns:
         Updated task or None if not found
     """
+    now = datetime.now().isoformat()
     return update_task_queue(
         task_id,
         "provisional",
         commits_count=commits_count,
         turns_used=turns_used,
+        submitted_at=now,
         history_event="submitted",
         history_details=f"commits={commits_count}, turns={turns_used}",
     )
@@ -856,6 +883,7 @@ def accept_completion(task_id: str, accepted_by: str | None = None) -> dict[str,
     Side effects (guaranteed by update_task_queue):
     - claimed_by is cleared
     - Dependent tasks are unblocked
+    - completed_at is set
 
     Args:
         task_id: Task identifier
@@ -864,9 +892,11 @@ def accept_completion(task_id: str, accepted_by: str | None = None) -> dict[str,
     Returns:
         Updated task or None if not found
     """
+    now = datetime.now().isoformat()
     return update_task_queue(
         task_id,
         "done",
+        completed_at=now,
         history_event="accepted",
         history_agent=accepted_by,
     )
@@ -1521,6 +1551,32 @@ def get_task_history(task_id: str) -> list[dict[str, Any]]:
             SELECT * FROM task_history
             WHERE task_id = ?
             ORDER BY timestamp ASC
+            """,
+            (task_id,),
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def get_task_events(task_id: str) -> list[dict[str, Any]]:
+    """Get the event log for a task, ordered by timestamp.
+
+    This is the public API for retrieving a task's audit trail.
+    Each event includes: id, task_id, event, actor (agent), details, timestamp.
+
+    Args:
+        task_id: Task identifier
+
+    Returns:
+        List of event dicts in chronological order.
+        The 'agent' column is aliased as 'actor' for clarity.
+    """
+    with get_connection() as conn:
+        cursor = conn.execute(
+            """
+            SELECT id, task_id, event, agent AS actor, details, timestamp
+            FROM task_history
+            WHERE task_id = ?
+            ORDER BY timestamp ASC, id ASC
             """,
             (task_id,),
         )
