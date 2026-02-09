@@ -102,18 +102,10 @@ def resolve_task_id(prefix: str) -> dict[str, Any] | None:
 # ---------------------------------------------------------------------------
 
 
-def find_agent_submodule(task_info: dict[str, Any]) -> Path | None:
-    """Find the orchestrator submodule inside the agent's worktree.
-
-    The agent name comes from task.claimed_by (still set for provisional
-    tasks). The worktree lives at .orchestrator/agents/<name>/worktree/
-    and its orchestrator submodule is in the ``orchestrator/`` sub-dir.
-
-    Returns the absolute path to the submodule directory, or None.
-    """
+def _resolve_agent_name(task_info: dict[str, Any]) -> str | None:
+    """Resolve the agent name from task info or claim history."""
     agent_name = task_info.get("claimed_by")
     if not agent_name:
-        # Try to find it from history
         task_id = task_info["id"]
         with get_connection() as conn:
             row = conn.execute(
@@ -124,6 +116,19 @@ def find_agent_submodule(task_info: dict[str, Any]) -> Path | None:
             ).fetchone()
         if row:
             agent_name = row["agent"]
+    return agent_name
+
+
+def find_agent_submodule(task_info: dict[str, Any]) -> Path | None:
+    """Find the orchestrator submodule inside the agent's worktree.
+
+    The agent name comes from task.claimed_by (still set for provisional
+    tasks). The worktree lives at .orchestrator/agents/<name>/worktree/
+    and its orchestrator submodule is in the ``orchestrator/`` sub-dir.
+
+    Returns the absolute path to the submodule directory, or None.
+    """
+    agent_name = _resolve_agent_name(task_info)
 
     if not agent_name:
         print("ERROR: Cannot determine agent name (claimed_by is empty and no claim history)")
@@ -135,6 +140,24 @@ def find_agent_submodule(task_info: dict[str, Any]) -> Path | None:
         return None
 
     return worktree_sub
+
+
+def find_agent_worktree(task_info: dict[str, Any]) -> Path | None:
+    """Find the agent's worktree root (main repo checkout).
+
+    Returns the absolute path to the worktree root, or None.
+    """
+    agent_name = _resolve_agent_name(task_info)
+    if not agent_name:
+        print("ERROR: Cannot determine agent name")
+        return None
+
+    worktree = get_agents_runtime_dir() / agent_name / "worktree"
+    if not worktree.exists():
+        print(f"ERROR: Agent worktree not found at {worktree}")
+        return None
+
+    return worktree
 
 
 # ---------------------------------------------------------------------------
@@ -241,6 +264,77 @@ def find_agent_commits(agent_sub: Path, local_sub: Path, task_id: str | None = N
                 cwd=local_sub,
                 check=False,
             )
+
+    if result.returncode != 0 or not result.stdout.strip():
+        return []
+
+    return result.stdout.strip().splitlines()
+
+
+# ---------------------------------------------------------------------------
+# Step 2b — Find agent main repo commits
+# ---------------------------------------------------------------------------
+
+
+def find_agent_main_repo_commits(
+    agent_worktree: Path, task_id: str
+) -> list[str]:
+    """Return commit SHAs from the agent's main repo branch not in local main.
+
+    Looks for an agent branch matching the task ID pattern
+    (agent/<task-id>-*) in the agent's worktree.
+
+    Returns a list of SHAs in topological order (oldest first).
+    """
+    repo = _repo_root()
+
+    # Find the agent's branch for this task
+    result = run(
+        ["git", "branch", "--list", f"agent/{task_id}-*"],
+        cwd=agent_worktree,
+        check=False,
+    )
+    agent_branch = None
+    if result.returncode == 0 and result.stdout.strip():
+        # Take the first match (should be only one)
+        agent_branch = result.stdout.strip().lstrip("* ").split("\n")[0].strip()
+
+    if not agent_branch:
+        # Also check for tooling/<task-id> pattern (future convention)
+        result = run(
+            ["git", "branch", "--list", f"tooling/{task_id}*"],
+            cwd=agent_worktree,
+            check=False,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            agent_branch = result.stdout.strip().lstrip("* ").split("\n")[0].strip()
+
+    if not agent_branch:
+        return []
+
+    print(f"  Agent main repo branch: {agent_branch}")
+
+    # Fetch from agent worktree into local repo
+    fetch_result = run(
+        ["git", "fetch", str(agent_worktree), agent_branch],
+        cwd=repo,
+        check=False,
+    )
+    if fetch_result.returncode != 0:
+        print(f"  WARNING: fetch from agent worktree failed: {fetch_result.stderr.strip()}")
+        return []
+
+    # Get local main HEAD
+    local_head = run(
+        ["git", "rev-parse", "main"], cwd=repo, check=False
+    ).stdout.strip()
+
+    # Find commits in FETCH_HEAD not in main
+    result = run(
+        ["git", "rev-list", "--reverse", f"{local_head}..FETCH_HEAD"],
+        cwd=repo,
+        check=False,
+    )
 
     if result.returncode != 0 or not result.stdout.strip():
         return []
@@ -601,14 +695,30 @@ def approve_orchestrator_task(task_id_prefix: str) -> int:
         return 1
     print(f"   Agent submodule: {agent_sub}")
 
-    # Step 3: Find agent commits
-    print("\n2. Finding agent commits...")
-    commits = find_agent_commits(agent_sub, local_sub, task_id=task_id)
+    agent_worktree = find_agent_worktree(task_info)
 
-    if not commits:
-        print("   WARNING: No new commits found in agent submodule")
-        print("   The agent may not have committed, or commits are already in main.")
-        # Ask user to confirm
+    # Step 3: Find agent commits (submodule)
+    print("\n2. Finding agent commits (submodule)...")
+    sub_commits = find_agent_commits(agent_sub, local_sub, task_id=task_id)
+
+    if sub_commits:
+        print(f"   Found {len(sub_commits)} submodule commit(s)")
+    else:
+        print("   No submodule commits found")
+
+    # Step 3b: Find agent commits (main repo)
+    main_commits = []
+    if agent_worktree:
+        print("\n2b. Finding agent commits (main repo)...")
+        main_commits = find_agent_main_repo_commits(agent_worktree, task_id)
+        if main_commits:
+            print(f"   Found {len(main_commits)} main repo commit(s)")
+        else:
+            print("   No main repo commits found")
+
+    if not sub_commits and not main_commits:
+        print("\n   WARNING: No commits found in submodule or main repo")
+        print("   The agent may not have committed, or commits are already merged.")
         try:
             response = input("   Continue anyway? [y/N] ").strip().lower()
         except EOFError:
@@ -616,46 +726,76 @@ def approve_orchestrator_task(task_id_prefix: str) -> int:
         if response != "y":
             print("   Aborted.")
             return 1
-    else:
-        print(f"   Found {len(commits)} commit(s) to cherry-pick")
 
-    # Step 4: Cherry-pick
-    if commits:
-        print("\n3. Cherry-picking commits onto main...")
-        if not cherry_pick_commits(commits, local_sub):
+    # Step 4: Cherry-pick submodule commits
+    if sub_commits:
+        print("\n3. Cherry-picking submodule commits onto main...")
+        if not cherry_pick_commits(sub_commits, local_sub):
+            return 1
+        print("   Cherry-pick complete")
+
+    # Step 4b: Cherry-pick main repo commits
+    if main_commits:
+        print("\n3b. Cherry-picking main repo commits onto main...")
+        if not cherry_pick_commits(main_commits, repo):
             return 1
         print("   Cherry-pick complete")
 
     # Step 5: Run tests
-    if commits:
+    if sub_commits or main_commits:
         print("\n4. Running tests...")
         if not run_tests(local_sub):
-            # Revert the cherry-picks by resetting
-            print("\n   Reverting cherry-picked commits due to test failure...")
-            run(
-                ["git", "reset", "--hard", f"HEAD~{len(commits)}"],
-                cwd=local_sub,
-                check=False,
-            )
+            # Revert cherry-picks
+            if sub_commits:
+                print("\n   Reverting submodule cherry-picked commits...")
+                run(
+                    ["git", "reset", "--hard", f"HEAD~{len(sub_commits)}"],
+                    cwd=local_sub,
+                    check=False,
+                )
+            if main_commits:
+                print("\n   Reverting main repo cherry-picked commits...")
+                run(
+                    ["git", "reset", "--hard", f"HEAD~{len(main_commits)}"],
+                    cwd=repo,
+                    check=False,
+                )
             print("   Reverted. Fix the tests and re-run.")
             return 1
         print("   Tests passed")
     else:
         print("\n3-4. Skipping cherry-pick and tests (no commits)")
 
-    # Step 6: Push main
-    if commits:
-        print("\n5. Pushing main...")
+    # Step 6: Push submodule main
+    if sub_commits:
+        print("\n5. Pushing submodule main...")
         if not push_submodule(local_sub):
             return 1
         print("   Pushed")
     else:
-        print("\n5. Skipping push (no commits)")
+        print("\n5. Skipping submodule push (no submodule commits)")
 
-    # Step 7: Update submodule ref on main
-    print("\n6. Updating submodule ref on main...")
-    if not update_submodule_ref(task_id):
-        return 1
+    # Step 7: Update submodule ref and/or push main repo
+    if sub_commits:
+        print("\n6. Updating submodule ref on main...")
+        if not update_submodule_ref(task_id):
+            return 1
+    elif main_commits:
+        # Main repo commits only — just push main
+        print("\n6. Pushing main repo...")
+        result = run(["git", "push", "origin", "main"], cwd=repo, check=False)
+        if result.returncode != 0:
+            if "non-fast-forward" in result.stderr or "fetch first" in result.stderr:
+                print("  Main has diverged, pulling and retrying...")
+                run(["git", "pull", "--rebase", "origin", "main"], cwd=repo, check=False)
+                result = run(["git", "push", "origin", "main"], cwd=repo, check=False)
+                if result.returncode != 0:
+                    print(f"  Push failed: {result.stderr.strip()}")
+                    return 1
+            else:
+                print(f"  Push failed: {result.stderr.strip()}")
+                return 1
+        print("   Pushed")
 
     # Step 8: Accept in DB
     print(f"\n7. Accepting task {task_id[:8]} in DB...")
