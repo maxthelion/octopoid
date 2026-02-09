@@ -693,6 +693,58 @@ def reject_completion(
     return dest
 
 
+def _insert_rejection_feedback(content: str, feedback_section: str) -> str:
+    """Insert rejection feedback after the metadata block, before ## Context.
+
+    The metadata block consists of lines like ROLE:, PRIORITY:, BRANCH:, etc.
+    that appear between the title (# [TASK-...]) and the first ## heading.
+
+    On repeated rejections, any existing rejection notice is replaced so only
+    the latest feedback appears.
+
+    Args:
+        content: Original task file content
+        feedback_section: The formatted rejection notice to insert
+
+    Returns:
+        Content with rejection feedback inserted after metadata
+    """
+    # Strip any existing rejection notice section (new format)
+    content = re.sub(
+        r'\n*## Rejection Notice.*?(?=\n## |\Z)',
+        '',
+        content,
+        flags=re.DOTALL,
+    )
+
+    # Also strip old-style "## Review Feedback" sections (from before this change)
+    content = re.sub(
+        r'\n*## Review Feedback \(rejection #\d+\).*?(?=\n## |\Z)',
+        '',
+        content,
+        flags=re.DOTALL,
+    )
+
+    # Find where to insert: before the first ## heading
+    lines = content.split('\n')
+    insert_idx = None
+
+    for i, line in enumerate(lines):
+        if line.startswith('## '):
+            insert_idx = i
+            break
+
+    if insert_idx is not None:
+        feedback_lines = feedback_section.rstrip('\n').split('\n')
+        lines = lines[:insert_idx] + feedback_lines + ['', ''] + lines[insert_idx:]
+    else:
+        # No ## heading found — append at the end
+        lines.append('')
+        lines.extend(feedback_section.rstrip('\n').split('\n'))
+
+    return '\n'.join(lines)
+
+
 def review_reject_task(
     task_path: Path | str,
     feedback: str,
@@ -706,6 +758,8 @@ def review_reject_task(
     instead of cycling back to the implementer.
 
     The task's branch is preserved so the implementer can push fixes.
+    Rejection feedback is inserted near the top of the task file (after the
+    metadata block, before ## Context) so agents see it immediately.
 
     Args:
         task_path: Path to the task file (provisional or incoming)
@@ -733,18 +787,22 @@ def review_reject_task(
     else:
         dest = get_queue_subdir("incoming") / task_path.name
 
-    # Read original content, write original + feedback to destination, delete source.
+    # Read original content, insert feedback near top, write to destination, delete source.
     # This must happen BEFORE the DB update so the file is fully ready at its
     # new path before the scheduler can see the task as claimable.
     original_content = task_path.read_text()
 
-    feedback_section = f"\n## Review Feedback (rejection #{rejection_count})\n\n"
-    feedback_section += f"{feedback}\n"
-    feedback_section += f"\nREVIEW_REJECTED_AT: {datetime.now().isoformat()}\n"
+    feedback_section = f"## Rejection Notice (rejection #{rejection_count})\n\n"
+    feedback_section += "**WARNING: This task was previously attempted but the work was rejected.**\n"
+    feedback_section += "**Existing code on the branch does NOT satisfy the acceptance criteria.**\n"
+    feedback_section += "**You MUST make new commits to address the feedback below.**\n\n"
+    feedback_section += f"{feedback}\n\n"
+    feedback_section += f"REVIEW_REJECTED_AT: {datetime.now().isoformat()}\n"
     if rejected_by:
         feedback_section += f"REVIEW_REJECTED_BY: {rejected_by}\n"
 
-    dest.write_text(original_content + feedback_section)
+    new_content = _insert_rejection_feedback(original_content, feedback_section)
+    dest.write_text(new_content)
 
     # Remove source file
     if task_path != dest:
@@ -791,7 +849,8 @@ def review_reject_task(
 def get_review_feedback(task_id: str) -> str | None:
     """Extract review feedback sections from a task's markdown file.
 
-    Reads the task file and extracts all '## Review Feedback' sections.
+    Supports both the new '## Rejection Notice' format (inserted near top)
+    and the legacy '## Review Feedback' format (appended at bottom).
 
     Args:
         task_id: Task identifier
@@ -807,18 +866,27 @@ def get_review_feedback(task_id: str) -> str | None:
     if not content:
         return None
 
-    # Find all review feedback sections
-    import re
-    feedback_sections = re.findall(
+    # Try new format first: ## Rejection Notice
+    new_sections = re.findall(
+        r'## Rejection Notice.*?\n(.*?)(?=\n## |\Z)',
+        content,
+        re.DOTALL,
+    )
+
+    if new_sections:
+        return "\n\n---\n\n".join(section.strip() for section in new_sections)
+
+    # Fall back to legacy format: ## Review Feedback
+    legacy_sections = re.findall(
         r'## Review Feedback \(rejection #\d+\)\s*\n(.*?)(?=\n## |\Z)',
         content,
         re.DOTALL,
     )
 
-    if not feedback_sections:
+    if not legacy_sections:
         return None
 
-    return "\n\n---\n\n".join(section.strip() for section in feedback_sections)
+    return "\n\n---\n\n".join(section.strip() for section in legacy_sections)
 
 
 def escalate_to_planning(task_path: Path | str, plan_id: str) -> Path:

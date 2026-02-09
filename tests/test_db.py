@@ -1099,3 +1099,276 @@ class TestMigrationV9:
                     ("test",),
                 )
                 # No error means column exists
+
+
+class TestLifecycleTimestamps:
+    """Tests for submitted_at and completed_at lifecycle timestamps."""
+
+    def test_submitted_at_set_on_submit(self, initialized_db):
+        """submit_completion sets submitted_at to current time."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, claim_task, submit_completion, get_task
+
+            create_task(task_id="ts1", file_path="/ts1.md")
+            claim_task(agent_name="agent")
+
+            result = submit_completion("ts1", commits_count=2)
+
+            assert result["submitted_at"] is not None
+            # Verify it's a valid ISO timestamp
+            submitted = datetime.fromisoformat(result["submitted_at"])
+            assert submitted.year >= 2026
+
+    def test_completed_at_set_on_accept(self, initialized_db):
+        """accept_completion sets completed_at to current time."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, claim_task, submit_completion, accept_completion, get_task
+
+            create_task(task_id="ts2", file_path="/ts2.md")
+            claim_task()
+            submit_completion("ts2", commits_count=1)
+
+            result = accept_completion("ts2", accepted_by="pre-check")
+
+            assert result["completed_at"] is not None
+            completed = datetime.fromisoformat(result["completed_at"])
+            assert completed.year >= 2026
+
+    def test_submitted_at_null_on_create(self, initialized_db):
+        """submitted_at is NULL when task is first created."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, get_task
+
+            task = create_task(task_id="ts3", file_path="/ts3.md")
+
+            assert task["submitted_at"] is None
+
+    def test_completed_at_null_on_create(self, initialized_db):
+        """completed_at is NULL when task is first created."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, get_task
+
+            task = create_task(task_id="ts4", file_path="/ts4.md")
+
+            assert task["completed_at"] is None
+
+    def test_submitted_at_before_completed_at(self, initialized_db):
+        """submitted_at should be earlier than completed_at in a normal flow."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, claim_task, submit_completion, accept_completion
+
+            create_task(task_id="ts5", file_path="/ts5.md")
+            claim_task()
+            submit_completion("ts5", commits_count=1)
+            result = accept_completion("ts5")
+
+            submitted = datetime.fromisoformat(result["submitted_at"])
+            completed = datetime.fromisoformat(result["completed_at"])
+            assert submitted <= completed
+
+    def test_timestamps_persist_after_rejection_resubmit(self, initialized_db):
+        """submitted_at is updated on re-submission after rejection."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, claim_task, submit_completion, reject_completion, get_task
+
+            create_task(task_id="ts6", file_path="/ts6.md")
+
+            # First attempt
+            claim_task()
+            submit_completion("ts6", commits_count=0)
+            first_task = get_task("ts6")
+            first_submitted = first_task["submitted_at"]
+            assert first_submitted is not None
+
+            # Reject
+            reject_completion("ts6", reason="no_commits")
+
+            # Second attempt
+            claim_task()
+            submit_completion("ts6", commits_count=1)
+            second_task = get_task("ts6")
+            second_submitted = second_task["submitted_at"]
+            assert second_submitted is not None
+
+            # Second submitted_at should be >= first
+            assert second_submitted >= first_submitted
+
+
+class TestTaskEvents:
+    """Tests for the task event log (get_task_events)."""
+
+    def test_get_task_events_returns_ordered_results(self, initialized_db):
+        """get_task_events returns events in chronological order."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, claim_task, submit_completion, accept_completion, get_task_events
+
+            create_task(task_id="ev1", file_path="/ev1.md")
+            claim_task(agent_name="impl-1")
+            submit_completion("ev1", commits_count=2)
+            accept_completion("ev1", accepted_by="gatekeeper")
+
+            events = get_task_events("ev1")
+
+            assert len(events) >= 4
+            event_names = [e["event"] for e in events]
+            assert "created" in event_names
+            assert "claimed" in event_names
+            assert "submitted" in event_names
+            assert "accepted" in event_names
+
+            # Verify chronological ordering
+            timestamps = [e["timestamp"] for e in events]
+            assert timestamps == sorted(timestamps)
+
+    def test_get_task_events_includes_actor(self, initialized_db):
+        """get_task_events returns actor (agent) for each event."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, claim_task, accept_completion, get_task_events
+
+            create_task(task_id="ev2", file_path="/ev2.md")
+            claim_task(agent_name="impl-2")
+
+            events = get_task_events("ev2")
+
+            claimed_events = [e for e in events if e["event"] == "claimed"]
+            assert len(claimed_events) == 1
+            assert claimed_events[0]["actor"] == "impl-2"
+
+    def test_get_task_events_includes_details(self, initialized_db):
+        """get_task_events returns details for events that have them."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, claim_task, submit_completion, get_task_events
+
+            create_task(task_id="ev3", file_path="/ev3.md")
+            claim_task()
+            submit_completion("ev3", commits_count=5, turns_used=30)
+
+            events = get_task_events("ev3")
+
+            submitted = [e for e in events if e["event"] == "submitted"]
+            assert len(submitted) == 1
+            assert "commits=5" in submitted[0]["details"]
+            assert "turns=30" in submitted[0]["details"]
+
+    def test_get_task_events_empty_for_unknown_task(self, initialized_db):
+        """get_task_events returns empty list for non-existent task."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import get_task_events
+
+            events = get_task_events("nonexistent")
+            assert events == []
+
+    def test_get_task_events_records_rejection(self, initialized_db):
+        """get_task_events records rejection events."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, claim_task, submit_completion, reject_completion, get_task_events
+
+            create_task(task_id="ev4", file_path="/ev4.md")
+            claim_task()
+            submit_completion("ev4", commits_count=0)
+            reject_completion("ev4", reason="no_commits", rejected_by="pre-check")
+
+            events = get_task_events("ev4")
+
+            rejected = [e for e in events if e["event"] == "rejected"]
+            assert len(rejected) == 1
+            assert rejected[0]["actor"] == "pre-check"
+            assert "no_commits" in rejected[0]["details"]
+
+    def test_get_task_events_records_review_rejection(self, initialized_db):
+        """get_task_events records review rejection events."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, claim_task, submit_completion, review_reject_completion, get_task_events
+
+            create_task(task_id="ev5", file_path="/ev5.md")
+            claim_task()
+            submit_completion("ev5", commits_count=1)
+            review_reject_completion("ev5", reason="tests failing", reviewer="gk-testing")
+
+            events = get_task_events("ev5")
+
+            review_rejected = [e for e in events if e["event"] == "review_rejected"]
+            assert len(review_rejected) == 1
+            assert review_rejected[0]["actor"] == "gk-testing"
+
+    def test_get_task_events_full_bounce_cycle(self, initialized_db):
+        """get_task_events captures a full bounce cycle: create→claim→submit→reject→re-claim→submit→accept."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import (
+                create_task, claim_task, submit_completion,
+                reject_completion, accept_completion, get_task_events,
+            )
+
+            create_task(task_id="ev6", file_path="/ev6.md")
+
+            # First attempt
+            claim_task(agent_name="agent-a")
+            submit_completion("ev6", commits_count=0)
+            reject_completion("ev6", reason="no_commits", rejected_by="pre-check")
+
+            # Second attempt
+            claim_task(agent_name="agent-b")
+            submit_completion("ev6", commits_count=3)
+            accept_completion("ev6", accepted_by="gatekeeper")
+
+            events = get_task_events("ev6")
+            event_names = [e["event"] for e in events]
+
+            # Should have: created, claimed, submitted, rejected, claimed, submitted, accepted
+            # (plus any auto-generated queue_changed events)
+            assert event_names.count("claimed") == 2
+            assert event_names.count("submitted") == 2
+            assert "rejected" in event_names
+            assert "accepted" in event_names
+
+
+class TestMigrationV10:
+    """Tests for schema migration v9 -> v10 (lifecycle timestamps)."""
+
+    def test_migration_adds_submitted_at_column(self, mock_config, db_path):
+        """migrate_schema adds submitted_at column when upgrading from v9."""
+        with patch('orchestrator.db.get_database_path', return_value=db_path):
+            from orchestrator.db import init_schema, get_connection, migrate_schema
+
+            init_schema()
+
+            # Downgrade to v9
+            with get_connection() as conn:
+                conn.execute(
+                    "INSERT OR REPLACE INTO schema_info (key, value) VALUES (?, ?)",
+                    ("version", "9"),
+                )
+
+            result = migrate_schema()
+            assert result is True
+
+            # Verify column exists
+            with get_connection() as conn:
+                conn.execute(
+                    "UPDATE tasks SET submitted_at = ? WHERE 1=0",
+                    ("test",),
+                )
+
+    def test_migration_adds_completed_at_column(self, mock_config, db_path):
+        """migrate_schema adds completed_at column when upgrading from v9."""
+        with patch('orchestrator.db.get_database_path', return_value=db_path):
+            from orchestrator.db import init_schema, get_connection, migrate_schema
+
+            init_schema()
+
+            # Downgrade to v9
+            with get_connection() as conn:
+                conn.execute(
+                    "INSERT OR REPLACE INTO schema_info (key, value) VALUES (?, ?)",
+                    ("version", "9"),
+                )
+
+            result = migrate_schema()
+            assert result is True
+
+            # Verify column exists
+            with get_connection() as conn:
+                conn.execute(
+                    "UPDATE tasks SET completed_at = ? WHERE 1=0",
+                    ("test",),
+                )

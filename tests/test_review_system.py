@@ -232,8 +232,8 @@ class TestReviewRejectCompletion:
 class TestReviewRejectTask:
     """Tests for review_reject_task() in queue_utils.py."""
 
-    def test_reject_appends_feedback_to_file(self, mock_config, initialized_db):
-        """Test that review_reject_task appends feedback to the task file."""
+    def test_reject_inserts_feedback_before_context(self, mock_config, initialized_db):
+        """Test that review_reject_task inserts feedback before ## Context."""
         with patch('orchestrator.db.get_database_path', return_value=initialized_db):
             from orchestrator.db import create_task
             from orchestrator.queue_utils import review_reject_task
@@ -254,8 +254,14 @@ class TestReviewRejectTask:
 
             assert action == "rejected"
             content = new_path.read_text()
-            assert "## Review Feedback (rejection #1)" in content
+            assert "## Rejection Notice (rejection #1)" in content
             assert "Architecture violation" in content
+            assert "WARNING" in content
+            assert "MUST make new commits" in content
+            # Feedback must appear BEFORE ## Context
+            notice_pos = content.index("## Rejection Notice")
+            context_pos = content.index("## Context")
+            assert notice_pos < context_pos
 
     def test_reject_preserves_original_content(self, mock_config, initialized_db):
         """Test that rejection preserves all original task content (not just feedback).
@@ -297,14 +303,14 @@ class TestReviewRejectTask:
             assert "approach B for performance" in content
             assert "## Acceptance Criteria" in content
 
-            # Feedback must also be present
-            assert "## Review Feedback (rejection #1)" in content
+            # Feedback must also be present (new format)
+            assert "## Rejection Notice (rejection #1)" in content
             assert "Tests are at the wrong layer" in content
 
-            # Original content must appear before feedback
+            # Feedback must appear BEFORE context (inserted at top, not appended)
+            feedback_pos = content.index("## Rejection Notice")
             context_pos = content.index("## Context")
-            feedback_pos = content.index("## Review Feedback")
-            assert context_pos < feedback_pos
+            assert feedback_pos < context_pos
 
             # Provisional file must be removed (no duplicates)
             assert not task_path.exists()
@@ -358,8 +364,8 @@ class TestReviewRejectTask:
             task = get_task("branch1")
             assert task["branch"] == "feature/test"  # Branch preserved
 
-    def test_reject_preserves_original_content(self, mock_config, initialized_db):
-        """Test that rejection preserves original task file content (header, context, criteria)."""
+    def test_reject_preserves_content_with_metadata(self, mock_config, initialized_db):
+        """Test that rejection preserves original task file content (header, metadata, context, criteria)."""
         with patch('orchestrator.db.get_database_path', return_value=initialized_db):
             from orchestrator.db import create_task
             from orchestrator.queue_utils import review_reject_task
@@ -390,17 +396,24 @@ class TestReviewRejectTask:
             content = new_path.read_text()
             # Original content must still be present
             assert "# [TASK-pres1] Important feature" in content
+            assert "ROLE: implement" in content
+            assert "PRIORITY: P1" in content
             assert "## Context" in content
             assert "This task implements feature X" in content
             assert "## Acceptance Criteria" in content
             assert "Feature X works correctly" in content
             assert "Tests are added" in content
-            # Rejection feedback must also be present
-            assert "## Review Feedback" in content
+            # Rejection feedback must be present (new format)
+            assert "## Rejection Notice" in content
             assert "Tests don't cover edge cases" in content
+            # Rejection notice must appear between metadata and context
+            role_pos = content.index("ROLE: implement")
+            notice_pos = content.index("## Rejection Notice")
+            context_pos = content.index("## Context")
+            assert role_pos < notice_pos < context_pos
 
-    def test_multiple_rejections_accumulate(self, mock_config, initialized_db):
-        """Test that multiple rejections accumulate without losing earlier feedback."""
+    def test_multiple_rejections_replace_not_stack(self, mock_config, initialized_db):
+        """Test that repeated rejections replace the previous notice (not stack)."""
         with patch('orchestrator.db.get_database_path', return_value=initialized_db):
             from orchestrator.db import create_task, get_task
             from orchestrator.queue_utils import review_reject_task, submit_completion
@@ -431,6 +444,11 @@ class TestReviewRejectTask:
             )
             assert action == "rejected"
 
+            # Verify first rejection is present
+            content1 = new_path.read_text()
+            assert "First issue: boundary violation" in content1
+            assert "## Rejection Notice (rejection #1)" in content1
+
             # Simulate re-claim and re-submit (move file back to provisional)
             resubmit_path = prov_dir / "TASK-multi1.md"
             new_path.rename(resubmit_path)
@@ -450,9 +468,12 @@ class TestReviewRejectTask:
             assert "# [TASK-multi1] Multi-reject test" in content
             assert "Original context." in content
             assert "## Acceptance Criteria" in content
-            # Both rejection feedbacks present
-            assert "First issue: boundary violation" in content
+            # Only the LATEST rejection feedback should be present (replaced, not stacked)
+            assert "First issue: boundary violation" not in content
             assert "Second issue: tests at wrong layer" in content
+            assert "## Rejection Notice (rejection #2)" in content
+            # Only one Rejection Notice section
+            assert content.count("## Rejection Notice") == 1
 
     def test_header_remains_first_heading(self, mock_config, initialized_db):
         """Test that the # [TASK-xxx] header remains as the first heading after rejection."""
@@ -480,6 +501,184 @@ class TestReviewRejectTask:
             # First non-empty line should be the task header
             first_heading = next(l for l in lines if l.startswith("#"))
             assert first_heading.startswith("# [TASK-head1]")
+
+    def test_rejection_includes_warning_text(self, mock_config, initialized_db):
+        """Test that rejection notice includes standard warning about branch code."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task
+            from orchestrator.queue_utils import review_reject_task
+
+            prov_dir = mock_config / "shared" / "queue" / "provisional"
+            prov_dir.mkdir(parents=True, exist_ok=True)
+            task_path = prov_dir / "TASK-warn1.md"
+            task_path.write_text(
+                "# [TASK-warn1] Test\n\nROLE: implement\n\n"
+                "## Context\nSome context.\n"
+            )
+            create_task(task_id="warn1", file_path=str(task_path))
+
+            new_path, _ = review_reject_task(
+                task_path, "Bad code.", rejected_by="gk-testing"
+            )
+
+            content = new_path.read_text()
+            assert "WARNING" in content
+            assert "does NOT satisfy the acceptance criteria" in content
+            assert "MUST make new commits" in content
+            assert "REVIEW_REJECTED_BY: gk-testing" in content
+
+    def test_rejection_handles_file_without_metadata(self, mock_config, initialized_db):
+        """Test rejection works on task files with no metadata lines."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task
+            from orchestrator.queue_utils import review_reject_task
+
+            prov_dir = mock_config / "shared" / "queue" / "provisional"
+            prov_dir.mkdir(parents=True, exist_ok=True)
+            task_path = prov_dir / "TASK-nometa.md"
+            task_path.write_text(
+                "# [TASK-nometa] Minimal task\n\n## Context\nJust context.\n"
+            )
+            create_task(task_id="nometa", file_path=str(task_path))
+
+            new_path, _ = review_reject_task(
+                task_path, "Needs work.", rejected_by="gk"
+            )
+
+            content = new_path.read_text()
+            assert "# [TASK-nometa] Minimal task" in content
+            assert "## Rejection Notice" in content
+            assert "## Context" in content
+            # Rejection notice before context
+            notice_pos = content.index("## Rejection Notice")
+            context_pos = content.index("## Context")
+            assert notice_pos < context_pos
+
+    def test_rejection_handles_file_without_headings(self, mock_config, initialized_db):
+        """Test rejection works on task files with no ## headings at all."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task
+            from orchestrator.queue_utils import review_reject_task
+
+            prov_dir = mock_config / "shared" / "queue" / "provisional"
+            prov_dir.mkdir(parents=True, exist_ok=True)
+            task_path = prov_dir / "TASK-nohead.md"
+            task_path.write_text("# [TASK-nohead] Just a title\n\nSome text.\n")
+            create_task(task_id="nohead", file_path=str(task_path))
+
+            new_path, _ = review_reject_task(
+                task_path, "Missing structure.", rejected_by="gk"
+            )
+
+            content = new_path.read_text()
+            assert "# [TASK-nohead] Just a title" in content
+            assert "## Rejection Notice" in content
+            assert "Missing structure." in content
+
+    def test_rejection_strips_old_format_feedback(self, mock_config, initialized_db):
+        """Test that old-format '## Review Feedback' sections are removed when rejecting."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task
+            from orchestrator.queue_utils import review_reject_task
+
+            prov_dir = mock_config / "shared" / "queue" / "provisional"
+            prov_dir.mkdir(parents=True, exist_ok=True)
+            # Simulate a file that has old-format feedback from before this change
+            task_path = prov_dir / "TASK-oldformat.md"
+            task_path.write_text(
+                "# [TASK-oldformat] Legacy task\n\n"
+                "## Context\nSome context.\n\n"
+                "## Review Feedback (rejection #1)\n\n"
+                "Old feedback that should be removed.\n\n"
+                "REVIEW_REJECTED_AT: 2026-02-08\n"
+            )
+            create_task(task_id="oldformat", file_path=str(task_path))
+
+            new_path, _ = review_reject_task(
+                task_path, "New feedback.", rejected_by="gk"
+            )
+
+            content = new_path.read_text()
+            # Old format should be stripped
+            assert "## Review Feedback" not in content
+            assert "Old feedback that should be removed" not in content
+            # New format should be present
+            assert "## Rejection Notice" in content
+            assert "New feedback." in content
+
+
+# =============================================================================
+# Rejection Feedback Insertion Helper Tests
+# =============================================================================
+
+
+class TestInsertRejectionFeedback:
+    """Tests for _insert_rejection_feedback() helper."""
+
+    def test_inserts_before_first_heading(self):
+        """Test insertion before the first ## heading."""
+        from orchestrator.queue_utils import _insert_rejection_feedback
+
+        content = "# Title\n\nROLE: implement\n\n## Context\nSome context.\n"
+        feedback = "## Rejection Notice\n\nFeedback here.\n"
+
+        result = _insert_rejection_feedback(content, feedback)
+
+        assert "## Rejection Notice" in result
+        notice_pos = result.index("## Rejection Notice")
+        context_pos = result.index("## Context")
+        assert notice_pos < context_pos
+        # Original content preserved
+        assert "# Title" in result
+        assert "ROLE: implement" in result
+        assert "Some context." in result
+
+    def test_replaces_existing_rejection_notice(self):
+        """Test that existing rejection notice is replaced."""
+        from orchestrator.queue_utils import _insert_rejection_feedback
+
+        content = (
+            "# Title\n\n"
+            "## Rejection Notice (rejection #1)\n\n"
+            "Old feedback.\n\n"
+            "## Context\nSome context.\n"
+        )
+        feedback = "## Rejection Notice (rejection #2)\n\nNew feedback.\n"
+
+        result = _insert_rejection_feedback(content, feedback)
+
+        assert "Old feedback." not in result
+        assert "New feedback." in result
+        assert result.count("## Rejection Notice") == 1
+
+    def test_replaces_old_format_review_feedback(self):
+        """Test that old-format Review Feedback sections are stripped."""
+        from orchestrator.queue_utils import _insert_rejection_feedback
+
+        content = (
+            "# Title\n\n"
+            "## Context\nSome context.\n\n"
+            "## Review Feedback (rejection #1)\n\nOld feedback.\n"
+        )
+        feedback = "## Rejection Notice (rejection #1)\n\nNew feedback.\n"
+
+        result = _insert_rejection_feedback(content, feedback)
+
+        assert "## Review Feedback" not in result
+        assert "Old feedback." not in result
+        assert "New feedback." in result
+
+    def test_handles_no_headings(self):
+        """Test insertion when there are no ## headings."""
+        from orchestrator.queue_utils import _insert_rejection_feedback
+
+        content = "# Title\n\nJust some text.\n"
+        feedback = "## Rejection Notice\n\nFeedback.\n"
+
+        result = _insert_rejection_feedback(content, feedback)
+
+        assert "## Rejection Notice" in result
+        assert "Just some text." in result
 
 
 # =============================================================================
@@ -685,6 +884,32 @@ REVIEW_REJECTED_BY: gk-testing
 
             feedback = get_review_feedback("nonexistent")
             assert feedback is None
+
+    def test_extracts_new_format_rejection_notice(self, mock_config, initialized_db):
+        """Test that get_review_feedback extracts the new Rejection Notice format."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task
+            from orchestrator.queue_utils import get_review_feedback
+
+            incoming_dir = mock_config / "shared" / "queue" / "incoming"
+            incoming_dir.mkdir(parents=True, exist_ok=True)
+            task_path = incoming_dir / "TASK-newfmt.md"
+            task_path.write_text(
+                "# [TASK-newfmt] Test task\n\n"
+                "## Rejection Notice (rejection #1)\n\n"
+                "**WARNING: ...**\n\n"
+                "Fix the boundary violation.\n\n"
+                "REVIEW_REJECTED_AT: 2026-02-09\n"
+                "REVIEW_REJECTED_BY: gk-arch\n\n"
+                "## Context\nSome context.\n"
+            )
+
+            create_task(task_id="newfmt", file_path=str(task_path))
+
+            feedback = get_review_feedback("newfmt")
+
+            assert feedback is not None
+            assert "boundary violation" in feedback
 
 
 # =============================================================================

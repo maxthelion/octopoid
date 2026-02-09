@@ -192,7 +192,7 @@ class GatekeeperRole(SpecialistRole):
         if staging_url:
             staging_section = f"\n**Staging URL:** {staging_url}\n"
 
-        is_qa = self.check_name == "qa"
+        is_qa = self.check_name in ("qa", "gk-qa")
 
         if is_qa:
             # QA checks are visual-only: no diff, no changed files, no code references
