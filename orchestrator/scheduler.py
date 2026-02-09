@@ -864,6 +864,15 @@ def dispatch_gatekeeper_agents() -> None:
                 if not gk_name:
                     continue
 
+                # Check if agent focus matches the check
+                gk_focus = gk_config.get("focus", "")
+                # Match if focus appears in check name (e.g., "testing" matches "gk-testing-octopoid")
+                # Check names like "gk-testing-octopoid", "gk-qa", "architecture-review" should match
+                # focus "testing", "qa", "architecture" respectively.
+                if gk_focus and gk_focus not in pending_gk_check:
+                    debug_log(f"Gatekeeper {gk_name} (focus={gk_focus}) does not match check {pending_gk_check}, skipping")
+                    continue
+
                 # Check if this gatekeeper is currently running
                 gk_state_path = get_agent_state_path(gk_name)
                 gk_state = load_state(gk_state_path)
