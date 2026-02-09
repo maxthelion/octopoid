@@ -582,7 +582,7 @@ Each git worktree gets its OWN submodule object store under `.git/worktrees/{nam
 | Per-agent | `.orchestrator/agents/{name}/worktree/` | Isolated working copy for agent code changes |
 | Review | `.orchestrator/agents/review-worktree/` | Shared worktree for human review and automated checks (has own `node_modules`) |
 
-Worktrees are created/updated by `ensure_worktree()` in `git_utils.py`. The scheduler peeks at the next task's branch via `peek_task_branch()` to create the worktree on the right base branch, saving the agent from wasting turns on `git checkout`.
+Worktrees are created/updated by `ensure_worktree()` in `git_utils.py`. Both new and existing worktrees are always based on `origin/{base_branch}` (after a fetch), not the local branch. This prevents stale state when the human's local main is behind origin. Similarly, `create_feature_branch()` detaches to `origin/{base_branch}` before creating the agent branch. The scheduler peeks at the next task's branch via `peek_task_branch()` to create the worktree on the right base branch, saving the agent from wasting turns on `git checkout`.
 
 ### Branch Naming
 

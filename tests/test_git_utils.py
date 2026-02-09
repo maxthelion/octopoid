@@ -3,7 +3,244 @@
 import pytest
 import subprocess
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, call
+
+
+class TestEnsureWorktree:
+    """Tests for ensure_worktree using origin/main as base."""
+
+    def test_new_worktree_uses_origin_ref(self, temp_dir):
+        """New worktrees are created from origin/{base_branch}, not local branch."""
+        from orchestrator.git_utils import ensure_worktree
+
+        worktree_path = temp_dir / "agents" / "test-agent" / "worktree"
+
+        with patch('orchestrator.git_utils.find_parent_project', return_value=temp_dir), \
+             patch('orchestrator.git_utils.get_worktree_path', return_value=worktree_path), \
+             patch('orchestrator.git_utils.run_git') as mock_run:
+
+            mock_run.return_value = MagicMock(returncode=0)
+
+            ensure_worktree("test-agent", base_branch="main")
+
+            # Find the worktree add call
+            add_calls = [c for c in mock_run.call_args_list
+                         if c[0][0][:2] == ["worktree", "add"]]
+            assert len(add_calls) == 1
+            add_args = add_calls[0][0][0]
+            # Must use origin/main, not bare "main"
+            assert add_args[-1] == "origin/main"
+
+    def test_new_worktree_custom_branch_uses_origin(self, temp_dir):
+        """Custom base_branch also uses origin/ prefix."""
+        from orchestrator.git_utils import ensure_worktree
+
+        worktree_path = temp_dir / "agents" / "test-agent" / "worktree"
+
+        with patch('orchestrator.git_utils.find_parent_project', return_value=temp_dir), \
+             patch('orchestrator.git_utils.get_worktree_path', return_value=worktree_path), \
+             patch('orchestrator.git_utils.run_git') as mock_run:
+
+            mock_run.return_value = MagicMock(returncode=0)
+
+            ensure_worktree("test-agent", base_branch="feature/test")
+
+            add_calls = [c for c in mock_run.call_args_list
+                         if c[0][0][:2] == ["worktree", "add"]]
+            assert len(add_calls) == 1
+            assert add_calls[0][0][0][-1] == "origin/feature/test"
+
+    def test_new_worktree_fetches_before_create(self, temp_dir):
+        """Fetch happens before worktree creation."""
+        from orchestrator.git_utils import ensure_worktree
+
+        worktree_path = temp_dir / "agents" / "test-agent" / "worktree"
+        call_order = []
+
+        def tracking_run_git(args, cwd=None, check=True):
+            call_order.append(args[:2])
+            return MagicMock(returncode=0)
+
+        with patch('orchestrator.git_utils.find_parent_project', return_value=temp_dir), \
+             patch('orchestrator.git_utils.get_worktree_path', return_value=worktree_path), \
+             patch('orchestrator.git_utils.run_git', side_effect=tracking_run_git):
+
+            ensure_worktree("test-agent")
+
+            fetch_idx = next(i for i, c in enumerate(call_order) if c == ["fetch", "origin"])
+            add_idx = next(i for i, c in enumerate(call_order) if c == ["worktree", "add"])
+            assert fetch_idx < add_idx, "fetch must happen before worktree add"
+
+    def test_existing_worktree_resets_to_origin(self, temp_dir):
+        """Existing worktrees are reset to origin/{base_branch}."""
+        from orchestrator.git_utils import ensure_worktree
+
+        worktree_path = temp_dir / "agents" / "test-agent" / "worktree"
+        worktree_path.mkdir(parents=True)
+        (worktree_path / ".git").write_text("gitdir: ...")
+
+        with patch('orchestrator.git_utils.find_parent_project', return_value=temp_dir), \
+             patch('orchestrator.git_utils.get_worktree_path', return_value=worktree_path), \
+             patch('orchestrator.git_utils.run_git') as mock_run:
+
+            mock_run.return_value = MagicMock(returncode=0)
+
+            ensure_worktree("test-agent", base_branch="main")
+
+            # Should checkout --detach origin/main
+            checkout_calls = [c for c in mock_run.call_args_list
+                              if len(c[0][0]) >= 3 and c[0][0][:2] == ["checkout", "--detach"]]
+            assert len(checkout_calls) == 1
+            assert checkout_calls[0][0][0][2] == "origin/main"
+
+    def test_existing_worktree_fetches_first(self, temp_dir):
+        """Existing worktrees fetch origin before resetting."""
+        from orchestrator.git_utils import ensure_worktree
+
+        worktree_path = temp_dir / "agents" / "test-agent" / "worktree"
+        worktree_path.mkdir(parents=True)
+        (worktree_path / ".git").write_text("gitdir: ...")
+
+        call_order = []
+
+        def tracking_run_git(args, cwd=None, check=True):
+            call_order.append(args[:2])
+            return MagicMock(returncode=0)
+
+        with patch('orchestrator.git_utils.find_parent_project', return_value=temp_dir), \
+             patch('orchestrator.git_utils.get_worktree_path', return_value=worktree_path), \
+             patch('orchestrator.git_utils.run_git', side_effect=tracking_run_git):
+
+            ensure_worktree("test-agent")
+
+            # fetch must come before checkout
+            fetch_idx = next(i for i, c in enumerate(call_order) if c == ["fetch", "origin"])
+            checkout_idx = next(i for i, c in enumerate(call_order) if c == ["checkout", "--detach"])
+            assert fetch_idx < checkout_idx
+
+    def test_new_worktree_fallback_to_local_on_missing_origin(self, temp_dir):
+        """Falls back to local branch if origin ref doesn't exist."""
+        from orchestrator.git_utils import ensure_worktree
+
+        worktree_path = temp_dir / "agents" / "test-agent" / "worktree"
+
+        call_count = [0]
+
+        def mock_run_git(args, cwd=None, check=True):
+            if args[:2] == ["worktree", "add"]:
+                call_count[0] += 1
+                if call_count[0] == 1:
+                    # First call with origin/main fails
+                    err = subprocess.CalledProcessError(128, "git")
+                    err.stderr = "fatal: invalid reference: origin/main"
+                    raise err
+                # Second call with local main succeeds
+            return MagicMock(returncode=0)
+
+        with patch('orchestrator.git_utils.find_parent_project', return_value=temp_dir), \
+             patch('orchestrator.git_utils.get_worktree_path', return_value=worktree_path), \
+             patch('orchestrator.git_utils.run_git', side_effect=mock_run_git):
+
+            ensure_worktree("test-agent")
+
+            assert call_count[0] == 2  # Tried origin/main then fell back to main
+
+
+class TestCreateFeatureBranch:
+    """Tests for create_feature_branch using origin/main as base."""
+
+    def test_branch_based_on_origin(self, temp_dir):
+        """Feature branch is created from origin/{base_branch}."""
+        from orchestrator.git_utils import create_feature_branch
+
+        with patch('orchestrator.git_utils.run_git') as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+
+            branch = create_feature_branch(temp_dir, "test-task", base_branch="main")
+
+            # Should checkout --detach origin/main (not local main)
+            checkout_calls = [c for c in mock_run.call_args_list
+                              if len(c[0][0]) >= 3 and c[0][0][:2] == ["checkout", "--detach"]]
+            assert len(checkout_calls) == 1
+            assert checkout_calls[0][0][0][2] == "origin/main"
+
+    def test_branch_based_on_origin_custom_base(self, temp_dir):
+        """Custom base_branch uses origin/ prefix."""
+        from orchestrator.git_utils import create_feature_branch
+
+        with patch('orchestrator.git_utils.run_git') as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+
+            create_feature_branch(temp_dir, "test-task", base_branch="feature/xyz")
+
+            checkout_calls = [c for c in mock_run.call_args_list
+                              if len(c[0][0]) >= 3 and c[0][0][:2] == ["checkout", "--detach"]]
+            assert len(checkout_calls) == 1
+            assert checkout_calls[0][0][0][2] == "origin/feature/xyz"
+
+    def test_fetches_before_checkout(self, temp_dir):
+        """Fetch happens before creating the branch."""
+        from orchestrator.git_utils import create_feature_branch
+
+        call_order = []
+
+        def tracking_run_git(args, cwd=None, check=True):
+            call_order.append(args[:2])
+            return MagicMock(returncode=0)
+
+        with patch('orchestrator.git_utils.run_git', side_effect=tracking_run_git):
+            create_feature_branch(temp_dir, "test-task")
+
+            fetch_idx = next(i for i, c in enumerate(call_order) if c == ["fetch", "origin"])
+            checkout_idx = next(i for i, c in enumerate(call_order) if c == ["checkout", "--detach"])
+            assert fetch_idx < checkout_idx
+
+    def test_does_not_checkout_local_main(self, temp_dir):
+        """Does NOT check out bare 'main' (local) as the base."""
+        from orchestrator.git_utils import create_feature_branch
+
+        with patch('orchestrator.git_utils.run_git') as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+
+            create_feature_branch(temp_dir, "test-task", base_branch="main")
+
+            # Should NOT have a call to checkout bare "main"
+            for c in mock_run.call_args_list:
+                args = c[0][0]
+                if args[:1] == ["checkout"] and args != ["checkout", "-b", mock_run.call_args_list[-1][0][0][-1]]:
+                    # Any checkout call should use origin/ prefix or -b
+                    if len(args) == 2 and args[1] == "main":
+                        pytest.fail("Should not checkout local 'main' directly")
+
+    def test_fallback_to_local_on_origin_failure(self, temp_dir):
+        """Falls back to local branch if origin ref fails."""
+        from orchestrator.git_utils import create_feature_branch
+
+        call_count = [0]
+
+        def mock_run_git(args, cwd=None, check=True):
+            if args[:2] == ["checkout", "--detach"]:
+                raise subprocess.CalledProcessError(1, "git")
+            return MagicMock(returncode=0)
+
+        with patch('orchestrator.git_utils.run_git', side_effect=mock_run_git):
+            branch = create_feature_branch(temp_dir, "test-task")
+
+            assert branch.startswith("agent/test-task-")
+
+    def test_branch_name_format(self, temp_dir):
+        """Branch name follows agent/{task_id}-{timestamp} format."""
+        from orchestrator.git_utils import create_feature_branch
+
+        with patch('orchestrator.git_utils.run_git') as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+
+            branch = create_feature_branch(temp_dir, "abc12345")
+
+            assert branch.startswith("agent/abc12345-")
+            # Timestamp portion: YYYYMMDD-HHMMSS
+            import re
+            assert re.match(r"agent/abc12345-\d{8}-\d{6}$", branch)
 
 
 class TestGetCommitCount:
