@@ -656,6 +656,15 @@ def assign_qa_checks() -> None:
 
             # Add gk-qa check
             new_checks = checks + ["gk-qa"]
+
+            # Validate that the check name is valid before adding
+            from .queue_utils import _validate_check_names
+            try:
+                _validate_check_names(["gk-qa"])
+            except ValueError as e:
+                debug_log(f"Cannot add gk-qa check to task {task_id}: {e}")
+                continue
+
             checks_str = ",".join(new_checks)
             db.update_task(task_id, checks=checks_str)
 
@@ -980,6 +989,30 @@ def check_and_update_finished_agents() -> None:
                     try:
                         from . import db
                         db.mark_agent_finished(agent_name)
+
+                        # Sync DB queue column with actual file location
+                        # When agent finishes, it may have moved task to needs_continuation/, provisional/, etc.
+                        # but DB queue column may still say "claimed"
+                        if state.current_task:
+                            from .queue_utils import find_task_file, ALL_QUEUE_DIRS
+                            task_file = find_task_file(state.current_task)
+                            if task_file:
+                                # Determine queue from file location
+                                actual_queue = task_file.parent.name
+                                if actual_queue in ALL_QUEUE_DIRS:
+                                    task = db.get_task(state.current_task)
+                                    if task and task.get("queue") != actual_queue:
+                                        debug_log(f"Task {state.current_task} file is in {actual_queue}/ but DB says {task.get('queue')} — syncing")
+                                        # Use update_task_queue to properly move the task
+                                        # Clear claimed_by/claimed_at when leaving claimed/
+                                        claimed_by = None if actual_queue != "claimed" else task.get("claimed_by")
+                                        claimed_at = None if actual_queue != "claimed" else task.get("claimed_at")
+                                        db.update_task_queue(
+                                            state.current_task,
+                                            actual_queue,
+                                            claimed_by=claimed_by,
+                                            claimed_at=claimed_at,
+                                        )
                     except Exception as e:
                         debug_log(f"Failed to update agent {agent_name} in DB: {e}")
 
