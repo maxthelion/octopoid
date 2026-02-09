@@ -61,9 +61,15 @@ def ensure_worktree(agent_name: str, base_branch: str = "main") -> Path:
 
     # Check if worktree already exists and is valid
     if worktree_path.exists() and (worktree_path / ".git").exists():
-        # Update existing worktree
+        # Update existing worktree to latest origin/main
         try:
             run_git(["fetch", "origin"], cwd=worktree_path)
+            # Reset to origin/main so the worktree isn't based on stale local main
+            run_git(
+                ["checkout", "--detach", f"origin/{base_branch}"],
+                cwd=worktree_path,
+                check=False,
+            )
         except subprocess.CalledProcessError:
             pass  # Fetch may fail if offline, that's ok
         return worktree_path
@@ -88,18 +94,18 @@ def ensure_worktree(agent_name: str, base_branch: str = "main") -> Path:
     except subprocess.CalledProcessError:
         pass  # May fail if offline
 
-    # Create the worktree in detached HEAD mode
-    # This prevents blocking the branch from being checked out elsewhere
+    # Create the worktree from origin/main (not local main) so it's
+    # always up to date, even if the human hasn't run git pull.
     try:
         run_git(
-            ["worktree", "add", "--detach", str(worktree_path), base_branch],
+            ["worktree", "add", "--detach", str(worktree_path), f"origin/{base_branch}"],
             cwd=parent_repo,
         )
     except subprocess.CalledProcessError as e:
-        # If branch doesn't exist locally, try with origin/branch
+        # Fallback to local branch if origin ref doesn't exist
         if "invalid reference" in e.stderr or "not a valid" in e.stderr:
             run_git(
-                ["worktree", "add", "--detach", str(worktree_path), f"origin/{base_branch}"],
+                ["worktree", "add", "--detach", str(worktree_path), base_branch],
                 cwd=parent_repo,
             )
 
@@ -137,18 +143,17 @@ def create_feature_branch(
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     branch_name = f"agent/{task_id}-{timestamp}"
 
-    # Fetch latest
+    # Fetch latest from origin and create branch from origin/main
+    # (not local main, which may be behind if human hasn't run git pull)
     run_git(["fetch", "origin"], cwd=worktree_path, check=False)
 
-    # Checkout base branch and pull latest
     try:
-        run_git(["checkout", base_branch], cwd=worktree_path)
-        run_git(["pull", "origin", base_branch], cwd=worktree_path, check=False)
+        run_git(["checkout", "--detach", f"origin/{base_branch}"], cwd=worktree_path)
     except subprocess.CalledProcessError:
-        # Try with origin prefix
-        run_git(["checkout", "-B", base_branch, f"origin/{base_branch}"], cwd=worktree_path)
+        # Fallback to local branch if origin ref doesn't exist
+        run_git(["checkout", base_branch], cwd=worktree_path)
 
-    # Create and checkout new branch
+    # Create and checkout new branch from the detached origin HEAD
     run_git(["checkout", "-b", branch_name], cwd=worktree_path)
 
     return branch_name
