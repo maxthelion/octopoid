@@ -716,7 +716,7 @@ DEFAULT_PRE_CHECK_CONFIG = {
 | **Pre-check** | No commits (1st attempt) | Rejected back to incoming | `reject_completion(reason='no_commits')`, `attempt_count` incremented |
 | **Pre-check** | No commits (burned out) | Recycled to breakdown queue | `recycle_to_breakdown()` if `is_burned_out()` |
 | **Pre-check** | No commits (max attempts) | Recycled or escalated to planning | `recycle_to_breakdown()` or `escalate_to_planning()` |
-| **Automated check** | Check fails | Rejected with feedback | `review_reject_task()`, `rejection_count` incremented |
+| **Automated check** | Check fails | Rejected with feedback (inserted at top of task file, before ## Context) | `review_reject_task()`, `rejection_count` incremented, previous rejection replaced |
 | **Automated check** | Check fails (max rejections) | Escalated to human | `review_reject_task()` with `max_rejections=3` → escalated queue |
 | **Self-merge** (orch) | Rebase conflict | Falls back to provisional | `submit_completion()` |
 | **Self-merge** (orch) | pytest fails | Falls back to provisional | `submit_completion()` |
