@@ -474,3 +474,145 @@ class TestSchedulerGatekeeperDispatch:
                 with patch('orchestrator.scheduler.spawn_agent') as mock_spawn:
                     dispatch_gatekeeper_agents()
                     mock_spawn.assert_not_called()
+
+
+class TestAssignQaChecks:
+    """Tests for auto-assigning gk-qa check to provisional app tasks with staging_url."""
+
+    def test_assigns_gk_qa_to_app_task_with_staging_url(self, mock_config, initialized_db):
+        """App task with staging_url gets gk-qa check auto-assigned."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, update_task_queue, update_task, get_task
+            from orchestrator.scheduler import assign_qa_checks
+
+            create_task(
+                task_id='qa_assign',
+                file_path='/qa_assign.md',
+                role='implement',
+                branch='feature/test',
+            )
+            update_task_queue('qa_assign', 'provisional', commits_count=2)
+            update_task(
+                'qa_assign',
+                staging_url='https://test.pages.dev',
+            )
+
+            assign_qa_checks()
+
+            task = get_task('qa_assign')
+            assert 'gk-qa' in task['checks']
+
+    def test_skips_task_without_staging_url(self, mock_config, initialized_db):
+        """Tasks without staging_url are skipped (deployment not ready)."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, update_task_queue, get_task
+            from orchestrator.scheduler import assign_qa_checks
+
+            create_task(
+                task_id='no_staging',
+                file_path='/no_staging.md',
+                role='implement',
+                branch='feature/test',
+            )
+            update_task_queue('no_staging', 'provisional', commits_count=1)
+
+            assign_qa_checks()
+
+            task = get_task('no_staging')
+            assert 'gk-qa' not in task['checks']
+
+    def test_skips_orchestrator_impl_tasks(self, mock_config, initialized_db):
+        """orchestrator_impl tasks are not assigned gk-qa (they use gk-testing-octopoid)."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, update_task_queue, update_task, get_task
+            from orchestrator.scheduler import assign_qa_checks
+
+            create_task(
+                task_id='orch_task',
+                file_path='/orch_task.md',
+                role='orchestrator_impl',
+                checks=['gk-testing-octopoid'],
+            )
+            update_task_queue('orch_task', 'provisional', commits_count=1)
+            update_task(
+                'orch_task',
+                staging_url='https://test.pages.dev',
+            )
+
+            assign_qa_checks()
+
+            task = get_task('orch_task')
+            assert 'gk-qa' not in task['checks']
+            assert 'gk-testing-octopoid' in task['checks']
+
+    def test_does_not_duplicate_gk_qa_check(self, mock_config, initialized_db):
+        """If gk-qa is already in checks, it is not added again."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, update_task_queue, update_task, get_task
+            from orchestrator.scheduler import assign_qa_checks
+
+            create_task(
+                task_id='already_qa',
+                file_path='/already_qa.md',
+                role='implement',
+                checks=['gk-qa'],
+                branch='feature/test',
+            )
+            update_task_queue('already_qa', 'provisional', commits_count=1)
+            update_task(
+                'already_qa',
+                staging_url='https://test.pages.dev',
+            )
+
+            assign_qa_checks()
+
+            task = get_task('already_qa')
+            # Should still be exactly one gk-qa, not duplicated
+            assert task['checks'].count('gk-qa') == 1
+
+    def test_preserves_existing_checks(self, mock_config, initialized_db):
+        """Existing checks are preserved when gk-qa is added."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, update_task_queue, update_task, get_task
+            from orchestrator.scheduler import assign_qa_checks
+
+            create_task(
+                task_id='has_checks',
+                file_path='/has_checks.md',
+                role='implement',
+                checks=['architecture-review'],
+                branch='feature/test',
+            )
+            update_task_queue('has_checks', 'provisional', commits_count=1)
+            update_task(
+                'has_checks',
+                staging_url='https://test.pages.dev',
+            )
+
+            assign_qa_checks()
+
+            task = get_task('has_checks')
+            assert 'architecture-review' in task['checks']
+            assert 'gk-qa' in task['checks']
+
+    def test_skips_non_provisional_tasks(self, mock_config, initialized_db):
+        """Only provisional tasks get gk-qa assigned."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, update_task, get_task
+            from orchestrator.scheduler import assign_qa_checks
+
+            create_task(
+                task_id='in_incoming',
+                file_path='/in_incoming.md',
+                role='implement',
+            )
+            update_task(
+                'in_incoming',
+                staging_url='https://test.pages.dev',
+            )
+
+            assign_qa_checks()
+
+            task = get_task('in_incoming')
+            # Task is in incoming, not provisional — should not get gk-qa
+            assert 'gk-qa' not in task['checks']

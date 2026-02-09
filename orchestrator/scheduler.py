@@ -617,6 +617,55 @@ def read_agent_exit_code(agent_name: str) -> int | None:
         return None
 
 
+def assign_qa_checks() -> None:
+    """Auto-assign gk-qa check to provisional app tasks that have a staging_url.
+
+    Scans provisional tasks and adds 'gk-qa' to the checks list for tasks that:
+    - Have a staging_url (deployment is ready)
+    - Are NOT orchestrator_impl tasks (those use gk-testing-octopoid)
+    - Don't already have gk-qa in their checks list
+
+    Tasks without a staging_url are silently skipped — they'll be picked up
+    on a future tick once the staging URL is populated by _store_staging_url().
+    """
+    if not is_db_enabled():
+        return
+
+    try:
+        from . import db
+
+        provisional_tasks = db.list_tasks(queue="provisional")
+
+        for task in provisional_tasks:
+            task_id = task["id"]
+            staging_url = task.get("staging_url")
+            role = task.get("role", "")
+            checks = task.get("checks", [])
+
+            # Skip orchestrator_impl tasks (they use gk-testing-octopoid)
+            if role == "orchestrator_impl":
+                continue
+
+            # Skip tasks without a staging_url (deployment not ready yet)
+            if not staging_url:
+                continue
+
+            # Skip if gk-qa already assigned
+            if "gk-qa" in checks:
+                continue
+
+            # Add gk-qa check
+            new_checks = checks + ["gk-qa"]
+            checks_str = ",".join(new_checks)
+            db.update_task(task_id, checks=checks_str)
+
+            debug_log(f"Auto-assigned gk-qa check to task {task_id} (staging_url={staging_url})")
+            print(f"[{datetime.now().isoformat()}] Auto-assigned gk-qa check to task {task_id}")
+
+    except Exception as e:
+        debug_log(f"Error assigning QA checks: {e}")
+
+
 def process_auto_accept_tasks() -> None:
     """Process provisional tasks that have auto_accept enabled.
 
@@ -1399,6 +1448,9 @@ def run_scheduler() -> None:
 
     # Process auto-accept tasks in provisional queue
     process_auto_accept_tasks()
+
+    # Auto-assign gk-qa checks to app tasks with staging URLs
+    assign_qa_checks()
 
     # Process gatekeeper reviews for provisional tasks
     process_gatekeeper_reviews()
