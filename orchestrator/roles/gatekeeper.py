@@ -192,7 +192,39 @@ class GatekeeperRole(SpecialistRole):
         if staging_url:
             staging_section = f"\n**Staging URL:** {staging_url}\n"
 
-        prompt = f"""You are a gatekeeper agent performing a **{self.check_name}** review on a task implementation.
+        is_qa = self.check_name == "qa"
+
+        if is_qa:
+            # QA checks are visual-only: no diff, no changed files, no code references
+            prompt = f"""You are a gatekeeper agent performing a **{self.check_name}** review on a task implementation.
+
+**Focus Area:** {focus_description}
+
+{instructions}
+
+{domain_prompt}
+
+## Task Being Reviewed
+
+**Task ID:** {self.review_task_id}
+{staging_section}
+
+### Task Description
+{task_file_content[:3000] if task_file_content else 'No task file found.'}
+
+## Your Task
+
+Visually verify this implementation using Playwright MCP against the staging deployment. You MUST navigate to the staging URL and take screenshots. Do NOT read code or diffs.
+
+When you've completed your review, use the /record-check skill to record your result:
+
+```
+/record-check {self.review_task_id} {self.check_name} <pass|fail> "summary" "details"
+```
+"""
+        else:
+            # Code review checks: include diff and changed files
+            prompt = f"""You are a gatekeeper agent performing a **{self.check_name}** review on a task implementation.
 
 **Focus Area:** {focus_description}
 
