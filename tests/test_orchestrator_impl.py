@@ -480,14 +480,18 @@ class TestTryMergeSubmodule:
 
 
 class TestTryMergeMainRepo:
-    """Tests for _try_merge_main_repo -- main repo tooling merge flow."""
+    """Tests for _try_merge_main_repo -- push-to-origin main repo merge flow.
+
+    The new flow never touches the human's working tree. All operations
+    happen in the agent's worktree, pushing to origin via refspec.
+    """
 
     def _make_role(self):
         from orchestrator.roles.orchestrator_impl import OrchestratorImplRole
         return OrchestratorImplRole()
 
     def test_success_path(self):
-        """All steps succeed -> returns True."""
+        """All steps succeed -> returns True, all git ops use worktree cwd."""
         with patch.dict('os.environ', _ENV):
             role = self._make_role()
 
@@ -497,24 +501,55 @@ class TestTryMergeMainRepo:
                 calls.append((cmd, str(cwd)))
                 return _make_completed_result(0)
 
-            with patch.object(role, '_run_cmd', side_effect=mock_run_cmd):
+            with patch.object(role, '_run_cmd', side_effect=mock_run_cmd), \
+                 patch('orchestrator.message_utils.info'):
                 result = role._try_merge_main_repo('abc12345')
 
             assert result is True
 
+            worktree = str(role.worktree)
             cmds = [c[0] for c in calls]
-            assert any('fetch' in c[0] and 'tooling/abc12345' in str(c[0]) for c in calls)
-            assert ['git', 'rebase', 'main'] in cmds
-            assert ['git', 'merge', '--ff-only', 'tooling/abc12345'] in cmds
-            assert ['git', 'branch', '-d', 'tooling/abc12345'] in cmds
+
+            # All git commands must use the worktree, not parent_project
+            for cmd, cwd in calls:
+                if cmd[0] == 'git':
+                    assert cwd == worktree, f"Command {cmd} ran in {cwd}, expected {worktree}"
+
+            # Verify key steps
+            assert ['git', 'fetch', 'origin', 'main'] in cmds
+            assert ['git', 'checkout', 'tooling/abc12345'] in cmds
+            assert ['git', 'rebase', 'origin/main'] in cmds
+            assert ['git', 'push', 'origin', 'tooling/abc12345', '--force-with-lease'] in cmds
+            assert ['git', 'push', 'origin', 'tooling/abc12345:main'] in cmds
+            # Remote branch cleanup
+            assert ['git', 'push', 'origin', '--delete', 'tooling/abc12345'] in cmds
+
+    def test_never_touches_parent_project(self):
+        """No git command should use parent_project as cwd."""
+        with patch.dict('os.environ', _ENV):
+            role = self._make_role()
+
+            calls = []
+
+            def mock_run_cmd(cmd, cwd, timeout=120):
+                calls.append((cmd, str(cwd)))
+                return _make_completed_result(0)
+
+            with patch.object(role, '_run_cmd', side_effect=mock_run_cmd), \
+                 patch('orchestrator.message_utils.info'):
+                role._try_merge_main_repo('abc12345')
+
+            parent = str(role.parent_project)
+            for cmd, cwd in calls:
+                assert cwd != parent, f"Command {cmd} touched parent_project {parent}"
 
     def test_fetch_failure_returns_false(self):
-        """If fetch fails, returns False."""
+        """If fetch origin/main fails, returns False."""
         with patch.dict('os.environ', _ENV):
             role = self._make_role()
 
             def mock_run_cmd(cmd, cwd, timeout=120):
-                if 'fetch' in cmd:
+                if cmd == ['git', 'fetch', 'origin', 'main']:
                     return _make_completed_result(1, stderr='fetch failed')
                 return _make_completed_result(0)
 
@@ -524,12 +559,15 @@ class TestTryMergeMainRepo:
             assert result is False
 
     def test_rebase_failure_returns_false(self):
-        """If rebase fails, returns False and cleans up."""
+        """If rebase onto origin/main fails, returns False and aborts."""
         with patch.dict('os.environ', _ENV):
             role = self._make_role()
 
+            calls = []
+
             def mock_run_cmd(cmd, cwd, timeout=120):
-                if cmd == ['git', 'rebase', 'main']:
+                calls.append((cmd, str(cwd)))
+                if cmd == ['git', 'rebase', 'origin/main']:
                     return _make_completed_result(1, stderr='CONFLICT')
                 return _make_completed_result(0)
 
@@ -537,21 +575,111 @@ class TestTryMergeMainRepo:
                 result = role._try_merge_main_repo('abc12345')
 
             assert result is False
+            # Should abort the rebase
+            cmds = [c[0] for c in calls]
+            assert ['git', 'rebase', '--abort'] in cmds
 
-    def test_ff_merge_failure_returns_false(self):
-        """If ff-merge fails, returns False."""
+    def test_branch_push_failure_returns_false(self):
+        """If pushing the rebased branch to origin fails, returns False."""
         with patch.dict('os.environ', _ENV):
             role = self._make_role()
 
             def mock_run_cmd(cmd, cwd, timeout=120):
-                if cmd == ['git', 'merge', '--ff-only', 'tooling/abc12345']:
-                    return _make_completed_result(1, stderr='not ff')
+                if '--force-with-lease' in cmd:
+                    return _make_completed_result(1, stderr='push rejected')
                 return _make_completed_result(0)
 
             with patch.object(role, '_run_cmd', side_effect=mock_run_cmd):
                 result = role._try_merge_main_repo('abc12345')
 
             assert result is False
+
+    def test_ff_push_failure_triggers_retry(self):
+        """If the refspec push to main fails, rebase and retry once."""
+        with patch.dict('os.environ', _ENV):
+            role = self._make_role()
+
+            refspec_push_count = [0]
+
+            def mock_run_cmd(cmd, cwd, timeout=120):
+                if cmd == ['git', 'push', 'origin', 'tooling/abc12345:main']:
+                    refspec_push_count[0] += 1
+                    if refspec_push_count[0] == 1:
+                        return _make_completed_result(1, stderr='not fast-forward')
+                    return _make_completed_result(0)
+                return _make_completed_result(0)
+
+            with patch.object(role, '_run_cmd', side_effect=mock_run_cmd), \
+                 patch('orchestrator.message_utils.info'):
+                result = role._try_merge_main_repo('abc12345')
+
+            assert result is True
+            assert refspec_push_count[0] == 2
+
+    def test_ff_push_failure_after_retry_returns_false(self):
+        """If the refspec push fails twice, returns False."""
+        with patch.dict('os.environ', _ENV):
+            role = self._make_role()
+
+            def mock_run_cmd(cmd, cwd, timeout=120):
+                if cmd == ['git', 'push', 'origin', 'tooling/abc12345:main']:
+                    return _make_completed_result(1, stderr='not fast-forward')
+                return _make_completed_result(0)
+
+            with patch.object(role, '_run_cmd', side_effect=mock_run_cmd):
+                result = role._try_merge_main_repo('abc12345')
+
+            assert result is False
+
+    def test_retry_rebase_failure_returns_false(self):
+        """If the retry rebase fails, returns False."""
+        with patch.dict('os.environ', _ENV):
+            role = self._make_role()
+
+            rebase_count = [0]
+
+            def mock_run_cmd(cmd, cwd, timeout=120):
+                if cmd == ['git', 'push', 'origin', 'tooling/abc12345:main']:
+                    return _make_completed_result(1, stderr='not fast-forward')
+                if cmd == ['git', 'rebase', 'origin/main']:
+                    rebase_count[0] += 1
+                    if rebase_count[0] == 2:
+                        return _make_completed_result(1, stderr='CONFLICT on retry')
+                return _make_completed_result(0)
+
+            with patch.object(role, '_run_cmd', side_effect=mock_run_cmd):
+                result = role._try_merge_main_repo('abc12345')
+
+            assert result is False
+
+    def test_sends_notification_on_success(self):
+        """On success, sends an info message to the human inbox."""
+        with patch.dict('os.environ', _ENV):
+            role = self._make_role()
+
+            mock_send = MagicMock()
+
+            with patch.object(role, '_run_cmd', return_value=_make_completed_result(0)), \
+                 patch('orchestrator.message_utils.info', mock_send):
+                result = role._try_merge_main_repo('abc12345')
+
+            assert result is True
+            mock_send.assert_called_once()
+            call_kwargs = mock_send.call_args
+            assert 'abc12345' in call_kwargs.kwargs.get('title', '') or 'abc12345' in str(call_kwargs)
+            assert call_kwargs.kwargs.get('agent_name') == 'test-orch'
+            assert 'git pull' in call_kwargs.kwargs.get('body', '')
+
+    def test_notification_failure_does_not_break_merge(self):
+        """If notification fails, merge still returns True."""
+        with patch.dict('os.environ', _ENV):
+            role = self._make_role()
+
+            with patch.object(role, '_run_cmd', return_value=_make_completed_result(0)), \
+                 patch('orchestrator.message_utils.info', side_effect=Exception('msg fail')):
+                result = role._try_merge_main_repo('abc12345')
+
+            assert result is True
 
 
 class TestTryMergeToMain:

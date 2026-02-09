@@ -196,71 +196,112 @@ class OrchestratorImplRole(ImplementerRole):
         return True
 
     def _try_merge_main_repo(self, task_id: str) -> bool:
-        """Try to rebase and fast-forward merge main repo tooling changes.
+        """Try to rebase and push main repo tooling changes to origin.
+
+        Uses push-to-origin pattern: all work happens in the agent's worktree,
+        the human's working tree is never touched. After rebasing onto
+        origin/main, pushes the rebased branch as a fast-forward update to
+        origin/main via a refspec push.
 
         No pytest here -- tooling files don't affect orchestrator tests.
         The submodule merge (if any) already ran pytest.
 
         Returns True if all steps succeed, False on any failure.
         """
-        tooling_branch = f"tooling/{task_id}"
-        main_repo = self.parent_project
+        from ..message_utils import info as send_info_message
 
-        # Step 1: Fetch the tooling branch from the agent's worktree
-        self.log(f"Self-merge (main repo): fetching {tooling_branch}...")
+        tooling_branch = f"tooling/{task_id}"
+        worktree = self.worktree
+
+        # Step 1: Fetch latest origin/main into the agent's worktree
+        self.log("Self-merge (main repo): fetching origin/main...")
         result = self._run_cmd(
-            ["git", "fetch", str(self.worktree), f"{tooling_branch}:{tooling_branch}"],
-            cwd=main_repo,
+            ["git", "fetch", "origin", "main"],
+            cwd=worktree,
         )
         if result.returncode != 0:
-            self.log(f"Self-merge (main repo): fetch tooling branch failed: {result.stderr.strip()}")
+            self.log(f"Self-merge (main repo): fetch origin/main failed: {result.stderr.strip()}")
             return False
 
-        # Step 2: Checkout the tooling branch and rebase onto main
+        # Step 2: Checkout the tooling branch and rebase onto origin/main
         result = self._run_cmd(
-            ["git", "checkout", tooling_branch], cwd=main_repo
+            ["git", "checkout", tooling_branch], cwd=worktree
         )
         if result.returncode != 0:
             self.log(f"Self-merge (main repo): checkout {tooling_branch} failed: {result.stderr.strip()}")
             return False
 
-        self.log(f"Self-merge (main repo): rebasing {tooling_branch} onto main...")
+        self.log(f"Self-merge (main repo): rebasing {tooling_branch} onto origin/main...")
         result = self._run_cmd(
-            ["git", "rebase", "main"], cwd=main_repo
+            ["git", "rebase", "origin/main"], cwd=worktree
         )
         if result.returncode != 0:
             self.log(f"Self-merge (main repo): rebase failed: {result.stderr.strip()}")
-            self._run_cmd(["git", "rebase", "--abort"], cwd=main_repo)
-            self._run_cmd(["git", "checkout", "main"], cwd=main_repo)
+            self._run_cmd(["git", "rebase", "--abort"], cwd=worktree)
             return False
 
-        # Step 3: Checkout main and ff-merge
+        # Step 3: Push the rebased branch to origin
+        self.log(f"Self-merge (main repo): pushing {tooling_branch} to origin...")
         result = self._run_cmd(
-            ["git", "checkout", "main"], cwd=main_repo
+            ["git", "push", "origin", tooling_branch, "--force-with-lease"],
+            cwd=worktree,
         )
         if result.returncode != 0:
-            self.log(f"Self-merge (main repo): checkout main failed: {result.stderr.strip()}")
+            self.log(f"Self-merge (main repo): push branch failed: {result.stderr.strip()}")
             return False
 
-        result = self._run_cmd(
-            ["git", "merge", "--ff-only", tooling_branch], cwd=main_repo
-        )
-        if result.returncode != 0:
-            self.log(f"Self-merge (main repo): ff-merge failed: {result.stderr.strip()}")
-            return False
-        self.log("Self-merge (main repo): merged to main")
+        # Step 4: Fast-forward origin/main to the rebased branch via refspec push.
+        # Since we just rebased onto origin/main, this should be a fast-forward.
+        # If it fails (main diverged between fetch and push), retry once.
+        for attempt in range(2):
+            result = self._run_cmd(
+                ["git", "push", "origin", f"{tooling_branch}:main"],
+                cwd=worktree,
+            )
+            if result.returncode == 0:
+                break
 
-        # Step 4: Push main to origin
-        result = self._run_cmd(
-            ["git", "push", "origin", "main"], cwd=main_repo
-        )
-        if result.returncode != 0:
-            self.log("Self-merge (main repo): push failed but local merge succeeded, continuing")
+            if attempt == 0:
+                self.log("Self-merge (main repo): ff push to main failed, rebasing and retrying...")
+                # Re-fetch and re-rebase
+                self._run_cmd(["git", "fetch", "origin", "main"], cwd=worktree)
+                rebase_result = self._run_cmd(
+                    ["git", "rebase", "origin/main"], cwd=worktree
+                )
+                if rebase_result.returncode != 0:
+                    self.log(f"Self-merge (main repo): retry rebase failed: {rebase_result.stderr.strip()}")
+                    self._run_cmd(["git", "rebase", "--abort"], cwd=worktree)
+                    return False
+                # Push rebased branch again
+                self._run_cmd(
+                    ["git", "push", "origin", tooling_branch, "--force-with-lease"],
+                    cwd=worktree,
+                )
+            else:
+                self.log(f"Self-merge (main repo): ff push to main failed after retry: {result.stderr.strip()}")
+                return False
 
-        # Clean up the tooling branch
+        self.log("Self-merge (main repo): pushed to origin/main")
+
+        # Step 5: Clean up the remote tooling branch
         self._run_cmd(
-            ["git", "branch", "-d", tooling_branch], cwd=main_repo
+            ["git", "push", "origin", "--delete", tooling_branch],
+            cwd=worktree,
         )
+
+        # Step 6: Send notification to human
+        try:
+            send_info_message(
+                title=f"TASK-{task_id[:8]} merged to main",
+                body=(
+                    f"Tooling changes from `tooling/{task_id}` have been pushed to `origin/main`.\n\n"
+                    "Run `git pull` to update your local checkout."
+                ),
+                agent_name=self.agent_name,
+                task_id=task_id,
+            )
+        except Exception as e:
+            self.log(f"Self-merge (main repo): notification failed: {e}")
 
         return True
 

@@ -270,12 +270,17 @@ The recycler also runs `reconcile_stale_blockers()` on each tick to catch any de
   5. Invoke Claude with explicit submodule paths in prompt
   6. Count commits from SUBMODULE (not main repo)
   7. **No PR.** Instead, attempt self-merge via `_try_merge_to_main()`:
-     - Rebase `orch/{task_id}` onto main in submodule
-     - Run `pytest tests/ -v`
-     - Fast-forward merge to main
-     - Fetch into main checkout's submodule, ff-merge
-     - Push submodule main to origin
-     - Update submodule ref in main repo, commit, push
+     - **Submodule path** (`orch/{task_id}`):
+       - Rebase onto main, run `pytest tests/ -v`
+       - Fast-forward merge to main in agent worktree submodule
+       - Fetch into main checkout's submodule, ff-merge, push to origin
+       - Update submodule ref in main repo, commit, push
+     - **Main repo path** (`tooling/{task_id}`) — push-to-origin pattern:
+       - Fetch `origin/main`, rebase onto it (all in agent worktree)
+       - Push rebased branch to origin, then `git push origin tooling/{task_id}:main`
+       - If ff push fails, rebase and retry once
+       - Send notification to human inbox: "run `git pull`"
+       - Human working tree is never touched
   8. If self-merge succeeds: `accept_completion(accepted_by='self-merge')`
   9. If self-merge fails: `submit_completion()` for manual review
 - **Agent:** `orch-impl-1` (active)
@@ -390,11 +395,14 @@ create_task(role='implement', branch='main')
 
 ```
 create_task(role='orchestrator_impl', branch='main')
-  → agent claims, creates orch/{task_id} branch IN SUBMODULE
-  → agent commits to submodule branch (NOT main repo)
+  → agent claims, creates orch/{task_id} in submodule + tooling/{task_id} in main repo
+  → agent commits to submodule and/or main repo tooling branch
   → NO PR created
-  → self-merge attempt:
+  → self-merge attempt (submodule):
       rebase onto main → pytest → ff-merge → push → update submodule ref
+  → self-merge attempt (main repo, push-to-origin):
+      fetch origin/main → rebase → push branch → push tooling/{task_id}:main
+      → retry once if ff push fails → notify human to git pull
   → if self-merge succeeds: accept_completion(accepted_by='self-merge')
   → if self-merge fails: submit_completion() → provisional → manual review
 ```
@@ -402,6 +410,7 @@ create_task(role='orchestrator_impl', branch='main')
 **Key characteristics:**
 - Boxen worktree is on `main`; all work in `worktree/orchestrator/` submodule
 - Submodule feature branch: `orch/{task_id}`
+- Main repo tooling branch: `tooling/{task_id}` (push-to-origin, never touches human checkout)
 - Tests: `pytest tests/ -v` (in submodule, using `.orchestrator/venv/`)
 - No PR in main repo
 - Self-merge on success; `approve_orchestrator_task.py` for manual approval
