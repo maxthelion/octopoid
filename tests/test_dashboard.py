@@ -604,3 +604,268 @@ class TestSafeHline:
         win.hline.side_effect = curses.error("test")
         # Should not raise
         dash.safe_hline(win, 0, 0, ord("-"), 10)
+
+
+# ---------------------------------------------------------------------------
+# _flatten_work_tasks tests
+# ---------------------------------------------------------------------------
+
+
+class TestFlattenWorkTasks:
+    """Tests for _flatten_work_tasks()."""
+
+    def test_empty_report(self):
+        report = {"work": {}}
+        assert dash._flatten_work_tasks(report) == []
+
+    def test_orders_columns_left_to_right(self):
+        """Tasks from incoming come before in_progress, then checking, then in_review."""
+        report = {"work": {
+            "incoming": [{"id": "t1"}],
+            "in_progress": [{"id": "t2"}],
+            "checking": [{"id": "t3"}],
+            "in_review": [{"id": "t4"}],
+        }}
+        flat = dash._flatten_work_tasks(report)
+        ids = [t["id"] for t in flat]
+        assert ids == ["t1", "t2", "t3", "t4"]
+
+    def test_multiple_per_column(self):
+        report = {"work": {
+            "incoming": [{"id": "t1"}, {"id": "t2"}],
+            "in_progress": [{"id": "t3"}],
+        }}
+        flat = dash._flatten_work_tasks(report)
+        ids = [t["id"] for t in flat]
+        assert ids == ["t1", "t2", "t3"]
+
+    def test_demo_data_has_tasks(self):
+        report = dash._generate_demo_report()
+        flat = dash._flatten_work_tasks(report)
+        assert len(flat) > 0
+
+    def test_missing_work_key(self):
+        assert dash._flatten_work_tasks({}) == []
+
+
+# ---------------------------------------------------------------------------
+# Work Board cursor navigation tests
+# ---------------------------------------------------------------------------
+
+
+class TestWorkCursorNavigation:
+    """Tests for j/k cursor movement on the Work Board tab."""
+
+    def _make_dashboard(self):
+        state = dash.DashboardState(demo_mode=True)
+        state.last_report = dash._generate_demo_report()
+        state.last_drafts = dash._generate_demo_drafts()
+        dashboard = MagicMock()
+        dashboard.state = state
+        dashboard.running = True
+        dashboard.handle_input = dash.Dashboard.handle_input.__get__(dashboard)
+        dashboard._move_cursor = dash.Dashboard._move_cursor.__get__(dashboard)
+        dashboard.load_data = MagicMock()
+        return dashboard
+
+    def test_j_moves_work_cursor_down(self):
+        d = self._make_dashboard()
+        d.state.active_tab = dash.TAB_WORK
+        d.state.work_cursor = 0
+        d.handle_input(ord('j'))
+        assert d.state.work_cursor == 1
+
+    def test_k_moves_work_cursor_up(self):
+        d = self._make_dashboard()
+        d.state.active_tab = dash.TAB_WORK
+        d.state.work_cursor = 2
+        d.handle_input(ord('k'))
+        assert d.state.work_cursor == 1
+
+    def test_work_cursor_clamps_at_top(self):
+        d = self._make_dashboard()
+        d.state.active_tab = dash.TAB_WORK
+        d.state.work_cursor = 0
+        d.handle_input(ord('k'))
+        assert d.state.work_cursor == 0
+
+    def test_work_cursor_clamps_at_bottom(self):
+        d = self._make_dashboard()
+        d.state.active_tab = dash.TAB_WORK
+        flat = dash._flatten_work_tasks(d.state.last_report)
+        d.state.work_cursor = len(flat) - 1
+        d.handle_input(ord('j'))
+        assert d.state.work_cursor == len(flat) - 1
+
+    def test_cursor_navigates_across_columns(self):
+        """Cursor should move through tasks across multiple columns."""
+        d = self._make_dashboard()
+        d.state.active_tab = dash.TAB_WORK
+        d.state.work_cursor = 0
+        flat = dash._flatten_work_tasks(d.state.last_report)
+        # Move to the end
+        for _ in range(len(flat)):
+            d.handle_input(ord('j'))
+        assert d.state.work_cursor == len(flat) - 1
+
+    def test_down_arrow_works(self):
+        import curses
+        d = self._make_dashboard()
+        d.state.active_tab = dash.TAB_WORK
+        d.state.work_cursor = 0
+        d.handle_input(curses.KEY_DOWN)
+        assert d.state.work_cursor == 1
+
+    def test_up_arrow_works(self):
+        import curses
+        d = self._make_dashboard()
+        d.state.active_tab = dash.TAB_WORK
+        d.state.work_cursor = 3
+        d.handle_input(curses.KEY_UP)
+        assert d.state.work_cursor == 2
+
+
+# ---------------------------------------------------------------------------
+# Work Board detail view tests
+# ---------------------------------------------------------------------------
+
+
+class TestWorkDetailView:
+    """Tests for Enter to open and Esc to close task detail view."""
+
+    def _make_dashboard(self):
+        state = dash.DashboardState(demo_mode=True)
+        state.last_report = dash._generate_demo_report()
+        state.last_drafts = dash._generate_demo_drafts()
+        dashboard = MagicMock()
+        dashboard.state = state
+        dashboard.running = True
+        dashboard.handle_input = dash.Dashboard.handle_input.__get__(dashboard)
+        dashboard._move_cursor = dash.Dashboard._move_cursor.__get__(dashboard)
+        dashboard.load_data = MagicMock()
+        return dashboard
+
+    def test_enter_opens_detail(self):
+        d = self._make_dashboard()
+        d.state.active_tab = dash.TAB_WORK
+        d.state.work_cursor = 0
+        flat = dash._flatten_work_tasks(d.state.last_report)
+        d.handle_input(ord('\n'))
+        assert d.state.work_detail_task_id == flat[0]["id"]
+
+    def test_esc_closes_detail(self):
+        d = self._make_dashboard()
+        d.state.active_tab = dash.TAB_WORK
+        d.state.work_detail_task_id = "some-id"
+        d.handle_input(27)  # Esc key
+        assert d.state.work_detail_task_id is None
+
+    def test_enter_on_non_work_tab_does_not_open_detail(self):
+        d = self._make_dashboard()
+        d.state.active_tab = dash.TAB_AGENTS
+        d.handle_input(ord('\n'))
+        assert d.state.work_detail_task_id is None
+
+    def test_enter_with_empty_work(self):
+        d = self._make_dashboard()
+        d.state.active_tab = dash.TAB_WORK
+        d.state.last_report = {"work": {}}
+        d.handle_input(ord('\n'))
+        assert d.state.work_detail_task_id is None
+
+    def test_cursor_preserved_after_close(self):
+        d = self._make_dashboard()
+        d.state.active_tab = dash.TAB_WORK
+        d.state.work_cursor = 3
+        flat = dash._flatten_work_tasks(d.state.last_report)
+        d.handle_input(ord('\n'))
+        assert d.state.work_detail_task_id == flat[3]["id"]
+        d.handle_input(27)  # Esc
+        assert d.state.work_detail_task_id is None
+        assert d.state.work_cursor == 3  # preserved
+
+    def test_detail_does_not_open_when_already_open(self):
+        """Enter should not change the detail task if already viewing one."""
+        d = self._make_dashboard()
+        d.state.active_tab = dash.TAB_WORK
+        d.state.work_detail_task_id = "existing-id"
+        d.handle_input(ord('\n'))
+        # Should not change because detail is already open
+        assert d.state.work_detail_task_id == "existing-id"
+
+
+class TestWorkDetailRendering:
+    """Smoke tests for the detail view renderer."""
+
+    @pytest.fixture(autouse=True)
+    def _patch_curses(self):
+        import curses as _curses
+        with patch.object(_curses, "color_pair", side_effect=lambda n: n):
+            if not hasattr(_curses, "ACS_HLINE") or _curses.ACS_HLINE is None:
+                _curses.ACS_HLINE = ord("-")
+            yield
+
+    def _mock_win(self, rows=40, cols=120):
+        win = MagicMock()
+        win.getmaxyx.return_value = (rows, cols)
+        win.addnstr = MagicMock()
+        win.addstr = MagicMock()
+        win.hline = MagicMock()
+        win.attron = MagicMock()
+        win.attroff = MagicMock()
+        return win
+
+    def test_detail_renders_without_crash(self):
+        win = self._mock_win()
+        report = dash._generate_demo_report()
+        state = dash.DashboardState()
+        flat = dash._flatten_work_tasks(report)
+        state.work_detail_task_id = flat[0]["id"]
+        # Should not crash
+        dash.render_work_tab(win, report, state)
+        assert win.addnstr.called
+
+    def test_detail_renders_task_with_checks(self):
+        """Detail view should handle tasks with checks and check_results."""
+        win = self._mock_win()
+        report = dash._generate_demo_report()
+        state = dash.DashboardState()
+        # Find a task with checks (from the checking column)
+        checking = report["work"].get("checking", [])
+        if checking:
+            state.work_detail_task_id = checking[0]["id"]
+            dash.render_work_tab(win, report, state)
+            assert win.addnstr.called
+
+    def test_detail_renders_task_not_found(self):
+        win = self._mock_win()
+        report = dash._generate_demo_report()
+        state = dash.DashboardState()
+        state.work_detail_task_id = "nonexistent"
+        # Should not crash
+        dash.render_work_tab(win, report, state)
+
+    def test_detail_renders_in_small_terminal(self):
+        win = self._mock_win(rows=15, cols=60)
+        report = dash._generate_demo_report()
+        state = dash.DashboardState()
+        flat = dash._flatten_work_tasks(report)
+        state.work_detail_task_id = flat[0]["id"]
+        dash.render_work_tab(win, report, state)
+
+    def test_work_tab_with_highlight(self):
+        """Work tab should render highlighted card without crash."""
+        win = self._mock_win()
+        report = dash._generate_demo_report()
+        state = dash.DashboardState()
+        state.work_cursor = 2
+        dash.render_work_tab(win, report, state)
+        assert win.addnstr.called
+
+    def test_work_tab_highlight_at_last_task(self):
+        win = self._mock_win()
+        report = dash._generate_demo_report()
+        state = dash.DashboardState()
+        flat = dash._flatten_work_tasks(report)
+        state.work_cursor = len(flat) - 1
+        dash.render_work_tab(win, report, state)

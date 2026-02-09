@@ -246,11 +246,23 @@ def _generate_demo_report() -> dict[str, Any]:
              "commits": 2, "pr_number": None,
              "created": (now - timedelta(hours=1)).isoformat(), "project_id": None},
         ],
+        "checking": [
+            {"id": "z1y2x3w4", "title": "Panel offset drag handler", "role": "implement",
+             "priority": "P1", "agent": "impl-agent-2", "turns": 78, "turn_limit": 100,
+             "commits": 4, "pr_number": 56, "branch": "agent/z1y2x3w4",
+             "created": (now - timedelta(hours=4)).isoformat(), "project_id": None,
+             "checks": ["gk-testing", "gk-geometry"],
+             "check_results": {"gk-testing": {"status": "pass"}, "gk-geometry": {"status": "pending"}},
+             "attempt_count": 1, "rejection_count": 0,
+             "staging_url": "https://boxen-pr-56.vercel.app"},
+        ],
         "in_review": [
             {"id": "u1v2w3x4", "title": "Fix z-fighting on bounding box", "role": "implement",
              "priority": "P1", "agent": "impl-agent-1", "turns": 120, "turn_limit": 100,
-             "commits": 4, "pr_number": 50,
-             "created": (now - timedelta(hours=15)).isoformat(), "project_id": None},
+             "commits": 4, "pr_number": 50, "branch": "agent/u1v2w3x4",
+             "created": (now - timedelta(hours=15)).isoformat(), "project_id": None,
+             "attempt_count": 2, "rejection_count": 1,
+             "staging_url": "https://boxen-pr-50.vercel.app"},
             {"id": "y5z6a7b8", "title": "Rename Inset tool to Offset", "role": "implement",
              "priority": "P2", "agent": "impl-agent-2", "turns": 35, "turn_limit": 100,
              "commits": 2, "pr_number": 52,
@@ -444,10 +456,40 @@ def _generate_demo_drafts() -> list[dict[str, Any]]:
 # Tab renderers
 # ---------------------------------------------------------------------------
 
+def _flatten_work_tasks(report: dict[str, Any]) -> list[dict[str, Any]]:
+    """Flatten work tasks across columns into a single navigable list.
+
+    Order: left-to-right across columns, top-to-bottom within each column.
+    Returns the ordered list of task dicts.
+    """
+    work = report.get("work", {})
+    columns = [
+        work.get("incoming", []),
+        work.get("in_progress", []),
+        work.get("checking", []),
+        work.get("in_review", []),
+    ]
+    flat: list[dict[str, Any]] = []
+    for col_tasks in columns:
+        flat.extend(col_tasks)
+    return flat
+
+
 def render_work_tab(win, report: dict[str, Any], state: "DashboardState"):
-    """Render Tab 1: Work Board (kanban)."""
+    """Render Tab 1: Work Board (kanban) or task detail overlay."""
+    # If detail view is open, render that instead of the board
+    if state.work_detail_task_id:
+        _render_work_detail(win, report, state)
+        return
+
     max_y, max_x = win.getmaxyx()
     work = report.get("work", {})
+
+    # Build the flat task list to determine which task is highlighted
+    flat = _flatten_work_tasks(report)
+    highlighted_id = None
+    if flat and 0 <= state.work_cursor < len(flat):
+        highlighted_id = flat[state.work_cursor].get("id")
 
     columns = [
         ("QUEUED", work.get("incoming", []), Colors.WARNING, False),
@@ -489,9 +531,17 @@ def render_work_tab(win, report: dict[str, Any], state: "DashboardState"):
                                 curses.color_pair(Colors.DIM))
                 break
 
+            is_highlighted = task.get("id") == highlighted_id
             _render_task_card(win, card_y, col_x + 1, inner_width, task,
-                              show_progress_bar=show_bar)
+                              show_progress_bar=show_bar, highlighted=is_highlighted)
             card_y += _card_height(task, show_agent=show_bar) + 1  # +1 for spacing
+
+    # Action hints at bottom
+    hint_y = max_y - 2
+    safe_hline(win, hint_y - 1, 0, curses.ACS_HLINE, max_x - 1,
+               curses.color_pair(Colors.BORDER))
+    safe_addstr(win, hint_y, 2, "[j/k] select  [Enter] details  [q] quit",
+                curses.color_pair(Colors.DIM))
 
 
 
@@ -504,7 +554,7 @@ def _card_height(task: dict[str, Any], show_agent: bool = False) -> int:
 
 
 def _render_task_card(win, y: int, x: int, width: int, task: dict[str, Any],
-                      show_progress_bar: bool = True):
+                      show_progress_bar: bool = True, highlighted: bool = False):
     """Render a single task card."""
     task_id = task.get("id", "")[:8]
     title = task.get("title", "untitled")
@@ -514,15 +564,26 @@ def _render_task_card(win, y: int, x: int, width: int, task: dict[str, Any],
     turn_limit = task.get("turn_limit", MAX_TURNS)
     is_orch = role in ("orchestrator_impl", "breakdown", "recycler", "inbox_poller")
 
+    # Highlighted cards use yellow text
+    hl_attr = curses.color_pair(Colors.WARNING) if highlighted else 0
+
     # Line 1: ID with role badge
     if is_orch:
-        safe_addstr(win, y, x, "ORCH", curses.color_pair(Colors.PAUSED) | curses.A_BOLD)
-        safe_addstr(win, y, x + 5, task_id, curses.color_pair(Colors.DIM))
+        safe_addstr(win, y, x, "ORCH",
+                    hl_attr or (curses.color_pair(Colors.PAUSED) | curses.A_BOLD))
+        safe_addstr(win, y, x + 5, task_id,
+                    hl_attr or curses.color_pair(Colors.DIM))
     else:
-        safe_addstr(win, y, x, task_id, curses.color_pair(Colors.DIM))
+        safe_addstr(win, y, x, task_id,
+                    hl_attr or curses.color_pair(Colors.DIM))
+
+    # Cursor indicator for highlighted card
+    if highlighted:
+        safe_addstr(win, y, x - 1, "\u25b6", curses.color_pair(Colors.WARNING))
 
     # Line 2: Title
-    safe_addstr(win, y + 1, x, title[:width], curses.color_pair(Colors.DEFAULT))
+    safe_addstr(win, y + 1, x, title[:width],
+                hl_attr or curses.color_pair(Colors.DEFAULT))
 
     row = y + 2
 
@@ -548,6 +609,231 @@ def _render_task_card(win, y: int, x: int, width: int, task: dict[str, Any],
             safe_addstr(win, row, bar_x, turn_text[:width - len(agent_text) - 1],
                         curses.color_pair(Colors.DIM))
         row += 1
+
+
+def _render_work_detail(win, report: dict[str, Any], state: "DashboardState"):
+    """Render a full-width task detail overlay for the Work Board."""
+    max_y, max_x = win.getmaxyx()
+    task_id = state.work_detail_task_id
+
+    # Find the task in the report
+    task = None
+    queue_name = None
+    work = report.get("work", {})
+    queue_map = [
+        ("incoming", "QUEUED"),
+        ("in_progress", "IN PROGRESS"),
+        ("checking", "CHECKS"),
+        ("in_review", "IN REVIEW"),
+        ("done_today", "DONE TODAY"),
+    ]
+    for key, label in queue_map:
+        for t in work.get(key, []):
+            if t.get("id") == task_id:
+                task = t
+                queue_name = label
+                break
+        if task:
+            break
+
+    if not task:
+        safe_addstr(win, 1, 2, f"Task {task_id} not found.",
+                    curses.color_pair(Colors.FAILURE))
+        return
+
+    x = 2
+    row = 0
+    width = max_x - 4
+
+    # Header: TASK DETAIL
+    safe_addstr(win, row, x, "TASK DETAIL",
+                curses.color_pair(Colors.HEADER) | curses.A_BOLD)
+    safe_hline(win, row + 1, x, curses.ACS_HLINE, min(width, 40),
+               curses.color_pair(Colors.BORDER))
+    row += 2
+
+    title = task.get("title", "untitled")
+    full_id = task.get("id", "")
+
+    # Title (prominent)
+    safe_addstr(win, row, x, title[:width],
+                curses.color_pair(Colors.DEFAULT) | curses.A_BOLD)
+    row += 2
+
+    # Two-column layout for metadata
+    col2_x = x + 30  # second column starts here
+
+    # -- Left column --
+    # ID
+    safe_addstr(win, row, x, "ID:", curses.color_pair(Colors.DIM))
+    safe_addstr(win, row, x + 12, full_id, curses.color_pair(Colors.DEFAULT))
+    # Status/Queue
+    safe_addstr(win, row, col2_x, "Status:", curses.color_pair(Colors.DIM))
+    safe_addstr(win, row, col2_x + 12, queue_name or "?",
+                curses.color_pair(Colors.WARNING))
+    row += 1
+
+    # Role
+    role = task.get("role", "?")
+    safe_addstr(win, row, x, "Role:", curses.color_pair(Colors.DIM))
+    is_orch = role in ("orchestrator_impl", "breakdown", "recycler", "inbox_poller")
+    role_color = Colors.PAUSED if is_orch else Colors.DEFAULT
+    safe_addstr(win, row, x + 12, role, curses.color_pair(role_color))
+    # Priority
+    priority = task.get("priority", "?")
+    safe_addstr(win, row, col2_x, "Priority:", curses.color_pair(Colors.DIM))
+    p_color = Colors.P0 if priority == "P0" else (
+        Colors.P1 if priority == "P1" else Colors.P2)
+    safe_addstr(win, row, col2_x + 12, str(priority),
+                curses.color_pair(p_color) | curses.A_BOLD)
+    row += 1
+
+    # Branch
+    branch = task.get("branch", "")
+    if branch:
+        safe_addstr(win, row, x, "Branch:", curses.color_pair(Colors.DIM))
+        safe_addstr(win, row, x + 12, branch[:width - 14],
+                    curses.color_pair(Colors.DEFAULT))
+        row += 1
+
+    # Agent
+    agent = task.get("agent")
+    safe_addstr(win, row, x, "Agent:", curses.color_pair(Colors.DIM))
+    safe_addstr(win, row, x + 12, agent or "(unassigned)",
+                curses.color_pair(Colors.DEFAULT if agent else Colors.DIM))
+    row += 1
+
+    row += 1  # spacer
+    if row >= max_y - 3:
+        return
+
+    # -- Progress section --
+    safe_addstr(win, row, x, "PROGRESS",
+                curses.color_pair(Colors.HEADER) | curses.A_BOLD)
+    safe_hline(win, row + 1, x, curses.ACS_HLINE, 8,
+               curses.color_pair(Colors.BORDER))
+    row += 2
+
+    turns = task.get("turns", 0) or 0
+    turn_limit = task.get("turn_limit", MAX_TURNS)
+    safe_addstr(win, row, x, "Turns:", curses.color_pair(Colors.DIM))
+    safe_addstr(win, row, x + 12, f"{turns} / {turn_limit}",
+                curses.color_pair(Colors.DEFAULT))
+    # Progress bar
+    if turn_limit > 0:
+        bar_x = x + 26
+        bar_width = min(25, width - 28)
+        if bar_width >= 5:
+            draw_progress_bar(win, row, bar_x, bar_width,
+                              min(1.0, turns / turn_limit), Colors.RUNNING)
+    row += 1
+
+    commits = task.get("commits", 0) or 0
+    safe_addstr(win, row, x, "Commits:", curses.color_pair(Colors.DIM))
+    safe_addstr(win, row, x + 12, str(commits),
+                curses.color_pair(Colors.DEFAULT))
+    row += 1
+
+    # Created / Age
+    created = task.get("created")
+    safe_addstr(win, row, x, "Created:", curses.color_pair(Colors.DIM))
+    if created:
+        age = format_age(created)
+        safe_addstr(win, row, x + 12, f"{created[:19]}  ({age} ago)",
+                    curses.color_pair(Colors.DIM))
+    else:
+        safe_addstr(win, row, x + 12, "?", curses.color_pair(Colors.DIM))
+    row += 1
+
+    # Attempt count
+    attempt_count = task.get("attempt_count", 0) or 0
+    if attempt_count > 1:
+        safe_addstr(win, row, x, "Attempts:", curses.color_pair(Colors.DIM))
+        safe_addstr(win, row, x + 12, str(attempt_count),
+                    curses.color_pair(Colors.WARNING))
+        row += 1
+
+    # Rejection count
+    rejection_count = task.get("rejection_count", 0) or 0
+    if rejection_count > 0:
+        safe_addstr(win, row, x, "Rejections:", curses.color_pair(Colors.DIM))
+        safe_addstr(win, row, x + 12, str(rejection_count),
+                    curses.color_pair(Colors.FAILURE))
+        row += 1
+
+    # Blocked by
+    blocked_by = task.get("blocked_by")
+    if blocked_by:
+        safe_addstr(win, row, x, "Blocked by:", curses.color_pair(Colors.DIM))
+        safe_addstr(win, row, x + 12, str(blocked_by)[:width - 14],
+                    curses.color_pair(Colors.BLOCKED))
+        row += 1
+
+    row += 1  # spacer
+    if row >= max_y - 3:
+        return
+
+    # -- PR / Staging section --
+    pr_number = task.get("pr_number")
+    staging_url = task.get("staging_url")
+    if pr_number or staging_url:
+        safe_addstr(win, row, x, "REVIEW",
+                    curses.color_pair(Colors.HEADER) | curses.A_BOLD)
+        safe_hline(win, row + 1, x, curses.ACS_HLINE, 6,
+                   curses.color_pair(Colors.BORDER))
+        row += 2
+
+        if pr_number:
+            safe_addstr(win, row, x, "PR:", curses.color_pair(Colors.DIM))
+            safe_addstr(win, row, x + 12, f"#{pr_number}",
+                        curses.color_pair(Colors.P1))
+            row += 1
+
+        if staging_url:
+            safe_addstr(win, row, x, "Staging:", curses.color_pair(Colors.DIM))
+            safe_addstr(win, row, x + 12, str(staging_url)[:width - 14],
+                        curses.color_pair(Colors.DIM))
+            row += 1
+
+        row += 1
+
+    if row >= max_y - 3:
+        return
+
+    # -- Checks section --
+    checks = task.get("checks", [])
+    check_results = task.get("check_results", {})
+    if checks:
+        safe_addstr(win, row, x, "CHECKS",
+                    curses.color_pair(Colors.HEADER) | curses.A_BOLD)
+        safe_hline(win, row + 1, x, curses.ACS_HLINE, 6,
+                   curses.color_pair(Colors.BORDER))
+        row += 2
+
+        for check_name in checks:
+            if row >= max_y - 3:
+                break
+            result = check_results.get(check_name, {})
+            status = result.get("status", "pending")
+            if status == "pass":
+                icon = "\u2713"
+                color = Colors.SUCCESS
+            elif status == "fail":
+                icon = "\u2717"
+                color = Colors.FAILURE
+            else:
+                icon = "\u25cb"
+                color = Colors.DIM
+            safe_addstr(win, row, x, f"  {icon} {check_name}",
+                        curses.color_pair(color))
+            row += 1
+
+    # Action hints at bottom
+    hint_y = max_y - 2
+    safe_hline(win, hint_y - 1, 0, curses.ACS_HLINE, max_x - 1,
+               curses.color_pair(Colors.BORDER))
+    safe_addstr(win, hint_y, 2, "[Esc] back to board",
+                curses.color_pair(Colors.DIM))
 
 
 def render_prs_tab(win, report: dict[str, Any], state: "DashboardState"):
@@ -965,6 +1251,7 @@ class DashboardState:
     pr_cursor: int = 0
     work_cursor: int = 0
     inbox_cursor: int = 0
+    work_detail_task_id: Optional[str] = None  # set when detail overlay is open
     last_report: Optional[dict[str, Any]] = None
     last_drafts: Optional[list[dict[str, Any]]] = None
     demo_mode: bool = False
@@ -1022,11 +1309,28 @@ class Dashboard:
         elif key == ord('k') or key == curses.KEY_UP:
             self._move_cursor(-1, report)
 
+        # Enter: open detail view on Work tab
+        elif key == ord('\n') or key == curses.KEY_ENTER:
+            if self.state.active_tab == TAB_WORK and not self.state.work_detail_task_id:
+                flat = _flatten_work_tasks(report)
+                if flat and 0 <= self.state.work_cursor < len(flat):
+                    self.state.work_detail_task_id = flat[self.state.work_cursor].get("id")
+
+        # Esc: close detail view
+        elif key == 27:
+            if self.state.work_detail_task_id:
+                self.state.work_detail_task_id = None
+
         return True
 
     def _move_cursor(self, delta: int, report: dict[str, Any]):
         """Move the active tab's cursor."""
-        if self.state.active_tab == TAB_AGENTS:
+        if self.state.active_tab == TAB_WORK:
+            flat = _flatten_work_tasks(report)
+            if flat:
+                self.state.work_cursor = max(0, min(
+                    len(flat) - 1, self.state.work_cursor + delta))
+        elif self.state.active_tab == TAB_AGENTS:
             agents = report.get("agents", [])
             self.state.agent_cursor = max(0, min(
                 len(agents) - 1, self.state.agent_cursor + delta))
