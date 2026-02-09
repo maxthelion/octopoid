@@ -25,6 +25,7 @@ def get_project_report() -> dict[str, Any]:
     """
     return {
         "work": _gather_work(),
+        "done_tasks": _gather_done_tasks(),
         "prs": _gather_prs(),
         "proposals": _gather_proposals(),
         "messages": _gather_messages(),
@@ -79,6 +80,79 @@ def _gather_work() -> dict[str, list[dict[str, Any]]]:
         "in_review": in_review,
         "done_today": done_today,
     }
+
+
+def _gather_done_tasks() -> list[dict[str, Any]]:
+    """Gather completed tasks from the last 7 days for the Done tab.
+
+    Includes merge method derived from task_history 'accepted' events.
+    Also includes failed and recycled tasks.
+    """
+    from .queue_utils import list_tasks
+
+    cutoff = datetime.now() - timedelta(days=7)
+
+    # Done tasks
+    done_all = list_tasks("done")
+    done_recent = [t for t in done_all if _is_recent(t, cutoff)]
+
+    # Failed tasks
+    try:
+        failed_all = list_tasks("failed")
+        failed_recent = [t for t in failed_all if _is_recent(t, cutoff)]
+    except Exception:
+        failed_recent = []
+
+    # Recycled tasks (queue='recycled')
+    try:
+        recycled_all = list_tasks("recycled")
+        recycled_recent = [t for t in recycled_all if _is_recent(t, cutoff)]
+    except Exception:
+        recycled_recent = []
+
+    result = []
+    for t in done_recent:
+        item = _format_task(t)
+        item["final_queue"] = "done"
+        item["completed_at"] = t.get("created")  # updated_at not in file format; use created as fallback
+        item["accepted_by"] = _get_accepted_by(t.get("id"))
+        result.append(item)
+
+    for t in failed_recent:
+        item = _format_task(t)
+        item["final_queue"] = "failed"
+        item["completed_at"] = t.get("created")
+        item["accepted_by"] = None
+        result.append(item)
+
+    for t in recycled_recent:
+        item = _format_task(t)
+        item["final_queue"] = "recycled"
+        item["completed_at"] = t.get("created")
+        item["accepted_by"] = None
+        result.append(item)
+
+    # Sort by most recent first (using completed_at/created)
+    result.sort(key=lambda t: t.get("completed_at") or "", reverse=True)
+    return result
+
+
+def _get_accepted_by(task_id: str | None) -> str | None:
+    """Look up who accepted a task from task_history."""
+    if not task_id:
+        return None
+    try:
+        from .config import is_db_enabled
+        if not is_db_enabled():
+            return None
+        from . import db
+        history = db.get_task_history(task_id)
+        for event in reversed(history):
+            if event.get("event") == "accepted":
+                return event.get("agent")
+        return None
+    except Exception:
+        return None
 
 
 def _format_task(task: dict[str, Any]) -> dict[str, Any]:

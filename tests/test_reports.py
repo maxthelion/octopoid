@@ -34,6 +34,7 @@ class TestGetProjectReport:
     """Tests for the main get_project_report() function."""
 
     @patch("orchestrator.reports._gather_work")
+    @patch("orchestrator.reports._gather_done_tasks")
     @patch("orchestrator.reports._gather_prs")
     @patch("orchestrator.reports._gather_proposals")
     @patch("orchestrator.reports._gather_messages")
@@ -46,9 +47,11 @@ class TestGetProjectReport:
         mock_messages,
         mock_proposals,
         mock_prs,
+        mock_done,
         mock_work,
     ):
         mock_work.return_value = {"incoming": [], "in_progress": [], "in_review": [], "done_today": []}
+        mock_done.return_value = []
         mock_prs.return_value = []
         mock_proposals.return_value = []
         mock_messages.return_value = []
@@ -58,6 +61,7 @@ class TestGetProjectReport:
         report = get_project_report()
 
         assert "work" in report
+        assert "done_tasks" in report
         assert "prs" in report
         assert "proposals" in report
         assert "messages" in report
@@ -66,6 +70,7 @@ class TestGetProjectReport:
         assert "generated_at" in report
 
     @patch("orchestrator.reports._gather_work")
+    @patch("orchestrator.reports._gather_done_tasks")
     @patch("orchestrator.reports._gather_prs")
     @patch("orchestrator.reports._gather_proposals")
     @patch("orchestrator.reports._gather_messages")
@@ -78,9 +83,11 @@ class TestGetProjectReport:
         mock_messages,
         mock_proposals,
         mock_prs,
+        mock_done,
         mock_work,
     ):
         mock_work.return_value = {"incoming": [], "in_progress": [], "in_review": [], "done_today": []}
+        mock_done.return_value = []
         mock_prs.return_value = []
         mock_proposals.return_value = []
         mock_messages.return_value = []
@@ -93,6 +100,7 @@ class TestGetProjectReport:
         assert isinstance(dt, datetime)
 
     @patch("orchestrator.reports._gather_work")
+    @patch("orchestrator.reports._gather_done_tasks")
     @patch("orchestrator.reports._gather_prs")
     @patch("orchestrator.reports._gather_proposals")
     @patch("orchestrator.reports._gather_messages")
@@ -105,9 +113,11 @@ class TestGetProjectReport:
         mock_messages,
         mock_proposals,
         mock_prs,
+        mock_done,
         mock_work,
     ):
         mock_work.return_value = {"incoming": [], "in_progress": [], "in_review": [], "done_today": []}
+        mock_done.return_value = []
         mock_prs.return_value = []
         mock_proposals.return_value = []
         mock_messages.return_value = []

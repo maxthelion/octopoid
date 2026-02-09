@@ -428,13 +428,14 @@ class TestConstants:
         assert dash.TAB_PRS == 1
         assert dash.TAB_INBOX == 2
         assert dash.TAB_AGENTS == 3
+        assert dash.TAB_DONE == 4
 
     def test_tab_names_match_count(self):
-        assert len(dash.TAB_NAMES) == 4
-        assert len(dash.TAB_KEYS) == 4
+        assert len(dash.TAB_NAMES) == 5
+        assert len(dash.TAB_KEYS) == 5
 
     def test_tab_keys(self):
-        assert dash.TAB_KEYS == ["W", "P", "I", "A"]
+        assert dash.TAB_KEYS == ["W", "P", "I", "A", "D"]
 
     def test_max_turns(self):
         assert dash.MAX_TURNS > 0
@@ -869,3 +870,152 @@ class TestWorkDetailRendering:
         flat = dash._flatten_work_tasks(report)
         state.work_cursor = len(flat) - 1
         dash.render_work_tab(win, report, state)
+
+    def test_done_tab_renders(self):
+        win = self._mock_win()
+        report = dash._generate_demo_report()
+        state = dash.DashboardState()
+        dash.render_done_tab(win, report, state)
+        assert win.addnstr.called
+
+    def test_done_tab_empty(self):
+        win = self._mock_win()
+        report = {"done_tasks": []}
+        state = dash.DashboardState()
+        dash.render_done_tab(win, report, state)
+
+    def test_done_tab_small_terminal(self):
+        win = self._mock_win(rows=12, cols=50)
+        report = dash._generate_demo_report()
+        state = dash.DashboardState()
+        dash.render_done_tab(win, report, state)
+
+    def test_done_tab_with_cursor(self):
+        win = self._mock_win()
+        report = dash._generate_demo_report()
+        state = dash.DashboardState()
+        state.done_cursor = 2
+        dash.render_done_tab(win, report, state)
+        assert win.addnstr.called
+
+    def test_done_tab_cursor_at_last(self):
+        win = self._mock_win()
+        report = dash._generate_demo_report()
+        state = dash.DashboardState()
+        done_tasks = report.get("done_tasks", [])
+        if done_tasks:
+            state.done_cursor = len(done_tasks) - 1
+        dash.render_done_tab(win, report, state)
+
+    def test_done_tab_missing_key(self):
+        """Should handle report without done_tasks key."""
+        win = self._mock_win()
+        report = {}
+        state = dash.DashboardState()
+        dash.render_done_tab(win, report, state)
+
+
+# ---------------------------------------------------------------------------
+# Done tab input handling tests
+# ---------------------------------------------------------------------------
+
+
+class TestDoneTabInput:
+    """Tests for Done tab switching and cursor navigation."""
+
+    def _make_dashboard(self):
+        state = dash.DashboardState(demo_mode=True)
+        state.last_report = dash._generate_demo_report()
+        state.last_drafts = dash._generate_demo_drafts()
+        dashboard = MagicMock()
+        dashboard.state = state
+        dashboard.running = True
+        dashboard.handle_input = dash.Dashboard.handle_input.__get__(dashboard)
+        dashboard._move_cursor = dash.Dashboard._move_cursor.__get__(dashboard)
+        dashboard.load_data = MagicMock()
+        return dashboard
+
+    def test_d_switches_to_done_tab(self):
+        d = self._make_dashboard()
+        d.handle_input(ord('d'))
+        assert d.state.active_tab == dash.TAB_DONE
+
+    def test_5_switches_to_done_tab(self):
+        d = self._make_dashboard()
+        d.handle_input(ord('5'))
+        assert d.state.active_tab == dash.TAB_DONE
+
+    def test_j_moves_done_cursor_down(self):
+        d = self._make_dashboard()
+        d.state.active_tab = dash.TAB_DONE
+        d.state.done_cursor = 0
+        d.handle_input(ord('j'))
+        assert d.state.done_cursor == 1
+
+    def test_k_moves_done_cursor_up(self):
+        d = self._make_dashboard()
+        d.state.active_tab = dash.TAB_DONE
+        d.state.done_cursor = 3
+        d.handle_input(ord('k'))
+        assert d.state.done_cursor == 2
+
+    def test_done_cursor_clamps_at_top(self):
+        d = self._make_dashboard()
+        d.state.active_tab = dash.TAB_DONE
+        d.state.done_cursor = 0
+        d.handle_input(ord('k'))
+        assert d.state.done_cursor == 0
+
+    def test_done_cursor_clamps_at_bottom(self):
+        d = self._make_dashboard()
+        d.state.active_tab = dash.TAB_DONE
+        done_tasks = d.state.last_report.get("done_tasks", [])
+        d.state.done_cursor = len(done_tasks) - 1
+        d.handle_input(ord('j'))
+        assert d.state.done_cursor == len(done_tasks) - 1
+
+
+# ---------------------------------------------------------------------------
+# Done tab demo data tests
+# ---------------------------------------------------------------------------
+
+
+class TestDoneDemoData:
+    """Tests for done_tasks in demo data."""
+
+    def test_demo_report_has_done_tasks(self):
+        report = dash._generate_demo_report()
+        assert "done_tasks" in report
+        assert len(report["done_tasks"]) > 0
+
+    def test_done_tasks_have_required_fields(self):
+        report = dash._generate_demo_report()
+        for task in report["done_tasks"]:
+            assert "id" in task
+            assert "title" in task
+            assert "final_queue" in task
+            assert "completed_at" in task
+            assert "accepted_by" in task
+
+    def test_done_tasks_include_different_final_queues(self):
+        report = dash._generate_demo_report()
+        queues = {t["final_queue"] for t in report["done_tasks"]}
+        assert "done" in queues, "Should include done tasks"
+        assert "failed" in queues, "Should include failed tasks"
+        assert "recycled" in queues, "Should include recycled tasks"
+
+    def test_done_tasks_include_merge_methods(self):
+        report = dash._generate_demo_report()
+        methods = {t.get("accepted_by") for t in report["done_tasks"]}
+        assert "self-merge" in methods
+        assert "human" in methods
+
+    def test_done_tasks_include_orchestrator_role(self):
+        report = dash._generate_demo_report()
+        orch = [t for t in report["done_tasks"] if t.get("role") == "orchestrator_impl"]
+        assert len(orch) > 0
+
+    def test_done_tasks_sorted_most_recent_first(self):
+        report = dash._generate_demo_report()
+        timestamps = [t.get("completed_at", "") for t in report["done_tasks"]]
+        assert timestamps == sorted(timestamps, reverse=True)

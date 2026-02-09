@@ -31,9 +31,10 @@ TAB_WORK = 0
 TAB_PRS = 1
 TAB_INBOX = 2
 TAB_AGENTS = 3
+TAB_DONE = 4
 
-TAB_NAMES = ["Work", "PRs", "Inbox", "Agents"]
-TAB_KEYS = ["W", "P", "I", "A"]
+TAB_NAMES = ["Work", "PRs", "Inbox", "Agents", "Done"]
+TAB_KEYS = ["W", "P", "I", "A", "D"]
 
 MAX_TURNS = 200  # default max turns for progress bar
 
@@ -175,6 +176,7 @@ def load_report(demo_mode: bool) -> dict[str, Any]:
     except Exception as e:
         return {
             "work": {"incoming": [], "in_progress": [], "in_review": [], "done_today": []},
+            "done_tasks": [],
             "prs": [],
             "proposals": [],
             "messages": [],
@@ -426,8 +428,66 @@ def _generate_demo_report() -> dict[str, Any]:
         "queue_depth": len(work["incoming"]) + len(work["in_progress"]),
     }
 
+    done_tasks = [
+        {"id": "k7l8m9n0", "title": "Toggle face buttons", "role": "implement",
+         "priority": "P1", "agent": "impl-agent-1", "turns": 60, "turn_limit": 100,
+         "commits": 3, "pr_number": 53, "final_queue": "done",
+         "completed_at": (now - timedelta(hours=4)).isoformat(),
+         "accepted_by": "self-merge",
+         "created": (now - timedelta(hours=4)).isoformat(), "project_id": None},
+        {"id": "o1p2q3r4", "title": "Task templates system", "role": "implement",
+         "priority": "P2", "agent": "impl-agent-2", "turns": 40, "turn_limit": 100,
+         "commits": 2, "pr_number": 47, "final_queue": "done",
+         "completed_at": (now - timedelta(hours=6)).isoformat(),
+         "accepted_by": "human",
+         "created": (now - timedelta(hours=6)).isoformat(), "project_id": None},
+        {"id": "s5t6u7v8", "title": "Whats-next script", "role": "orchestrator_impl",
+         "priority": "P2", "agent": "orch-impl-1", "turns": 30, "turn_limit": 200,
+         "commits": 1, "pr_number": None, "final_queue": "done",
+         "completed_at": (now - timedelta(hours=8)).isoformat(),
+         "accepted_by": "self-merge",
+         "created": (now - timedelta(hours=8)).isoformat(), "project_id": None},
+        {"id": "w9x0y1z2", "title": "CLAUDE.md role definitions", "role": "implement",
+         "priority": "P2", "agent": "impl-agent-1", "turns": 25, "turn_limit": 100,
+         "commits": 1, "pr_number": 46, "final_queue": "done",
+         "completed_at": (now - timedelta(hours=10)).isoformat(),
+         "accepted_by": "human",
+         "created": (now - timedelta(hours=10)).isoformat(), "project_id": None},
+        {"id": "a3b4c5d6", "title": "2D snap system", "role": "implement",
+         "priority": "P1", "agent": "impl-agent-2", "turns": 85, "turn_limit": 100,
+         "commits": 5, "pr_number": 48, "final_queue": "done",
+         "completed_at": (now - timedelta(hours=12)).isoformat(),
+         "accepted_by": "self-merge",
+         "created": (now - timedelta(hours=12)).isoformat(), "project_id": None},
+        {"id": "f1g2h3i4", "title": "Fix panel alignment edge case", "role": "implement",
+         "priority": "P1", "agent": "impl-agent-1", "turns": 100, "turn_limit": 100,
+         "commits": 0, "pr_number": None, "final_queue": "recycled",
+         "completed_at": (now - timedelta(days=1)).isoformat(),
+         "accepted_by": None,
+         "created": (now - timedelta(days=1)).isoformat(), "project_id": None},
+        {"id": "j5k6l7m8", "title": "Broken import path", "role": "implement",
+         "priority": "P2", "agent": "impl-agent-2", "turns": 15, "turn_limit": 100,
+         "commits": 0, "pr_number": None, "final_queue": "failed",
+         "completed_at": (now - timedelta(days=2)).isoformat(),
+         "accepted_by": None,
+         "created": (now - timedelta(days=2)).isoformat(), "project_id": None},
+        {"id": "n9o0p1q2", "title": "Queue depth monitoring", "role": "orchestrator_impl",
+         "priority": "P2", "agent": "orch-impl-1", "turns": 45, "turn_limit": 200,
+         "commits": 2, "pr_number": None, "final_queue": "done",
+         "completed_at": (now - timedelta(days=3)).isoformat(),
+         "accepted_by": "human",
+         "created": (now - timedelta(days=3)).isoformat(), "project_id": None},
+        {"id": "r3s4t5u6", "title": "SVG export kerf compensation", "role": "implement",
+         "priority": "P1", "agent": "impl-agent-1", "turns": 92, "turn_limit": 100,
+         "commits": 6, "pr_number": 44, "final_queue": "done",
+         "completed_at": (now - timedelta(days=5)).isoformat(),
+         "accepted_by": "self-merge",
+         "created": (now - timedelta(days=5)).isoformat(), "project_id": None},
+    ]
+
     return {
         "work": work,
+        "done_tasks": done_tasks,
         "prs": prs,
         "proposals": proposals,
         "messages": messages,
@@ -1239,6 +1299,151 @@ def _render_agent_detail(win, y: int, x: int, width: int, max_height: int,
         safe_addstr(win, row, x, "(none)", curses.color_pair(Colors.DIM))
 
 
+def render_done_tab(win, report: dict[str, Any], state: "DashboardState"):
+    """Render Tab 5: Done (completed, failed, recycled tasks in last 7 days)."""
+    max_y, max_x = win.getmaxyx()
+    done_tasks = report.get("done_tasks", [])
+
+    # Header
+    safe_addstr(win, 0, 1, f" COMPLETED WORK ({len(done_tasks)}) — last 7 days ",
+                curses.color_pair(Colors.HEADER) | curses.A_BOLD)
+    safe_hline(win, 1, 1, curses.ACS_HLINE, max_x - 2,
+               curses.color_pair(Colors.BORDER))
+
+    if not done_tasks:
+        safe_addstr(win, 3, 3, "No completed tasks in the last 7 days.",
+                    curses.color_pair(Colors.DIM))
+        return
+
+    # Column headers
+    y = 2
+    safe_addstr(win, y, 2, "  ID", curses.color_pair(Colors.DIM))
+    safe_addstr(win, y, 16, "Title", curses.color_pair(Colors.DIM))
+    title_end = max(45, max_x - 50)
+    safe_addstr(win, y, title_end, "Age", curses.color_pair(Colors.DIM))
+    safe_addstr(win, y, title_end + 8, "Turns", curses.color_pair(Colors.DIM))
+    safe_addstr(win, y, title_end + 16, "Cmts", curses.color_pair(Colors.DIM))
+    safe_addstr(win, y, title_end + 22, "Merge", curses.color_pair(Colors.DIM))
+    safe_addstr(win, y, title_end + 34, "Agent", curses.color_pair(Colors.DIM))
+    y += 1
+
+    # Calculate visible range for scrolling
+    visible_rows = max_y - 6  # header(2) + column_header(1) + footer(3)
+    scroll_offset = max(0, state.done_cursor - visible_rows + 1)
+
+    for i, task in enumerate(done_tasks):
+        if i < scroll_offset:
+            continue
+        if y >= max_y - 3:
+            remaining = len(done_tasks) - i
+            if remaining > 0:
+                safe_addstr(win, y, 2, f"+{remaining} more",
+                            curses.color_pair(Colors.DIM))
+            break
+
+        selected = i == state.done_cursor
+        task_id = task.get("id", "")[:8]
+        title = task.get("title", "untitled")
+        role = task.get("role", "")
+        agent = task.get("agent", "")
+        turns = task.get("turns", 0) or 0
+        turn_limit = task.get("turn_limit", MAX_TURNS)
+        commits = task.get("commits", 0) or 0
+        final_queue = task.get("final_queue", "done")
+        accepted_by = task.get("accepted_by") or ""
+        completed_at = task.get("completed_at")
+        is_orch = role in ("orchestrator_impl", "breakdown", "recycler", "inbox_poller")
+
+        # Determine row color based on final queue
+        if final_queue == "failed":
+            row_color = Colors.FAILURE
+        elif final_queue == "recycled":
+            row_color = Colors.WARNING
+        else:
+            row_color = Colors.SUCCESS
+
+        hl_attr = curses.color_pair(Colors.HIGHLIGHT) if selected else 0
+
+        # Cursor indicator
+        if selected:
+            safe_addstr(win, y, 1, "\u25b6", curses.color_pair(Colors.WARNING))
+
+        # Status icon
+        if final_queue == "failed":
+            safe_addstr(win, y, 2, "\u2717", hl_attr or curses.color_pair(Colors.FAILURE))
+        elif final_queue == "recycled":
+            safe_addstr(win, y, 2, "\u267b", hl_attr or curses.color_pair(Colors.WARNING))
+        else:
+            safe_addstr(win, y, 2, "\u2713", hl_attr or curses.color_pair(Colors.SUCCESS))
+
+        # ID with ORCH badge
+        if is_orch:
+            safe_addstr(win, y, 4, "ORCH",
+                        hl_attr or (curses.color_pair(Colors.PAUSED) | curses.A_BOLD))
+            safe_addstr(win, y, 9, task_id,
+                        hl_attr or curses.color_pair(Colors.DIM))
+        else:
+            safe_addstr(win, y, 4, task_id,
+                        hl_attr or curses.color_pair(Colors.DIM))
+
+        # Title
+        title_max = title_end - 17
+        safe_addstr(win, y, 16, title[:title_max],
+                    hl_attr or curses.color_pair(Colors.DEFAULT))
+
+        # Age
+        age = format_age(completed_at)
+        safe_addstr(win, y, title_end, age,
+                    hl_attr or curses.color_pair(Colors.DIM))
+
+        # Turns
+        turns_text = f"{turns}/{turn_limit}"
+        safe_addstr(win, y, title_end + 8, turns_text[:7],
+                    hl_attr or curses.color_pair(Colors.DIM))
+
+        # Commits
+        safe_addstr(win, y, title_end + 16, str(commits),
+                    hl_attr or curses.color_pair(Colors.DIM))
+
+        # Merge method
+        if accepted_by:
+            merge_color = Colors.SUCCESS if accepted_by == "self-merge" else Colors.P1
+            safe_addstr(win, y, title_end + 22, accepted_by[:10],
+                        hl_attr or curses.color_pair(merge_color))
+        elif final_queue == "failed":
+            safe_addstr(win, y, title_end + 22, "failed",
+                        hl_attr or curses.color_pair(Colors.FAILURE))
+        elif final_queue == "recycled":
+            safe_addstr(win, y, title_end + 22, "recycled",
+                        hl_attr or curses.color_pair(Colors.WARNING))
+
+        # Agent
+        if agent:
+            safe_addstr(win, y, title_end + 34, agent[:12],
+                        hl_attr or curses.color_pair(Colors.DIM))
+
+        y += 1
+
+    # Footer with count and hints
+    hint_y = max_y - 2
+    safe_hline(win, hint_y - 1, 1, curses.ACS_HLINE, max_x - 2,
+               curses.color_pair(Colors.BORDER))
+
+    # Count summary
+    done_count = sum(1 for t in done_tasks if t.get("final_queue") == "done")
+    failed_count = sum(1 for t in done_tasks if t.get("final_queue") == "failed")
+    recycled_count = sum(1 for t in done_tasks if t.get("final_queue") == "recycled")
+    parts = [f"{done_count} done"]
+    if recycled_count:
+        parts.append(f"{recycled_count} recycled")
+    if failed_count:
+        parts.append(f"{failed_count} failed")
+    summary = " \u00b7 ".join(parts)
+
+    safe_addstr(win, hint_y, 2, f"[j/k] select  Total: {summary}",
+                curses.color_pair(Colors.DIM))
+
+
 # ---------------------------------------------------------------------------
 # Dashboard state
 # ---------------------------------------------------------------------------
@@ -1251,6 +1456,7 @@ class DashboardState:
     pr_cursor: int = 0
     work_cursor: int = 0
     inbox_cursor: int = 0
+    done_cursor: int = 0
     work_detail_task_id: Optional[str] = None  # set when detail overlay is open
     last_report: Optional[dict[str, Any]] = None
     last_drafts: Optional[list[dict[str, Any]]] = None
@@ -1302,6 +1508,8 @@ class Dashboard:
             self.state.active_tab = TAB_INBOX
         elif key == ord('a') or key == ord('4'):
             self.state.active_tab = TAB_AGENTS
+        elif key == ord('d') or key == ord('5'):
+            self.state.active_tab = TAB_DONE
 
         # Navigation: j/k
         elif key == ord('j') or key == curses.KEY_DOWN:
@@ -1338,6 +1546,11 @@ class Dashboard:
             prs = report.get("prs", [])
             self.state.pr_cursor = max(0, min(
                 len(prs) - 1, self.state.pr_cursor + delta))
+        elif self.state.active_tab == TAB_DONE:
+            done_tasks = report.get("done_tasks", [])
+            if done_tasks:
+                self.state.done_cursor = max(0, min(
+                    len(done_tasks) - 1, self.state.done_cursor + delta))
 
     def render(self):
         """Render the entire dashboard."""
@@ -1405,6 +1618,8 @@ class Dashboard:
             render_inbox_tab(content_win, report, drafts, self.state)
         elif self.state.active_tab == TAB_AGENTS:
             render_agents_tab(content_win, report, self.state)
+        elif self.state.active_tab == TAB_DONE:
+            render_done_tab(content_win, report, self.state)
 
         # -- Status bar (bottom) --
         status_y = max_y - 1
