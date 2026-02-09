@@ -257,6 +257,62 @@ class TestReviewRejectTask:
             assert "## Review Feedback (rejection #1)" in content
             assert "Architecture violation" in content
 
+    def test_reject_preserves_original_content(self, mock_config, initialized_db):
+        """Test that rejection preserves all original task content (not just feedback).
+
+        Regression test: original bug caused the incoming file to contain only
+        the review feedback section, losing Context, Design Decisions, and
+        Acceptance Criteria from the original task file.
+        """
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, get_task
+            from orchestrator.queue_utils import review_reject_task
+
+            prov_dir = mock_config / "shared" / "queue" / "provisional"
+            prov_dir.mkdir(parents=True, exist_ok=True)
+            original_content = (
+                "# [TASK-preserve1] Important feature\n\n"
+                "## Context\nThis is critical context that must survive rejection.\n\n"
+                "## Design Decisions\nWe chose approach B for performance.\n\n"
+                "## Acceptance Criteria\n- [ ] Tests pass\n- [ ] No regressions\n"
+            )
+            task_path = prov_dir / "TASK-preserve1.md"
+            task_path.write_text(original_content)
+
+            create_task(task_id="preserve1", file_path=str(task_path))
+
+            new_path, action = review_reject_task(
+                task_path,
+                feedback="Tests are at the wrong layer.",
+                rejected_by="gk-testing",
+            )
+
+            assert action == "rejected"
+            content = new_path.read_text()
+
+            # Original content must be preserved
+            assert "## Context" in content
+            assert "critical context that must survive rejection" in content
+            assert "## Design Decisions" in content
+            assert "approach B for performance" in content
+            assert "## Acceptance Criteria" in content
+
+            # Feedback must also be present
+            assert "## Review Feedback (rejection #1)" in content
+            assert "Tests are at the wrong layer" in content
+
+            # Original content must appear before feedback
+            context_pos = content.index("## Context")
+            feedback_pos = content.index("## Review Feedback")
+            assert context_pos < feedback_pos
+
+            # Provisional file must be removed (no duplicates)
+            assert not task_path.exists()
+
+            # DB file_path should point to new location
+            task = get_task("preserve1")
+            assert task["file_path"] == str(new_path)
+
     def test_escalation_after_max_rejections(self, mock_config, initialized_db):
         """Test that review_reject_task escalates after max rejections."""
         with patch('orchestrator.db.get_database_path', return_value=initialized_db):

@@ -665,44 +665,52 @@ def review_reject_task(
             task_id = db_task["id"]
             rejection_count = (db_task.get("rejection_count") or 0) + 1
 
-            if rejection_count >= max_rejections:
-                # Escalate to human
-                db.update_task_queue(
-                    task_id,
-                    "escalated",
-                    claimed_by=None,
-                    claimed_at=None,
-                    history_event="review_escalated",
-                    history_agent=rejected_by,
-                    history_details=f"rejection_count={rejection_count}, max={max_rejections}",
-                )
-                # Also set rejection_count directly (not incrementing, setting absolute value)
-                db.update_task(task_id, rejection_count=rejection_count)
-            else:
-                db.review_reject_completion(
-                    task_id,
-                    reason=feedback[:500],
-                    reviewer=rejected_by,
-                )
-
-    # Append feedback to the task file
-    with open(task_path, "a") as f:
-        f.write(f"\n## Review Feedback (rejection #{rejection_count})\n\n")
-        f.write(f"{feedback}\n")
-        f.write(f"\nREVIEW_REJECTED_AT: {datetime.now().isoformat()}\n")
-        if rejected_by:
-            f.write(f"REVIEW_REJECTED_BY: {rejected_by}\n")
-
+    # Determine destination before any DB or file changes
     if rejection_count >= max_rejections:
-        # Escalate: move to escalated queue
-        escalated_dir = get_queue_subdir("escalated")
-        dest = escalated_dir / task_path.name
-        os.rename(task_path, dest)
+        dest = get_queue_subdir("escalated") / task_path.name
+    else:
+        dest = get_queue_subdir("incoming") / task_path.name
 
-        # Update file_path in DB to reflect new location
-        if task_id:
+    # Read original content, write original + feedback to destination, delete source.
+    # This must happen BEFORE the DB update so the file is fully ready at its
+    # new path before the scheduler can see the task as claimable.
+    original_content = task_path.read_text()
+
+    feedback_section = f"\n## Review Feedback (rejection #{rejection_count})\n\n"
+    feedback_section += f"{feedback}\n"
+    feedback_section += f"\nREVIEW_REJECTED_AT: {datetime.now().isoformat()}\n"
+    if rejected_by:
+        feedback_section += f"REVIEW_REJECTED_BY: {rejected_by}\n"
+
+    dest.write_text(original_content + feedback_section)
+
+    # Remove source file
+    if task_path != dest:
+        task_path.unlink()
+
+    # Now update the DB — the file is already at its final path with full content
+    if task_id and is_db_enabled():
+        if rejection_count >= max_rejections:
+            db.update_task_queue(
+                task_id,
+                "escalated",
+                claimed_by=None,
+                claimed_at=None,
+                file_path=str(dest),
+                history_event="review_escalated",
+                history_agent=rejected_by,
+                history_details=f"rejection_count={rejection_count}, max={max_rejections}",
+            )
+            db.update_task(task_id, rejection_count=rejection_count)
+        else:
+            db.review_reject_completion(
+                task_id,
+                reason=feedback[:500],
+                reviewer=rejected_by,
+            )
             db.update_task(task_id, file_path=str(dest))
 
+    if rejection_count >= max_rejections:
         # Send message to human
         from . import message_utils
         message_utils.warning(
@@ -715,15 +723,6 @@ def review_reject_task(
 
         return dest, "escalated"
     else:
-        # Move back to incoming for re-implementation
-        incoming_dir = get_queue_subdir("incoming")
-        dest = incoming_dir / task_path.name
-        os.rename(task_path, dest)
-
-        # Update file_path in DB to reflect new location
-        if task_id:
-            db.update_task(task_id, file_path=str(dest))
-
         return dest, "rejected"
 
 
