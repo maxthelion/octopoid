@@ -90,8 +90,46 @@ class OrchestratorImplRole(ImplementerRole):
                 failed.add(test_id)
         return failed
 
-    def _try_merge_submodule(self, submodule_path: Path, task_id: str) -> bool:
-        """Try to rebase, test, and fast-forward merge submodule work to main.
+    def _ensure_branch_exists(self, repo_path: Path, branch: str, base: str = "main") -> None:
+        """Ensure a branch exists locally, creating it from base if needed.
+
+        Used to create project branches on first use. If the branch already
+        exists locally, this is a no-op. If it exists on origin but not locally,
+        it's checked out as a tracking branch. Otherwise, it's created from base.
+
+        Args:
+            repo_path: Path to the git repo
+            branch: Branch name to ensure exists
+            base: Base branch to create from if needed
+        """
+        # Check if branch exists locally
+        result = self._run_cmd(
+            ["git", "rev-parse", "--verify", branch], cwd=repo_path
+        )
+        if result.returncode == 0:
+            return  # Already exists
+
+        # Try to create from origin/<branch> if it exists remotely
+        self._run_cmd(["git", "fetch", "origin", branch], cwd=repo_path)
+        result = self._run_cmd(
+            ["git", "rev-parse", "--verify", f"origin/{branch}"], cwd=repo_path
+        )
+        if result.returncode == 0:
+            self._run_cmd(
+                ["git", "branch", branch, f"origin/{branch}"], cwd=repo_path
+            )
+            return
+
+        # Create from base branch
+        self._run_cmd(["git", "branch", branch, base], cwd=repo_path)
+
+    def _try_merge_submodule(
+        self, submodule_path: Path, task_id: str, target_branch: str = "main"
+    ) -> bool:
+        """Try to rebase, test, and fast-forward merge submodule work to target branch.
+
+        For non-project tasks, target_branch is "main" (default).
+        For project tasks, target_branch is the project branch.
 
         Returns True if all steps succeed, False on any failure.
         """
@@ -103,12 +141,16 @@ class OrchestratorImplRole(ImplementerRole):
             self.log("Self-merge (submodule): no venv found, skipping tests")
             return False
 
+        # Ensure target branch exists locally (for project branches)
+        if target_branch != "main":
+            self._ensure_branch_exists(submodule_path, target_branch)
+
         # Ensure we're on the feature branch before starting.
         self._run_cmd(["git", "checkout", sub_branch], cwd=submodule_path)
 
-        # Step 1: Capture baseline test failures on main
-        self.log("Self-merge (submodule): running baseline pytest on main...")
-        self._run_cmd(["git", "checkout", "main"], cwd=submodule_path)
+        # Step 1: Capture baseline test failures on target branch
+        self.log(f"Self-merge (submodule): running baseline pytest on {target_branch}...")
+        self._run_cmd(["git", "checkout", target_branch], cwd=submodule_path)
         baseline_result = self._run_cmd(
             [str(venv_python), "-m", "pytest", "tests/", "-v", "--tb=short"],
             cwd=submodule_path,
@@ -116,13 +158,13 @@ class OrchestratorImplRole(ImplementerRole):
         )
         baseline_failures = self._parse_failed_tests(baseline_result.stdout)
         if baseline_failures:
-            self.log(f"Self-merge (submodule): {len(baseline_failures)} pre-existing failure(s) on main")
+            self.log(f"Self-merge (submodule): {len(baseline_failures)} pre-existing failure(s) on {target_branch}")
         self._run_cmd(["git", "checkout", sub_branch], cwd=submodule_path)
 
-        # Step 2: Rebase onto main
-        self.log(f"Self-merge (submodule): rebasing {sub_branch} onto main...")
+        # Step 2: Rebase onto target branch
+        self.log(f"Self-merge (submodule): rebasing {sub_branch} onto {target_branch}...")
         result = self._run_cmd(
-            ["git", "rebase", "main"], cwd=submodule_path
+            ["git", "rebase", target_branch], cwd=submodule_path
         )
         if result.returncode != 0:
             self.log(f"Self-merge (submodule): rebase failed: {result.stderr.strip()}")
@@ -150,12 +192,12 @@ class OrchestratorImplRole(ImplementerRole):
                 )
         self.log("Self-merge (submodule): tests passed")
 
-        # Step 4: Fast-forward merge to main in agent's worktree submodule
+        # Step 4: Fast-forward merge to target branch in agent's worktree submodule
         result = self._run_cmd(
-            ["git", "checkout", "main"], cwd=submodule_path
+            ["git", "checkout", target_branch], cwd=submodule_path
         )
         if result.returncode != 0:
-            self.log(f"Self-merge (submodule): checkout main failed: {result.stderr.strip()}")
+            self.log(f"Self-merge (submodule): checkout {target_branch} failed: {result.stderr.strip()}")
             return False
 
         result = self._run_cmd(
@@ -165,16 +207,21 @@ class OrchestratorImplRole(ImplementerRole):
             self.log(f"Self-merge (submodule): ff-merge failed: {result.stderr.strip()}")
             self._run_cmd(["git", "checkout", sub_branch], cwd=submodule_path)
             return False
-        self.log("Self-merge (submodule): merged to main in agent worktree submodule")
+        self.log(f"Self-merge (submodule): merged to {target_branch} in agent worktree submodule")
 
         # Step 5: Propagate to main checkout's submodule
         result = self._run_cmd(
-            ["git", "fetch", str(submodule_path), "main"],
+            ["git", "fetch", str(submodule_path), target_branch],
             cwd=main_checkout_sub,
         )
         if result.returncode != 0:
             self.log(f"Self-merge (submodule): fetch into main checkout failed: {result.stderr.strip()}")
             return False
+
+        # For project branches, ensure the branch exists in main checkout too
+        if target_branch != "main":
+            self._ensure_branch_exists(main_checkout_sub, target_branch)
+            self._run_cmd(["git", "checkout", target_branch], cwd=main_checkout_sub)
 
         result = self._run_cmd(
             ["git", "merge", "--ff-only", "FETCH_HEAD"],
@@ -183,25 +230,32 @@ class OrchestratorImplRole(ImplementerRole):
         if result.returncode != 0:
             self.log(f"Self-merge (submodule): ff-merge in main checkout failed: {result.stderr.strip()}")
             return False
-        self.log("Self-merge (submodule): updated main checkout submodule")
+        self.log(f"Self-merge (submodule): updated main checkout submodule ({target_branch})")
 
-        # Step 6: Push submodule main to origin
+        # Step 6: Push submodule target branch to origin
         result = self._run_cmd(
-            ["git", "push", "origin", "main"],
+            ["git", "push", "origin", target_branch],
             cwd=main_checkout_sub,
         )
         if result.returncode != 0:
             self.log("Self-merge (submodule): push failed but local merge succeeded, continuing")
 
+        # Switch main checkout back to main if we were on a project branch
+        if target_branch != "main":
+            self._run_cmd(["git", "checkout", "main"], cwd=main_checkout_sub)
+
         return True
 
-    def _try_merge_main_repo(self, task_id: str) -> bool:
+    def _try_merge_main_repo(self, task_id: str, target_branch: str = "main") -> bool:
         """Try to rebase and push main repo tooling changes to origin.
 
         Uses push-to-origin pattern: all work happens in the agent's worktree,
         the human's working tree is never touched. After rebasing onto
-        origin/main, pushes the rebased branch as a fast-forward update to
-        origin/main via a refspec push.
+        origin/<target_branch>, pushes the rebased branch as a fast-forward
+        update to origin/<target_branch> via a refspec push.
+
+        For non-project tasks, target_branch is "main" (default).
+        For project tasks, target_branch is the project branch.
 
         No pytest here -- tooling files don't affect orchestrator tests.
         The submodule merge (if any) already ran pytest.
@@ -212,18 +266,19 @@ class OrchestratorImplRole(ImplementerRole):
 
         tooling_branch = f"tooling/{task_id}"
         worktree = self.worktree
+        origin_target = f"origin/{target_branch}"
 
-        # Step 1: Fetch latest origin/main into the agent's worktree
-        self.log("Self-merge (main repo): fetching origin/main...")
+        # Step 1: Fetch latest origin/<target_branch> into the agent's worktree
+        self.log(f"Self-merge (main repo): fetching {origin_target}...")
         result = self._run_cmd(
-            ["git", "fetch", "origin", "main"],
+            ["git", "fetch", "origin", target_branch],
             cwd=worktree,
         )
         if result.returncode != 0:
-            self.log(f"Self-merge (main repo): fetch origin/main failed: {result.stderr.strip()}")
+            self.log(f"Self-merge (main repo): fetch {origin_target} failed: {result.stderr.strip()}")
             return False
 
-        # Step 2: Checkout the tooling branch and rebase onto origin/main
+        # Step 2: Checkout the tooling branch and rebase onto origin/<target_branch>
         result = self._run_cmd(
             ["git", "checkout", tooling_branch], cwd=worktree
         )
@@ -231,9 +286,9 @@ class OrchestratorImplRole(ImplementerRole):
             self.log(f"Self-merge (main repo): checkout {tooling_branch} failed: {result.stderr.strip()}")
             return False
 
-        self.log(f"Self-merge (main repo): rebasing {tooling_branch} onto origin/main...")
+        self.log(f"Self-merge (main repo): rebasing {tooling_branch} onto {origin_target}...")
         result = self._run_cmd(
-            ["git", "rebase", "origin/main"], cwd=worktree
+            ["git", "rebase", origin_target], cwd=worktree
         )
         if result.returncode != 0:
             self.log(f"Self-merge (main repo): rebase failed: {result.stderr.strip()}")
@@ -250,23 +305,23 @@ class OrchestratorImplRole(ImplementerRole):
             self.log(f"Self-merge (main repo): push branch failed: {result.stderr.strip()}")
             return False
 
-        # Step 4: Fast-forward origin/main to the rebased branch via refspec push.
-        # Since we just rebased onto origin/main, this should be a fast-forward.
-        # If it fails (main diverged between fetch and push), retry once.
+        # Step 4: Fast-forward origin/<target_branch> to the rebased branch via refspec push.
+        # Since we just rebased onto origin/<target_branch>, this should be a fast-forward.
+        # If it fails (target diverged between fetch and push), retry once.
         for attempt in range(2):
             result = self._run_cmd(
-                ["git", "push", "origin", f"{tooling_branch}:main"],
+                ["git", "push", "origin", f"{tooling_branch}:{target_branch}"],
                 cwd=worktree,
             )
             if result.returncode == 0:
                 break
 
             if attempt == 0:
-                self.log("Self-merge (main repo): ff push to main failed, rebasing and retrying...")
+                self.log(f"Self-merge (main repo): ff push to {target_branch} failed, rebasing and retrying...")
                 # Re-fetch and re-rebase
-                self._run_cmd(["git", "fetch", "origin", "main"], cwd=worktree)
+                self._run_cmd(["git", "fetch", "origin", target_branch], cwd=worktree)
                 rebase_result = self._run_cmd(
-                    ["git", "rebase", "origin/main"], cwd=worktree
+                    ["git", "rebase", origin_target], cwd=worktree
                 )
                 if rebase_result.returncode != 0:
                     self.log(f"Self-merge (main repo): retry rebase failed: {rebase_result.stderr.strip()}")
@@ -278,10 +333,10 @@ class OrchestratorImplRole(ImplementerRole):
                     cwd=worktree,
                 )
             else:
-                self.log(f"Self-merge (main repo): ff push to main failed after retry: {result.stderr.strip()}")
+                self.log(f"Self-merge (main repo): ff push to {target_branch} failed after retry: {result.stderr.strip()}")
                 return False
 
-        self.log("Self-merge (main repo): pushed to origin/main")
+        self.log(f"Self-merge (main repo): pushed to origin/{target_branch}")
 
         # Step 5: Clean up the remote tooling branch
         self._run_cmd(
@@ -292,9 +347,9 @@ class OrchestratorImplRole(ImplementerRole):
         # Step 6: Send notification to human
         try:
             send_info_message(
-                title=f"TASK-{task_id[:8]} merged to main",
+                title=f"TASK-{task_id[:8]} merged to {target_branch}",
                 body=(
-                    f"Tooling changes from `tooling/{task_id}` have been pushed to `origin/main`.\n\n"
+                    f"Tooling changes from `tooling/{task_id}` have been pushed to `origin/{target_branch}`.\n\n"
                     "Run `git pull` to update your local checkout."
                 ),
                 agent_name=self.agent_name,
@@ -311,30 +366,37 @@ class OrchestratorImplRole(ImplementerRole):
         task_id: str,
         has_sub_commits: bool = True,
         has_main_commits: bool = False,
+        target_branch: str = "main",
     ) -> bool:
-        """Try to merge agent work to main in both submodule and main repo.
+        """Try to merge agent work to target branch in both submodule and main repo.
 
         Handles three cases:
         - Submodule only: merge orch/<task-id> (existing flow)
         - Main repo only: merge tooling/<task-id>
         - Both: merge submodule first (has tests), then main repo
 
+        For project tasks (target_branch != "main"), the submodule ref update
+        on main is skipped — that happens at project completion.
+
         If any step fails, falls back to submit_completion().
         """
+        is_project_task = target_branch != "main"
+
         # Merge submodule first if it has commits (it runs tests)
         if has_sub_commits:
-            if not self._try_merge_submodule(submodule_path, task_id):
+            if not self._try_merge_submodule(submodule_path, task_id, target_branch=target_branch):
                 return False
 
         # Then merge main repo if it has commits
         if has_main_commits:
-            if not self._try_merge_main_repo(task_id):
+            if not self._try_merge_main_repo(task_id, target_branch=target_branch):
                 if has_sub_commits:
                     self.log("Self-merge: submodule merged but main repo merge failed")
                 return False
 
-        # If submodule merged, update the submodule ref in main repo
-        if has_sub_commits:
+        # If submodule merged and this is NOT a project task, update the submodule ref in main repo.
+        # For project tasks, the submodule ref update is deferred to project completion.
+        if has_sub_commits and not is_project_task:
             main_repo = self.parent_project
             self._run_cmd(["git", "add", "orchestrator"], cwd=main_repo)
             diff = self._run_cmd(
@@ -529,19 +591,30 @@ class OrchestratorImplRole(ImplementerRole):
             result_msg = f"Implementation complete ({sub_commits} submodule + {main_commits} main repo commits)"
 
             if is_db_enabled():
+                # Determine target branch: project tasks merge to project branch
+                merge_target = "main"
+                from .. import db as _db
+                db_task = _db.get_task(task_id)
+                if db_task and db_task.get("project_id"):
+                    project = _db.get_project(db_task["project_id"])
+                    if project and project.get("branch"):
+                        merge_target = project["branch"]
+                        self.log(f"Project task: targeting branch '{merge_target}'")
+
                 if total_commits > 0:
                     merged = self._try_merge_to_main(
                         submodule_path,
                         task_id,
                         has_sub_commits=sub_commits > 0,
                         has_main_commits=main_commits > 0,
+                        target_branch=merge_target,
                     )
                     if merged:
                         accept_completion(
                             task_path,
                             accepted_by="self-merge",
                         )
-                        self.log(f"Self-merged to main ({sub_commits} submodule + {main_commits} main repo commits)")
+                        self.log(f"Self-merged to {merge_target} ({sub_commits} submodule + {main_commits} main repo commits)")
                     else:
                         submit_completion(
                             task_path,
@@ -666,6 +739,108 @@ Remember:
 - Before finishing, check `docs/architecture.md` in the submodule for sections
   affected by your changes and update them to reflect the current state
 """
+
+
+def merge_project_to_main(project_id: str, parent_project: Path | None = None) -> bool:
+    """Merge a completed project's branch to main in both submodule and main repo.
+
+    Called when all tasks in a project are done and it transitions to ready-for-pr.
+    This merges the project branch to main, updates the submodule ref, and pushes.
+
+    Args:
+        project_id: The project ID to merge
+        parent_project: Path to the main repo checkout (auto-detected if None)
+
+    Returns:
+        True if merge succeeded, False on failure
+    """
+    import sys
+    from ..config import is_db_enabled
+    from .. import db
+
+    if not is_db_enabled():
+        return False
+
+    project = db.get_project(project_id)
+    if not project:
+        print(f"merge_project_to_main: project {project_id} not found", file=sys.stderr)
+        return False
+
+    branch = project.get("branch")
+    if not branch or branch == "main":
+        # No project branch to merge — tasks already merged to main
+        return True
+
+    if parent_project is None:
+        from ..config import get_orchestrator_dir
+        parent_project = get_orchestrator_dir().parent
+
+    main_checkout_sub = parent_project / "orchestrator"
+
+    def run_cmd(cmd, cwd, timeout=120):
+        return subprocess.run(
+            cmd, capture_output=True, text=True, cwd=cwd, timeout=timeout
+        )
+
+    # Step 1: Merge project branch to main in submodule
+    print(f"merge_project_to_main: merging {branch} -> main in submodule", file=sys.stderr)
+
+    # Fetch latest
+    run_cmd(["git", "fetch", "origin"], cwd=main_checkout_sub)
+
+    # Checkout main
+    result = run_cmd(["git", "checkout", "main"], cwd=main_checkout_sub)
+    if result.returncode != 0:
+        print(f"merge_project_to_main: checkout main failed: {result.stderr.strip()}", file=sys.stderr)
+        return False
+
+    # Pull latest main
+    run_cmd(["git", "pull", "--ff-only", "origin", "main"], cwd=main_checkout_sub)
+
+    # Merge project branch (fast-forward if possible, otherwise regular merge)
+    result = run_cmd(
+        ["git", "merge", "--ff-only", f"origin/{branch}"],
+        cwd=main_checkout_sub,
+    )
+    if result.returncode != 0:
+        # Try a regular merge if ff-only fails
+        result = run_cmd(
+            ["git", "merge", f"origin/{branch}", "-m",
+             f"Merge project {project_id} branch '{branch}' to main"],
+            cwd=main_checkout_sub,
+        )
+        if result.returncode != 0:
+            print(f"merge_project_to_main: merge failed: {result.stderr.strip()}", file=sys.stderr)
+            return False
+
+    # Push submodule main
+    result = run_cmd(["git", "push", "origin", "main"], cwd=main_checkout_sub)
+    if result.returncode != 0:
+        print(f"merge_project_to_main: submodule push failed: {result.stderr.strip()}", file=sys.stderr)
+        # Continue — local merge succeeded
+
+    # Step 2: Update submodule ref in main repo and push
+    print(f"merge_project_to_main: updating submodule ref in main repo", file=sys.stderr)
+    run_cmd(["git", "add", "orchestrator"], cwd=parent_project)
+    diff = run_cmd(["git", "diff", "--cached", "--quiet"], cwd=parent_project)
+    if diff.returncode != 0:
+        result = run_cmd(
+            ["git", "commit", "-m",
+             f"chore: update orchestrator submodule (project {project_id} complete)"],
+            cwd=parent_project,
+        )
+        if result.returncode != 0:
+            print(f"merge_project_to_main: submodule ref commit failed: {result.stderr.strip()}", file=sys.stderr)
+        else:
+            push = run_cmd(["git", "push", "origin", "main"], cwd=parent_project)
+            if push.returncode != 0:
+                print("merge_project_to_main: main repo push failed (human can push later)", file=sys.stderr)
+
+    # Step 3: Update project status to complete
+    db.update_project(project_id, status="complete")
+
+    print(f"merge_project_to_main: project {project_id} merged to main", file=sys.stderr)
+    return True
 
 
 def main():

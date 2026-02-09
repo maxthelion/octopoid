@@ -704,7 +704,7 @@ class TestTryMergeToMain:
                 )
 
             assert result is True
-            mock_sub.assert_called_once_with(sub_path, 'abc12345')
+            mock_sub.assert_called_once_with(sub_path, 'abc12345', target_branch='main')
             mock_main.assert_not_called()
 
     def test_main_repo_only(self):
@@ -723,7 +723,7 @@ class TestTryMergeToMain:
 
             assert result is True
             mock_sub.assert_not_called()
-            mock_main.assert_called_once_with('abc12345')
+            mock_main.assert_called_once_with('abc12345', target_branch='main')
 
     def test_both_repos(self):
         """Both repos: merges submodule first, then main repo."""
@@ -965,3 +965,475 @@ class TestPromptIncludesToolingBranch:
             assert 'tooling/test123' in captured_prompt
             assert 'Main Repo Tooling Files' in captured_prompt
             assert 'Do NOT commit main repo files directly on main' in captured_prompt
+
+
+# ---------------------------------------------------------------------------
+# Project-level branching tests
+# ---------------------------------------------------------------------------
+
+
+class TestEnsureBranchExists:
+    """Tests for _ensure_branch_exists — creates branch if missing."""
+
+    def _make_role(self):
+        from orchestrator.roles.orchestrator_impl import OrchestratorImplRole
+        return OrchestratorImplRole()
+
+    def test_branch_exists_locally_is_noop(self):
+        """If the branch already exists locally, no action taken."""
+        with patch.dict('os.environ', _ENV):
+            role = self._make_role()
+            calls = []
+
+            def mock_run_cmd(cmd, cwd, timeout=120):
+                calls.append(cmd)
+                if cmd == ['git', 'rev-parse', '--verify', 'proj/my-branch']:
+                    return _make_completed_result(0)  # exists
+                return _make_completed_result(0)
+
+            with patch.object(role, '_run_cmd', side_effect=mock_run_cmd):
+                role._ensure_branch_exists(Path('/repo'), 'proj/my-branch')
+
+            # Should only check local existence, then stop
+            assert ['git', 'rev-parse', '--verify', 'proj/my-branch'] in calls
+            assert ['git', 'branch', 'proj/my-branch', 'main'] not in calls
+
+    def test_creates_from_origin_if_remote_exists(self):
+        """If the branch exists on origin but not locally, create tracking branch."""
+        with patch.dict('os.environ', _ENV):
+            role = self._make_role()
+            calls = []
+
+            def mock_run_cmd(cmd, cwd, timeout=120):
+                calls.append(cmd)
+                if cmd == ['git', 'rev-parse', '--verify', 'proj/my-branch']:
+                    return _make_completed_result(1)  # not local
+                if cmd == ['git', 'rev-parse', '--verify', 'origin/proj/my-branch']:
+                    return _make_completed_result(0)  # exists on origin
+                return _make_completed_result(0)
+
+            with patch.object(role, '_run_cmd', side_effect=mock_run_cmd):
+                role._ensure_branch_exists(Path('/repo'), 'proj/my-branch')
+
+            assert ['git', 'branch', 'proj/my-branch', 'origin/proj/my-branch'] in calls
+
+    def test_creates_from_base_if_no_remote(self):
+        """If the branch doesn't exist anywhere, create from base."""
+        with patch.dict('os.environ', _ENV):
+            role = self._make_role()
+            calls = []
+
+            def mock_run_cmd(cmd, cwd, timeout=120):
+                calls.append(cmd)
+                if cmd[0:3] == ['git', 'rev-parse', '--verify']:
+                    return _make_completed_result(1)  # doesn't exist
+                return _make_completed_result(0)
+
+            with patch.object(role, '_run_cmd', side_effect=mock_run_cmd):
+                role._ensure_branch_exists(Path('/repo'), 'proj/my-branch')
+
+            assert ['git', 'branch', 'proj/my-branch', 'main'] in calls
+
+
+class TestProjectBranchSubmoduleMerge:
+    """Tests for _try_merge_submodule with a project target branch."""
+
+    def _make_role(self):
+        from orchestrator.roles.orchestrator_impl import OrchestratorImplRole
+        return OrchestratorImplRole()
+
+    def test_project_branch_rebase_target(self):
+        """Submodule merge with project branch rebases onto project branch, not main."""
+        with patch.dict('os.environ', _ENV):
+            role = self._make_role()
+            sub_path = Path('/fake/agents/test-orch/worktree/orchestrator')
+            venv_python = Path('/fake/venv/bin/python')
+
+            calls = []
+
+            def mock_run_cmd(cmd, cwd, timeout=120):
+                calls.append(cmd)
+                return _make_completed_result(0, stdout='all passed')
+
+            with patch.object(role, '_run_cmd', side_effect=mock_run_cmd), \
+                 patch.object(role, '_find_venv_python', return_value=venv_python), \
+                 patch.object(role, '_ensure_branch_exists'):
+                result = role._try_merge_submodule(
+                    sub_path, 'abc12345', target_branch='proj/feature-x'
+                )
+
+            assert result is True
+            # Should rebase onto project branch, not main
+            assert ['git', 'rebase', 'proj/feature-x'] in calls
+            # Should checkout project branch for ff-merge
+            assert ['git', 'checkout', 'proj/feature-x'] in calls
+            # Should ff-merge to project branch
+            assert ['git', 'merge', '--ff-only', 'orch/abc12345'] in calls
+            # Should push project branch
+            assert ['git', 'push', 'origin', 'proj/feature-x'] in calls
+
+    def test_project_branch_calls_ensure_branch(self):
+        """Project branch merge calls _ensure_branch_exists for both submodule and main checkout."""
+        with patch.dict('os.environ', _ENV):
+            role = self._make_role()
+            sub_path = Path('/fake/agents/test-orch/worktree/orchestrator')
+            venv_python = Path('/fake/venv/bin/python')
+
+            with patch.object(role, '_run_cmd', return_value=_make_completed_result(0, stdout='ok')), \
+                 patch.object(role, '_find_venv_python', return_value=venv_python), \
+                 patch.object(role, '_ensure_branch_exists') as mock_ensure:
+                role._try_merge_submodule(
+                    sub_path, 'abc12345', target_branch='proj/feature-x'
+                )
+
+            # Called once for the agent's worktree submodule, once for main checkout submodule
+            assert mock_ensure.call_count == 2
+            assert mock_ensure.call_args_list[0] == call(sub_path, 'proj/feature-x')
+            main_checkout_sub = role.parent_project / "orchestrator"
+            assert mock_ensure.call_args_list[1] == call(main_checkout_sub, 'proj/feature-x')
+
+    def test_main_branch_does_not_call_ensure(self):
+        """Default main branch does NOT call _ensure_branch_exists."""
+        with patch.dict('os.environ', _ENV):
+            role = self._make_role()
+            sub_path = Path('/fake/agents/test-orch/worktree/orchestrator')
+            venv_python = Path('/fake/venv/bin/python')
+
+            with patch.object(role, '_run_cmd', return_value=_make_completed_result(0, stdout='ok')), \
+                 patch.object(role, '_find_venv_python', return_value=venv_python), \
+                 patch.object(role, '_ensure_branch_exists') as mock_ensure:
+                role._try_merge_submodule(sub_path, 'abc12345')
+
+            mock_ensure.assert_not_called()
+
+
+class TestProjectBranchMainRepoMerge:
+    """Tests for _try_merge_main_repo with a project target branch."""
+
+    def _make_role(self):
+        from orchestrator.roles.orchestrator_impl import OrchestratorImplRole
+        return OrchestratorImplRole()
+
+    def test_project_branch_target(self):
+        """Main repo merge with project branch targets the project branch, not main."""
+        with patch.dict('os.environ', _ENV):
+            role = self._make_role()
+
+            calls = []
+
+            def mock_run_cmd(cmd, cwd, timeout=120):
+                calls.append(cmd)
+                return _make_completed_result(0)
+
+            with patch.object(role, '_run_cmd', side_effect=mock_run_cmd), \
+                 patch('orchestrator.message_utils.info'):
+                result = role._try_merge_main_repo('abc12345', target_branch='proj/feature-x')
+
+            assert result is True
+            # Fetch project branch
+            assert ['git', 'fetch', 'origin', 'proj/feature-x'] in calls
+            # Rebase onto project branch
+            assert ['git', 'rebase', 'origin/proj/feature-x'] in calls
+            # Push to project branch via refspec
+            assert ['git', 'push', 'origin', 'tooling/abc12345:proj/feature-x'] in calls
+
+    def test_notification_mentions_project_branch(self):
+        """Notification should mention the project branch, not main."""
+        with patch.dict('os.environ', _ENV):
+            role = self._make_role()
+            mock_send = MagicMock()
+
+            with patch.object(role, '_run_cmd', return_value=_make_completed_result(0)), \
+                 patch('orchestrator.message_utils.info', mock_send):
+                role._try_merge_main_repo('abc12345', target_branch='proj/feature-x')
+
+            mock_send.assert_called_once()
+            body = mock_send.call_args.kwargs.get('body', '')
+            assert 'proj/feature-x' in body
+
+
+class TestProjectTaskSkipsSubmoduleRef:
+    """Tests that project tasks skip the submodule ref update on main."""
+
+    def _make_role(self):
+        from orchestrator.roles.orchestrator_impl import OrchestratorImplRole
+        return OrchestratorImplRole()
+
+    def test_project_task_skips_submodule_ref(self):
+        """When target_branch != 'main', submodule ref update is skipped."""
+        with patch.dict('os.environ', _ENV):
+            role = self._make_role()
+
+            calls = []
+
+            def mock_run_cmd(cmd, cwd, timeout=120):
+                calls.append((cmd, str(cwd)))
+                return _make_completed_result(0)
+
+            with patch.object(role, '_try_merge_submodule', return_value=True), \
+                 patch.object(role, '_run_cmd', side_effect=mock_run_cmd):
+                result = role._try_merge_to_main(
+                    Path('/fake/sub'), 'abc12345',
+                    has_sub_commits=True, has_main_commits=False,
+                    target_branch='proj/feature-x',
+                )
+
+            assert result is True
+            # Should NOT run 'git add orchestrator' on main repo
+            git_add_cmds = [c for c in calls if c[0] == ['git', 'add', 'orchestrator']]
+            assert len(git_add_cmds) == 0
+
+    def test_non_project_task_updates_submodule_ref(self):
+        """When target_branch == 'main' (default), submodule ref IS updated."""
+        with patch.dict('os.environ', _ENV):
+            role = self._make_role()
+
+            calls = []
+
+            def mock_run_cmd(cmd, cwd, timeout=120):
+                calls.append((cmd, str(cwd)))
+                # Return non-zero for diff --cached --quiet to simulate staged changes
+                if cmd == ['git', 'diff', '--cached', '--quiet']:
+                    return _make_completed_result(1)
+                return _make_completed_result(0)
+
+            with patch.object(role, '_try_merge_submodule', return_value=True), \
+                 patch.object(role, '_run_cmd', side_effect=mock_run_cmd):
+                result = role._try_merge_to_main(
+                    Path('/fake/sub'), 'abc12345',
+                    has_sub_commits=True, has_main_commits=False,
+                    target_branch='main',
+                )
+
+            assert result is True
+            # Should run 'git add orchestrator'
+            git_add_cmds = [c[0] for c in calls if c[0] == ['git', 'add', 'orchestrator']]
+            assert len(git_add_cmds) == 1
+
+    def test_project_branch_passed_to_sub_merge(self):
+        """target_branch is forwarded to _try_merge_submodule."""
+        with patch.dict('os.environ', _ENV):
+            role = self._make_role()
+
+            with patch.object(role, '_try_merge_submodule', return_value=True) as mock_sub, \
+                 patch.object(role, '_run_cmd', return_value=_make_completed_result(0)):
+                role._try_merge_to_main(
+                    Path('/fake/sub'), 'abc12345',
+                    has_sub_commits=True, has_main_commits=False,
+                    target_branch='proj/feature-x',
+                )
+
+            mock_sub.assert_called_once_with(
+                Path('/fake/sub'), 'abc12345', target_branch='proj/feature-x'
+            )
+
+    def test_project_branch_passed_to_main_merge(self):
+        """target_branch is forwarded to _try_merge_main_repo."""
+        with patch.dict('os.environ', _ENV):
+            role = self._make_role()
+
+            with patch.object(role, '_try_merge_submodule', return_value=True), \
+                 patch.object(role, '_try_merge_main_repo', return_value=True) as mock_main, \
+                 patch.object(role, '_run_cmd', return_value=_make_completed_result(0)):
+                role._try_merge_to_main(
+                    Path('/fake/sub'), 'abc12345',
+                    has_sub_commits=True, has_main_commits=True,
+                    target_branch='proj/feature-x',
+                )
+
+            mock_main.assert_called_once_with('abc12345', target_branch='proj/feature-x')
+
+
+class TestRunWithTaskProjectBranch:
+    """Tests that _run_with_task looks up project_id and determines target branch."""
+
+    def _standard_patches(self, role, mock_merge_result, sub_commits=2, main_commits=0):
+        """Return a context manager stack for the standard _run_with_task mocks."""
+        from contextlib import ExitStack
+
+        commit_values = [sub_commits, main_commits]
+        commit_iter = iter(commit_values)
+
+        stack = ExitStack()
+        stack.enter_context(patch.object(role, 'invoke_claude', return_value=(0, 'ok', '')))
+        stack.enter_context(patch.object(role, 'read_instructions', return_value=''))
+        stack.enter_context(patch.object(role, 'reset_tool_counter'))
+        stack.enter_context(patch.object(role, 'read_tool_count', return_value=5))
+        stack.enter_context(patch.object(role, '_run_cmd', return_value=_make_completed_result(0)))
+        stack.enter_context(patch.object(role, '_create_submodule_branch'))
+        stack.enter_context(patch.object(role, '_try_merge_to_main', return_value=mock_merge_result))
+        stack.enter_context(patch('orchestrator.git_utils.create_feature_branch', return_value='agent/test'))
+        stack.enter_context(patch('orchestrator.git_utils.get_head_ref', return_value='abc123'))
+        stack.enter_context(patch('orchestrator.git_utils.get_commit_count', side_effect=lambda *a, **kw: next(commit_iter)))
+        stack.enter_context(patch('orchestrator.queue_utils.save_task_notes'))
+        stack.enter_context(patch('orchestrator.queue_utils.get_task_notes', return_value=None))
+        stack.enter_context(patch('orchestrator.config.get_notes_dir', return_value=Path('/fake/notes')))
+        stack.enter_context(patch('orchestrator.config.is_db_enabled', return_value=True))
+        return stack
+
+    def test_project_task_uses_project_branch(self):
+        """When task has project_id, merge targets the project branch."""
+        with patch.dict('os.environ', _ENV):
+            from orchestrator.roles.orchestrator_impl import OrchestratorImplRole
+            role = OrchestratorImplRole()
+            task = {
+                'id': 'proj-task1',
+                'title': 'Project task',
+                'branch': 'main',
+                'path': '/fake/path',
+                'content': 'Test content',
+            }
+
+            mock_merge = MagicMock(return_value=True)
+
+            # Mock db.get_task to return a task with project_id
+            mock_get_task = MagicMock(return_value={
+                'id': 'proj-task1',
+                'project_id': 'PROJ-abc',
+                'checks': [],
+                'check_results': {},
+            })
+            # Mock db.get_project to return project with branch
+            mock_get_project = MagicMock(return_value={
+                'id': 'PROJ-abc',
+                'branch': 'proj/feature-x',
+                'base_branch': 'main',
+            })
+
+            with self._standard_patches(role, mock_merge_result=True), \
+                 patch.object(role, '_try_merge_to_main', mock_merge), \
+                 patch('orchestrator.queue_utils.accept_completion'), \
+                 patch('orchestrator.db.get_task', mock_get_task), \
+                 patch('orchestrator.db.get_project', mock_get_project):
+                role._run_with_task(task)
+
+            mock_merge.assert_called_once()
+            call_kwargs = mock_merge.call_args
+            assert call_kwargs.kwargs.get('target_branch') == 'proj/feature-x'
+
+    def test_non_project_task_uses_main(self):
+        """When task has no project_id, merge targets main."""
+        with patch.dict('os.environ', _ENV):
+            from orchestrator.roles.orchestrator_impl import OrchestratorImplRole
+            role = OrchestratorImplRole()
+            task = {
+                'id': 'solo-task1',
+                'title': 'Solo task',
+                'branch': 'main',
+                'path': '/fake/path',
+                'content': 'Test content',
+            }
+
+            mock_merge = MagicMock(return_value=True)
+
+            # Mock db.get_task to return a task WITHOUT project_id
+            mock_get_task = MagicMock(return_value={
+                'id': 'solo-task1',
+                'project_id': None,
+                'checks': [],
+                'check_results': {},
+            })
+
+            with self._standard_patches(role, mock_merge_result=True), \
+                 patch.object(role, '_try_merge_to_main', mock_merge), \
+                 patch('orchestrator.queue_utils.accept_completion'), \
+                 patch('orchestrator.db.get_task', mock_get_task):
+                role._run_with_task(task)
+
+            mock_merge.assert_called_once()
+            call_kwargs = mock_merge.call_args
+            assert call_kwargs.kwargs.get('target_branch') == 'main'
+
+
+class TestMergeProjectToMain:
+    """Tests for the module-level merge_project_to_main function."""
+
+    def test_merges_project_branch_to_main(self):
+        """merge_project_to_main merges the project branch and updates submodule ref."""
+        from orchestrator.roles.orchestrator_impl import merge_project_to_main
+
+        mock_project = {
+            'id': 'PROJ-abc',
+            'branch': 'proj/feature-x',
+            'base_branch': 'main',
+        }
+
+        calls = []
+
+        def mock_run(cmd, capture_output=True, text=True, cwd=None, timeout=120):
+            calls.append((cmd, str(cwd) if cwd else None))
+            # Simulate that ff-only merge succeeds
+            return _make_completed_result(0)
+
+        with patch('orchestrator.roles.orchestrator_impl.subprocess.run', side_effect=mock_run), \
+             patch('orchestrator.config.is_db_enabled', return_value=True), \
+             patch('orchestrator.db.get_project', return_value=mock_project), \
+             patch('orchestrator.db.update_project') as mock_update:
+            result = merge_project_to_main('PROJ-abc', parent_project=Path('/fake/project'))
+
+        assert result is True
+        # Should have checked out main in submodule
+        cmds = [c[0] for c in calls]
+        assert ['git', 'checkout', 'main'] in cmds
+        # Should merge project branch
+        assert ['git', 'merge', '--ff-only', 'origin/proj/feature-x'] in cmds
+        # Should update project to complete
+        mock_update.assert_called_once_with('PROJ-abc', status='complete')
+
+    def test_no_branch_is_noop(self):
+        """If project has no branch (or branch is 'main'), returns True immediately."""
+        from orchestrator.roles.orchestrator_impl import merge_project_to_main
+
+        mock_project = {
+            'id': 'PROJ-abc',
+            'branch': 'main',
+            'base_branch': 'main',
+        }
+
+        with patch('orchestrator.config.is_db_enabled', return_value=True), \
+             patch('orchestrator.db.get_project', return_value=mock_project), \
+             patch('orchestrator.db.update_project') as mock_update:
+            result = merge_project_to_main('PROJ-abc', parent_project=Path('/fake/project'))
+
+        assert result is True
+        mock_update.assert_not_called()
+
+    def test_project_not_found_returns_false(self):
+        """If project doesn't exist, returns False."""
+        from orchestrator.roles.orchestrator_impl import merge_project_to_main
+
+        with patch('orchestrator.config.is_db_enabled', return_value=True), \
+             patch('orchestrator.db.get_project', return_value=None):
+            result = merge_project_to_main('PROJ-missing', parent_project=Path('/fake/project'))
+
+        assert result is False
+
+    def test_merge_failure_falls_back_to_regular_merge(self):
+        """If ff-only merge fails, tries regular merge."""
+        from orchestrator.roles.orchestrator_impl import merge_project_to_main
+
+        mock_project = {
+            'id': 'PROJ-abc',
+            'branch': 'proj/feature-x',
+            'base_branch': 'main',
+        }
+
+        merge_count = [0]
+
+        def mock_run(cmd, capture_output=True, text=True, cwd=None, timeout=120):
+            if 'merge' in cmd and '--ff-only' in cmd:
+                merge_count[0] += 1
+                return _make_completed_result(1, stderr='not a fast-forward')
+            if 'merge' in cmd and '--ff-only' not in cmd:
+                merge_count[0] += 1
+                return _make_completed_result(0)
+            return _make_completed_result(0)
+
+        with patch('orchestrator.roles.orchestrator_impl.subprocess.run', side_effect=mock_run), \
+             patch('orchestrator.config.is_db_enabled', return_value=True), \
+             patch('orchestrator.db.get_project', return_value=mock_project), \
+             patch('orchestrator.db.update_project'):
+            result = merge_project_to_main('PROJ-abc', parent_project=Path('/fake/project'))
+
+        assert result is True
+        assert merge_count[0] == 2  # ff-only + regular merge
