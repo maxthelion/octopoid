@@ -1,6 +1,10 @@
 """Proposer role - specialized agents that propose work for the curator."""
 
+import subprocess
+from datetime import datetime
+
 from ..config import get_proposal_limits
+from ..git_utils import has_uncommitted_changes, push_branch, run_git
 from ..proposal_utils import can_create_proposal, get_rejected_proposals
 from .base import main_entry
 from .specialist import SpecialistRole
@@ -47,6 +51,54 @@ class ProposerRole(SpecialistRole):
             lines.append("")
 
         return "\n".join(lines)
+
+    def _commit_and_push(self, commit_message: str | None = None) -> str | None:
+        """Commit and push any uncommitted changes in the worktree.
+
+        Creates a timestamped feature branch, commits all changes, and pushes
+        to origin. This ensures file changes (archives, proposed tasks, etc.)
+        survive worktree cleanup.
+
+        Args:
+            commit_message: Optional commit message. Auto-generated if None.
+
+        Returns:
+            Branch name if changes were committed and pushed, None otherwise.
+        """
+        if not has_uncommitted_changes(self.worktree):
+            self.log("No uncommitted changes to commit")
+            return None
+
+        # Create a feature branch from current HEAD
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        branch_name = f"tooling/{self.agent_name}-{timestamp}"
+
+        try:
+            run_git(["checkout", "-b", branch_name], cwd=self.worktree)
+        except subprocess.CalledProcessError as e:
+            self.log(f"Failed to create branch {branch_name}: {e.stderr}")
+            return None
+
+        # Stage and commit all changes
+        if not commit_message:
+            commit_message = f"chore: {self.agent_name} run ({timestamp})"
+
+        try:
+            run_git(["add", "-A"], cwd=self.worktree)
+            run_git(["commit", "-m", commit_message], cwd=self.worktree)
+        except subprocess.CalledProcessError as e:
+            self.log(f"Failed to commit changes: {e.stderr}")
+            return None
+
+        # Push to origin
+        try:
+            push_branch(self.worktree, branch_name)
+            self.log(f"Committed and pushed changes on {branch_name}")
+            return branch_name
+        except subprocess.CalledProcessError as e:
+            self.log(f"Failed to push branch {branch_name}: {e.stderr}")
+            # Changes are committed locally even if push fails
+            return branch_name
 
     def run(self) -> int:
         """Analyze the codebase and create proposals.
@@ -133,7 +185,12 @@ Start by exploring the codebase relevant to your focus, then create proposals.
 
         if exit_code != 0:
             self.log(f"Claude invocation failed: {stderr}")
+            # Still try to commit any partial work
+            self._commit_and_push()
             return exit_code
+
+        # Commit and push any file changes made by the agent
+        self._commit_and_push()
 
         self.log("Proposal generation complete")
         return 0

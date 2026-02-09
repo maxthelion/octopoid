@@ -357,6 +357,7 @@ The recycler also runs `reconcile_stale_blockers()` on each tick to catch any de
 - **File:** `orchestrator/orchestrator/roles/proposer.py`
 - **Claude invocation:** Yes
 - **Focus areas:** Each proposer has a `focus` field: `inbox_triage`, `backlog_grooming`, `test_quality`, `code_structure`, `project_plans`
+- **Git lifecycle:** After Claude finishes, the role's `_commit_and_push()` method checks for uncommitted changes in the worktree. If changes exist, it creates a `tooling/<agent-name>-<timestamp>` branch, commits, and pushes to origin. This runs regardless of whether Claude succeeded or failed (to preserve partial work).
 - **Agents:** `inbox-poller` (active, focus: `inbox_triage`); others paused
 
 ### Disabled Roles
