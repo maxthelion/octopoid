@@ -1019,6 +1019,161 @@ def check_and_update_finished_agents() -> None:
                 print(f"[{datetime.now().isoformat()}] Agent {agent_name} finished (exit code: {exit_code})")
 
 
+# =============================================================================
+# Queue Health Detection (for queue-manager agent)
+# =============================================================================
+
+def detect_queue_health_issues() -> dict[str, list[dict]]:
+    """Detect queue health issues: file-DB mismatches, orphan files, zombie claims.
+
+    Returns:
+        Dictionary with keys 'file_db_mismatches', 'orphan_files', 'zombie_claims'
+        Each value is a list of issue dictionaries with details.
+    """
+    if not is_db_enabled():
+        return {'file_db_mismatches': [], 'orphan_files': [], 'zombie_claims': []}
+
+    from . import db
+    from .config import get_queue_dir
+    from .queue_utils import ALL_QUEUE_DIRS
+    import time
+
+    issues = {
+        'file_db_mismatches': [],
+        'orphan_files': [],
+        'zombie_claims': []
+    }
+
+    # Get all tasks from DB
+    all_tasks = db.list_tasks()
+    task_ids_in_db = {task['id'] for task in all_tasks}
+
+    # Scan all queue directories for files
+    queue_dir = get_queue_dir()
+    current_time = time.time()
+    MIN_FILE_AGE_SECONDS = 300  # 5 minutes
+
+    for queue_name in ALL_QUEUE_DIRS:
+        queue_path = queue_dir / queue_name
+        if not queue_path.exists():
+            continue
+
+        for task_file in queue_path.glob("TASK-*.md"):
+            # Extract task ID from filename
+            task_id = task_file.stem.replace("TASK-", "")
+            file_mtime = task_file.stat().st_mtime
+            file_age = current_time - file_mtime
+
+            # Skip recently created files to avoid race conditions
+            if file_age < MIN_FILE_AGE_SECONDS:
+                continue
+
+            # Check for orphan files
+            if task_id not in task_ids_in_db:
+                issues['orphan_files'].append({
+                    'task_id': task_id,
+                    'file_path': str(task_file.relative_to(find_parent_project())),
+                    'queue': queue_name,
+                    'mtime': datetime.fromtimestamp(file_mtime).isoformat(),
+                    'age_seconds': int(file_age)
+                })
+                continue
+
+            # Check for file-DB mismatch
+            task_in_db = next((t for t in all_tasks if t['id'] == task_id), None)
+            if task_in_db and task_in_db['queue'] != queue_name:
+                issues['file_db_mismatches'].append({
+                    'task_id': task_id,
+                    'db_queue': task_in_db['queue'],
+                    'file_queue': queue_name,
+                    'file_path': str(task_file.relative_to(find_parent_project())),
+                    'mtime': datetime.fromtimestamp(file_mtime).isoformat(),
+                    'age_seconds': int(file_age)
+                })
+
+    # Check for zombie claims
+    ZOMBIE_CLAIM_HOURS = 2
+    AGENT_INACTIVE_HOURS = 1
+    zombie_threshold = datetime.now().timestamp() - (ZOMBIE_CLAIM_HOURS * 3600)
+
+    for task in all_tasks:
+        if task['queue'] != 'claimed' or not task.get('claimed_by'):
+            continue
+
+        claimed_at_str = task.get('claimed_at')
+        if not claimed_at_str:
+            continue
+
+        try:
+            claimed_at = datetime.fromisoformat(claimed_at_str).timestamp()
+        except (ValueError, TypeError):
+            continue
+
+        if claimed_at > zombie_threshold:
+            continue  # Not old enough
+
+        # Check agent activity
+        agent_name = task['claimed_by']
+        state_path = get_agent_state_path(agent_name)
+        agent_inactive = False
+        agent_last_active = None
+
+        if not state_path.exists():
+            agent_inactive = True
+        else:
+            state = load_state(state_path)
+            if state.last_finished:
+                try:
+                    last_active = datetime.fromisoformat(state.last_finished).timestamp()
+                    agent_last_active = state.last_finished
+                    inactive_threshold = datetime.now().timestamp() - (AGENT_INACTIVE_HOURS * 3600)
+                    if last_active < inactive_threshold:
+                        agent_inactive = True
+                except (ValueError, TypeError):
+                    agent_inactive = True
+
+        if agent_inactive:
+            claim_duration = int(datetime.now().timestamp() - claimed_at)
+            issues['zombie_claims'].append({
+                'task_id': task['id'],
+                'claimed_by': agent_name,
+                'claimed_at': claimed_at_str,
+                'claim_duration_seconds': claim_duration,
+                'agent_last_active': agent_last_active or 'no state file'
+            })
+
+    return issues
+
+
+def should_trigger_queue_manager() -> tuple[bool, str]:
+    """Check if queue-manager agent should be triggered.
+
+    Returns:
+        (should_trigger, trigger_reason) where trigger_reason describes why
+    """
+    issues = detect_queue_health_issues()
+
+    total_issues = (
+        len(issues['file_db_mismatches']) +
+        len(issues['orphan_files']) +
+        len(issues['zombie_claims'])
+    )
+
+    if total_issues == 0:
+        return False, ""
+
+    # Build trigger reason
+    parts = []
+    if issues['file_db_mismatches']:
+        parts.append(f"{len(issues['file_db_mismatches'])} file-DB mismatch(es)")
+    if issues['orphan_files']:
+        parts.append(f"{len(issues['orphan_files'])} orphan file(s)")
+    if issues['zombie_claims']:
+        parts.append(f"{len(issues['zombie_claims'])} zombie claim(s)")
+
+    trigger_reason = ", ".join(parts)
+    return True, trigger_reason
+
 
 def ensure_rebaser_worktree() -> Path | None:
     """Ensure the dedicated rebaser worktree exists.
@@ -1505,6 +1660,13 @@ def run_scheduler() -> None:
 
     # Check branch freshness and auto-rebase stale provisional branches
     check_branch_freshness()
+
+    # Check queue health and trigger queue-manager if issues detected
+    should_trigger, trigger_reason = should_trigger_queue_manager()
+    if should_trigger:
+        debug_log(f"Queue health issues detected: {trigger_reason}")
+        # The queue-manager agent will be evaluated in the normal agent loop below
+        # We just log the detection here; the agent's pre-check handles actual triggering
 
     # Load agent configuration
     try:
