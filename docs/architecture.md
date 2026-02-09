@@ -84,9 +84,10 @@ main() → run_scheduler()
   1. Check global pause flag (agents.yaml: `paused`)
   2. check_and_update_finished_agents() — detect dead processes, update state
   3. process_auto_accept_tasks() — move provisional tasks with auto_accept to done
-  4. process_gatekeeper_reviews() — initialize/check gatekeeper review cycles
-  5. check_stale_branches() — mark branches >5 commits behind for rebase
-  6. For each agent in agents.yaml:
+  4. assign_qa_checks() — auto-add gk-qa check to app tasks with staging_url
+  5. process_gatekeeper_reviews() — initialize/check gatekeeper review cycles
+  6. check_stale_branches() — mark branches >5 commits behind for rebase
+  7. For each agent in agents.yaml:
      a. Skip if paused
      b. Acquire agent lock (file-based, non-blocking)
      c. Check if still running (PID check)
@@ -364,7 +365,7 @@ The recycler also runs `reconcile_stale_blockers()` on each tick to catch any de
 
 | Role | Class | Status | Purpose |
 |------|-------|--------|---------|
-| `gatekeeper` | `GatekeeperRole` | Agents paused, system disabled (`gatekeeper.enabled: false`) | LLM-based review of branch diffs; records pass/fail per focus area (architecture, testing, qa) |
+| `gatekeeper` | `GatekeeperRole` | gk-qa active (auto-dispatched for app tasks with staging_url); gk-architecture and gk-testing paused; global system disabled (`gatekeeper.enabled: false`) | LLM-based review of branch diffs; records pass/fail per focus area (architecture, testing, qa) |
 | `gatekeeper_coordinator` | N/A | Not in agents.yaml | Orchestrates gatekeeper review cycles, aggregates results |
 | `curator` | `CuratorRole` | Paused | Evaluates proposals, scores them, approves/rejects |
 | `reviewer` | `ReviewerRole` | Paused | Code review on PRs |
@@ -472,6 +473,19 @@ Tasks can have a `checks` column (comma-separated list of check names). The chec
 - `gk-testing-octopoid`: rebase + pytest with divergence detection
 
 Results stored in `check_results` JSON column: `{check_name: {status: 'pass'|'fail', summary: str, timestamp: str}}`.
+
+### QA Gatekeeper (gk-qa)
+
+`assign_qa_checks()` in the scheduler auto-assigns the `gk-qa` check to provisional app tasks that have a `staging_url` (Cloudflare Pages preview). The staging URL is populated by `_store_staging_url()` in reports.py, which scrapes Cloudflare bot comments on the PR.
+
+Flow:
+1. Task reaches provisional with commits → scheduler assigns gk-qa check (if staging_url present)
+2. `dispatch_gatekeeper_agents()` spawns the gk-qa agent for the pending check
+3. Agent evaluates the staging URL against acceptance criteria
+4. Agent records pass/fail via `/record-check` skill
+5. `process_gatekeeper_reviews()` handles the result (leave for human review or reject)
+
+Tasks without a staging_url are silently skipped and retried on subsequent ticks.
 
 ### Gatekeeper Review (disabled)
 
