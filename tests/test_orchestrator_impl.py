@@ -155,7 +155,8 @@ class TestOrchestratorImplPrompt:
                  patch('orchestrator.queue_utils.save_task_notes'), \
                  patch('orchestrator.queue_utils.get_task_notes', return_value=None), \
                  patch('orchestrator.config.get_notes_dir', return_value=Path('/fake/notes')), \
-                 patch('orchestrator.config.is_db_enabled', return_value=True):
+                 patch('orchestrator.config.is_db_enabled', return_value=True), \
+                 patch('orchestrator.db.get_task', return_value=None):
                 role._run_with_task(task)
 
             assert captured_prompt is not None
@@ -198,7 +199,8 @@ class TestOrchestratorImplPrompt:
                  patch('orchestrator.queue_utils.save_task_notes'), \
                  patch('orchestrator.queue_utils.get_task_notes', return_value=None), \
                  patch('orchestrator.config.get_notes_dir', return_value=Path('/fake/notes')), \
-                 patch('orchestrator.config.is_db_enabled', return_value=True):
+                 patch('orchestrator.config.is_db_enabled', return_value=True), \
+                 patch('orchestrator.db.get_task', return_value=None):
                 role._run_with_task(task)
 
             assert captured_prompt is not None
@@ -238,7 +240,8 @@ class TestOrchestratorImplCommitCounting:
                  patch('orchestrator.queue_utils.save_task_notes'), \
                  patch('orchestrator.queue_utils.get_task_notes', return_value=None), \
                  patch('orchestrator.config.get_notes_dir', return_value=Path('/fake/notes')), \
-                 patch('orchestrator.config.is_db_enabled', return_value=True):
+                 patch('orchestrator.config.is_db_enabled', return_value=True), \
+                 patch('orchestrator.db.get_task', return_value=None):
                 role._run_with_task(task)
 
             # get_commit_count must be called twice: once for submodule, once for main repo
@@ -281,7 +284,8 @@ class TestOrchestratorImplCommitCounting:
                  patch('orchestrator.queue_utils.save_task_notes'), \
                  patch('orchestrator.queue_utils.get_task_notes', return_value=None), \
                  patch('orchestrator.config.get_notes_dir', return_value=Path('/fake/notes')), \
-                 patch('orchestrator.config.is_db_enabled', return_value=True):
+                 patch('orchestrator.config.is_db_enabled', return_value=True), \
+                 patch('orchestrator.db.get_task', return_value=None):
                 role._run_with_task(task)
 
             # get_head_ref must be called twice: main repo first, then submodule
@@ -325,6 +329,7 @@ class TestOrchestratorImplNoPR:
                  patch('orchestrator.queue_utils.get_task_notes', return_value=None), \
                  patch('orchestrator.config.get_notes_dir', return_value=Path('/fake/notes')), \
                  patch('orchestrator.config.is_db_enabled', return_value=True), \
+                 patch('orchestrator.db.get_task', return_value=None), \
                  patch('orchestrator.git_utils.create_pull_request', mock_create_pr):
                 role._run_with_task(task)
 
@@ -811,6 +816,7 @@ class TestSelfMergeIntegration:
         stack.enter_context(patch('orchestrator.queue_utils.get_task_notes', return_value=None))
         stack.enter_context(patch('orchestrator.config.get_notes_dir', return_value=Path('/fake/notes')))
         stack.enter_context(patch('orchestrator.config.is_db_enabled', return_value=True))
+        stack.enter_context(patch('orchestrator.db.get_task', return_value=None))
         return stack
 
     def test_successful_merge_calls_accept(self):
@@ -866,7 +872,8 @@ class TestSelfMergeIntegration:
                  patch('orchestrator.queue_utils.save_task_notes'), \
                  patch('orchestrator.queue_utils.get_task_notes', return_value=None), \
                  patch('orchestrator.config.get_notes_dir', return_value=Path('/fake/notes')), \
-                 patch('orchestrator.config.is_db_enabled', return_value=True):
+                 patch('orchestrator.config.is_db_enabled', return_value=True), \
+                 patch('orchestrator.db.get_task', return_value=None):
                 role._run_with_task(task)
 
             mock_merge.assert_not_called()
@@ -958,7 +965,8 @@ class TestPromptIncludesToolingBranch:
                  patch('orchestrator.queue_utils.save_task_notes'), \
                  patch('orchestrator.queue_utils.get_task_notes', return_value=None), \
                  patch('orchestrator.config.get_notes_dir', return_value=Path('/fake/notes')), \
-                 patch('orchestrator.config.is_db_enabled', return_value=True):
+                 patch('orchestrator.config.is_db_enabled', return_value=True), \
+                 patch('orchestrator.db.get_task', return_value=None):
                 role._run_with_task(task)
 
             assert captured_prompt is not None
@@ -1269,6 +1277,7 @@ class TestRunWithTaskProjectBranch:
         stack.enter_context(patch('orchestrator.queue_utils.get_task_notes', return_value=None))
         stack.enter_context(patch('orchestrator.config.get_notes_dir', return_value=Path('/fake/notes')))
         stack.enter_context(patch('orchestrator.config.is_db_enabled', return_value=True))
+        stack.enter_context(patch('orchestrator.db.get_task', return_value=None))
         return stack
 
     def test_project_task_uses_project_branch(self):
