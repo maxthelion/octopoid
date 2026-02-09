@@ -1,7 +1,7 @@
 """Tests for the orchestrator task approval automation.
 
-Tests the individual steps of approve_orch.py using mock git repos
-to simulate the agent worktree submodule scenario.
+Tests the push-to-origin approval flow using mock git repos
+to simulate the agent worktree scenario.
 """
 
 import subprocess
@@ -13,11 +13,12 @@ import pytest
 from orchestrator.approve_orch import (
     resolve_task_id,
     find_agent_submodule,
-    find_agent_commits,
-    cherry_pick_commits,
-    _is_empty_cherry_pick,
+    find_submodule_branch,
+    find_main_repo_branch,
+    count_branch_commits,
+    rebase_onto_origin,
     run_tests,
-    push_submodule,
+    push_to_origin,
     accept_in_db,
     approve_orchestrator_task,
     SUBMODULE_BRANCH,
@@ -32,8 +33,8 @@ from orchestrator.approve_orch import (
 @pytest.fixture
 def git_repo(tmp_path):
     """Create a bare git repo to act as 'origin' and two clones:
-    - local_sub: the main submodule (on main)
-    - agent_sub: the agent's worktree submodule (on main)
+    - local: the main checkout (human's working tree)
+    - agent: the agent's worktree
 
     Returns a dict with paths and helpers.
     """
@@ -46,7 +47,6 @@ def git_repo(tmp_path):
 
     # Clone to local, make initial commit on main
     subprocess.run(["git", "clone", str(origin), str(local)], check=True, capture_output=True)
-    # Ensure we're on a branch called 'main' (handles older git defaults)
     subprocess.run(["git", "checkout", "-B", "main"], cwd=local, check=True, capture_output=True)
     (local / "base.txt").write_text("base content\n")
     subprocess.run(["git", "add", "."], cwd=local, check=True, capture_output=True)
@@ -155,7 +155,6 @@ class TestResolveTaskId:
 class TestFindAgentSubmodule:
     def test_finds_from_claimed_by(self, tmp_path):
         """Locates the submodule using claimed_by field."""
-        # Create a fake agent worktree structure
         agent_sub = tmp_path / ".orchestrator" / "agents" / "orch-impl-1" / "worktree" / "orchestrator"
         agent_sub.mkdir(parents=True)
 
@@ -172,7 +171,6 @@ class TestFindAgentSubmodule:
         with patch("orchestrator.db.get_database_path", return_value=initialized_db):
             from orchestrator.db import create_task, get_connection
             create_task(task_id="hist1234", file_path="/tmp/TASK-hist1234.md", role="orchestrator_impl")
-            # Manually add history event
             with get_connection() as conn:
                 conn.execute(
                     "INSERT INTO task_history (task_id, event, agent) VALUES (?, 'claimed', ?)",
@@ -202,210 +200,112 @@ class TestFindAgentSubmodule:
 
 
 # ---------------------------------------------------------------------------
-# Test: find_agent_commits
+# Test: find_submodule_branch
 # ---------------------------------------------------------------------------
 
 
-class TestFindAgentCommits:
-    def test_finds_new_commits(self, git_repo):
-        """Detects commits in agent that are not in local."""
+class TestFindSubmoduleBranch:
+    def test_finds_orch_branch(self, git_repo):
+        """Finds orch/<task-id> branch."""
         agent = git_repo["agent"]
-        local = git_repo["local"]
-
-        # Make two commits in agent
-        sha1 = _make_commit(agent, "a.txt", "aaa", "agent commit 1")
-        sha2 = _make_commit(agent, "b.txt", "bbb", "agent commit 2")
-
-        commits = find_agent_commits(agent, local)
-        assert len(commits) == 2
-        assert sha1 in commits
-        assert sha2 in commits
-
-    def test_no_new_commits(self, git_repo):
-        """Returns empty list when agent HEAD equals local HEAD."""
-        agent = git_repo["agent"]
-        local = git_repo["local"]
-
-        commits = find_agent_commits(agent, local)
-        assert commits == []
-
-    def test_handles_diverged_histories(self, git_repo):
-        """Finds agent commits even when local has advanced too."""
-        agent = git_repo["agent"]
-        local = git_repo["local"]
-
-        # Local advances
-        _make_commit(local, "local.txt", "local work", "local commit")
-
-        # Agent advances (based on the older state)
-        agent_sha = _make_commit(agent, "agent.txt", "agent work", "agent commit")
-
-        commits = find_agent_commits(agent, local)
-        assert len(commits) == 1
-        assert agent_sha in commits
-
-
-# ---------------------------------------------------------------------------
-# Test: _is_empty_cherry_pick
-# ---------------------------------------------------------------------------
-
-
-class TestIsEmptyCherryPick:
-    def test_detects_nothing_to_commit(self):
-        """Detects 'nothing to commit' message."""
-        result = subprocess.CompletedProcess(
-            args=[], returncode=1,
-            stdout="On branch main\nnothing to commit, working tree clean\n",
-            stderr="",
-        )
-        assert _is_empty_cherry_pick(result) is True
-
-    def test_detects_empty_in_stderr(self):
-        """Detects 'empty' in stderr (git cherry-pick reports this)."""
-        result = subprocess.CompletedProcess(
-            args=[], returncode=1,
-            stdout="",
-            stderr="The previous cherry-pick is now empty, possibly due to conflict resolution.\n",
-        )
-        assert _is_empty_cherry_pick(result) is True
-
-    def test_detects_allow_empty_hint(self):
-        """Detects 'allow-empty' hint from git."""
-        result = subprocess.CompletedProcess(
-            args=[], returncode=1,
-            stdout="",
-            stderr="If you wish to commit it anyway, use:\n    git commit --allow-empty\n",
-        )
-        assert _is_empty_cherry_pick(result) is True
-
-    def test_does_not_match_real_conflict(self):
-        """Does not match genuine merge conflicts."""
-        result = subprocess.CompletedProcess(
-            args=[], returncode=1,
-            stdout="",
-            stderr="error: could not apply abc1234... some commit\nhint: Resolve all conflicts manually\n",
-        )
-        assert _is_empty_cherry_pick(result) is False
-
-
-# ---------------------------------------------------------------------------
-# Test: cherry_pick_commits
-# ---------------------------------------------------------------------------
-
-
-class TestCherryPickCommits:
-    def test_successful_cherry_pick(self, git_repo):
-        """Cherry-picks non-conflicting commits."""
-        agent = git_repo["agent"]
-        local = git_repo["local"]
-
-        sha = _make_commit(agent, "feature.txt", "new feature", "add feature")
-
-        # Fetch from agent so commits are available
         subprocess.run(
-            ["git", "fetch", str(agent), SUBMODULE_BRANCH],
-            cwd=local, check=True, capture_output=True,
+            ["git", "checkout", "-b", "orch/abc12345"],
+            cwd=agent, check=True, capture_output=True,
         )
+        result = find_submodule_branch(agent, "abc12345")
+        assert result == "orch/abc12345"
 
-        result = cherry_pick_commits([sha], local)
+    def test_returns_none_when_on_main(self, git_repo):
+        """Returns None when only on main."""
+        agent = git_repo["agent"]
+        result = find_submodule_branch(agent, "nonexist")
+        assert result is None
+
+    def test_falls_back_to_current_branch(self, git_repo):
+        """Falls back to current non-main branch."""
+        agent = git_repo["agent"]
+        subprocess.run(
+            ["git", "checkout", "-b", "some-other-branch"],
+            cwd=agent, check=True, capture_output=True,
+        )
+        result = find_submodule_branch(agent, "nonexist")
+        assert result == "some-other-branch"
+
+
+# ---------------------------------------------------------------------------
+# Test: find_main_repo_branch
+# ---------------------------------------------------------------------------
+
+
+class TestFindMainRepoBranch:
+    def test_finds_tooling_branch(self, git_repo):
+        """Finds tooling/<task-id> branch."""
+        agent = git_repo["agent"]
+        subprocess.run(
+            ["git", "checkout", "-b", "tooling/abc12345"],
+            cwd=agent, check=True, capture_output=True,
+        )
+        result = find_main_repo_branch(agent, "abc12345")
+        assert result == "tooling/abc12345"
+
+    def test_finds_agent_branch(self, git_repo):
+        """Finds agent/<task-id>-* branch."""
+        agent = git_repo["agent"]
+        subprocess.run(
+            ["git", "checkout", "-b", "agent/abc12345-20260209"],
+            cwd=agent, check=True, capture_output=True,
+        )
+        result = find_main_repo_branch(agent, "abc12345")
+        assert result == "agent/abc12345-20260209"
+
+    def test_returns_none_when_no_match(self, git_repo):
+        """Returns None when no matching branch."""
+        agent = git_repo["agent"]
+        result = find_main_repo_branch(agent, "nonexist")
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Test: rebase_onto_origin
+# ---------------------------------------------------------------------------
+
+
+class TestRebaseOntoOrigin:
+    def test_successful_rebase(self, git_repo):
+        """Rebases a feature branch onto origin/main."""
+        agent = git_repo["agent"]
+
+        # Create feature branch with a commit
+        subprocess.run(
+            ["git", "checkout", "-b", "orch/test1234"],
+            cwd=agent, check=True, capture_output=True,
+        )
+        _make_commit(agent, "feature.txt", "feature", "add feature")
+
+        result = rebase_onto_origin(agent, "orch/test1234")
         assert result is True
 
-        # Verify the file exists in local
-        assert (local / "feature.txt").read_text() == "new feature"
-
-    def test_conflict_aborts_cleanly(self, git_repo):
-        """Conflicting cherry-pick aborts and returns False."""
+    def test_rebase_conflict_aborts(self, git_repo):
+        """Conflicting rebase aborts cleanly."""
         agent = git_repo["agent"]
         local = git_repo["local"]
 
-        # Both repos modify the same file
+        # Push a conflicting commit from local
         _make_commit(local, "conflict.txt", "local version", "local edit")
-        sha = _make_commit(agent, "conflict.txt", "agent version", "agent edit")
-
-        # Fetch from agent
         subprocess.run(
-            ["git", "fetch", str(agent), SUBMODULE_BRANCH],
+            ["git", "push", "origin", "main"],
             cwd=local, check=True, capture_output=True,
         )
 
-        result = cherry_pick_commits([sha], local)
+        # Create feature branch with conflicting commit
+        subprocess.run(
+            ["git", "checkout", "-b", "orch/test5678"],
+            cwd=agent, check=True, capture_output=True,
+        )
+        _make_commit(agent, "conflict.txt", "agent version", "agent edit")
+
+        result = rebase_onto_origin(agent, "orch/test5678")
         assert result is False
-
-        # Verify working tree is clean (cherry-pick aborted)
-        status = subprocess.run(
-            ["git", "status", "--porcelain"],
-            cwd=local, capture_output=True, text=True,
-        )
-        assert status.stdout.strip() == ""
-
-    def test_already_applied_commit_is_skipped(self, git_repo):
-        """Cherry-pick of an already-applied commit is skipped (idempotency)."""
-        agent = git_repo["agent"]
-        local = git_repo["local"]
-
-        sha = _make_commit(agent, "feature.txt", "new feature", "add feature")
-
-        # Fetch and cherry-pick the first time
-        subprocess.run(
-            ["git", "fetch", str(agent), SUBMODULE_BRANCH],
-            cwd=local, check=True, capture_output=True,
-        )
-        result = cherry_pick_commits([sha], local)
-        assert result is True
-
-        # Get local HEAD before second attempt
-        head_before = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=local, capture_output=True, text=True, check=True,
-        ).stdout.strip()
-
-        # Re-fetch and cherry-pick the same commit again
-        subprocess.run(
-            ["git", "fetch", str(agent), SUBMODULE_BRANCH],
-            cwd=local, check=True, capture_output=True,
-        )
-        result = cherry_pick_commits([sha], local)
-        assert result is True  # Should succeed, not fail
-
-        # HEAD should not have changed (commit was skipped)
-        head_after = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=local, capture_output=True, text=True, check=True,
-        ).stdout.strip()
-        assert head_before == head_after
-
-        # Working tree should be clean
-        status = subprocess.run(
-            ["git", "status", "--porcelain"],
-            cwd=local, capture_output=True, text=True,
-        )
-        assert status.stdout.strip() == ""
-
-    def test_mixed_applied_and_new_commits(self, git_repo):
-        """Mix of already-applied and new commits works correctly."""
-        agent = git_repo["agent"]
-        local = git_repo["local"]
-
-        sha1 = _make_commit(agent, "first.txt", "first", "first commit")
-        sha2 = _make_commit(agent, "second.txt", "second", "second commit")
-
-        # Fetch and apply only the first commit
-        subprocess.run(
-            ["git", "fetch", str(agent), SUBMODULE_BRANCH],
-            cwd=local, check=True, capture_output=True,
-        )
-        subprocess.run(
-            ["git", "cherry-pick", sha1],
-            cwd=local, check=True, capture_output=True,
-        )
-
-        # Now try to cherry-pick both (first is already applied)
-        result = cherry_pick_commits([sha1, sha2], local)
-        assert result is True
-
-        # Both files should exist
-        assert (local / "first.txt").read_text() == "first"
-        assert (local / "second.txt").read_text() == "second"
 
 
 # ---------------------------------------------------------------------------
@@ -416,20 +316,19 @@ class TestCherryPickCommits:
 class TestRunTests:
     def test_returns_true_when_no_venv(self, tmp_path):
         """Returns True (with warning) when no venv exists."""
-        with patch("orchestrator.approve_orch._repo_root", return_value=tmp_path):
+        with patch("orchestrator.approve_orch._repo_root", return_value=tmp_path), \
+             patch("orchestrator.approve_orch._submodule_dir", return_value=tmp_path / "sub"):
             result = run_tests(tmp_path)
             assert result is True
 
     def test_returns_true_on_passing_tests(self, tmp_path):
         """Returns True when pytest passes."""
-        # Create a fake venv with a mock python
         venv_bin = tmp_path / "venv" / "bin"
         venv_bin.mkdir(parents=True)
         fake_python = venv_bin / "python"
         fake_python.write_text("#!/bin/bash\necho '1 passed'\nexit 0\n")
         fake_python.chmod(0o755)
 
-        # Create a tests dir
         tests_dir = tmp_path / "tests"
         tests_dir.mkdir()
 
@@ -452,24 +351,54 @@ class TestRunTests:
 
 
 # ---------------------------------------------------------------------------
-# Test: push_submodule
+# Test: push_to_origin
 # ---------------------------------------------------------------------------
 
 
-class TestPushSubmodule:
+class TestPushToOrigin:
     def test_successful_push(self, git_repo):
-        """Push succeeds when local is ahead."""
-        local = git_repo["local"]
-        _make_commit(local, "new.txt", "content", "new commit")
+        """Pushes rebased branch to origin/main via refspec."""
+        agent = git_repo["agent"]
 
-        result = push_submodule(local)
+        # Create feature branch with a commit
+        subprocess.run(
+            ["git", "checkout", "-b", "orch/push1234"],
+            cwd=agent, check=True, capture_output=True,
+        )
+        _make_commit(agent, "feature.txt", "feature", "add feature")
+
+        result = push_to_origin(agent, "orch/push1234")
         assert result is True
 
-    def test_push_up_to_date(self, git_repo):
-        """Push succeeds when already up to date."""
-        local = git_repo["local"]
-        result = push_submodule(local)
-        assert result is True
+        # Verify origin/main has the commit
+        subprocess.run(
+            ["git", "fetch", "origin", "main"],
+            cwd=agent, check=True, capture_output=True,
+        )
+        log = subprocess.run(
+            ["git", "log", "--oneline", "origin/main"],
+            cwd=agent, capture_output=True, text=True,
+        )
+        assert "add feature" in log.stdout
+
+    def test_cleans_up_remote_branch(self, git_repo):
+        """Deletes the remote branch after pushing."""
+        agent = git_repo["agent"]
+
+        subprocess.run(
+            ["git", "checkout", "-b", "orch/clean1234"],
+            cwd=agent, check=True, capture_output=True,
+        )
+        _make_commit(agent, "feature.txt", "feature", "add feature")
+
+        push_to_origin(agent, "orch/clean1234")
+
+        # Check that remote branch was deleted
+        branches = subprocess.run(
+            ["git", "branch", "-r"],
+            cwd=agent, capture_output=True, text=True,
+        )
+        assert "orch/clean1234" not in branches.stdout
 
 
 # ---------------------------------------------------------------------------
@@ -497,20 +426,6 @@ class TestAcceptInDb:
             assert task["queue"] == "done"
             assert task["claimed_by"] is None
 
-    def test_fixes_incorrect_state(self, initialized_db):
-        """Corrects queue state if accept_completion didn't fully work."""
-        with patch("orchestrator.db.get_database_path", return_value=initialized_db):
-            from orchestrator.db import create_task, update_task_queue
-            create_task(
-                task_id="fix12345",
-                file_path="/tmp/TASK-fix12345.md",
-                role="orchestrator_impl",
-            )
-            update_task_queue("fix12345", "claimed", claimed_by="orch-impl-1")
-
-            result = accept_in_db("fix12345")
-            assert result is True
-
     def test_idempotent_on_already_done(self, initialized_db):
         """Re-calling accept_in_db on a done task is a no-op."""
         with patch("orchestrator.db.get_database_path", return_value=initialized_db):
@@ -523,22 +438,18 @@ class TestAcceptInDb:
             )
             update_task_queue("idem1234", "provisional", claimed_by="orch-impl-1")
 
-            # Accept the first time
             result = accept_in_db("idem1234")
             assert result is True
 
-            # Count history entries
             with get_connection() as conn:
                 count_before = conn.execute(
                     "SELECT COUNT(*) as c FROM task_history WHERE task_id = ? AND event = 'accepted'",
                     ("idem1234",),
                 ).fetchone()["c"]
 
-            # Accept again (idempotent)
             result = accept_in_db("idem1234")
             assert result is True
 
-            # Should NOT add another history entry
             with get_connection() as conn:
                 count_after = conn.execute(
                     "SELECT COUNT(*) as c FROM task_history WHERE task_id = ? AND event = 'accepted'",
@@ -547,7 +458,6 @@ class TestAcceptInDb:
 
             assert count_after == count_before
 
-            # Task should still be done
             task = get_task("idem1234")
             assert task["queue"] == "done"
             assert task["claimed_by"] is None
@@ -591,7 +501,7 @@ class TestApproveOrchestratorTask:
                 assert result == 0
 
     def test_rejects_wrong_queue(self, initialized_db):
-        """Returns error for tasks in non-approvable queues (e.g., incoming)."""
+        """Returns error for tasks in non-approvable queues."""
         with patch("orchestrator.db.get_database_path", return_value=initialized_db):
             with patch("orchestrator.approve_orch.is_db_enabled", return_value=True):
                 from orchestrator.db import create_task, update_task_queue
@@ -600,8 +510,6 @@ class TestApproveOrchestratorTask:
                     file_path="/tmp/TASK-inc_1234.md",
                     role="orchestrator_impl",
                 )
-                # incoming is not an approvable queue — task is already created in incoming,
-                # but we explicitly set it to confirm the guard
                 update_task_queue("inc_1234", "incoming")
 
                 result = approve_orchestrator_task("inc_1234")

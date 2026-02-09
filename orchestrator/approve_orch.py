@@ -7,11 +7,9 @@ This script is now primarily used for:
 - Re-running approval after manually fixing conflicts
 - Recovering from partial failures (e.g., push failed but merge succeeded)
 
-Orchestrator specialist agents (role=orchestrator_impl) commit to the
-orchestrator submodule's main branch inside their worktree.
-Approving a task means landing those commits on the canonical main
-branch, running tests, pushing, updating the submodule ref on main, and
-accepting in the DB.
+Uses the push-to-origin pattern: all git operations happen in the agent's
+worktree. The human's local checkout is never modified. After rebasing onto
+origin/main in the agent's worktree, we push to origin via refspec.
 
 Usage:
     .orchestrator/venv/bin/python -m orchestrator.approve_orch <task-id-prefix>
@@ -161,282 +159,114 @@ def find_agent_worktree(task_info: dict[str, Any]) -> Path | None:
 
 
 # ---------------------------------------------------------------------------
-# Step 2 — Find agent commits
+# Step 2 — Find agent branches
 # ---------------------------------------------------------------------------
 
 
-def find_agent_commits(agent_sub: Path, local_sub: Path, task_id: str | None = None) -> list[str]:
-    """Return commit SHAs from agent submodule that are not in local_sub.
+def find_submodule_branch(agent_sub: Path, task_id: str) -> str | None:
+    """Find the orch/<task-id> branch in the agent's submodule.
 
-    If task_id is provided, fetches the ``orch/<task-id>`` branch directly
-    (reliable even when the agent has moved on to a different task).
-    Falls back to the agent's current branch if the task branch doesn't exist.
-
-    Returns a list of SHAs in topological order (oldest first), ready
-    for cherry-pick.
+    Returns the branch name or None.
     """
-    # Get local HEAD
-    local_head = run(
-        ["git", "rev-parse", "HEAD"], cwd=local_sub, check=False
+    task_branch = f"orch/{task_id}"
+    check = run(
+        ["git", "rev-parse", "--verify", task_branch],
+        cwd=agent_sub, check=False,
     )
-    if local_head.returncode != 0:
-        return []
-    local_sha = local_head.stdout.strip()
+    if check.returncode == 0:
+        print(f"  Agent submodule branch: {task_branch}")
+        return task_branch
 
-    # Prefer orch/<task-id> branch (stable) over whatever the agent is currently on
-    agent_branch = None
-    if task_id:
-        task_branch = f"orch/{task_id}"
-        # Verify the branch exists in the agent's submodule
-        check = run(
-            ["git", "rev-parse", "--verify", task_branch],
-            cwd=agent_sub, check=False,
-        )
-        if check.returncode == 0:
-            agent_branch = task_branch
-
-    if not agent_branch:
-        # Fallback: detect the agent's current branch
-        agent_branch_result = run(
-            ["git", "branch", "--show-current"], cwd=agent_sub, check=False
-        )
-        agent_branch = agent_branch_result.stdout.strip() if agent_branch_result.returncode == 0 else ""
-        if not agent_branch:
-            agent_branch = "HEAD"  # Detached HEAD fallback
-    print(f"  Agent submodule branch: {agent_branch}")
-
-    # Fetch from agent submodule so we can compare
-    fetch_result = run(
-        ["git", "fetch", str(agent_sub), agent_branch],
-        cwd=local_sub,
-        check=False,
-    )
-    if fetch_result.returncode != 0:
-        print(f"  WARNING: fetch from agent submodule failed: {fetch_result.stderr.strip()}")
-        # Fallback: try fetching main
-        if agent_branch != SUBMODULE_BRANCH:
-            fetch_result = run(
-                ["git", "fetch", str(agent_sub), SUBMODULE_BRANCH],
-                cwd=local_sub,
-                check=False,
-            )
-            if fetch_result.returncode != 0:
-                return []
-        else:
-            return []
-
-    # Get FETCH_HEAD
-    fetch_head = run(
-        ["git", "rev-parse", "FETCH_HEAD"], cwd=local_sub, check=False
-    )
-    if fetch_head.returncode != 0:
-        return []
-    agent_sha = fetch_head.stdout.strip()
-
-    if agent_sha == local_sha:
-        return []  # Identical — nothing to do
-
-    # Find commits reachable from FETCH_HEAD but not from local HEAD.
+    # Fallback: detect the agent's current branch
     result = run(
-        ["git", "rev-list", "--reverse", f"{local_sha}..FETCH_HEAD"],
-        cwd=local_sub,
-        check=False,
+        ["git", "branch", "--show-current"], cwd=agent_sub, check=False
     )
+    branch = result.stdout.strip() if result.returncode == 0 else ""
+    if branch and branch != SUBMODULE_BRANCH:
+        print(f"  Agent submodule branch (current): {branch}")
+        return branch
 
-    if result.returncode != 0 or not result.stdout.strip():
-        # Might be totally divergent — try via merge-base
-        merge_base = run(
-            ["git", "merge-base", local_sha, "FETCH_HEAD"],
-            cwd=local_sub,
-            check=False,
-        )
-        if merge_base.returncode != 0:
-            # No common ancestor; list all FETCH_HEAD commits
-            result = run(
-                ["git", "rev-list", "--reverse", "FETCH_HEAD"],
-                cwd=local_sub,
-                check=False,
-            )
-        else:
-            base = merge_base.stdout.strip()
-            result = run(
-                ["git", "rev-list", "--reverse", f"{base}..FETCH_HEAD"],
-                cwd=local_sub,
-                check=False,
-            )
-
-    if result.returncode != 0 or not result.stdout.strip():
-        return []
-
-    return result.stdout.strip().splitlines()
+    return None
 
 
-# ---------------------------------------------------------------------------
-# Step 2b — Find agent main repo commits
-# ---------------------------------------------------------------------------
+def find_main_repo_branch(agent_worktree: Path, task_id: str) -> str | None:
+    """Find the tooling/<task-id> or agent/<task-id>-* branch in agent worktree.
 
-
-def find_agent_main_repo_commits(
-    agent_worktree: Path, task_id: str
-) -> list[str]:
-    """Return commit SHAs from the agent's main repo branch not in local main.
-
-    Looks for an agent branch matching the task ID pattern
-    (agent/<task-id>-*) in the agent's worktree.
-
-    Returns a list of SHAs in topological order (oldest first).
+    Returns the branch name or None.
     """
-    repo = _repo_root()
-
-    # Find the agent's branch for this task
-    result = run(
-        ["git", "branch", "--list", f"agent/{task_id}-*"],
-        cwd=agent_worktree,
-        check=False,
-    )
-    agent_branch = None
-    if result.returncode == 0 and result.stdout.strip():
-        # Take the first match (should be only one)
-        agent_branch = result.stdout.strip().lstrip("* ").split("\n")[0].strip()
-
-    if not agent_branch:
-        # Also check for tooling/<task-id> pattern (future convention)
+    # Check tooling/<task-id> first (current convention)
+    for pattern in [f"tooling/{task_id}*", f"agent/{task_id}-*"]:
         result = run(
-            ["git", "branch", "--list", f"tooling/{task_id}*"],
+            ["git", "branch", "--list", pattern],
             cwd=agent_worktree,
             check=False,
         )
         if result.returncode == 0 and result.stdout.strip():
-            agent_branch = result.stdout.strip().lstrip("* ").split("\n")[0].strip()
+            branch = result.stdout.strip().lstrip("* ").split("\n")[0].strip()
+            print(f"  Agent main repo branch: {branch}")
+            return branch
 
-    if not agent_branch:
-        return []
+    return None
 
-    print(f"  Agent main repo branch: {agent_branch}")
 
-    # Fetch from agent worktree into local repo
-    fetch_result = run(
-        ["git", "fetch", str(agent_worktree), agent_branch],
-        cwd=repo,
-        check=False,
-    )
-    if fetch_result.returncode != 0:
-        print(f"  WARNING: fetch from agent worktree failed: {fetch_result.stderr.strip()}")
-        return []
-
-    # Get local main HEAD
-    local_head = run(
-        ["git", "rev-parse", "main"], cwd=repo, check=False
-    ).stdout.strip()
-
-    # Find commits in FETCH_HEAD not in main
+def count_branch_commits(cwd: Path, branch: str, base: str = "origin/main") -> int:
+    """Count commits on branch not in base."""
+    run(["git", "fetch", "origin", "main"], cwd=cwd, check=False)
     result = run(
-        ["git", "rev-list", "--reverse", f"{local_head}..FETCH_HEAD"],
-        cwd=repo,
-        check=False,
+        ["git", "rev-list", "--count", f"{base}..{branch}"],
+        cwd=cwd, check=False,
     )
-
-    if result.returncode != 0 or not result.stdout.strip():
-        return []
-
-    return result.stdout.strip().splitlines()
+    if result.returncode == 0:
+        return int(result.stdout.strip())
+    return 0
 
 
 # ---------------------------------------------------------------------------
-# Step 3 — Cherry-pick
+# Step 3 — Rebase onto origin/main
 # ---------------------------------------------------------------------------
 
 
-def _is_empty_cherry_pick(result: subprocess.CompletedProcess) -> bool:
-    """Detect whether a cherry-pick failed because it produced an empty commit.
+def rebase_onto_origin(cwd: Path, branch: str) -> bool:
+    """Checkout branch, fetch origin/main, and rebase onto it.
 
-    This happens when the patch has already been applied (e.g., re-running
-    the approval script after a partial failure).  Git reports messages
-    containing 'nothing to commit', 'empty', or 'allow-empty' in this case.
+    All operations happen in the agent's worktree (cwd). Returns True on
+    success. On conflict, aborts the rebase and returns False.
     """
-    combined = (result.stdout + result.stderr).lower()
-    return any(
-        phrase in combined
-        for phrase in [
-            "nothing to commit",
-            "empty",
-            "allow-empty",
-            "previously applied",
-        ]
-    )
+    run(["git", "fetch", "origin", "main"], cwd=cwd, check=False)
 
+    result = run(["git", "checkout", branch], cwd=cwd, check=False)
+    if result.returncode != 0:
+        print(f"  ERROR: checkout {branch} failed: {result.stderr.strip()}")
+        return False
 
-def cherry_pick_commits(commits: list[str], local_sub: Path) -> bool:
-    """Cherry-pick commits one by one onto the current main.
+    print(f"  Rebasing {branch} onto origin/main...")
+    result = run(["git", "rebase", "origin/main"], cwd=cwd, check=False)
+    if result.returncode != 0:
+        print(f"  CONFLICT during rebase: {result.stderr.strip()}")
+        run(["git", "rebase", "--abort"], cwd=cwd, check=False)
+        return False
 
-    Returns True on success, False on conflict.  On conflict the cherry-pick
-    is aborted so the working tree is clean.
-
-    Already-applied commits (empty cherry-picks) are detected and skipped,
-    making this function safe to re-run after a partial failure.
-    """
-    skipped = 0
-    for sha in commits:
-        # Get commit message for display
-        msg_result = run(
-            ["git", "log", "--format=%s", "-1", sha],
-            cwd=local_sub,
-            check=False,
-        )
-        msg = msg_result.stdout.strip() if msg_result.returncode == 0 else sha[:8]
-        print(f"  Cherry-picking {sha[:8]} ({msg}) ...")
-
-        result = run(
-            ["git", "cherry-pick", sha],
-            cwd=local_sub,
-            check=False,
-        )
-        if result.returncode != 0:
-            # Check if this is an empty cherry-pick (already applied)
-            if _is_empty_cherry_pick(result):
-                print(f"  Skipping {sha[:8]} — already applied")
-                # Reset any cherry-pick state
-                run(["git", "cherry-pick", "--abort"], cwd=local_sub, check=False)
-                skipped += 1
-                continue
-
-            print(f"\n  CONFLICT during cherry-pick of {sha[:8]}")
-            print(f"  stderr: {result.stderr.strip()}")
-
-            # Show conflicted files
-            status = run(["git", "status", "--short"], cwd=local_sub, check=False)
-            if status.stdout.strip():
-                print(f"\n  Conflicted files:\n{status.stdout}")
-
-            # Abort the cherry-pick
-            run(["git", "cherry-pick", "--abort"], cwd=local_sub, check=False)
-
-            print("\n  Cherry-pick aborted. To resolve manually:")
-            print(f"    cd {local_sub}")
-            print(f"    git cherry-pick {sha}")
-            print("    # resolve conflicts, then git cherry-pick --continue")
-            return False
-
-    if skipped:
-        print(f"  ({skipped} commit(s) already applied, skipped)")
     return True
 
 
 # ---------------------------------------------------------------------------
-# Step 4 — Run tests
+# Step 4 — Run tests (in agent worktree)
 # ---------------------------------------------------------------------------
 
 
-def run_tests(local_sub: Path) -> bool:
-    """Run pytest in the orchestrator submodule.
+def run_tests(agent_sub: Path) -> bool:
+    """Run pytest in the agent's submodule worktree.
 
     Returns True if tests pass, False otherwise.
     """
     # Find venv python
-    venv_python = local_sub / "venv" / "bin" / "python"
+    venv_python = agent_sub / "venv" / "bin" / "python"
     if not venv_python.exists():
-        # Try the .orchestrator venv
+        # Try parent .orchestrator venv
         venv_python = _repo_root() / ".orchestrator" / "venv" / "bin" / "python"
+    if not venv_python.exists():
+        # Try main checkout submodule venv
+        venv_python = _submodule_dir() / "venv" / "bin" / "python"
 
     if not venv_python.exists():
         print("  WARNING: No venv found, skipping tests")
@@ -445,20 +275,18 @@ def run_tests(local_sub: Path) -> bool:
     print("  Running tests...")
     result = run(
         [str(venv_python), "-m", "pytest", "tests/", "-v", "--tb=short"],
-        cwd=local_sub,
+        cwd=agent_sub,
         check=False,
         timeout=300,
     )
 
     if result.returncode != 0:
         print(f"\n  Tests FAILED (exit code {result.returncode})")
-        # Show last 30 lines of output
         lines = result.stdout.strip().splitlines()
         tail = lines[-30:] if len(lines) > 30 else lines
         print("\n  " + "\n  ".join(tail))
         return False
 
-    # Count passed
     for line in result.stdout.splitlines():
         if "passed" in line:
             print(f"  {line.strip()}")
@@ -468,118 +296,55 @@ def run_tests(local_sub: Path) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Step 5 — Push main
+# Step 5 — Push to origin via refspec
 # ---------------------------------------------------------------------------
 
 
-def push_submodule(local_sub: Path) -> bool:
-    """Push main to origin, handling remote divergence.
+def push_to_origin(cwd: Path, branch: str, target: str = "main") -> bool:
+    """Push branch to origin/target via refspec (ff-only).
+
+    First pushes the branch itself (for traceability), then pushes
+    branch:target. Retries once on failure (re-fetch, re-rebase).
 
     Returns True on success.
     """
-    # Fetch first to detect divergence
-    run(["git", "fetch", "origin", SUBMODULE_BRANCH], cwd=local_sub, check=False)
-
+    # Push the branch itself first
     result = run(
-        ["git", "push", "origin", SUBMODULE_BRANCH],
-        cwd=local_sub,
-        check=False,
+        ["git", "push", "origin", branch, "--force-with-lease"],
+        cwd=cwd, check=False,
     )
-    if result.returncode == 0:
-        return True
+    if result.returncode != 0:
+        print(f"  WARNING: push {branch} failed: {result.stderr.strip()}")
+        # Non-fatal — the refspec push is what matters
 
-    if "Everything up-to-date" in result.stderr:
-        return True
-
-    # Push failed — might be non-fast-forward
-    if "non-fast-forward" in result.stderr or "fetch first" in result.stderr:
-        print("  Remote has diverged. Rebasing onto latest origin...")
-        rebase = run(
-            ["git", "pull", "--rebase", "origin", SUBMODULE_BRANCH],
-            cwd=local_sub,
-            check=False,
-        )
-        if rebase.returncode != 0:
-            print(f"  Rebase failed: {rebase.stderr.strip()}")
-            run(["git", "rebase", "--abort"], cwd=local_sub, check=False)
-            return False
-
-        # Retry push
+    # Push branch:target (ff-only since we just rebased)
+    for attempt in range(2):
         result = run(
-            ["git", "push", "origin", SUBMODULE_BRANCH],
-            cwd=local_sub,
-            check=False,
+            ["git", "push", "origin", f"{branch}:{target}"],
+            cwd=cwd, check=False,
         )
-        if result.returncode != 0:
-            print(f"  Push still failed: {result.stderr.strip()}")
+        if result.returncode == 0:
+            break
+
+        if attempt == 0:
+            print(f"  Push {branch}:{target} failed, rebasing and retrying...")
+            run(["git", "fetch", "origin", "main"], cwd=cwd, check=False)
+            rebase = run(["git", "rebase", "origin/main"], cwd=cwd, check=False)
+            if rebase.returncode != 0:
+                print(f"  Retry rebase failed: {rebase.stderr.strip()}")
+                run(["git", "rebase", "--abort"], cwd=cwd, check=False)
+                return False
+            run(
+                ["git", "push", "origin", branch, "--force-with-lease"],
+                cwd=cwd, check=False,
+            )
+        else:
+            print(f"  Push failed after retry: {result.stderr.strip()}")
             return False
 
-    else:
-        print(f"  Push failed: {result.stderr.strip()}")
-        return False
-
+    # Clean up remote branch
+    run(["git", "push", "origin", "--delete", branch], cwd=cwd, check=False)
     return True
-
-
-# ---------------------------------------------------------------------------
-# Step 6 — Update submodule ref on main
-# ---------------------------------------------------------------------------
-
-
-def update_submodule_ref(task_id: str) -> bool:
-    """Stage the submodule pointer change, commit, and push main.
-
-    Returns True on success.
-    """
-    repo = _repo_root()
-
-    # Check we're on main
-    branch = run(["git", "branch", "--show-current"], cwd=repo).stdout.strip()
-    if branch != "main":
-        print(f"  ERROR: Main repo must be on 'main' (currently on '{branch}')")
-        return False
-
-    run(["git", "add", "orchestrator"], cwd=repo)
-
-    # Check if there's actually a diff
-    diff = run(["git", "diff", "--cached", "--quiet"], cwd=repo, check=False)
-    if diff.returncode == 0:
-        print("  Submodule ref already up to date")
-        return True
-
-    # Read the task file to extract the title
-    task = get_task(task_id)
-    title = task_id[:8]
-    if task and task.get("file_path"):
-        try:
-            import re
-            content = Path(task["file_path"]).read_text()
-            title_match = re.search(r"^#\s*\[TASK-[^\]]+\]\s*(.+)$", content, re.MULTILINE)
-            if title_match:
-                title = title_match.group(1).strip()
-        except (IOError, OSError):
-            pass
-
-    msg = f"chore: update orchestrator submodule ({title})"
-    run(["git", "commit", "-m", msg], cwd=repo)
-    print(f"  Committed: {msg}")
-
-    # Push main
-    result = run(["git", "push", "origin", "main"], cwd=repo, check=False)
-    if result.returncode == 0:
-        return True
-
-    if "non-fast-forward" in result.stderr or "fetch first" in result.stderr:
-        print("  Main has diverged, pulling and retrying...")
-        run(["git", "pull", "--rebase", "origin", "main"], cwd=repo)
-        result = run(["git", "push", "origin", "main"], cwd=repo, check=False)
-        if result.returncode == 0:
-            return True
-        print(f"  Push still failed: {result.stderr.strip()}")
-        return False
-
-    print(f"  Push failed: {result.stderr.strip()}")
-    return False
 
 
 # ---------------------------------------------------------------------------
@@ -638,7 +403,11 @@ def accept_in_db(task_id: str) -> bool:
 
 
 def approve_orchestrator_task(task_id_prefix: str) -> int:
-    """Run the full approval flow. Returns 0 on success, non-zero on failure."""
+    """Run the full approval flow using push-to-origin.
+
+    All git operations happen in the agent's worktree. The human's local
+    checkout is never modified. Returns 0 on success, non-zero on failure.
+    """
 
     if not is_db_enabled():
         print("Error: Database mode required")
@@ -672,23 +441,7 @@ def approve_orchestrator_task(task_id_prefix: str) -> int:
 
     print(f"\nApproving orchestrator task {task_id[:8]} (queue={queue})")
 
-    # Step 1: Check prerequisites
-    repo = _repo_root()
-    local_sub = _submodule_dir()
-
-    branch = run(["git", "branch", "--show-current"], cwd=repo).stdout.strip()
-    if branch != "main":
-        print(f"Error: Must be on main branch (currently on '{branch}')")
-        return 1
-
-    sub_branch = run(
-        ["git", "branch", "--show-current"], cwd=local_sub
-    ).stdout.strip()
-    if sub_branch != SUBMODULE_BRANCH:
-        print(f"Error: Submodule must be on {SUBMODULE_BRANCH} (currently on '{sub_branch}')")
-        return 1
-
-    # Step 2: Find agent worktree
+    # Step 1: Find agent worktrees
     print("\n1. Finding agent worktree...")
     agent_sub = find_agent_submodule(task_info)
     if not agent_sub:
@@ -697,27 +450,30 @@ def approve_orchestrator_task(task_id_prefix: str) -> int:
 
     agent_worktree = find_agent_worktree(task_info)
 
-    # Step 3: Find agent commits (submodule)
-    print("\n2. Finding agent commits (submodule)...")
-    sub_commits = find_agent_commits(agent_sub, local_sub, task_id=task_id)
-
-    if sub_commits:
-        print(f"   Found {len(sub_commits)} submodule commit(s)")
-    else:
-        print("   No submodule commits found")
-
-    # Step 3b: Find agent commits (main repo)
-    main_commits = []
+    # Step 2: Find agent branches
+    print("\n2. Finding agent branches...")
+    sub_branch = find_submodule_branch(agent_sub, task_id)
+    main_branch = None
     if agent_worktree:
-        print("\n2b. Finding agent commits (main repo)...")
-        main_commits = find_agent_main_repo_commits(agent_worktree, task_id)
-        if main_commits:
-            print(f"   Found {len(main_commits)} main repo commit(s)")
-        else:
-            print("   No main repo commits found")
+        main_branch = find_main_repo_branch(agent_worktree, task_id)
 
-    if not sub_commits and not main_commits:
-        print("\n   WARNING: No commits found in submodule or main repo")
+    has_sub = sub_branch is not None
+    has_main = main_branch is not None
+
+    if has_sub:
+        n = count_branch_commits(agent_sub, sub_branch)
+        print(f"   Submodule: {n} commit(s) on {sub_branch}")
+    else:
+        print("   No submodule branch found")
+
+    if has_main:
+        n = count_branch_commits(agent_worktree, main_branch)
+        print(f"   Main repo: {n} commit(s) on {main_branch}")
+    else:
+        print("   No main repo branch found")
+
+    if not has_sub and not has_main:
+        print("\n   WARNING: No branches found in submodule or main repo")
         print("   The agent may not have committed, or commits are already merged.")
         try:
             response = input("   Continue anyway? [y/N] ").strip().lower()
@@ -727,82 +483,52 @@ def approve_orchestrator_task(task_id_prefix: str) -> int:
             print("   Aborted.")
             return 1
 
-    # Step 4: Cherry-pick submodule commits
-    if sub_commits:
-        print("\n3. Cherry-picking submodule commits onto main...")
-        if not cherry_pick_commits(sub_commits, local_sub):
+    # Step 3: Rebase onto origin/main (in agent worktree)
+    if has_sub:
+        print(f"\n3. Rebasing submodule {sub_branch} onto origin/main...")
+        if not rebase_onto_origin(agent_sub, sub_branch):
             return 1
-        print("   Cherry-pick complete")
+        print("   Rebased")
 
-    # Step 4b: Cherry-pick main repo commits
-    if main_commits:
-        print("\n3b. Cherry-picking main repo commits onto main...")
-        if not cherry_pick_commits(main_commits, repo):
+    if has_main:
+        print(f"\n3b. Rebasing main repo {main_branch} onto origin/main...")
+        if not rebase_onto_origin(agent_worktree, main_branch):
             return 1
-        print("   Cherry-pick complete")
+        print("   Rebased")
 
-    # Step 5: Run tests
-    if sub_commits or main_commits:
-        print("\n4. Running tests...")
-        if not run_tests(local_sub):
-            # Revert cherry-picks
-            if sub_commits:
-                print("\n   Reverting submodule cherry-picked commits...")
-                run(
-                    ["git", "reset", "--hard", f"HEAD~{len(sub_commits)}"],
-                    cwd=local_sub,
-                    check=False,
-                )
-            if main_commits:
-                print("\n   Reverting main repo cherry-picked commits...")
-                run(
-                    ["git", "reset", "--hard", f"HEAD~{len(main_commits)}"],
-                    cwd=repo,
-                    check=False,
-                )
-            print("   Reverted. Fix the tests and re-run.")
+    # Step 4: Run tests (in agent worktree)
+    if has_sub:
+        print("\n4. Running tests on rebased branch...")
+        if not run_tests(agent_sub):
+            print("   Tests failed. Fix and re-run.")
             return 1
         print("   Tests passed")
     else:
-        print("\n3-4. Skipping cherry-pick and tests (no commits)")
+        print("\n4. Skipping tests (no submodule commits)")
 
-    # Step 6: Push submodule main
-    if sub_commits:
-        print("\n5. Pushing submodule main...")
-        if not push_submodule(local_sub):
+    # Step 5: Push to origin
+    if has_sub:
+        print(f"\n5. Pushing {sub_branch} to origin/main (submodule)...")
+        if not push_to_origin(agent_sub, sub_branch):
             return 1
         print("   Pushed")
-    else:
-        print("\n5. Skipping submodule push (no submodule commits)")
 
-    # Step 7: Update submodule ref and/or push main repo
-    if sub_commits:
-        print("\n6. Updating submodule ref on main...")
-        if not update_submodule_ref(task_id):
+    if has_main:
+        print(f"\n5b. Pushing {main_branch} to origin/main (main repo)...")
+        if not push_to_origin(agent_worktree, main_branch):
             return 1
-    elif main_commits:
-        # Main repo commits only — just push main
-        print("\n6. Pushing main repo...")
-        result = run(["git", "push", "origin", "main"], cwd=repo, check=False)
-        if result.returncode != 0:
-            if "non-fast-forward" in result.stderr or "fetch first" in result.stderr:
-                print("  Main has diverged, pulling and retrying...")
-                run(["git", "pull", "--rebase", "origin", "main"], cwd=repo, check=False)
-                result = run(["git", "push", "origin", "main"], cwd=repo, check=False)
-                if result.returncode != 0:
-                    print(f"  Push failed: {result.stderr.strip()}")
-                    return 1
-            else:
-                print(f"  Push failed: {result.stderr.strip()}")
-                return 1
         print("   Pushed")
 
-    # Step 8: Accept in DB
-    print(f"\n7. Accepting task {task_id[:8]} in DB...")
+    # Step 6: Accept in DB
+    print(f"\n6. Accepting task {task_id[:8]} in DB...")
     accept_in_db(task_id)
     print("   Done")
 
-    print(f"\nTask {task_id[:8]} approved and merged.")
+    if has_sub or has_main:
+        print(f"\nTask {task_id[:8]} approved and pushed to origin.")
+        print("Run `git pull` (and `cd orchestrator && git pull` for submodule) to update local.")
+    else:
+        print(f"\nTask {task_id[:8]} accepted (no commits to push).")
     return 0
 
 
