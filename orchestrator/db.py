@@ -972,17 +972,19 @@ def record_check_result(
     check_name: str,
     status: str,
     summary: str = "",
+    screenshots: list[str] | None = None,
 ) -> dict[str, Any] | None:
     """Record the result of an automated check for a task.
 
     Updates the check_results JSON field on the task. Each check result
-    is keyed by check_name and contains {status, summary, timestamp}.
+    is keyed by check_name and contains {status, summary, timestamp, screenshots}.
 
     Args:
         task_id: Task identifier
         check_name: Name of the check (e.g. 'gk-testing-octopoid')
         status: Result status ('pass' or 'fail')
         summary: Brief description of the result
+        screenshots: Optional list of screenshot paths (relative to repo root)
 
     Returns:
         Updated task or None if not found
@@ -992,11 +994,15 @@ def record_check_result(
         return None
 
     results = task.get("check_results", {})
-    results[check_name] = {
+    result_data = {
         "status": status,
         "summary": summary,
         "timestamp": datetime.now().isoformat(),
     }
+    if screenshots:
+        result_data["screenshots"] = screenshots
+
+    results[check_name] = result_data
 
     serialized = _serialize_check_results(results)
     with get_connection() as conn:
@@ -1064,9 +1070,17 @@ def get_check_feedback(task_id: str) -> str:
         status = result.get("status", "pending")
         summary = result.get("summary", "")
         timestamp = result.get("timestamp", "")
+        screenshots = result.get("screenshots", [])
 
         if status == "fail":
             part = f"### {check_name} ({timestamp})\n\n**FAILED** — {summary}\n"
+
+            # Add screenshots if present
+            if screenshots:
+                part += "\n**Screenshots:**\n"
+                for screenshot_path in screenshots:
+                    part += f"- `{screenshot_path}`\n"
+
             feedback_parts.append(part)
 
     return "\n".join(feedback_parts)

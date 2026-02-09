@@ -214,13 +214,21 @@ class GatekeeperRole(SpecialistRole):
 
 ## Your Task
 
-Visually verify this implementation using Playwright MCP against the staging deployment. You MUST navigate to the staging URL and take screenshots. Do NOT read code or diffs.
+Visually verify this implementation using Playwright MCP against the staging deployment.
 
-When you've completed your review, use the /record-check skill to record your result:
+**IMPORTANT: Save screenshots for visual evidence**
+1. Take screenshots during your review (initial state, bugs, key views)
+2. Save them to persistent storage using the instructions in `.orchestrator/prompts/record-check.md`
+3. Include screenshot paths when recording your check result
 
-```
-/record-check {self.review_task_id} {self.check_name} <pass|fail> "summary" "details"
-```
+Refer to `.orchestrator/prompts/record-check.md` for the complete workflow.
+
+**Quick reference:**
+- Screenshots go in: `.orchestrator/agents/gk-qa/screenshots/TASK-{self.review_task_id}/`
+- Use `db.record_check_result()` with `screenshots=[]` parameter
+- Paths must be relative to repo root
+
+Do NOT read code or diffs — this is a visual-only check.
 """
         else:
             # Code review checks: include diff and changed files
