@@ -400,13 +400,21 @@ create_task(role='orchestrator_impl', branch='main')
   → agent claims, creates orch/{task_id} in submodule + tooling/{task_id} in main repo
   → agent commits to submodule and/or main repo tooling branch
   → NO PR created
+  → determine target branch:
+      if task has project_id → use project.branch (e.g. "project/my-feature")
+      else → use "main"
   → self-merge attempt (submodule):
-      rebase onto main → pytest → ff-merge → push → update submodule ref
+      ensure target branch exists → rebase onto target → pytest → ff-merge → push
+      if target is main: update submodule ref in main repo
+      if target is project branch: skip submodule ref update (deferred to project completion)
   → self-merge attempt (main repo, push-to-origin):
-      fetch origin/main → rebase → push branch → push tooling/{task_id}:main
+      fetch origin/{target} → rebase → push branch → push tooling/{task_id}:{target}
       → retry once if ff push fails → notify human to git pull
   → if self-merge succeeds: accept_completion(accepted_by='self-merge')
   → if self-merge fails: submit_completion() → provisional → manual review
+  → on accept_completion: if task has project_id and all project tasks done →
+      merge_project_to_main() merges project branch to main in submodule,
+      updates submodule ref, sets project status to "complete"
 ```
 
 **Key characteristics:**
@@ -417,6 +425,7 @@ create_task(role='orchestrator_impl', branch='main')
 - No PR in main repo
 - Self-merge on success; `approve_orchestrator_task.py` for manual approval
 - Default check: `gk-testing-octopoid` (auto-added by `create_task()` for `orchestrator_impl` role)
+- **Project-aware:** tasks with `project_id` merge to project branch, not main
 
 **Fallback approval script:** `.orchestrator/scripts/approve_orchestrator_task.py <task-id>`
 - Auto-detects agent branch
@@ -497,15 +506,34 @@ When `gatekeeper.enabled: true` in agents.yaml:
 
 ### Self-Merge (orchestrator_impl only)
 
-The `_try_merge_to_main()` method in `OrchestratorImplRole` performs:
-1. Rebase `orch/{task_id}` onto main in the agent's worktree submodule
-2. Run `pytest` via the orchestrator venv
-3. Fast-forward merge to main in agent's worktree submodule
-4. Fetch into main checkout's submodule, ff-merge
-5. Push submodule main to origin
-6. Update submodule ref in main repo, commit, push
+The `_try_merge_to_main()` method in `OrchestratorImplRole` determines the
+merge target branch from the task's project (if any) and performs:
+
+1. Determine target branch: project branch if task has `project_id`, else `main`
+2. If target is not `main`: ensure branch exists locally (check local, then origin, then create from base)
+3. Rebase `orch/{task_id}` onto target branch in the agent's worktree submodule
+4. Run `pytest` via the orchestrator venv
+5. Fast-forward merge to target branch in agent's worktree submodule
+6. Fetch into main checkout's submodule, ff-merge to target branch
+7. Push submodule target branch to origin
+8. **If target is `main`:** update submodule ref in main repo, commit, push
+9. **If target is a project branch:** skip submodule ref update (deferred to project completion)
 
 If any step fails, falls back to `submit_completion()` for manual review.
+
+### Project Completion Merge
+
+When `accept_completion()` detects that all tasks in a project are done
+(via `check_project_completion()`), it calls `merge_project_to_main()`:
+
+1. Look up project branch from DB
+2. In the main checkout submodule: fetch, checkout project branch, merge to main (ff-only, fallback to regular merge)
+3. Push submodule main to origin
+4. Update submodule ref in main repo, commit, push
+5. Set project status to `"complete"` in DB
+
+This ensures the submodule ref on `main` is only updated once — when the entire
+project is finished — rather than after each individual task.
 
 ---
 
