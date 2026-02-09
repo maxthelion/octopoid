@@ -180,8 +180,17 @@ class GatekeeperRole(SpecialistRole):
                 task_file_content = candidate.read_text()
                 break
 
+        # Extract staging URL for QA checks
+        staging_url = ""
+        if task and self.check_name == "qa":
+            staging_url = task.get("staging_url", "") or ""
+
         # Build the review prompt
         instructions = self.read_instructions()
+
+        staging_section = ""
+        if staging_url:
+            staging_section = f"\n**Staging URL:** {staging_url}\n"
 
         prompt = f"""You are a gatekeeper agent performing a **{self.check_name}** review on a task implementation.
 
@@ -196,6 +205,7 @@ class GatekeeperRole(SpecialistRole):
 **Task ID:** {self.review_task_id}
 **Branch:** {branch} → {base_branch}
 **Files Changed:** {len(changed_files)}
+{staging_section}
 
 ### Task Description
 {task_file_content[:3000] if task_file_content else 'No task file found.'}
@@ -246,10 +256,17 @@ Use /record-check with:
             "Skill",
         ]
 
+        max_turns = 15
+
+        # QA checks need Playwright MCP and more turns for visual interaction
+        if self.check_name == "qa":
+            allowed_tools.append("mcp__playwright__*")
+            max_turns = 30
+
         exit_code, stdout, stderr = self.invoke_claude(
             prompt,
             allowed_tools=allowed_tools,
-            max_turns=15,
+            max_turns=max_turns,
         )
 
         if exit_code != 0:
