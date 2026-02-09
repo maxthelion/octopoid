@@ -628,7 +628,16 @@ def accept_completion(
     if project_id and is_db_enabled():
         from . import db
         if db.check_project_completion(project_id):
-            _write_project_file(db.get_project(project_id))
+            project = db.get_project(project_id)
+            _write_project_file(project)
+            # For projects with a branch, merge the project branch to main
+            if project and project.get("branch") and project["branch"] != "main":
+                try:
+                    from .roles.orchestrator_impl import merge_project_to_main
+                    merge_project_to_main(project_id)
+                except Exception as e:
+                    import sys
+                    print(f"Warning: project completion merge failed: {e}", file=sys.stderr)
 
     return dest
 
