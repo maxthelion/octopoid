@@ -1583,7 +1583,8 @@ class Dashboard:
 
         # Tab bar (right-aligned)
         tab_bar = ""
-        tab_x = max(20, max_x - 35)
+        total_tab_width = sum(len(f" [{k}]{n} ") for k, n in zip(TAB_KEYS, TAB_NAMES))
+        tab_x = max(20, max_x - total_tab_width)
         for i, name in enumerate(TAB_NAMES):
             label = f" [{TAB_KEYS[i]}]{name} "
             if i == self.state.active_tab:
