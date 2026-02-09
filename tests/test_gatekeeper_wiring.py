@@ -10,10 +10,10 @@ from unittest.mock import patch, MagicMock
 
 
 class TestOrchestratorImplChecksAutoAssigned:
-    """Verify that orchestrator_impl tasks get gk-testing-octopoid auto-assigned."""
+    """Verify that orchestrator_impl tasks do NOT get auto-assigned checks (self-merge runs pytest)."""
 
-    def test_create_task_assigns_gk_testing_for_orchestrator_impl(self, mock_config, initialized_db):
-        """queue_utils.create_task auto-assigns checks for orchestrator_impl role."""
+    def test_create_task_no_default_checks_for_orchestrator_impl(self, mock_config, initialized_db):
+        """queue_utils.create_task does not auto-assign checks for orchestrator_impl role."""
         with patch('orchestrator.db.get_database_path', return_value=initialized_db):
             with patch('orchestrator.queue_utils.get_orchestrator_dir', return_value=mock_config):
                 from orchestrator.queue_utils import create_task as qu_create_task
@@ -34,7 +34,7 @@ class TestOrchestratorImplChecksAutoAssigned:
                 task = get_task(task_id)
 
                 assert task is not None
-                assert "gk-testing-octopoid" in task["checks"]
+                assert task["checks"] == []
 
     def test_create_task_no_checks_for_regular_implement(self, mock_config, initialized_db):
         """Regular implement tasks don't get auto-assigned checks."""
@@ -522,7 +522,7 @@ class TestAssignQaChecks:
             assert 'gk-qa' not in task['checks']
 
     def test_skips_orchestrator_impl_tasks(self, mock_config, initialized_db):
-        """orchestrator_impl tasks are not assigned gk-qa (they use gk-testing-octopoid)."""
+        """orchestrator_impl tasks are not assigned gk-qa (no visual QA for Python code)."""
         with patch('orchestrator.db.get_database_path', return_value=initialized_db):
             from orchestrator.db import create_task, update_task_queue, update_task, get_task
             from orchestrator.scheduler import assign_qa_checks
@@ -531,7 +531,6 @@ class TestAssignQaChecks:
                 task_id='orch_task',
                 file_path='/orch_task.md',
                 role='orchestrator_impl',
-                checks=['gk-testing-octopoid'],
             )
             update_task_queue('orch_task', 'provisional', commits_count=1)
             update_task(
@@ -543,7 +542,6 @@ class TestAssignQaChecks:
 
             task = get_task('orch_task')
             assert 'gk-qa' not in task['checks']
-            assert 'gk-testing-octopoid' in task['checks']
 
     def test_does_not_duplicate_gk_qa_check(self, mock_config, initialized_db):
         """If gk-qa is already in checks, it is not added again."""

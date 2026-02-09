@@ -485,10 +485,10 @@ class TestSchemaMigrationV6:
 
 
 class TestDefaultChecksForOrchestratorImpl:
-    """Tests that orchestrator_impl tasks get gk-testing-octopoid by default."""
+    """Tests that orchestrator_impl tasks do NOT get default checks (self-merge runs pytest)."""
 
-    def test_create_task_defaults_to_gk_testing(self, mock_config, initialized_db):
-        """create_task with role=orchestrator_impl and no checks defaults to gk-testing-octopoid."""
+    def test_create_task_no_default_checks(self, mock_config, initialized_db):
+        """create_task with role=orchestrator_impl and no checks gets no default checks."""
         with patch("orchestrator.db.get_database_path", return_value=initialized_db):
             with patch("orchestrator.queue_utils.is_db_enabled", return_value=True):
                 with patch("orchestrator.queue_utils.get_queue_dir", return_value=mock_config / "shared" / "queue"):
@@ -505,10 +505,10 @@ class TestDefaultChecksForOrchestratorImpl:
                     task_id = task_path.stem.replace("TASK-", "")
                     task = get_task(task_id)
 
-                    assert task["checks"] == ["gk-testing-octopoid"]
+                    assert task["checks"] == []
 
-    def test_create_task_explicit_checks_override_default(self, mock_config, initialized_db):
-        """Explicit checks parameter overrides the default for orchestrator_impl."""
+    def test_create_task_explicit_checks_respected(self, mock_config, initialized_db):
+        """Explicit checks parameter is respected for orchestrator_impl."""
         with patch("orchestrator.db.get_database_path", return_value=initialized_db):
             with patch("orchestrator.queue_utils.is_db_enabled", return_value=True):
                 with patch("orchestrator.queue_utils.get_queue_dir", return_value=mock_config / "shared" / "queue"):
