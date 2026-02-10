@@ -258,7 +258,7 @@ def _gather_prs() -> list[dict[str, Any]]:
 
             # If we found a staging URL, try to store it on the associated task
             if staging_url and pr_number:
-                _store_staging_url(pr_number, staging_url)
+                _store_staging_url(pr_number, staging_url, branch_name=pr.get("headRefName"))
 
             pr_list.append({
                 "number": pr_number,
@@ -315,12 +315,17 @@ def _extract_staging_url(pr_number: int) -> str | None:
         return None
 
 
-def _store_staging_url(pr_number: int, staging_url: str) -> None:
+def _store_staging_url(pr_number: int, staging_url: str, *, branch_name: str | None = None) -> None:
     """Store a staging URL on the task associated with a PR number.
+
+    Looks up the task by pr_number first. If that fails and a branch_name
+    is provided, falls back to matching by branch pattern (agent/<task-id>-*).
+    When multiple tasks match, uses the most recently updated one.
 
     Args:
         pr_number: PR number to look up
         staging_url: URL to store
+        branch_name: Optional branch name for fallback lookup
     """
     try:
         from .config import is_db_enabled
@@ -328,13 +333,27 @@ def _store_staging_url(pr_number: int, staging_url: str) -> None:
             return
 
         from . import db
-        # Find task by pr_number
         with db.get_connection() as conn:
+            # Primary: find task by pr_number
             cursor = conn.execute(
                 "SELECT id FROM tasks WHERE pr_number = ?",
                 (pr_number,),
             )
             row = cursor.fetchone()
+
+            # Fallback: match by branch name pattern (e.g. agent/<task-id>-*)
+            if not row and branch_name:
+                import re
+                # Extract task ID from branch patterns like agent/<task-id>-*
+                m = re.match(r"agent/([a-f0-9]{8})", branch_name)
+                if m:
+                    task_id_prefix = m.group(1)
+                    cursor = conn.execute(
+                        "SELECT id FROM tasks WHERE id = ? ORDER BY updated_at DESC LIMIT 1",
+                        (task_id_prefix,),
+                    )
+                    row = cursor.fetchone()
+
             if row:
                 db.update_task(row["id"], staging_url=staging_url)
     except Exception:
