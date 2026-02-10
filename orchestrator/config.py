@@ -77,7 +77,13 @@ def find_parent_project() -> Path:
 
 
 def get_orchestrator_dir() -> Path:
-    """Get the .orchestrator directory in the parent project."""
+    """Get the .orchestrator directory in the parent project.
+
+    Can be overridden via ORCHESTRATOR_DIR environment variable (used by tests).
+    """
+    env_override = os.environ.get("ORCHESTRATOR_DIR")
+    if env_override:
+        return Path(env_override)
     return find_parent_project() / ".orchestrator"
 
 
