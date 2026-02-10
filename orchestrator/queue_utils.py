@@ -1256,6 +1256,47 @@ def get_continuation_tasks(agent_name: str | None = None) -> list[dict[str, Any]
     return tasks
 
 
+def _validate_check_names(checks: list[str]) -> None:
+    """Validate that all check names correspond to available agents.
+
+    Prevents orphan checks by rejecting invalid check names at task creation time.
+    A check is valid if ANY agent exists with matching focus (paused or not).
+
+    Args:
+        checks: List of check names to validate
+
+    Raises:
+        ValueError: If any check name does not match an available agent's focus
+    """
+    if not checks:
+        return
+
+    from .config import get_agents
+    agents = get_agents()
+
+    # Build set of valid check names from agent focuses
+    valid_checks = set()
+    for agent in agents:
+        if agent.get("role") == "gatekeeper":
+            focus = agent.get("focus", "")
+            agent_name = agent.get("name", "")
+            if focus:
+                # Accept both "focus" and "gk-focus" formats
+                valid_checks.add(focus)
+                valid_checks.add(f"gk-{focus}")
+            if agent_name:
+                # Also accept agent name itself
+                valid_checks.add(agent_name)
+
+    # Validate all requested checks
+    invalid_checks = [c for c in checks if c not in valid_checks]
+    if invalid_checks:
+        raise ValueError(
+            f"Invalid check name(s): {', '.join(invalid_checks)}. "
+            f"No agent with matching focus exists. Valid checks: {', '.join(sorted(valid_checks))}"
+        )
+
+
 def create_task(
     title: str,
     role: str,
@@ -1268,6 +1309,7 @@ def create_task(
     project_id: str | None = None,
     queue: str = "incoming",
     checks: list[str] | None = None,
+    validate_checks: bool = True,
 ) -> Path:
     """Create a new task file in the specified queue.
 
@@ -1286,10 +1328,16 @@ def create_task(
         queue: Queue to create in (default: incoming, can be 'breakdown')
         checks: Optional list of check names that must pass before human review
             (e.g. ['gk-testing-octopoid'])
+        validate_checks: Whether to validate check names against available agents.
+            Set to False in tests to allow arbitrary check names. (default: True)
 
     Returns:
         Path to created task file
     """
+    # Validate check names before creating the task
+    if checks and validate_checks:
+        _validate_check_names(checks)
+
     task_id = uuid4().hex[:8]
     filename = f"TASK-{task_id}.md"
 

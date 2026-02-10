@@ -718,6 +718,7 @@ class TestCreateTaskChecks:
                     context="test context",
                     acceptance_criteria=["test"],
                     checks=["gk-testing-octopoid", "vitest"],
+                    validate_checks=False,
                 )
 
                 content = task_path.read_text()
@@ -752,6 +753,7 @@ class TestCreateTaskChecks:
                     context="test context",
                     acceptance_criteria=["test"],
                     checks=["gk-testing-octopoid"],
+                    validate_checks=False,
                 )
 
                 task_id = task_path.stem.replace("TASK-", "")
@@ -777,6 +779,7 @@ class TestCreateTaskChecks:
                     context="test context",
                     acceptance_criteria=["test"],
                     checks=["gk-testing-octopoid", "vitest"],
+                    validate_checks=False,
                 )
 
                 # Verify file
@@ -820,6 +823,7 @@ class TestCreateTaskOrchestratorImplDefaultChecks:
                     context="test context",
                     acceptance_criteria=["test"],
                     checks=["custom-check", "another-check"],
+                    validate_checks=False,
                 )
 
                 content = task_path.read_text()

@@ -404,6 +404,7 @@ def create_task(
     auto_accept: bool | None = None,
     checks: list[str] | None = None,
     staging_url: str | None = None,
+    validate_checks: bool = True,
 ) -> dict[str, Any]:
     """Create a new task in the database.
 
@@ -419,6 +420,7 @@ def create_task(
         auto_accept: Skip provisional queue, go straight to done (inherits from project if None)
         checks: Optional list of check names (e.g. ['gk-testing-octopoid'])
         staging_url: Optional staging/preview URL
+        validate_checks: Ignored (for API compatibility with queue_utils.create_task)
 
     Returns:
         Created task as dictionary
@@ -508,6 +510,68 @@ def _serialize_check_results(results: dict[str, dict]) -> str | None:
     if not results:
         return None
     return json.dumps(results)
+
+
+def _validate_qa_result(summary: str, status: str) -> None:
+    """Validate that a QA check result references visual indicators.
+
+    QA checks must verify visual behavior (screenshots, staging, playwright, browser).
+    They should not reference code patterns (.tsx, .ts, import, function, const)
+    without visual context.
+
+    Allow ESCALATE: prefix to bypass validation (staging not accessible).
+
+    Args:
+        summary: The check result summary text
+        status: The check status ('pass' or 'fail')
+
+    Raises:
+        ValueError: If QA result references code without visual indicators
+    """
+    # Allow escalations to bypass validation
+    if summary.strip().startswith("ESCALATE:"):
+        return
+
+    summary_lower = summary.lower()
+
+    # Visual indicators that make a result valid
+    visual_indicators = [
+        "screenshot",
+        "staging",
+        "playwright",
+        "browser",
+        "visual",
+        "ui",
+        "rendered",
+        "displayed",
+        "button",
+        "click",
+        "page",
+        "viewport",
+    ]
+
+    # Code indicators that are suspicious without visual context
+    code_indicators = [
+        ".tsx",
+        ".ts",
+        "import",
+        "function",
+        "const",
+        "export",
+        "interface",
+        "type ",
+        "class ",
+    ]
+
+    has_visual = any(indicator in summary_lower for indicator in visual_indicators)
+    has_code = any(indicator in summary_lower for indicator in code_indicators)
+
+    if has_code and not has_visual:
+        raise ValueError(
+            f"Invalid QA check result: references code patterns ({', '.join([c for c in code_indicators if c in summary_lower])}) "
+            f"without visual indicators. QA checks must verify visual behavior, not code review. "
+            f"Summary: {summary[:200]}"
+        )
 
 
 def get_task(task_id: str) -> dict[str, Any] | None:
@@ -1032,11 +1096,14 @@ def record_check_result(
     status: str,
     summary: str = "",
     screenshots: list[str] | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Record the result of an automated check for a task.
 
     Updates the check_results JSON field on the task. Each check result
-    is keyed by check_name and contains {status, summary, timestamp, screenshots}.
+    is keyed by check_name and contains {status, summary, timestamp, screenshots, metadata}.
+
+    Validates that QA check results reference visual indicators (not just code).
 
     Args:
         task_id: Task identifier
@@ -1044,24 +1111,34 @@ def record_check_result(
         status: Result status ('pass' or 'fail')
         summary: Brief description of the result
         screenshots: Optional list of screenshot paths (relative to repo root)
+        metadata: Optional metadata (check_performed, check_requested, agent_name,
+                  agent_focus, tools_used)
 
     Returns:
         Updated task or None if not found
+
+    Raises:
+        ValueError: If QA check result is invalid (references code without visual context)
     """
     task = get_task(task_id)
     if not task:
         return None
 
+    # Validate QA check results
+    if "qa" in check_name.lower():
+        _validate_qa_result(summary, status)
+
     results = task.get("check_results", {})
-    result_data = {
+    result_entry = {
         "status": status,
         "summary": summary,
         "timestamp": datetime.now().isoformat(),
     }
     if screenshots:
-        result_data["screenshots"] = screenshots
-
-    results[check_name] = result_data
+        result_entry["screenshots"] = screenshots
+    if metadata:
+        result_entry["metadata"] = metadata
+    results[check_name] = result_entry
 
     serialized = _serialize_check_results(results)
     with get_connection() as conn:

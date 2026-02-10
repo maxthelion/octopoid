@@ -36,6 +36,7 @@ class TestCheckResultsDB:
                 task_id="cr1",
                 file_path="/cr1.md",
                 checks=["gk-testing-octopoid"],
+                validate_checks=False,
             )
 
             result = record_check_result("cr1", "gk-testing-octopoid", "pass", "All tests passed")
@@ -50,7 +51,8 @@ class TestCheckResultsDB:
         with patch("orchestrator.db.get_database_path", return_value=initialized_db):
             from orchestrator.db import create_task, record_check_result, get_task
 
-            create_task(task_id="cr2", file_path="/cr2.md", checks=["gk-testing-octopoid"])
+            create_task(task_id="cr2", file_path="/cr2.md", checks=["gk-testing-octopoid"],
+                validate_checks=False)
 
             result = record_check_result("cr2", "gk-testing-octopoid", "fail", "3 tests failed")
 
@@ -87,7 +89,8 @@ class TestCheckResultsDB:
         with patch("orchestrator.db.get_database_path", return_value=initialized_db):
             from orchestrator.db import create_task, record_check_result
 
-            create_task(task_id="cr4", file_path="/cr4.md", checks=["gk-testing-octopoid"])
+            create_task(task_id="cr4", file_path="/cr4.md", checks=["gk-testing-octopoid"],
+                validate_checks=False)
 
             record_check_result("cr4", "gk-testing-octopoid", "fail", "first run failed")
             result = record_check_result("cr4", "gk-testing-octopoid", "pass", "retry passed")
@@ -100,7 +103,8 @@ class TestCheckResultsDB:
         with patch("orchestrator.db.get_database_path", return_value=initialized_db):
             from orchestrator.db import create_task, record_check_result, get_task_history
 
-            create_task(task_id="cr5", file_path="/cr5.md", checks=["gk-testing-octopoid"])
+            create_task(task_id="cr5", file_path="/cr5.md", checks=["gk-testing-octopoid"],
+                validate_checks=False)
             record_check_result("cr5", "gk-testing-octopoid", "pass", "All passed")
 
             history = get_task_history("cr5")
@@ -113,7 +117,8 @@ class TestCheckResultsDB:
         with patch("orchestrator.db.get_database_path", return_value=initialized_db):
             from orchestrator.db import create_task, record_check_result, get_task
 
-            create_task(task_id="cr6", file_path="/cr6.md", checks=["gk-testing-octopoid"])
+            create_task(task_id="cr6", file_path="/cr6.md", checks=["gk-testing-octopoid"],
+                validate_checks=False)
             record_check_result("cr6", "gk-testing-octopoid", "pass", "OK")
 
             task = get_task("cr6")
@@ -125,7 +130,8 @@ class TestCheckResultsDB:
         with patch("orchestrator.db.get_database_path", return_value=initialized_db):
             from orchestrator.db import create_task, record_check_result, list_tasks
 
-            create_task(task_id="cr7", file_path="/cr7.md", checks=["gk-testing-octopoid"])
+            create_task(task_id="cr7", file_path="/cr7.md", checks=["gk-testing-octopoid"],
+                validate_checks=False)
             record_check_result("cr7", "gk-testing-octopoid", "fail", "broken")
 
             tasks = list_tasks(queue="incoming")
@@ -137,7 +143,8 @@ class TestCheckResultsDB:
         with patch("orchestrator.db.get_database_path", return_value=initialized_db):
             from orchestrator.db import create_task, get_task
 
-            create_task(task_id="cr8", file_path="/cr8.md", checks=["gk-testing-octopoid"])
+            create_task(task_id="cr8", file_path="/cr8.md", checks=["gk-testing-octopoid"],
+                validate_checks=False)
 
             task = get_task("cr8")
             assert task["check_results"] == {}
@@ -151,7 +158,8 @@ class TestAllChecksPassed:
         with patch("orchestrator.db.get_database_path", return_value=initialized_db):
             from orchestrator.db import create_task, record_check_result, all_checks_passed
 
-            create_task(task_id="acp1", file_path="/acp1.md", checks=["gk-testing-octopoid"])
+            create_task(task_id="acp1", file_path="/acp1.md", checks=["gk-testing-octopoid"],
+                validate_checks=False)
             record_check_result("acp1", "gk-testing-octopoid", "pass")
 
             passed, not_passed = all_checks_passed("acp1")
@@ -176,7 +184,8 @@ class TestAllChecksPassed:
         with patch("orchestrator.db.get_database_path", return_value=initialized_db):
             from orchestrator.db import create_task, all_checks_passed
 
-            create_task(task_id="acp3", file_path="/acp3.md", checks=["gk-testing-octopoid"])
+            create_task(task_id="acp3", file_path="/acp3.md", checks=["gk-testing-octopoid"],
+                validate_checks=False)
 
             passed, not_passed = all_checks_passed("acp3")
             assert passed is False
@@ -210,7 +219,8 @@ class TestGetCheckFeedback:
         with patch("orchestrator.db.get_database_path", return_value=initialized_db):
             from orchestrator.db import create_task, record_check_result, get_check_feedback
 
-            create_task(task_id="gcf1", file_path="/gcf1.md", checks=["gk-testing-octopoid"])
+            create_task(task_id="gcf1", file_path="/gcf1.md", checks=["gk-testing-octopoid"],
+                validate_checks=False)
             record_check_result("gcf1", "gk-testing-octopoid", "fail", "3 tests failed")
 
             feedback = get_check_feedback("gcf1")
@@ -223,7 +233,8 @@ class TestGetCheckFeedback:
         with patch("orchestrator.db.get_database_path", return_value=initialized_db):
             from orchestrator.db import create_task, record_check_result, get_check_feedback
 
-            create_task(task_id="gcf2", file_path="/gcf2.md", checks=["gk-testing-octopoid"])
+            create_task(task_id="gcf2", file_path="/gcf2.md", checks=["gk-testing-octopoid"],
+                validate_checks=False)
             record_check_result("gcf2", "gk-testing-octopoid", "pass", "OK")
 
             feedback = get_check_feedback("gcf2")
@@ -257,7 +268,8 @@ class TestReportsCheckingSplit:
 
             fp = prov_dir / "TASK-rck1.md"
             fp.write_text("# [TASK-rck1] Task with check\nROLE: orchestrator_impl\n")
-            create_task(task_id="rck1", file_path=str(fp), role="orchestrator_impl", checks=["gk-testing-octopoid"])
+            create_task(task_id="rck1", file_path=str(fp), role="orchestrator_impl", checks=["gk-testing-octopoid"],
+                validate_checks=False)
             update_task_queue("rck1", "provisional", commits_count=2)
 
             work = _gather_work()
@@ -278,7 +290,8 @@ class TestReportsCheckingSplit:
 
             fp = prov_dir / "TASK-rck2.md"
             fp.write_text("# [TASK-rck2] Task with passed check\nROLE: orchestrator_impl\n")
-            create_task(task_id="rck2", file_path=str(fp), role="orchestrator_impl", checks=["gk-testing-octopoid"])
+            create_task(task_id="rck2", file_path=str(fp), role="orchestrator_impl", checks=["gk-testing-octopoid"],
+                validate_checks=False)
             update_task_queue("rck2", "provisional", commits_count=3)
             record_check_result("rck2", "gk-testing-octopoid", "pass", "All tests passed")
 
@@ -321,7 +334,8 @@ class TestReportsCheckingSplit:
 
             fp = prov_dir / "TASK-rck4.md"
             fp.write_text("# [TASK-rck4] Failed check task\nROLE: orchestrator_impl\n")
-            create_task(task_id="rck4", file_path=str(fp), role="orchestrator_impl", checks=["gk-testing-octopoid"])
+            create_task(task_id="rck4", file_path=str(fp), role="orchestrator_impl", checks=["gk-testing-octopoid"],
+                validate_checks=False)
             update_task_queue("rck4", "provisional", commits_count=2)
             record_check_result("rck4", "gk-testing-octopoid", "fail", "Tests broken")
 
@@ -386,6 +400,7 @@ class TestPreCheckSkipsPendingChecks:
                                     file_path=str(mock_config / "shared" / "queue" / "provisional" / "TASK-vskip1.md"),
                                     role="orchestrator_impl",
                                     checks=["gk-testing-octopoid"],
+                validate_checks=False,
                                 )
                                 claim_task()
                                 submit_completion("vskip1", commits_count=3, turns_used=20)
@@ -437,6 +452,7 @@ class TestPreCheckSkipsPendingChecks:
                                     file_path=str(mock_config / "shared" / "queue" / "provisional" / "TASK-vskip2.md"),
                                     role="orchestrator_impl",
                                     checks=["gk-testing-octopoid"],
+                validate_checks=False,
                                 )
                                 claim_task()
                                 submit_completion("vskip2", commits_count=3, turns_used=20)
@@ -521,6 +537,7 @@ class TestDefaultChecksForOrchestratorImpl:
                         context="Test context",
                         acceptance_criteria=["Do the thing"],
                         checks=["custom-gatekeeper"],
+                        validate_checks=False,
                     )
 
                     task_id = task_path.stem.replace("TASK-", "")

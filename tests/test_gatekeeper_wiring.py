@@ -481,26 +481,32 @@ class TestAssignQaChecks:
 
     def test_assigns_gk_qa_to_app_task_with_staging_url(self, mock_config, initialized_db):
         """App task with staging_url gets gk-qa check auto-assigned."""
+        # Mock agents to include gk-qa
+        mock_agents = [
+            {'name': 'gk-qa', 'role': 'gatekeeper', 'focus': 'qa'},
+        ]
+
         with patch('orchestrator.db.get_database_path', return_value=initialized_db):
-            from orchestrator.db import create_task, update_task_queue, update_task, get_task
-            from orchestrator.scheduler import assign_qa_checks
+            with patch('orchestrator.config.get_agents', return_value=mock_agents):
+                from orchestrator.db import create_task, update_task_queue, update_task, get_task
+                from orchestrator.scheduler import assign_qa_checks
 
-            create_task(
-                task_id='qa_assign',
-                file_path='/qa_assign.md',
-                role='implement',
-                branch='feature/test',
-            )
-            update_task_queue('qa_assign', 'provisional', commits_count=2)
-            update_task(
-                'qa_assign',
-                staging_url='https://test.pages.dev',
-            )
+                create_task(
+                    task_id='qa_assign',
+                    file_path='/qa_assign.md',
+                    role='implement',
+                    branch='feature/test',
+                )
+                update_task_queue('qa_assign', 'provisional', commits_count=2)
+                update_task(
+                    'qa_assign',
+                    staging_url='https://test.pages.dev',
+                )
 
-            assign_qa_checks()
+                assign_qa_checks()
 
-            task = get_task('qa_assign')
-            assert 'gk-qa' in task['checks']
+                task = get_task('qa_assign')
+                assert 'gk-qa' in task['checks']
 
     def test_skips_task_without_staging_url(self, mock_config, initialized_db):
         """Tasks without staging_url are skipped (deployment not ready)."""
@@ -570,28 +576,35 @@ class TestAssignQaChecks:
 
     def test_preserves_existing_checks(self, mock_config, initialized_db):
         """Existing checks are preserved when gk-qa is added."""
+        # Mock agents to include both gk-qa and architecture gatekeeper
+        mock_agents = [
+            {'name': 'gk-qa', 'role': 'gatekeeper', 'focus': 'qa'},
+            {'name': 'gk-architecture', 'role': 'gatekeeper', 'focus': 'architecture'},
+        ]
+
         with patch('orchestrator.db.get_database_path', return_value=initialized_db):
-            from orchestrator.db import create_task, update_task_queue, update_task, get_task
-            from orchestrator.scheduler import assign_qa_checks
+            with patch('orchestrator.config.get_agents', return_value=mock_agents):
+                from orchestrator.db import create_task, update_task_queue, update_task, get_task
+                from orchestrator.scheduler import assign_qa_checks
 
-            create_task(
-                task_id='has_checks',
-                file_path='/has_checks.md',
-                role='implement',
-                checks=['architecture-review'],
-                branch='feature/test',
-            )
-            update_task_queue('has_checks', 'provisional', commits_count=1)
-            update_task(
-                'has_checks',
-                staging_url='https://test.pages.dev',
-            )
+                create_task(
+                    task_id='has_checks',
+                    file_path='/has_checks.md',
+                    role='implement',
+                    checks=['architecture-review'],
+                    branch='feature/test',
+                )
+                update_task_queue('has_checks', 'provisional', commits_count=1)
+                update_task(
+                    'has_checks',
+                    staging_url='https://test.pages.dev',
+                )
 
-            assign_qa_checks()
+                assign_qa_checks()
 
-            task = get_task('has_checks')
-            assert 'architecture-review' in task['checks']
-            assert 'gk-qa' in task['checks']
+                task = get_task('has_checks')
+                assert 'architecture-review' in task['checks']
+                assert 'gk-qa' in task['checks']
 
     def test_skips_non_provisional_tasks(self, mock_config, initialized_db):
         """Only provisional tasks get gk-qa assigned."""
@@ -614,3 +627,321 @@ class TestAssignQaChecks:
             task = get_task('in_incoming')
             # Task is in incoming, not provisional — should not get gk-qa
             assert 'gk-qa' not in task['checks']
+
+
+class TestDispatcherFocusMatching:
+    """Tests for dispatcher focus matching guardrail (P0)."""
+
+    def _make_idle_state(self):
+        """Create an idle AgentState for mocking."""
+        from orchestrator.state_utils import AgentState
+        return AgentState(running=False, pid=None, last_finished=None, last_exit_code=None, extra={})
+
+    def test_dispatcher_skips_mismatched_focus(self, mock_config, initialized_db):
+        """Dispatcher skips gatekeepers whose focus does not match check_name."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            with patch('orchestrator.config.get_orchestrator_dir', return_value=mock_config):
+                from orchestrator.db import create_task, update_task_queue, update_task
+                from orchestrator.scheduler import dispatch_gatekeeper_agents
+
+                # Create a provisional task with architecture check
+                task = create_task(
+                    task_id='test_focus',
+                    file_path=str(mock_config / 'shared/queue/provisional/TASK-test_focus.md'),
+                    role='implement',
+                    checks=['gk-architecture'],  # Must be a list
+                    branch='feature/test',
+                )
+                task_id = task['id']
+
+                update_task_queue(task_id, 'provisional')
+                update_task(task_id, commits_count=1)
+
+                # Mock gatekeeper agents: gk-qa (focus=qa) and gk-architecture (focus=architecture)
+                gk_agents = [
+                    {'name': 'gk-qa', 'role': 'gatekeeper', 'focus': 'qa'},
+                    {'name': 'gk-architecture', 'role': 'gatekeeper', 'focus': 'architecture'},
+                ]
+
+                idle_state = self._make_idle_state()
+
+                with patch('orchestrator.scheduler.is_db_enabled', return_value=True):
+                    with patch('orchestrator.scheduler.get_gatekeepers', return_value=gk_agents):
+                        with patch('orchestrator.scheduler.get_agents', return_value=gk_agents):
+                            with patch('orchestrator.scheduler.load_state', return_value=idle_state):
+                                with patch('orchestrator.scheduler.is_overdue', return_value=True):
+                                    with patch('orchestrator.scheduler.spawn_agent', return_value=12345) as mock_spawn:
+                                        with patch('orchestrator.scheduler.save_state'):
+                                            with patch('orchestrator.scheduler.ensure_worktree'):
+                                                with patch('orchestrator.scheduler.setup_agent_commands'):
+                                                    with patch('orchestrator.scheduler.generate_agent_instructions'):
+                                                        with patch('orchestrator.scheduler.write_agent_env'):
+                                                            with patch('orchestrator.scheduler.is_process_running', return_value=False):
+                                                                with patch('orchestrator.scheduler.mark_started', return_value=idle_state):
+                                                                    dispatch_gatekeeper_agents()
+
+                                                                    # Verify: gk-architecture was spawned (focus matches)
+                                                                    # gk-qa was NOT spawned (focus mismatch)
+                                                                    assert mock_spawn.call_count == 1
+                                                                    spawn_args = mock_spawn.call_args[0]
+                                                                    assert spawn_args[0] == 'gk-architecture'
+
+
+class TestCheckResultValidation:
+    """Tests for check result validation guardrail (P0)."""
+
+    def test_qa_result_with_code_references_rejected(self, mock_config, initialized_db):
+        """QA check results that reference code without visual indicators are rejected."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, record_check_result
+
+            task = create_task(
+                task_id='test_qa_validation',
+                file_path=str(mock_config / 'shared/queue/provisional/TASK-test_qa_validation.md'),
+                role='implement',
+                checks='gk-qa',
+            )
+            task_id = task['id']
+
+            # This should raise ValueError: references .tsx files without visual context
+            with pytest.raises(ValueError, match="Invalid QA check result"):
+                record_check_result(
+                    task_id=task_id,
+                    check_name='gk-qa',
+                    status='pass',
+                    summary='Reviewed SketchView2D.tsx and Box3D.tsx, code looks good',
+                )
+
+    def test_qa_result_with_visual_indicators_accepted(self, mock_config, initialized_db):
+        """QA check results with visual indicators (playwright, screenshot) are accepted."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, record_check_result, get_task
+
+            task = create_task(
+                task_id='test_qa_visual',
+                file_path=str(mock_config / 'shared/queue/provisional/TASK-test_qa_visual.md'),
+                role='implement',
+                checks='gk-qa',
+            )
+            task_id = task['id']
+
+            # This should be accepted: references playwright and staging
+            record_check_result(
+                task_id=task_id,
+                check_name='gk-qa',
+                status='pass',
+                summary='Verified with Playwright on staging: button renders correctly, screenshot attached',
+            )
+
+            task = get_task(task_id)
+            assert task['check_results']['gk-qa']['status'] == 'pass'
+
+    def test_qa_result_escalation_bypasses_validation(self, mock_config, initialized_db):
+        """QA results with ESCALATE: prefix bypass validation (staging not accessible)."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, record_check_result, get_task
+
+            task = create_task(
+                task_id='test_qa_escalate',
+                file_path=str(mock_config / 'shared/queue/provisional/TASK-test_qa_escalate.md'),
+                role='implement',
+                checks='gk-qa',
+            )
+            task_id = task['id']
+
+            # ESCALATE: prefix should bypass validation even with code references
+            record_check_result(
+                task_id=task_id,
+                check_name='gk-qa',
+                status='fail',
+                summary='ESCALATE: Staging URL not accessible, cannot verify .tsx changes',
+            )
+
+            task = get_task(task_id)
+            assert task['check_results']['gk-qa']['status'] == 'fail'
+
+    def test_non_qa_check_not_validated(self, mock_config, initialized_db):
+        """Non-QA checks (architecture, testing) are not validated for visual indicators."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, record_check_result, get_task
+
+            task = create_task(
+                task_id='test_arch_check',
+                file_path=str(mock_config / 'shared/queue/provisional/TASK-test_arch_check.md'),
+                role='implement',
+                checks='gk-architecture',
+            )
+            task_id = task['id']
+
+            # Architecture checks CAN reference code without visual indicators
+            record_check_result(
+                task_id=task_id,
+                check_name='gk-architecture',
+                status='pass',
+                summary='Reviewed Engine.ts and types.ts, architecture is sound',
+            )
+
+            task = get_task(task_id)
+            assert task['check_results']['gk-architecture']['status'] == 'pass'
+
+
+class TestCheckResultMetadata:
+    """Tests for self-documenting check result metadata (P0)."""
+
+    def test_metadata_stored_with_check_result(self, mock_config, initialized_db):
+        """Metadata is stored alongside check result for debugging."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, record_check_result, get_task
+
+            task = create_task(
+                task_id='test_metadata',
+                file_path=str(mock_config / 'shared/queue/provisional/TASK-test_metadata.md'),
+                role='implement',
+                checks='gk-testing-octopoid',
+            )
+            task_id = task['id']
+
+            metadata = {
+                'check_performed': 'gk-testing-octopoid',
+                'check_requested': 'gk-testing-octopoid',
+                'agent_name': 'gk-testing',
+                'agent_focus': 'testing',
+                'tools_used': ['Read', 'Bash', 'Grep'],
+            }
+
+            record_check_result(
+                task_id=task_id,
+                check_name='gk-testing-octopoid',
+                status='pass',
+                summary='All tests pass',
+                metadata=metadata,
+            )
+
+            task = get_task(task_id)
+            result = task['check_results']['gk-testing-octopoid']
+            assert result['metadata'] == metadata
+            assert result['metadata']['agent_focus'] == 'testing'
+            assert 'Bash' in result['metadata']['tools_used']
+
+
+class TestCheckValidationAtTaskCreation:
+    """Tests for validating check names at task creation time (prevents orphan checks)."""
+
+    def test_create_task_rejects_invalid_check_name(self, mock_config, initialized_db):
+        """create_task raises ValueError for check names with no matching agent."""
+        # Mock agents config to have only gk-testing and gk-qa
+        mock_agents = [
+            {'name': 'gk-testing', 'role': 'gatekeeper', 'focus': 'testing'},
+            {'name': 'gk-qa', 'role': 'gatekeeper', 'focus': 'qa'},
+        ]
+
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            with patch('orchestrator.queue_utils.get_orchestrator_dir', return_value=mock_config):
+                with patch('orchestrator.config.get_agents', return_value=mock_agents):
+                    from orchestrator.queue_utils import create_task
+                    import pytest
+
+                    # Attempt to create task with invalid check name
+                    with pytest.raises(ValueError, match="Invalid check name.*security.*No agent with matching focus"):
+                        create_task(
+                            title="Test task",
+                            context="Test context",
+                            acceptance_criteria=["Works"],
+                            role="implement",
+                            branch="main",
+                            checks=["security"],  # No agent with focus="security"
+                        )
+
+    def test_create_task_accepts_valid_check_names(self, mock_config, initialized_db):
+        """create_task accepts check names that match agent focus or agent name."""
+        mock_agents = [
+            {'name': 'gk-testing', 'role': 'gatekeeper', 'focus': 'testing'},
+            {'name': 'gk-qa', 'role': 'gatekeeper', 'focus': 'qa'},
+        ]
+
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            with patch('orchestrator.queue_utils.get_orchestrator_dir', return_value=mock_config):
+                with patch('orchestrator.config.get_agents', return_value=mock_agents):
+                    from orchestrator.queue_utils import create_task
+                    from orchestrator.db import get_task
+                    import re
+
+                    # All of these should be valid:
+                    # - "testing" matches focus
+                    # - "gk-testing" matches agent name
+                    # - "qa" matches focus
+                    # - "gk-qa" matches agent name
+                    for check_name in ["testing", "gk-testing", "qa", "gk-qa"]:
+                        path = create_task(
+                            title=f"Test task with {check_name}",
+                            context="Test context",
+                            acceptance_criteria=["Works"],
+                            role="implement",
+                            branch="main",
+                            checks=[check_name],
+                        )
+                        task_id = re.search(r"TASK-(\w+)", str(path)).group(1)
+                        task = get_task(task_id)
+                        assert check_name in task["checks"]
+
+
+class TestFileDbQueueSync:
+    """Tests for syncing DB queue column with file location when agent finishes."""
+
+    def test_queue_sync_when_agent_finishes(self, mock_config, initialized_db, tmp_path):
+        """When agent finishes, DB queue column syncs with actual file location."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, update_task_queue, get_task
+            from orchestrator.scheduler import check_and_update_finished_agents
+            from orchestrator.state_utils import AgentState, save_state
+            from orchestrator.config import get_agents_runtime_dir
+            from pathlib import Path
+            import shutil
+
+            # Create task and claim it
+            create_task(
+                task_id='sync_test',
+                file_path='/sync_test.md',
+                role='implement',
+                branch='feature/test',
+            )
+            update_task_queue('sync_test', 'claimed', claimed_by='test-impl', commits_count=0)
+
+            # Verify task is in claimed state
+            task = get_task('sync_test')
+            assert task['queue'] == 'claimed'
+            assert task['claimed_by'] == 'test-impl'
+
+            # Simulate agent finishing by:
+            # 1. Moving task file to needs_continuation/
+            # 2. Setting agent state to finished
+            queue_dir = Path(mock_config) / 'shared' / 'queue'
+            queue_dir.mkdir(parents=True, exist_ok=True)
+            (queue_dir / 'needs_continuation').mkdir(exist_ok=True)
+            task_file = queue_dir / 'needs_continuation' / 'TASK-sync_test.md'
+            task_file.write_text('# [TASK-sync_test] Test')
+
+            # Create agent state showing it was running but process is gone
+            agents_dir = get_agents_runtime_dir()
+            agents_dir.mkdir(parents=True, exist_ok=True)
+            agent_dir = agents_dir / 'test-impl'
+            agent_dir.mkdir(exist_ok=True)
+            state = AgentState(
+                running=True,  # Was running
+                pid=99999,  # Process ID that doesn't exist
+                current_task='sync_test',
+                last_started='2026-02-09T15:00:00',
+            )
+            save_state(state, agent_dir / 'state.json')
+
+            # Mock find_task_file to return the file we created
+            with patch('orchestrator.queue_utils.find_task_file', return_value=task_file):
+                with patch('orchestrator.scheduler.is_process_running', return_value=False):
+                    # Trigger the scheduler function that syncs DB
+                    check_and_update_finished_agents()
+
+            # Verify DB was synced
+            task = get_task('sync_test')
+            assert task['queue'] == 'needs_continuation'
+            assert task['claimed_by'] is None  # Cleared when leaving claimed/
+            assert task['claimed_at'] is None
