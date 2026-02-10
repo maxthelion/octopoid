@@ -233,12 +233,28 @@ class OrchestratorImplRole(ImplementerRole):
         self.log(f"Self-merge (submodule): updated main checkout submodule ({target_branch})")
 
         # Step 6: Push submodule target branch to origin
+        self.log(f"Self-merge (submodule): pushing {target_branch} to origin...")
         result = self._run_cmd(
             ["git", "push", "origin", target_branch],
             cwd=main_checkout_sub,
         )
         if result.returncode != 0:
-            self.log("Self-merge (submodule): push failed but local merge succeeded, continuing")
+            self.log(f"Self-merge (submodule): push to origin failed: {result.stderr.strip()}")
+            self.log("Self-merge (submodule): reverting local merge and pushing feature branch...")
+
+            # Revert the merge in main checkout's submodule
+            self._run_cmd(["git", "reset", "--hard", f"origin/{target_branch}"], cwd=main_checkout_sub)
+
+            # Push the feature branch to origin so work isn't lost
+            self._run_cmd(["git", "push", "origin", sub_branch], cwd=main_checkout_sub)
+
+            # Switch back to main if needed
+            if target_branch != "main":
+                self._run_cmd(["git", "checkout", "main"], cwd=main_checkout_sub)
+
+            return False
+
+        self.log(f"Self-merge (submodule): push to origin succeeded")
 
         # Switch main checkout back to main if we were on a project branch
         if target_branch != "main":
@@ -410,14 +426,60 @@ class OrchestratorImplRole(ImplementerRole):
                 )
                 if result.returncode != 0:
                     self.log(f"Self-merge: submodule ref commit failed: {result.stderr.strip()}")
+                    return False
                 else:
+                    self.log("Self-merge: pushing main repo to origin...")
                     push = self._run_cmd(
                         ["git", "push", "origin", "main"], cwd=main_repo
                     )
                     if push.returncode != 0:
-                        self.log("Self-merge: main repo push failed (human can push later)")
+                        self.log(f"Self-merge: main repo push failed: {push.stderr.strip()}")
+                        self.log("Self-merge: submodule already pushed, but main repo ref update failed")
+                        return False
+                    self.log("Self-merge: main repo push succeeded")
 
         return True
+
+    def _push_feature_branches(
+        self,
+        submodule_path: Path,
+        task_id: str,
+        has_sub_commits: bool,
+        has_main_commits: bool,
+    ) -> None:
+        """Push feature branches to origin when self-merge fails.
+
+        This ensures commits are available for review even if the agent's
+        worktree is deleted. Pushes:
+        - orch/<task-id> in submodule (if has_sub_commits)
+        - tooling/<task-id> in main repo (if has_main_commits)
+
+        Failures are logged but don't raise exceptions - reviewers can still
+        fetch from local worktree if needed.
+        """
+        # Push submodule branch
+        if has_sub_commits:
+            sub_branch = f"orch/{task_id}"
+            result = self._run_cmd(
+                ["git", "push", "origin", sub_branch],
+                cwd=submodule_path,
+            )
+            if result.returncode == 0:
+                self.log(f"Pushed {sub_branch} to origin")
+            else:
+                self.log(f"Warning: Failed to push {sub_branch}: {result.stderr.strip()}")
+
+        # Push main repo tooling branch
+        if has_main_commits:
+            tooling_branch = f"tooling/{task_id}"
+            result = self._run_cmd(
+                ["git", "push", "origin", tooling_branch],
+                cwd=self.worktree,
+            )
+            if result.returncode == 0:
+                self.log(f"Pushed {tooling_branch} to origin")
+            else:
+                self.log(f"Warning: Failed to push {tooling_branch}: {result.stderr.strip()}")
 
     def _find_venv_python(self, submodule_path: Path) -> Path | None:
         """Find the venv Python executable for running tests."""
@@ -616,6 +678,14 @@ class OrchestratorImplRole(ImplementerRole):
                         )
                         self.log(f"Self-merged to {merge_target} ({sub_commits} submodule + {main_commits} main repo commits)")
                     else:
+                        # Push feature branches to origin before submit_completion
+                        # so commits are available for review even if worktree is deleted
+                        self._push_feature_branches(
+                            submodule_path,
+                            task_id,
+                            has_sub_commits=sub_commits > 0,
+                            has_main_commits=main_commits > 0,
+                        )
                         submit_completion(
                             task_path,
                             commits_count=total_commits,
