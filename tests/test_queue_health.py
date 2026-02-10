@@ -45,9 +45,7 @@ def mock_db_setup(temp_dir):
 
 def test_detect_no_issues(mock_db_setup):
     """Test detection when there are no issues."""
-    with patch('orchestrator.scheduler.db') as mock_db:
-        mock_db.list_tasks.return_value = []
-
+    with patch('orchestrator.db.list_tasks', return_value=[]):
         issues = detect_queue_health_issues()
 
         assert len(issues['file_db_mismatches']) == 0
@@ -77,11 +75,8 @@ def test_detect_orphan_file(mock_db_setup):
         mock_result.st_mtime = old_time
         return mock_result
 
-    with patch('orchestrator.scheduler.db') as mock_db, \
+    with patch('orchestrator.db.list_tasks', return_value=[]), \
          patch.object(Path, 'stat', mock_stat):
-        # DB returns empty list (no tasks)
-        mock_db.list_tasks.return_value = []
-
         issues = detect_queue_health_issues()
 
         assert len(issues['orphan_files']) == 1
@@ -108,13 +103,10 @@ def test_detect_file_db_mismatch(mock_db_setup):
         mock_result.st_mtime = old_time
         return mock_result
 
-    with patch('orchestrator.scheduler.db') as mock_db, \
-         patch.object(Path, 'stat', mock_stat):
-        # DB says task is in 'claimed' queue
-        mock_db.list_tasks.return_value = [
+    with patch('orchestrator.db.list_tasks', return_value=[
             {'id': 'mismatch456', 'queue': 'claimed', 'role': 'implement'}
-        ]
-
+        ]), \
+         patch.object(Path, 'stat', mock_stat):
         issues = detect_queue_health_issues()
 
         assert len(issues['file_db_mismatches']) == 1
@@ -137,12 +129,10 @@ def test_detect_zombie_claim(mock_db_setup):
     last_finished = (datetime.now() - timedelta(hours=2)).isoformat()
     state_file.write_text(f'{{"running": false, "last_finished": "{last_finished}"}}')
 
-    with patch('orchestrator.scheduler.db') as mock_db, \
-         patch('orchestrator.scheduler.load_state') as mock_load_state:
+    # Task claimed 3 hours ago
+    claimed_at = (datetime.now() - timedelta(hours=3)).isoformat()
 
-        # Task claimed 3 hours ago
-        claimed_at = (datetime.now() - timedelta(hours=3)).isoformat()
-        mock_db.list_tasks.return_value = [
+    with patch('orchestrator.db.list_tasks', return_value=[
             {
                 'id': 'zombie789',
                 'queue': 'claimed',
@@ -150,7 +140,8 @@ def test_detect_zombie_claim(mock_db_setup):
                 'claimed_at': claimed_at,
                 'role': 'implement'
             }
-        ]
+        ]), \
+         patch('orchestrator.scheduler.load_state') as mock_load_state:
 
         # Mock agent state
         mock_state = MagicMock()
@@ -213,10 +204,8 @@ def test_recent_files_not_detected_as_orphans(mock_db_setup):
         mock_result.st_mtime = recent_time
         return mock_result
 
-    with patch('orchestrator.scheduler.db') as mock_db, \
+    with patch('orchestrator.db.list_tasks', return_value=[]), \
          patch.object(Path, 'stat', mock_stat):
-        mock_db.list_tasks.return_value = []
-
         issues = detect_queue_health_issues()
 
         # Should NOT be detected as orphan due to grace period
