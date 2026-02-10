@@ -345,6 +345,7 @@ def create_task(
     auto_accept: bool | None = None,
     checks: list[str] | None = None,
     staging_url: str | None = None,
+    validate_checks: bool = True,
 ) -> dict[str, Any]:
     """Create a new task in the database.
 
@@ -360,6 +361,7 @@ def create_task(
         auto_accept: Skip provisional queue, go straight to done (inherits from project if None)
         checks: Optional list of check names (e.g. ['gk-testing-octopoid'])
         staging_url: Optional staging/preview URL
+        validate_checks: Ignored (for API compatibility with queue_utils.create_task)
 
     Returns:
         Created task as dictionary

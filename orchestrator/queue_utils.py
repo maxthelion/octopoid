@@ -1309,6 +1309,7 @@ def create_task(
     project_id: str | None = None,
     queue: str = "incoming",
     checks: list[str] | None = None,
+    validate_checks: bool = True,
 ) -> Path:
     """Create a new task file in the specified queue.
 
@@ -1327,12 +1328,14 @@ def create_task(
         queue: Queue to create in (default: incoming, can be 'breakdown')
         checks: Optional list of check names that must pass before human review
             (e.g. ['gk-testing-octopoid'])
+        validate_checks: Whether to validate check names against available agents.
+            Set to False in tests to allow arbitrary check names. (default: True)
 
     Returns:
         Path to created task file
     """
     # Validate check names before creating the task
-    if checks:
+    if checks and validate_checks:
         _validate_check_names(checks)
 
     task_id = uuid4().hex[:8]
