@@ -18,7 +18,7 @@ from .config import get_orchestrator_dir
 _SENTINEL = object()
 
 # Schema version for migrations
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 # Module-level flag to avoid checking schema version on every connection.
 # Reset to False if tests need to re-trigger migration.
@@ -378,6 +378,13 @@ def migrate_schema() -> bool:
             except sqlite3.OperationalError:
                 pass  # Column already exists
 
+
+        # Migration from v10 to v11: Add file_path column to projects
+        if current < 11:
+            try:
+                conn.execute("ALTER TABLE projects ADD COLUMN file_path TEXT")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
         # Update schema version
         conn.execute(
             "INSERT OR REPLACE INTO schema_info (key, value) VALUES (?, ?)",
