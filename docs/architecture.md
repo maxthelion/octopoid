@@ -288,7 +288,9 @@ The recycler also runs `reconcile_stale_blockers()` on each tick to catch any de
        - Rebase onto main, run `pytest tests/ -v`
        - Fast-forward merge to main in agent worktree submodule
        - Fetch into main checkout's submodule, ff-merge, push to origin
+       - **If push fails:** revert local merge, push feature branch, return False
        - Update submodule ref in main repo, commit, push
+       - **If ref push fails:** return False (submodule already pushed, ref update for manual review)
      - **Main repo path** (`tooling/{task_id}`) — push-to-origin pattern:
        - Fetch `origin/main`, rebase onto it (all in agent worktree)
        - Push rebased branch to origin, then `git push origin tooling/{task_id}:main`
@@ -296,7 +298,7 @@ The recycler also runs `reconcile_stale_blockers()` on each tick to catch any de
        - Send notification to human inbox: "run `git pull`"
        - Human working tree is never touched
   8. If self-merge succeeds: `accept_completion(accepted_by='self-merge')`
-  9. If self-merge fails: `submit_completion()` for manual review
+  9. If self-merge fails: push feature branches, `submit_completion()` for manual review
 - **Agent:** `orch-impl-1` (active)
 
 #### `breakdown` (class: `BreakdownRole`)
