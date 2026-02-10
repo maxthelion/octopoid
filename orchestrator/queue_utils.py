@@ -279,6 +279,9 @@ def _db_task_to_file_format(db_task: dict[str, Any]) -> dict[str, Any]:
         # Additional DB fields
         "blocked_by": db_task.get("blocked_by"),
         "claimed_by": db_task.get("claimed_by"),
+        "claimed_at": db_task.get("claimed_at"),
+        "submitted_at": db_task.get("submitted_at"),
+        "completed_at": db_task.get("completed_at"),
         "attempt_count": db_task.get("attempt_count", 0),
         "commits_count": db_task.get("commits_count", 0),
         "turns_used": db_task.get("turns_used", 0),
