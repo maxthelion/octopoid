@@ -687,6 +687,201 @@ class TestTryMergeMainRepo:
             assert result is True
 
 
+class TestPushFeatureBranches:
+    """Tests for _push_feature_branches — push branches when self-merge fails."""
+
+    def _make_role(self):
+        from orchestrator.roles.orchestrator_impl import OrchestratorImplRole
+        return OrchestratorImplRole()
+
+    def test_pushes_submodule_branch_when_has_sub_commits(self):
+        """When has_sub_commits=True, pushes orch/<task-id> to origin."""
+        with patch.dict('os.environ', _ENV):
+            role = self._make_role()
+            sub_path = Path('/fake/agents/test-orch/worktree/orchestrator')
+
+            calls = []
+
+            def mock_run_cmd(cmd, cwd, timeout=120):
+                calls.append((cmd, str(cwd)))
+                return _make_completed_result(0)
+
+            with patch.object(role, '_run_cmd', side_effect=mock_run_cmd):
+                role._push_feature_branches(
+                    sub_path, 'abc12345',
+                    has_sub_commits=True, has_main_commits=False,
+                )
+
+            # Should push submodule branch
+            cmds = [c[0] for c in calls]
+            assert ['git', 'push', 'origin', 'orch/abc12345'] in cmds
+            # Should use submodule path
+            assert any(str(cwd) == str(sub_path) for cmd, cwd in calls if cmd[0] == 'git')
+
+    def test_pushes_main_repo_branch_when_has_main_commits(self):
+        """When has_main_commits=True, pushes tooling/<task-id> to origin."""
+        with patch.dict('os.environ', _ENV):
+            role = self._make_role()
+            sub_path = Path('/fake/agents/test-orch/worktree/orchestrator')
+
+            calls = []
+
+            def mock_run_cmd(cmd, cwd, timeout=120):
+                calls.append((cmd, str(cwd)))
+                return _make_completed_result(0)
+
+            with patch.object(role, '_run_cmd', side_effect=mock_run_cmd):
+                role._push_feature_branches(
+                    sub_path, 'abc12345',
+                    has_sub_commits=False, has_main_commits=True,
+                )
+
+            # Should push tooling branch
+            cmds = [c[0] for c in calls]
+            assert ['git', 'push', 'origin', 'tooling/abc12345'] in cmds
+            # Should use worktree path (not submodule)
+            worktree = str(role.worktree)
+            assert any(str(cwd) == worktree for cmd, cwd in calls if 'tooling' in ' '.join(cmd))
+
+    def test_pushes_both_when_has_both_commits(self):
+        """When both flags are True, pushes both branches."""
+        with patch.dict('os.environ', _ENV):
+            role = self._make_role()
+            sub_path = Path('/fake/agents/test-orch/worktree/orchestrator')
+
+            calls = []
+
+            def mock_run_cmd(cmd, cwd, timeout=120):
+                calls.append((cmd, str(cwd)))
+                return _make_completed_result(0)
+
+            with patch.object(role, '_run_cmd', side_effect=mock_run_cmd):
+                role._push_feature_branches(
+                    sub_path, 'abc12345',
+                    has_sub_commits=True, has_main_commits=True,
+                )
+
+            cmds = [c[0] for c in calls]
+            assert ['git', 'push', 'origin', 'orch/abc12345'] in cmds
+            assert ['git', 'push', 'origin', 'tooling/abc12345'] in cmds
+
+    def test_push_failure_logs_warning_not_exception(self):
+        """If push fails, logs a warning but doesn't raise exception."""
+        with patch.dict('os.environ', _ENV):
+            role = self._make_role()
+            sub_path = Path('/fake/agents/test-orch/worktree/orchestrator')
+
+            def mock_run_cmd(cmd, cwd, timeout=120):
+                if 'push' in cmd:
+                    return _make_completed_result(1, stderr='push failed')
+                return _make_completed_result(0)
+
+            with patch.object(role, '_run_cmd', side_effect=mock_run_cmd):
+                # Should not raise
+                role._push_feature_branches(
+                    sub_path, 'abc12345',
+                    has_sub_commits=True, has_main_commits=False,
+                )
+
+    def test_skips_push_when_no_commits(self):
+        """When both flags are False, no push commands are run."""
+        with patch.dict('os.environ', _ENV):
+            role = self._make_role()
+            sub_path = Path('/fake/agents/test-orch/worktree/orchestrator')
+
+            mock_run = MagicMock(return_value=_make_completed_result(0))
+
+            with patch.object(role, '_run_cmd', mock_run):
+                role._push_feature_branches(
+                    sub_path, 'abc12345',
+                    has_sub_commits=False, has_main_commits=False,
+                )
+
+            mock_run.assert_not_called()
+
+
+class TestPushBeforeSubmitCompletion:
+    """Tests that _push_feature_branches is called before submit_completion when merge fails."""
+
+    def _standard_patches(self, role, mock_merge_result, sub_commits=2, main_commits=0):
+        """Return a context manager stack for the standard _run_with_task mocks."""
+        from contextlib import ExitStack
+
+        commit_values = [sub_commits, main_commits]
+        commit_iter = iter(commit_values)
+
+        stack = ExitStack()
+        stack.enter_context(patch.object(role, 'invoke_claude', return_value=(0, 'ok', '')))
+        stack.enter_context(patch.object(role, 'read_instructions', return_value=''))
+        stack.enter_context(patch.object(role, 'reset_tool_counter'))
+        stack.enter_context(patch.object(role, 'read_tool_count', return_value=5))
+        stack.enter_context(patch.object(role, '_run_cmd', return_value=_make_completed_result(0)))
+        stack.enter_context(patch.object(role, '_create_submodule_branch'))
+        stack.enter_context(patch.object(role, '_try_merge_to_main', return_value=mock_merge_result))
+        stack.enter_context(patch('orchestrator.git_utils.create_feature_branch', return_value='agent/test'))
+        stack.enter_context(patch('orchestrator.git_utils.get_head_ref', return_value='abc123'))
+        stack.enter_context(patch('orchestrator.git_utils.get_commit_count', side_effect=lambda *a, **kw: next(commit_iter)))
+        stack.enter_context(patch('orchestrator.queue_utils.save_task_notes'))
+        stack.enter_context(patch('orchestrator.queue_utils.get_task_notes', return_value=None))
+        stack.enter_context(patch('orchestrator.config.get_notes_dir', return_value=Path('/fake/notes')))
+        stack.enter_context(patch('orchestrator.config.is_db_enabled', return_value=True))
+        stack.enter_context(patch('orchestrator.db.get_task', return_value=None))
+        return stack
+
+    def test_merge_failure_pushes_branches(self):
+        """When _try_merge_to_main returns False, _push_feature_branches is called."""
+        with patch.dict('os.environ', _ENV):
+            role, task = _make_role_and_task()
+            mock_push = MagicMock()
+
+            with self._standard_patches(role, mock_merge_result=False, sub_commits=2, main_commits=1), \
+                 patch.object(role, '_push_feature_branches', mock_push), \
+                 patch('orchestrator.queue_utils.submit_completion'), \
+                 patch('orchestrator.queue_utils.accept_completion'):
+                role._run_with_task(task)
+
+            # Should call _push_feature_branches with correct args
+            mock_push.assert_called_once()
+            call_args = mock_push.call_args
+            assert 'test123' in str(call_args)  # task_id
+            assert call_args.kwargs.get('has_sub_commits') is True
+            assert call_args.kwargs.get('has_main_commits') is True
+
+    def test_merge_success_skips_push(self):
+        """When _try_merge_to_main returns True, _push_feature_branches is NOT called."""
+        with patch.dict('os.environ', _ENV):
+            role, task = _make_role_and_task()
+            mock_push = MagicMock()
+
+            with self._standard_patches(role, mock_merge_result=True, sub_commits=2), \
+                 patch.object(role, '_push_feature_branches', mock_push), \
+                 patch('orchestrator.queue_utils.accept_completion'):
+                role._run_with_task(task)
+
+            # Should NOT call _push_feature_branches (branches already merged)
+            mock_push.assert_not_called()
+
+    def test_push_happens_before_submit(self):
+        """_push_feature_branches must be called BEFORE submit_completion."""
+        with patch.dict('os.environ', _ENV):
+            role, task = _make_role_and_task()
+            call_order = []
+
+            def mock_push(*args, **kwargs):
+                call_order.append('push')
+
+            def mock_submit(*args, **kwargs):
+                call_order.append('submit')
+
+            with self._standard_patches(role, mock_merge_result=False, sub_commits=2), \
+                 patch.object(role, '_push_feature_branches', side_effect=mock_push), \
+                 patch('orchestrator.queue_utils.submit_completion', side_effect=mock_submit):
+                role._run_with_task(task)
+
+            # Push must happen before submit
+            assert call_order == ['push', 'submit']
+
+
 class TestTryMergeToMain:
     """Tests for the top-level _try_merge_to_main orchestrator."""
 

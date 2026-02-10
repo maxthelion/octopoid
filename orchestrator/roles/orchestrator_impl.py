@@ -419,6 +419,47 @@ class OrchestratorImplRole(ImplementerRole):
 
         return True
 
+    def _push_feature_branches(
+        self,
+        submodule_path: Path,
+        task_id: str,
+        has_sub_commits: bool,
+        has_main_commits: bool,
+    ) -> None:
+        """Push feature branches to origin when self-merge fails.
+
+        This ensures commits are available for review even if the agent's
+        worktree is deleted. Pushes:
+        - orch/<task-id> in submodule (if has_sub_commits)
+        - tooling/<task-id> in main repo (if has_main_commits)
+
+        Failures are logged but don't raise exceptions - reviewers can still
+        fetch from local worktree if needed.
+        """
+        # Push submodule branch
+        if has_sub_commits:
+            sub_branch = f"orch/{task_id}"
+            result = self._run_cmd(
+                ["git", "push", "origin", sub_branch],
+                cwd=submodule_path,
+            )
+            if result.returncode == 0:
+                self.log(f"Pushed {sub_branch} to origin")
+            else:
+                self.log(f"Warning: Failed to push {sub_branch}: {result.stderr.strip()}")
+
+        # Push main repo tooling branch
+        if has_main_commits:
+            tooling_branch = f"tooling/{task_id}"
+            result = self._run_cmd(
+                ["git", "push", "origin", tooling_branch],
+                cwd=self.worktree,
+            )
+            if result.returncode == 0:
+                self.log(f"Pushed {tooling_branch} to origin")
+            else:
+                self.log(f"Warning: Failed to push {tooling_branch}: {result.stderr.strip()}")
+
     def _find_venv_python(self, submodule_path: Path) -> Path | None:
         """Find the venv Python executable for running tests."""
         venv_python = submodule_path / "venv" / "bin" / "python"
@@ -616,6 +657,14 @@ class OrchestratorImplRole(ImplementerRole):
                         )
                         self.log(f"Self-merged to {merge_target} ({sub_commits} submodule + {main_commits} main repo commits)")
                     else:
+                        # Push feature branches to origin before submit_completion
+                        # so commits are available for review even if worktree is deleted
+                        self._push_feature_branches(
+                            submodule_path,
+                            task_id,
+                            has_sub_commits=sub_commits > 0,
+                            has_main_commits=main_commits > 0,
+                        )
                         submit_completion(
                             task_path,
                             commits_count=total_commits,
