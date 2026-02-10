@@ -1,7 +1,7 @@
 # Octopoid Architecture Reference
 
 **Status:** Living Document
-**Date:** 2026-02-08
+**Date:** 2026-02-09
 
 This document describes the architecture of Octopoid, the automated orchestration system for the Boxen project. It is grounded in the actual code as of the date above.
 
@@ -17,7 +17,7 @@ Octopoid comprises the following runtime components:
 |-----------|-------------|----------|
 | **Scheduler** | Single-process loop that evaluates and spawns agents on a cron-like tick | `orchestrator/orchestrator/scheduler.py` |
 | **Agent subprocesses** | Claude Code CLI sessions (or lightweight Python scripts) spawned by the scheduler | `orchestrator/orchestrator/roles/*.py` |
-| **SQLite database** | Source of truth for task queue state, agent records, and history | `.orchestrator/state.db` (WAL mode, schema v7) |
+| **SQLite database** | Source of truth for task queue state, agent records, and history | `.orchestrator/state.db` (WAL mode, schema v9, auto-migrating) |
 | **Queue directory tree** | Markdown task files mirroring DB state for human readability | `.orchestrator/shared/queue/{incoming,claimed,provisional,done,...}/` |
 | **Git worktrees** | Per-agent git worktrees for isolated code changes | `.orchestrator/agents/{name}/worktree/` |
 | **Review worktree** | Permanent shared worktree for human review and automated checks | `.orchestrator/agents/review-worktree/` |
@@ -164,10 +164,23 @@ CREATE TABLE tasks (
     checks TEXT,                        -- comma-separated check names
     check_results TEXT,                 -- JSON: {check_name: {status, summary, timestamp}}
     needs_rebase BOOLEAN DEFAULT FALSE,
+    last_rebase_attempt_at DATETIME,
+    staging_url TEXT,
     created_at DATETIME,
     updated_at DATETIME
 );
 ```
+
+### Auto-Migration
+
+The database auto-migrates on first access each process. `get_connection()` calls `ensure_schema_current()` which:
+
+1. Reads the current schema version from `schema_info` (using a raw connection to avoid recursion)
+2. Compares against the code's `SCHEMA_VERSION` constant
+3. If stale, runs `migrate_schema()` to apply incremental ALTER TABLE migrations
+4. Sets a module-level flag to skip subsequent checks within the same process
+
+This means `accept_completion()` and other DB functions work even when the running schema is behind the code — the first call auto-upgrades.
 
 ### Queue States
 
@@ -429,10 +442,10 @@ create_task(role='orchestrator_impl', branch='main')
 
 **Fallback approval script:** `.orchestrator/scripts/approve_orchestrator_task.py <task-id>`
 - Auto-detects agent branch
-- Cherry-picks to main in submodule
-- Pushes submodule
-- Updates submodule ref in main repo
-- Calls `accept_completion()` in DB
+- Rebases onto origin/main
+- **Baseline test comparison:** runs pytest on origin/main first, then on the rebased branch. Only NEW failures (not present in the baseline) block approval. Pre-existing failures are reported but tolerated.
+- Pushes submodule to origin/main via refspec
+- Calls `accept_in_db()` which uses `accept_completion()` with exception handling — all error paths use `update_task_queue()` so raw SQL is never needed
 
 ---
 
