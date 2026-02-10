@@ -18,7 +18,7 @@ from .config import get_orchestrator_dir
 _SENTINEL = object()
 
 # Schema version for migrations
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 # Module-level flag to avoid checking schema version on every connection.
 # Reset to False if tests need to re-trigger migration.
@@ -225,6 +225,33 @@ def init_schema() -> None:
             ON task_history(task_id)
         """)
 
+        # Drafts table - tracks lifecycle of draft documents
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS drafts (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                status TEXT DEFAULT 'idea',
+                author TEXT NOT NULL,
+                domain TEXT,
+                file_path TEXT,
+                created_at TEXT,
+                updated_at TEXT,
+                linked_task_id TEXT,
+                linked_project_id TEXT,
+                tags TEXT
+            )
+        """)
+
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_drafts_status ON drafts(status)
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_drafts_author ON drafts(author)
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_drafts_domain ON drafts(domain)
+        """)
+
         # Schema version tracking
         conn.execute("""
             CREATE TABLE IF NOT EXISTS schema_info (
@@ -377,6 +404,33 @@ def migrate_schema() -> bool:
                 conn.execute("ALTER TABLE tasks ADD COLUMN completed_at TEXT")
             except sqlite3.OperationalError:
                 pass  # Column already exists
+
+        # Migration from v10 to v11: Add drafts table
+        if current < 11:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS drafts (
+                    id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    status TEXT DEFAULT 'idea',
+                    author TEXT NOT NULL,
+                    domain TEXT,
+                    file_path TEXT,
+                    created_at TEXT,
+                    updated_at TEXT,
+                    linked_task_id TEXT,
+                    linked_project_id TEXT,
+                    tags TEXT
+                )
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_drafts_status ON drafts(status)
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_drafts_author ON drafts(author)
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_drafts_domain ON drafts(domain)
+            """)
 
         # Update schema version
         conn.execute(
@@ -1947,4 +2001,168 @@ def delete_project(project_id: str) -> bool:
     """
     with get_connection() as conn:
         cursor = conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+        return cursor.rowcount > 0
+
+
+# =============================================================================
+# Draft Operations
+# =============================================================================
+
+
+def create_draft(
+    draft_id: str,
+    title: str,
+    author: str,
+    file_path: str,
+    status: str = "idea",
+    domain: str | None = None,
+    tags: str | None = None,
+    linked_task_id: str | None = None,
+    linked_project_id: str | None = None,
+) -> dict[str, Any]:
+    """Create a new draft in the database.
+
+    Args:
+        draft_id: Unique draft identifier
+        title: Draft title
+        author: Author name (human, agent name, draft-processor, etc.)
+        file_path: Path to the draft markdown file
+        status: Draft status (idea, discussion, proposed, approved, archived, rejected)
+        domain: Optional domain (boxen or octopoid)
+        tags: Optional comma-separated tags
+        linked_task_id: Optional task ID if draft became a task
+        linked_project_id: Optional project ID if draft became a project
+
+    Returns:
+        Created draft as dictionary
+    """
+    now = datetime.now().isoformat()
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO drafts (
+                id, title, status, author, domain, file_path,
+                created_at, updated_at, linked_task_id, linked_project_id, tags
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (draft_id, title, status, author, domain, file_path, now, now,
+             linked_task_id, linked_project_id, tags),
+        )
+
+    return get_draft(draft_id)
+
+
+def get_draft(draft_id: str) -> dict[str, Any] | None:
+    """Get a draft by ID.
+
+    Args:
+        draft_id: Draft identifier
+
+    Returns:
+        Draft as dictionary or None if not found
+    """
+    with get_connection() as conn:
+        cursor = conn.execute("SELECT * FROM drafts WHERE id = ?", (draft_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+
+def list_drafts(
+    status: str | None = None,
+    author: str | None = None,
+    domain: str | None = None,
+) -> list[dict[str, Any]]:
+    """List drafts with optional filters.
+
+    Args:
+        status: Filter by status (idea, discussion, proposed, approved, archived, rejected)
+        author: Filter by author
+        domain: Filter by domain (boxen, octopoid)
+
+    Returns:
+        List of draft dictionaries sorted by created_at descending
+    """
+    conditions = []
+    params = []
+
+    if status:
+        conditions.append("status = ?")
+        params.append(status)
+
+    if author:
+        conditions.append("author = ?")
+        params.append(author)
+
+    if domain:
+        conditions.append("domain = ?")
+        params.append(domain)
+
+    where_clause = " AND ".join(conditions) if conditions else "1=1"
+
+    with get_connection() as conn:
+        cursor = conn.execute(
+            f"""
+            SELECT * FROM drafts
+            WHERE {where_clause}
+            ORDER BY created_at DESC
+            """,
+            params,
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def update_draft(draft_id: str, **fields) -> dict[str, Any] | None:
+    """Update draft fields.
+
+    Args:
+        draft_id: Draft identifier
+        **fields: Fields to update
+
+    Returns:
+        Updated draft or None if not found
+    """
+    if not fields:
+        return get_draft(draft_id)
+
+    # Always update updated_at
+    fields["updated_at"] = datetime.now().isoformat()
+
+    set_clause = ", ".join(f"{k} = ?" for k in fields.keys())
+    values = list(fields.values())
+    values.append(draft_id)
+
+    with get_connection() as conn:
+        conn.execute(
+            f"UPDATE drafts SET {set_clause} WHERE id = ?",
+            values,
+        )
+
+    return get_draft(draft_id)
+
+
+def update_draft_status(draft_id: str, status: str) -> dict[str, Any] | None:
+    """Update a draft's status.
+
+    Args:
+        draft_id: Draft identifier
+        status: New status (idea, discussion, proposed, approved, archived, rejected)
+
+    Returns:
+        Updated draft or None if not found
+    """
+    return update_draft(draft_id, status=status)
+
+
+def delete_draft(draft_id: str) -> bool:
+    """Delete a draft from the database.
+
+    Args:
+        draft_id: Draft identifier
+
+    Returns:
+        True if deleted, False if not found
+    """
+    with get_connection() as conn:
+        cursor = conn.execute("DELETE FROM drafts WHERE id = ?", (draft_id,))
         return cursor.rowcount > 0
