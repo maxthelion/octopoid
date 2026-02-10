@@ -1587,6 +1587,122 @@ def _count_commits_behind(parent_project: Path, branch: str) -> int | None:
         return None
 
 
+# Track last queue health check time (global state)
+_last_queue_health_check: datetime | None = None
+QUEUE_HEALTH_CHECK_INTERVAL_SECONDS = 1800  # 30 minutes
+
+
+def _check_queue_health_throttled() -> None:
+    """Check queue health with throttling to avoid running too frequently."""
+    global _last_queue_health_check
+
+    now = datetime.now()
+
+    # Check if enough time has passed since last check
+    if _last_queue_health_check is not None:
+        elapsed = (now - _last_queue_health_check).total_seconds()
+        if elapsed < QUEUE_HEALTH_CHECK_INTERVAL_SECONDS:
+            return  # Not time yet
+
+    # Update last check time
+    _last_queue_health_check = now
+
+    # Run the actual check
+    check_queue_health()
+
+
+def check_queue_health() -> None:
+    """Check queue health and invoke queue-manager agent if issues found.
+
+    Runs the diagnostic script and spawns queue-manager agent if any issues
+    are detected. This is called periodically from the scheduler (every 30 minutes).
+    """
+    # Path to diagnostic script
+    parent_project = find_parent_project()
+    script_path = parent_project / ".orchestrator" / "scripts" / "diagnose_queue_health.py"
+
+    if not script_path.exists():
+        debug_log("Queue health diagnostic script not found, skipping")
+        return
+
+    # Run diagnostic script with JSON output
+    try:
+        result = subprocess.run(
+            [sys.executable, str(script_path), "--json"],
+            cwd=parent_project,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        if result.returncode == 0:
+            # No issues found
+            debug_log("Queue health check: no issues found")
+            return
+
+        # Parse diagnostic output
+        import json
+        try:
+            diagnostic_data = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            debug_log(f"Failed to parse diagnostic output: {result.stdout[:200]}")
+            return
+
+        # Count issues
+        mismatches = len(diagnostic_data.get("file_db_mismatches", []))
+        orphans = len(diagnostic_data.get("orphan_files", []))
+        zombies = len(diagnostic_data.get("zombie_claims", []))
+
+        total_issues = mismatches + orphans + zombies
+
+        if total_issues == 0:
+            debug_log("Queue health check: no issues found")
+            return
+
+        # Issues found - log summary
+        print(f"[{datetime.now().isoformat()}] Queue health issues detected:")
+        print(f"  File-DB mismatches: {mismatches}")
+        print(f"  Orphan files: {orphans}")
+        print(f"  Zombie claims: {zombies}")
+        debug_log(f"Queue health issues: {mismatches} mismatches, {orphans} orphans, {zombies} zombies")
+
+        # Check if queue-manager agent is configured and ready to run
+        agents = get_agents()
+        queue_manager = next((a for a in agents if a.get("role") == "queue_manager"), None)
+
+        if not queue_manager:
+            debug_log("No queue-manager agent configured")
+            return
+
+        if queue_manager.get("paused", False):
+            debug_log("Queue-manager agent is paused, not invoking")
+            print(f"  (queue-manager agent is paused - issues not auto-reported)")
+            return
+
+        # Trigger queue-manager agent by setting environment variable
+        # The agent's prompt will check this variable to know why it was triggered
+        agent_name = queue_manager.get("name", "queue-manager")
+        print(f"  Triggering {agent_name} to diagnose and report issues")
+        debug_log(f"Triggering {agent_name} with {total_issues} issues")
+
+        # Write diagnostic data to a temp file for the agent to read
+        notes_dir = get_orchestrator_dir() / "shared" / "notes"
+        notes_dir.mkdir(parents=True, exist_ok=True)
+        diagnostic_file = notes_dir / f"queue-health-diagnostic-{datetime.now().strftime('%Y%m%d-%H%M%S')}.json"
+        diagnostic_file.write_text(json.dumps(diagnostic_data, indent=2))
+
+        debug_log(f"Wrote diagnostic data to {diagnostic_file}")
+
+        # The queue-manager agent will read this file and generate a report
+        # For now, we just log that issues were found. In a future phase, we
+        # could automatically spawn the agent here.
+
+    except subprocess.TimeoutExpired:
+        debug_log("Queue health diagnostic timed out")
+    except Exception as e:
+        debug_log(f"Queue health check failed: {e}")
+
+
 def run_scheduler() -> None:
     """Main scheduler loop - evaluate and spawn agents."""
     print(f"[{datetime.now().isoformat()}] Scheduler starting")
@@ -1600,6 +1716,9 @@ def run_scheduler() -> None:
 
     # Check for finished agents first
     check_and_update_finished_agents()
+
+    # Check queue health (runs every 30 minutes)
+    _check_queue_health_throttled()
 
     # Process auto-accept tasks in provisional queue
     process_auto_accept_tasks()
