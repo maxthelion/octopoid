@@ -389,6 +389,15 @@ def claim_task(
         from . import db
         db_task = db.claim_task(role_filter=role_filter, agent_name=agent_name, from_queue=from_queue)
         if db_task:
+            # Log the claim
+            from .task_logger import TaskLogger
+            logger = TaskLogger(db_task["id"])
+            logger.log_claimed(
+                claimed_by=agent_name or "unknown",
+                attempt=db_task.get("attempt_count", 1),
+                from_queue=from_queue,
+            )
+
             # Also update the file with claim info
             file_path = Path(db_task["file_path"])
             if file_path.exists() and agent_name:
@@ -436,6 +445,15 @@ def claim_task(
 
                 # Atomic rename - will fail if file was already claimed
                 os.rename(source, dest)
+
+                # Log the claim
+                from .task_logger import TaskLogger
+                logger = TaskLogger(task["id"])
+                logger.log_claimed(
+                    claimed_by=agent_name or "unknown",
+                    attempt=1,  # File mode doesn't track attempt count
+                    from_queue=from_queue,
+                )
 
                 # Add claim metadata to file
                 if agent_name:
@@ -556,6 +574,11 @@ def submit_completion(
     # Update DB to provisional
     db.submit_completion(task_id, commits_count=commits_count, turns_used=turns_used)
 
+    # Log the submission
+    from .task_logger import TaskLogger
+    logger = TaskLogger(task_id)
+    logger.log_submitted(commits=commits_count, turns=turns_used)
+
     # Move file to provisional directory
     provisional_dir = get_queue_subdir("provisional")
     dest = provisional_dir / task_path.name
@@ -607,6 +630,16 @@ def accept_completion(
             task_id = db_task["id"]
             db.accept_completion(task_id, accepted_by=accepted_by)
             project_id = db_task.get("project_id")
+
+    # Log acceptance (extract task_id if we don't have it yet)
+    if not task_id:
+        match = re.match(r"TASK-(.+)\.md", task_path.name)
+        if match:
+            task_id = match.group(1)
+    if task_id:
+        from .task_logger import TaskLogger
+        logger = TaskLogger(task_id)
+        logger.log_accepted(accepted_by=accepted_by)
 
     done_dir = get_queue_subdir("done")
     dest = done_dir / task_path.name
@@ -680,6 +713,16 @@ def reject_completion(
             updated = db.reject_completion(task_id, reason=reason, rejected_by=accepted_by)
             if updated:
                 attempt_count = updated.get("attempt_count", 0)
+
+    # Log rejection (extract task_id if we don't have it yet)
+    if not task_id:
+        match = re.match(r"TASK-(.+)\.md", task_path.name)
+        if match:
+            task_id = match.group(1)
+    if task_id:
+        from .task_logger import TaskLogger
+        logger = TaskLogger(task_id)
+        logger.log_rejected(reason=reason, rejected_by=accepted_by)
 
     incoming_dir = get_queue_subdir("incoming")
     dest = incoming_dir / task_path.name
@@ -967,6 +1010,16 @@ def fail_task(task_path: Path | str, error: str) -> Path:
         db_task = db.get_task_by_path(str(task_path))
         if db_task:
             task_id = db_task["id"]
+
+    # Log failure (extract task_id if we don't have it yet)
+    if not task_id:
+        match = re.match(r"TASK-(.+)\.md", task_path.name)
+        if match:
+            task_id = match.group(1)
+    if task_id:
+        from .task_logger import TaskLogger
+        logger = TaskLogger(task_id)
+        logger.log_failed(error=error)
 
     # Append error info (truncate to avoid bloating the task file —
     # the full error is already in the agent stderr log)
@@ -1373,6 +1426,16 @@ CREATED_BY: {created_by}
     task_path = queue_dir / filename
 
     task_path.write_text(content)
+
+    # Log task creation
+    from .task_logger import TaskLogger
+    logger = TaskLogger(task_id)
+    logger.log_created(
+        created_by=created_by,
+        priority=priority,
+        role=role,
+        queue=queue,
+    )
 
     # Also create in DB if enabled
     if is_db_enabled():
