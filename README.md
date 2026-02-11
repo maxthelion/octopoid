@@ -1,774 +1,474 @@
 # Octopoid
 
-A file-driven orchestrator that runs Claude Code agents on a schedule. Designed as a self-contained git submodule.
+A distributed AI orchestrator for software development. Queue work locally, execute on VMs, coordinate across multiple machines.
 
-## What to expect
+## What is Octopoid?
 
-**Out of the box**, add octopoid to your project as a submodule, point it at a directory of tasks, and start it running on a schedule. Implementer agents will pull tasks from the queue when there's capacity, work on them in isolated git worktrees, and open PRs. Merging those PRs frees up space for the next piece of work. Backpressure controls keep the system from getting ahead of itself — you'll never come back to a pile of stale PRs.
+Octopoid manages autonomous Claude Code agents that work on tasks in parallel. It supports two versions:
 
-**Extend it** to match how you want to work:
+- **v2.0 (New)** - TypeScript client-server architecture with offline mode, distributed orchestration, and SDKs
+- **v1.x (Legacy)** - Python orchestrator as git submodule
 
-- **Proposers** are specialist agents that analyse your codebase from different angles — test coverage, architecture, features — and put suggestions into a proposals directory. This keeps the queue filled with useful work without you having to write every task by hand.
-- **A curator** triages proposals and decides what's worth doing now. It scores, promotes, rejects with feedback, or defers — so speculative work doesn't pile up and proposers learn what matters.
-- **Plan reader** takes rough ideas, plans, and notes you've written down and turns them into structured proposals. Instead of ideas sitting in a doc going stale, they get evaluated and either acted on or explicitly set aside.
-- **Gatekeepers** review PRs before you see them, checking for lint issues, test failures, style problems, and security concerns. The work that reaches you for review is as polished as the system can make it.
+This README covers **v2.0**. For v1.x documentation, see [README-v1.md](./README-v1.md).
 
-The goal is to stay at the level of direction and priorities while the orchestrator handles coordination and execution.
-
-## How it works
-
-Tasks are stored as markdown files in the filesystem. Each task has a title, context, acceptance criteria, and metadata like priority and role. Task state — who's claimed what, what's done, what's blocked — is tracked in SQLite, so operations are atomic and dependencies are enforced.
-
-A scheduler runs on a timer (typically every minute). Each tick, it evaluates which agents are due to run based on their configured intervals and whether conditions are met — for example, whether there are tasks available to claim or PRs to review. Agents that are ready get started; the rest wait.
-
-Each agent works in its own git worktree, branching off main by default. When multiple tasks are grouped into a project, they can branch off a shared feature branch instead. Either way, agents work concurrently without treading on each other. When an agent finishes, it commits its changes and opens a PR. Merging the PR completes the cycle and frees capacity for more work.
-
-All configuration lives in a single `agents.yaml` file. Backpressure limits control how many tasks can be in-flight and how many PRs can be open at once, so the system self-regulates and doesn't produce more work than you can review.
-
-## Overview
-
-This orchestrator manages multiple autonomous Claude Code agents that work on tasks in parallel. It supports two models:
-
-### Task Model (v1)
-The PM explores the codebase and creates tasks directly.
+## v2.0 Architecture
 
 ```
-PM explores codebase → Creates tasks → Executors implement
+┌─────────────────────────────────────────────────────────────┐
+│                    Central Server                            │
+│  ┌────────────────────────────────────────────────────────┐ │
+│  │  REST API (Hono + Cloudflare Workers)                  │ │
+│  │  - Task operations (claim, submit, accept, reject)     │ │
+│  │  - Orchestrator registration & heartbeat               │ │
+│  │  - State machine enforcement                           │ │
+│  └────────────────────────────────────────────────────────┘ │
+│  ┌────────────────────────────────────────────────────────┐ │
+│  │  D1 Database (SQLite at the edge)                      │ │
+│  │  - Tasks, Projects, Agents, Orchestrators              │ │
+│  │  - Task history and audit trail                        │ │
+│  └────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────┘
+                            ▲
+                            │ HTTPS/REST
+            ┌───────────────┴───────────────┐
+            │                               │
+┌───────────▼──────────┐        ┌──────────▼───────────┐
+│  Orchestrator Client │        │  Orchestrator Client  │
+│  (Machine 1)         │        │  (Machine 2)          │
+│  - Scheduler         │        │  - Scheduler          │
+│  - Agent Roles       │        │  - Agent Roles        │
+│  - Git Worktrees     │        │  - Git Worktrees      │
+└─────────────────────┘        └──────────────────────┘
 ```
 
-### Proposal Model (v2)
-Specialized proposers suggest work, a curator promotes the best proposals to tasks.
+## Quick Start (v2.0)
 
-```
-Proposers (specialists) → Proposals → Curator → Tasks → Executors
-```
-
-## Agent Roles
-
-**Task Model:**
-- **Product Manager** - Analyzes codebase, creates tasks directly
-
-**Proposal Model:**
-- **Proposers** - Specialists who propose work in their focus area
-- **Curator** - Evaluates proposals, promotes to tasks, rejects with feedback
-
-**Execution Layer (both models):**
-- **Implementer** - Claims tasks, implements features, creates PRs
-- **Tester** - Runs tests and adds test coverage
-- **Reviewer** - Reviews code for bugs and security issues
-
-## Quick Start
+### Option 1: Local Mode (No Server)
 
 ```bash
-cd your-project
-git submodule add https://github.com/maxthelion/octopoid.git orchestrator
+# Install dependencies
+npm install -g pnpm
+pnpm install
+
+# Build packages
+cd packages/shared && pnpm build && cd ../..
+cd packages/client && pnpm build && cd ../..
+
+# Link client globally
+cd packages/client && npm link && cd ../..
+
+# Initialize Octopoid
+octopoid init --local
+
+# Start orchestrator
+octopoid start
 ```
 
-Then ask Claude to read the orchestrator README and help you set it up.
+### Option 2: Client-Server Mode
+
+**Server (Cloudflare Workers):**
+
+```bash
+cd packages/server
+
+# Install wrangler
+npm install -g wrangler
+
+# Create database
+wrangler d1 create octopoid-db
+
+# Run migrations
+wrangler d1 migrations apply octopoid-db
+
+# Deploy to Cloudflare
+wrangler deploy
+
+# Or run locally
+wrangler dev
+```
+
+**Client:**
+
+```bash
+cd packages/client
+
+# Build and link
+pnpm build
+npm link
+
+# Initialize with server URL
+octopoid init \
+  --server https://octopoid-server.username.workers.dev \
+  --cluster prod \
+  --machine-id my-machine
+
+# Start orchestrator
+octopoid start --debug
+```
+
+### Automated Setup
+
+We provide a setup script for local development:
+
+```bash
+./setup-dev.sh
+```
+
+This installs dependencies and builds all packages.
+
+## Use Cases
+
+### 1. Queue Locally, Execute on VM
+
+```bash
+# On laptop: Create tasks
+octopoid enqueue "Add user authentication" --role implement --priority P1
+
+# On VM with GPU: Run orchestrator
+ssh vm
+octopoid start --daemon
+```
+
+### 2. Multiple Computers Without Conflicts
+
+```bash
+# Mac Studio
+octopoid init --cluster home --machine-id mac-studio
+octopoid start
+
+# Linux Workstation (same cluster)
+octopoid init --cluster home --machine-id linux-ws
+octopoid start
+
+# Server coordinates - no conflicts!
+```
+
+### 3. Offline Mode
+
+Works even when server is down:
+
+```bash
+octopoid enqueue "Fix bug" --role implement
+# ✓ Task created locally, will sync when server available
+
+octopoid status
+# ⚠️  Working offline
+# Pending sync: 3 operations
+```
+
+## CLI Commands
+
+```bash
+# Initialize project
+octopoid init [--server URL] [--cluster NAME] [--local]
+
+# Start orchestrator
+octopoid start [--daemon] [--debug] [--once]
+
+# Stop orchestrator
+octopoid stop
+
+# Check status
+octopoid status
+
+# Create task
+octopoid enqueue <description> [--role ROLE] [--priority P0-P3]
+
+# List tasks
+octopoid list [--queue QUEUE] [--priority PRIORITY] [--role ROLE]
+
+# Validate setup
+octopoid validate
+```
 
 ## Configuration
 
-### Claude Instructions
-
-The orchestrator uses your project's existing `claude.md` file. Add these lines to it:
-
-```markdown
-If .agent-instructions.md exists in this directory, read and follow those instructions.
-
-Check .orchestrator/messages/ for any agent messages and inform the user of warnings or questions.
-```
-
-When agents run, the scheduler generates a `.agent-instructions.md` file in each agent's worktree containing:
-- Agent identity and role
-- Current task details
-- Role-specific constraints
-
-This file is gitignored and regenerated each run. Your existing `claude.md` project instructions apply to all agents automatically.
-
-### agents.yaml
+After running `octopoid init`, configuration is stored in `.octopoid/config.yaml`:
 
 ```yaml
-# Queue limits for backpressure control
-queue_limits:
-  max_incoming: 20
-  max_claimed: 5
-  max_open_prs: 10
+# Mode: local or remote
+mode: remote
 
-# Agent definitions
-agents:
-  - name: pm-agent
-    role: product_manager
-    interval_seconds: 600
-
-  - name: impl-agent-1
-    role: implementer
-    interval_seconds: 180
-
-  - name: test-agent
-    role: tester
-    interval_seconds: 120
-
-  - name: review-agent
-    role: reviewer
-    interval_seconds: 300
-```
-
-### global-instructions.md (Optional)
-
-If you need agent-specific instructions beyond your `claude.md`, you can add them to `.orchestrator/global-instructions.md`. Most projects won't need this.
-
-### Flows (Declarative State Machines)
-
-Flows define how tasks move through the system. They're YAML files in `.octopoid/flows/` that specify transitions, conditions, and actions.
-
-`octopoid init` generates default flows:
-- **default.yaml** - Standard implementation flow (incoming → claimed → provisional → done)
-- **project.yaml** - Multi-task project flow with shared branch
-
-See [docs/flows.md](docs/flows.md) for full documentation on creating custom flows, conditions, and task overrides.
-
-## Proposal Model (v2)
-
-The proposal model separates concerns into three layers:
-
-### 1. Proposal Layer - Specialists Propose Work
-
-Proposers are specialized agents with a specific focus area:
-
-| Proposer | Focus | Typical Proposals |
-|----------|-------|-------------------|
-| test-checker | Test quality | Fix flaky tests, add coverage |
-| architect | Code structure | Refactoring, simplification |
-| app-designer | Features | New functionality, UX |
-| plan-reader | Project plans | Tasks from documented plans |
-
-Configure proposers in `agents.yaml`:
-
-```yaml
-- name: test-checker
-  role: proposer
-  focus: test_quality
-  interval_seconds: 86400  # Daily
-```
-
-Each proposer has independent backpressure:
-
-```yaml
-proposal_limits:
-  test-checker:
-    max_active: 5
-    max_per_run: 2
-```
-
-### 2. Curation Layer - PM Evaluates Proposals
-
-The curator (PM) does NOT explore the codebase directly. Instead:
-
-- **Scores** proposals based on configurable weights
-- **Promotes** good proposals to the task queue
-- **Rejects** proposals with feedback (so proposers can learn)
-- **Defers** proposals that aren't right for now
-- **Escalates** conflicts to the project owner
-
-Voice weights control proposer trust levels:
-
-```yaml
-voice_weights:
-  plan-reader: 1.5    # Executing plans is priority
-  architect: 1.2      # Simplification multiplies velocity
-  test-checker: 1.0   # Important but often not urgent
-  app-designer: 0.8   # Features after stability
-```
-
-### 3. Execution Layer - Same as Task Model
-
-Implementers, testers, and reviewers work the same way in both models.
-
-### Proposal Lifecycle
-
-```
-┌─────────┐     ┌─────────┐     ┌─────────┐
-│ active  │────▶│promoted │────▶│  task   │
-└─────────┘     └─────────┘     └─────────┘
-     │
-     ├─────────▶ deferred (revisit later)
-     │
-     └─────────▶ rejected (with feedback)
-```
-
-### Rejection Feedback Loop
-
-When the curator rejects a proposal:
-1. Rejection includes written feedback
-2. Before proposing again, proposers review their rejections
-3. This prevents spamming the same bad ideas
-
-### Conflict Handling
-
-When proposals conflict:
-1. Curator does NOT resolve autonomously
-2. Both proposals are deferred
-3. A message is sent to the project owner with trade-offs
-4. Human decides which approach to take
-
-### Proposal Format
-
-```markdown
-# Proposal: {Title}
-
-**ID:** PROP-{uuid8}
-**Proposer:** test-checker
-**Category:** test | refactor | feature | debt | plan-task
-**Complexity:** S | M | L | XL
-**Created:** {ISO8601}
-
-## Summary
-One-line description.
-
-## Rationale
-Why this matters.
-
-## Acceptance Criteria
-- [ ] Criterion 1
-- [ ] Criterion 2
-
-## Relevant Files
-- path/to/file.ts
-```
-
-### Enabling the Proposal Model
-
-Set `model: proposal` in `agents.yaml`:
-
-```yaml
-model: proposal
-
-proposal_limits:
-  test-checker:
-    max_active: 5
-    max_per_run: 2
-
-voice_weights:
-  plan-reader: 1.5
-  architect: 1.2
-
-agents:
-  - name: test-checker
-    role: proposer
-    focus: test_quality
-    interval_seconds: 86400
-
-  - name: curator
-    role: curator
-    interval_seconds: 600
-
-  - name: impl-agent-1
-    role: implementer
-    interval_seconds: 180
-```
-
-### Proposer Prompts
-
-Create domain-specific prompts in `.orchestrator/prompts/`:
-
-```
-.orchestrator/prompts/
-├── test-checker.md    # What test-checker should look for
-├── architect.md       # What architect should look for
-└── curator.md         # How curator should evaluate
-```
-
-Example templates are in `orchestrator/templates/`.
-
-## Gatekeeper System (Optional)
-
-Gatekeepers are an **optional** add-on that automatically review PRs before they're ready for human review. You can run the orchestrator without gatekeepers - they're useful if you want automated quality checks on PRs created by agents.
-
-**When to use gatekeepers:**
-- You want automated lint/test/style checks on agent PRs
-- You want to catch issues before human review
-- You have specific quality standards to enforce
-
-**When to skip gatekeepers:**
-- You prefer to review all PRs manually
-- Your CI/CD already handles these checks
-- You're just getting started (add them later)
-
-### Overview
-
-```
-PR opened → Coordinator detects → Gatekeepers review → Pass/Fail
-                                        ↓
-                              Failed: Create fix task with feedback
-                              Passed: Mark ready for human review
-```
-
-### Gatekeeper Roles
-
-| Role | Focus | What It Checks |
-|------|-------|----------------|
-| `lint` | Code quality | Lint errors, type issues, formatting |
-| `tests` | Test coverage | Test pass/fail, coverage, test quality |
-| `style` | Conventions | Naming, organization, documentation |
-| `architecture` | Structure | Boundaries, patterns, dependencies |
-| `security` | Vulnerabilities | OWASP Top 10, secrets, auth |
-
-### Configuration
-
-Gatekeepers are **disabled by default**. To enable them, add to `agents.yaml`:
-
-```yaml
-gatekeeper:
+# Server configuration (remote mode)
+server:
   enabled: true
-  auto_approve: false  # Auto-approve if all checks pass?
-  required_checks: [lint, tests]
-  optional_checks: [style, architecture]
+  url: https://octopoid-server.username.workers.dev
+  cluster: production
+  machine_id: my-machine
+  api_key: your-api-key  # Optional
 
+# Agent configuration
 agents:
-  - name: gatekeeper-coordinator
-    role: gatekeeper_coordinator
+  max_concurrent: 3
+
+# Repository
+repo:
+  path: /path/to/project
+  main_branch: main
+```
+
+### Agent Definitions
+
+Configure agents in `.octopoid/agents.yaml`:
+
+```yaml
+agents:
+  - name: implementer-1
+    role: implement
     interval_seconds: 300
+    model: claude-sonnet-4-20250514
+    max_turns: 50
 
-  - name: lint-checker
-    role: gatekeeper
-    focus: lint
+  - name: breakdown-agent
+    role: breakdown
     interval_seconds: 600
+    model: claude-sonnet-4-20250514
 
-  - name: test-checker
-    role: gatekeeper
-    focus: tests
-    interval_seconds: 600
+  - name: gatekeeper-1
+    role: review
+    interval_seconds: 300
+    model: claude-opus-4-20250514
 ```
 
-### Gatekeeper Prompts
+## Custom Scripts (SDKs)
 
-Create domain-specific prompts in `.orchestrator/prompts/`:
-
-```
-.orchestrator/prompts/
-├── lint.md          # Lint gatekeeper guidelines
-├── tests.md         # Test gatekeeper guidelines
-├── architecture.md  # Architecture gatekeeper guidelines
-└── security.md      # Security gatekeeper guidelines
-```
-
-Templates are provided in `orchestrator/templates/gatekeeper-*.md`.
-
-### Blocking vs Passing
-
-When a gatekeeper check fails:
-1. A fix task is created with detailed feedback
-2. The task includes specific issues and file:line references
-3. The PR is marked as blocked
-4. Once fixes are pushed, checks re-run automatically
-
-When all checks pass:
-1. PR is marked as approved for human review
-2. A comment is added summarizing check results
-3. Human reviewers can focus on higher-level concerns
-
-## Running the Scheduler
-
-### Manual Run
+### Node.js/TypeScript SDK
 
 ```bash
-cd your-project
-python orchestrator/orchestrator/scheduler.py
+npm install octopoid-sdk
 ```
 
-### Debug Mode
+```typescript
+import { OctopoidSDK } from 'octopoid-sdk'
 
-Enable debug logging to troubleshoot issues:
+const sdk = new OctopoidSDK({
+  serverUrl: 'https://octopoid-server.username.workers.dev',
+  apiKey: process.env.OCTOPOID_API_KEY
+})
+
+// Create a task
+const task = await sdk.tasks.create({
+  id: 'my-task-123',
+  file_path: 'tasks/incoming/TASK-my-task-123.md',
+  queue: 'incoming',
+  priority: 'P1',
+  role: 'implement'
+})
+
+// List tasks
+const tasks = await sdk.tasks.list({ queue: 'incoming' })
+
+// Auto-approve tasks
+for (const task of tasks) {
+  if (task.role === 'docs' && task.commits_count > 0) {
+    await sdk.tasks.accept(task.id, { accepted_by: 'auto-approve' })
+  }
+}
+```
+
+See [packages/sdk/README.md](./packages/sdk/README.md) for full API reference.
+
+### Python SDK
 
 ```bash
-python orchestrator/orchestrator/scheduler.py --debug
+pip install octopoid-sdk
 ```
-
-This creates detailed logs in `.orchestrator/logs/`:
-- `scheduler-YYYY-MM-DD.log` - Scheduler decisions and agent spawning
-- `{agent-name}-YYYY-MM-DD.log` - Per-agent activity logs
-
-Debug logs include:
-- Agent evaluation decisions (why agents were/weren't run)
-- State changes and lock acquisitions
-- Claude invocations with prompt sizes
-- Environment configuration
-
-Logs are useful for:
-- Understanding why an agent didn't run
-- Debugging agent failures
-- Tracking agent activity over time
-
-### Cron (Every Minute)
-
-```bash
-crontab -e
-```
-
-Add:
-```
-* * * * * cd /path/to/project && /path/to/venv/bin/python orchestrator/orchestrator/scheduler.py >> /var/log/orchestrator.log 2>&1
-```
-
-### launchd (macOS)
-
-Create `~/Library/LaunchAgents/com.orchestrator.scheduler.plist`:
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.orchestrator.scheduler</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>/path/to/venv/bin/python</string>
-        <string>/path/to/project/orchestrator/orchestrator/scheduler.py</string>
-    </array>
-    <key>WorkingDirectory</key>
-    <string>/path/to/project</string>
-    <key>StartInterval</key>
-    <integer>60</integer>
-    <key>StandardOutPath</key>
-    <string>/var/log/orchestrator.log</string>
-    <key>StandardErrorPath</key>
-    <string>/var/log/orchestrator.log</string>
-</dict>
-</plist>
-```
-
-Load with:
-```bash
-launchctl load ~/Library/LaunchAgents/com.orchestrator.scheduler.plist
-```
-
-## Management Commands
-
-After initialization, these commands are available in Claude Code:
-
-| Command | Description |
-|---------|-------------|
-| `/enqueue` | Create a new task |
-| `/queue-status` | Show queue state |
-| `/agent-status` | Show agent states |
-| `/add-agent` | Add a new agent |
-| `/pause-agent` | Pause/resume an agent |
-| `/pause-task` | Pause a task to prevent claiming |
-| `/unpause-task` | Resume a paused task |
-| `/retry-failed` | Retry failed tasks |
-| `/tune-backpressure` | Adjust queue limits |
-| `/tune-intervals` | Adjust agent intervals |
-
-## Task Format
-
-Tasks are markdown files in the queue:
-
-```markdown
-# [TASK-a1b2c3d4] Add input validation
-
-ROLE: implement
-PRIORITY: P1
-BRANCH: main
-CREATED: 2024-01-15T10:30:00Z
-CREATED_BY: pm-agent
-
-## Context
-Background and motivation...
-
-## Acceptance Criteria
-- [ ] Criterion 1
-- [ ] Criterion 2
-```
-
-## Directory Structure
-
-### Orchestrator (Submodule)
-
-```
-orchestrator/
-├── orchestrator/           # Python package
-│   ├── __init__.py
-│   ├── init.py             # Setup script
-│   ├── scheduler.py        # Main scheduler
-│   ├── config.py           # Configuration
-│   ├── lock_utils.py       # File locking
-│   ├── state_utils.py      # State management
-│   ├── git_utils.py        # Git operations
-│   ├── queue_utils.py      # Task queue operations
-│   ├── proposal_utils.py   # Proposal queue operations
-│   ├── port_utils.py       # Port allocation
-│   ├── message_utils.py    # Agent-to-human messaging
-│   └── roles/              # Agent roles
-│       ├── base.py
-│       ├── product_manager.py  # Task model
-│       ├── proposer.py         # Proposal model
-│       ├── curator.py          # Proposal model
-│       ├── implementer.py
-│       ├── tester.py
-│       └── reviewer.py
-├── commands/
-│   ├── agent/              # Skills for agents
-│   └── management/         # Skills for humans
-├── templates/
-│   ├── agent_instructions.md.tmpl
-│   ├── proposer-test-checker.md
-│   ├── proposer-architect.md
-│   └── curator.md
-├── setup.py
-├── requirements.txt
-├── README.md
-└── octopoid-dash.py      # Dashboard UI
-```
-
-### Parent Project
-
-```
-your-project/
-├── claude.md               # Your existing project instructions
-├── orchestrator/           # Submodule
-├── .orchestrator/          # Runtime directory
-│   ├── agents.yaml         # Agent configuration (committed)
-│   ├── commands/           # Custom skill overrides (committed)
-│   ├── prompts/            # Proposer prompts (committed, proposal model)
-│   │   ├── test-checker.md
-│   │   ├── architect.md
-│   │   └── curator.md
-│   ├── agents/             # Runtime state (gitignored)
-│   │   └── <agent>/
-│   │       ├── state.json
-│   │       ├── lock
-│   │       └── worktree/
-│   │           └── .agent-instructions.md  # Generated (gitignored)
-│   ├── messages/           # Agent messages (gitignored)
-│   │   └── warning-20240115-143000-test-failures.md
-│   └── shared/
-│       ├── proposals/      # Proposal queue (proposal model)
-│       │   ├── active/
-│       │   ├── promoted/
-│       │   ├── deferred/
-│       │   └── rejected/
-│       └── queue/          # Task queue
-│           ├── incoming/
-│           ├── claimed/
-│           ├── done/
-│           └── failed/
-└── ...
-```
-
-## Port Allocation
-
-Each agent gets unique ports based on its position:
-
-```
-BASE_PORT = 41000
-PORT_STRIDE = 10
-
-Agent 0: 41000, 41001, 41002 (dev, mcp, playwright)
-Agent 1: 41010, 41011, 41012
-Agent 2: 41020, 41021, 41022
-...
-```
-
-## Backpressure
-
-The system prevents overwhelming by checking limits before:
-
-1. **Creating tasks**: incoming + claimed < max_incoming
-2. **Claiming tasks**: claimed < max_claimed AND open_prs < max_open_prs
-
-## Agent Messages
-
-Agents can send messages to humans via the `.orchestrator/messages/` directory. This enables asynchronous communication when agents encounter issues or need input.
-
-### Message Types
-
-| Type | Emoji | Use Case |
-|------|-------|----------|
-| `info` | ℹ️ | Status updates, completed work summaries |
-| `warning` | ⚠️ | Something needs attention but isn't blocking |
-| `error` | ❌ | Something failed, may need intervention |
-| `question` | ❓ | Agent is blocked and needs human input |
-
-### Message Format
-
-Messages are markdown files with metadata:
-
-```markdown
-# ⚠️ Test failures in auth module
-
-**Type:** warning
-**Time:** 2024-01-15T14:30:00
-**From:** test-agent
-**Task:** TASK-abc123
-
----
-
-Found 3 failing tests in the authentication module:
-
-- test_login_invalid_password
-- test_session_expiry
-- test_token_refresh
-
-These may be related to recent changes in PR #42.
-```
-
-### Using Messages in Roles
-
-Agents can send messages using helper methods:
 
 ```python
-class MyRole(BaseRole):
-    def run(self):
-        # Send different message types
-        self.send_info("Task completed", "Successfully implemented feature X")
-        self.send_warning("Flaky test detected", "test_foo failed intermittently")
-        self.send_error("Build failed", "Compilation error in module Y")
-        self.send_question("Clarification needed", "Should this handle case Z?")
+from octopoid_sdk import OctopoidSDK
+
+sdk = OctopoidSDK(
+    server_url='https://octopoid-server.username.workers.dev',
+    api_key='your-api-key'
+)
+
+# Create a task
+task = sdk.tasks.create(
+    id='my-task-123',
+    file_path='tasks/incoming/TASK-my-task-123.md',
+    queue='incoming',
+    priority='P1',
+    role='implement'
+)
+
+# List tasks
+tasks = sdk.tasks.list(queue='incoming')
+
+# Auto-approve tasks
+for task in tasks:
+    if task['role'] == 'docs' and task.get('commits_count', 0) > 0:
+        sdk.tasks.accept(task['id'], accepted_by='auto-approve')
 ```
 
-### Checking Messages
+See [packages/python-sdk/README.md](./packages/python-sdk/README.md) for full API reference.
 
-Add to your `claude.md`:
+## Architecture
+
+### Packages
+
 ```
-Check .orchestrator/messages/ for any agent messages and inform the user of warnings or questions.
-```
-
-Messages are gitignored by default. Clear old messages periodically or use:
-
-```python
-from orchestrator.orchestrator.message_utils import clear_messages
-
-# Clear all messages older than 24 hours
-clear_messages(older_than_hours=24)
-
-# Clear only info messages
-clear_messages(message_type="info")
+packages/
+├── shared/          # TypeScript types (Task, Project, Orchestrator)
+├── server/          # Cloudflare Workers server with D1 database
+├── client/          # CLI + library (scheduler, agents, git ops)
+├── sdk/             # Node.js/TypeScript SDK for custom scripts
+└── python-sdk/      # Python SDK for custom scripts
 ```
 
-## Setup Details
+### Task Lifecycle
 
-### init.py
+```
+incoming → claimed → provisional → done
+    ↑         │           │
+    └─────────┴───────────┘
+       (reject/retry)
+```
 
-The init script sets up the orchestrator in your project:
+Tasks are:
+- **Claimed** by agents (with lease expiration)
+- **Submitted** to provisional queue after implementation
+- **Accepted** into done queue after review
+- **Rejected** back to incoming for retry
+
+### State Machine
+
+All state transitions are validated server-side:
+
+- **Guards**: Check preconditions (dependencies resolved, role matches)
+- **Side Effects**: Record history, unblock dependents, update leases
+- **Optimistic Locking**: Version checking prevents conflicts
+
+### Offline Mode
+
+When server is unreachable:
+- Operations saved to local SQLite cache
+- Background sync manager retries every 30 seconds
+- Transparent fallback with user notifications
+- Conflict resolution (server state wins)
+
+## Deployment
+
+### Server (Cloudflare Workers)
 
 ```bash
-python orchestrator/orchestrator/init.py
+cd packages/server
+
+# Create D1 database
+wrangler d1 create octopoid-db
+
+# Copy database ID to wrangler.toml
+# database_id = "your-database-id"
+
+# Run migrations
+wrangler d1 migrations apply octopoid-db
+
+# Deploy
+wrangler deploy
 ```
 
-**Flags:**
-| Flag | Description |
-|------|-------------|
-| `-y, --yes` | Non-interactive mode, accept all defaults |
-| `--skills` | Install management skills to `.claude/commands/` |
-| `--no-skills` | Skip skill installation |
-| `--gitignore` | Update `.gitignore` with orchestrator entries |
-| `--no-gitignore` | Skip `.gitignore` update |
+Cost: **Free tier includes 100k requests/day**
 
-**What gets created:**
-
-```
-.orchestrator/
-├── agents.yaml           # Agent configuration
-├── commands/             # Custom skill overrides (empty)
-├── agents/               # Runtime state (gitignored)
-├── messages/             # Agent-to-human messages (gitignored)
-└── shared/
-    └── queue/
-        ├── incoming/     # New tasks
-        ├── claimed/      # Tasks being worked on
-        ├── done/         # Completed tasks
-        └── failed/       # Failed tasks
-```
-
-If skills are installed, also creates:
-```
-.claude/commands/
-├── enqueue.md
-├── queue-status.md
-├── agent-status.md
-├── add-agent.md
-├── pause-agent.md
-├── retry-failed.md
-├── tune-backpressure.md
-└── tune-intervals.md
-```
-
-### Dependencies
+### Client (npm)
 
 ```bash
-pip install -e orchestrator/
+cd packages/client
+
+# Build
+pnpm build
+
+# Publish to npm
+npm publish
+
+# Users install globally
+npm install -g octopoid
 ```
 
-Or just install pyyaml:
-```bash
-pip install pyyaml
-```
+## Monitoring
 
-## Agent Management Scripts
-
-Scripts for managing agent processes and cleaning up stale state.
-
-### Kill a Specific Agent
-
-```bash
-./orchestrator/scripts/kill-agent.sh <agent-name>
-```
-
-This script:
-- Kills the claude process for the named agent
-- Removes `current_task.json` (prevents task resumption)
-- Removes the worktree directory
-- Prunes git worktrees
-- Resets `state.json` (sets running=false, pid=null, current_task=null)
-
-Example:
-```bash
-./orchestrator/scripts/kill-agent.sh impl-agent-1
-```
-
-### Kill All Agents
+### Server Health
 
 ```bash
-./orchestrator/scripts/kill-all-agents.sh
+curl https://octopoid-server.username.workers.dev/api/health
 ```
 
-This script:
-- Kills all claude agent processes
-- Cleans up all agent directories (task markers, worktrees, state)
-- Prunes git worktrees
-- Moves claimed tasks back to incoming queue
+### Client Status
 
-Use this when:
-- Agents are stuck on stale tasks
-- You need to do a full reset of the orchestrator
-- Agents are resuming work they shouldn't be
+```bash
+octopoid status
+```
 
-### Environment Variables
+Shows:
+- Server connection status
+- Online/offline mode
+- Pending sync operations
+- Task counts by queue
+- Orchestrator info
 
-Both scripts use `BOXEN_DIR` to locate the project root. If not set, they default to the directory containing `.orchestrator/`.
+## Migration from v1.x
 
-## Troubleshooting
+If you're using the Python orchestrator (v1.x):
 
-### Agent not running
+1. **Export current state**:
+   ```bash
+   python orchestrator/scripts/export_state.py --output backup.json
+   ```
 
-1. Check if paused: `paused: true` in agents.yaml
-2. Check scheduler lock: delete `.orchestrator/scheduler.lock`
-3. Check agent lock: delete `.orchestrator/agents/<name>/lock`
-4. Check logs for errors
+2. **Deploy v2.0 server** (see Deployment section)
 
-### Tasks not being claimed
+3. **Import state to server**:
+   ```bash
+   curl -X POST https://your-server/api/admin/import \
+     -H "Content-Type: application/json" \
+     -d @backup.json
+   ```
 
-1. Check backpressure limits
-2. Verify task ROLE matches agent role
-3. Check agent state for errors
+4. **Install v2.0 client**:
+   ```bash
+   npm install -g octopoid
+   octopoid init --server https://your-server --cluster prod
+   ```
 
-### PR creation failing
+5. **Test in parallel** before switching fully
 
-1. Ensure `gh` CLI is installed and authenticated
-2. Check git remote configuration
-3. Verify branch permissions
+See [docs/migration-v2.md](./docs/migration-v2.md) for detailed migration guide.
+
+## Documentation
+
+- [Architecture](./docs/architecture-v2.md) - System design and components
+- [Quick Start](./docs/quickstart-v2.md) - 5-minute setup guide
+- [Migration](./docs/migration-v2.md) - Migrate from v1.x to v2.0
+- [Deployment](./docs/deployment.md) - Production deployment guide
+- [API Reference](./packages/server/README.md) - REST API documentation
+- [SDK Guide](./packages/sdk/README.md) - Node.js SDK reference
+- [Python SDK Guide](./packages/python-sdk/README.md) - Python SDK reference
+
+## Development
+
+```bash
+# Install dependencies
+pnpm install
+
+# Build all packages
+pnpm build
+
+# Run tests
+pnpm test
+
+# Run server locally
+cd packages/server && wrangler dev
+
+# Run client in debug mode
+octopoid start --debug --once
+```
 
 ## License
 
 MIT
+
+## Contributing
+
+Contributions welcome! See [CONTRIBUTING.md](./CONTRIBUTING.md) for guidelines.
+
+---
+
+**v1.x Documentation:** For the legacy Python orchestrator, see [README-v1.md](./README-v1.md)
