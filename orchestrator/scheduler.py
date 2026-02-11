@@ -30,6 +30,7 @@ from .config import (
 from .git_utils import ensure_worktree, get_worktree_path
 from .lock_utils import locked_or_skip
 from .port_utils import get_port_env_vars
+from . import queue_utils
 from .state_utils import (
     AgentState,
     is_overdue,
@@ -193,11 +194,6 @@ def peek_task_branch(role: str) -> str | None:
     if role == "orchestrator_impl":
         return None
 
-    if not is_db_enabled():
-        return None
-
-    from . import db
-
     # Map roles to the queues they pull from
     role_queues = {
         "breakdown": "breakdown",
@@ -209,7 +205,7 @@ def peek_task_branch(role: str) -> str | None:
     if not queue:
         return None
 
-    tasks = db.list_tasks(queue=queue)
+    tasks = queue_utils.list_tasks(queue)
     if not tasks:
         return None
 
