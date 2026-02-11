@@ -5,14 +5,29 @@
  */
 
 import { Command } from 'commander'
-import { version } from '../package.json'
+import { readFileSync } from 'node:fs'
+import { join, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+// Get package.json path
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
+const packageJson = JSON.parse(
+  readFileSync(join(__dirname, '..', 'package.json'), 'utf-8')
+)
+
+// Import command implementations
+import { initCommand } from './commands/init'
+import { statusCommand } from './commands/status'
+import { enqueueCommand } from './commands/enqueue'
+import { listCommand } from './commands/list'
 
 const program = new Command()
 
 program
   .name('octopoid')
   .description('Distributed AI orchestrator for software development')
-  .version(version)
+  .version(packageJson.version)
 
 // Init command
 program
@@ -22,12 +37,7 @@ program
   .option('--cluster <name>', 'Cluster name (e.g., prod, dev)')
   .option('--machine-id <id>', 'Machine identifier')
   .option('--local', 'Use local mode (no server)', false)
-  .action(async (options) => {
-    console.log('⚙️  Initializing Octopoid...')
-    console.log('Options:', options)
-    console.log('❌ Init command not yet implemented')
-    process.exit(1)
-  })
+  .action(initCommand)
 
 // Start command
 program
@@ -56,11 +66,7 @@ program
 program
   .command('status')
   .description('Show orchestrator status')
-  .action(async () => {
-    console.log('📊 Orchestrator status:')
-    console.log('❌ Status command not yet implemented')
-    process.exit(1)
-  })
+  .action(statusCommand)
 
 // Enqueue command (create task)
 program
@@ -69,12 +75,8 @@ program
   .option('--role <role>', 'Task role (implement, test, review, etc.)')
   .option('--priority <priority>', 'Priority (P0, P1, P2, P3)', 'P2')
   .option('--project <id>', 'Project ID')
-  .action(async (description, options) => {
-    console.log('📝 Creating task:', description)
-    console.log('Options:', options)
-    console.log('❌ Enqueue command not yet implemented')
-    process.exit(1)
-  })
+  .option('--complexity <complexity>', 'Complexity (XS, S, M, L, XL)')
+  .action(enqueueCommand)
 
 // List command
 program
@@ -83,11 +85,12 @@ program
   .option('--queue <queue>', 'Filter by queue')
   .option('--priority <priority>', 'Filter by priority')
   .option('--role <role>', 'Filter by role')
-  .action(async (options) => {
-    console.log('📋 Listing tasks...')
-    console.log('Options:', options)
-    console.log('❌ List command not yet implemented')
-    process.exit(1)
+  .option('--limit <limit>', 'Maximum number of tasks to list', '100')
+  .action((options) => {
+    listCommand({
+      ...options,
+      limit: parseInt(options.limit),
+    })
   })
 
 // Validate command
