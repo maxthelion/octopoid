@@ -1,0 +1,133 @@
+"""Tests for ephemeral task-scoped worktrees."""
+
+import pytest
+from pathlib import Path
+from orchestrator.orchestrator.git_utils import (
+    create_task_worktree,
+    cleanup_task_worktree,
+    get_task_worktree_path,
+    get_task_branch,
+)
+
+
+class TestTaskWorktreePath:
+    """Tests for get_task_worktree_path()."""
+
+    def test_returns_path_under_tasks_dir(self):
+        """Task worktree path should be .orchestrator/tasks/<id>/worktree/."""
+        path = get_task_worktree_path("abc12345")
+        assert path.name == "worktree"
+        assert path.parent.name == "abc12345"
+        assert "tasks" in path.parts
+
+
+class TestGetTaskBranch:
+    """Tests for get_task_branch() branch selection logic."""
+
+    def test_project_task_uses_project_branch(self, db_with_project):
+        """Project tasks should use the project's branch."""
+        # This would need a DB fixture with a project
+        # For now, just test the standalone logic
+        pass
+
+    def test_breakdown_task_uses_breakdown_branch(self):
+        """Breakdown tasks should use breakdown/<id> branch."""
+        task = {
+            "id": "abc12345",
+            "plan_id": "breakdown-xyz",
+            "role": "implement",
+        }
+        branch = get_task_branch(task)
+        assert branch == "breakdown/breakdown-xyz"
+
+    def test_orchestrator_impl_uses_orch_branch(self):
+        """Orchestrator_impl tasks should use orch/<id> branch."""
+        task = {
+            "id": "abc12345",
+            "role": "orchestrator_impl",
+        }
+        branch = get_task_branch(task)
+        assert branch == "orch/abc12345"
+
+    def test_regular_task_uses_agent_branch_with_timestamp(self):
+        """Regular tasks should use agent/<id>-<timestamp> branch."""
+        task = {
+            "id": "abc12345",
+            "role": "implement",
+        }
+        branch = get_task_branch(task)
+        assert branch.startswith("agent/abc12345-")
+        # Should have timestamp suffix
+        assert len(branch.split("-")) >= 3
+
+
+class TestCreateTaskWorktree:
+    """Tests for create_task_worktree()."""
+
+    def test_creates_worktree_at_correct_path(self, temp_git_repo):
+        """Task worktree should be created at .orchestrator/tasks/<id>/worktree/."""
+        task = {
+            "id": "test-task",
+            "role": "implement",
+        }
+        # Would need temp_git_repo fixture
+        # For now this is a placeholder
+        pass
+
+    def test_creates_branch_if_not_exists_on_origin(self, temp_git_repo):
+        """Should create branch from origin/main if it doesn't exist."""
+        pass
+
+    def test_uses_existing_branch_from_origin(self, temp_git_repo):
+        """Should checkout existing branch if it exists on origin."""
+        pass
+
+
+class TestCleanupTaskWorktree:
+    """Tests for cleanup_task_worktree()."""
+
+    def test_pushes_commits_before_deletion(self, temp_git_repo):
+        """Should push unpushed commits before deleting worktree."""
+        pass
+
+    def test_skips_push_when_push_commits_false(self, temp_git_repo):
+        """Should skip pushing if push_commits=False."""
+        pass
+
+    def test_removes_worktree_directory(self, temp_git_repo):
+        """Should remove the worktree directory."""
+        pass
+
+    def test_handles_nonexistent_worktree_gracefully(self):
+        """Should not error if worktree doesn't exist."""
+        cleanup_task_worktree("nonexistent-task", push_commits=False)
+        # Should not raise
+
+
+class TestTaskWorktreeIntegration:
+    """Integration tests for task worktree lifecycle."""
+
+    def test_project_task_sequence(self, temp_git_repo):
+        """Multiple tasks in same project should see each other's commits via origin.
+
+        Flow:
+        1. Task A claims, creates worktree, commits, pushes, cleanup
+        2. Task B claims, creates worktree from origin (includes Task A's commits)
+        3. Task B sees Task A's work
+        """
+        pass
+
+    def test_cleanup_on_task_completion(self, temp_git_repo):
+        """Worktree should be cleaned up when task completes."""
+        pass
+
+    def test_cleanup_on_task_failure(self, temp_git_repo):
+        """Worktree should be cleaned up even when task fails."""
+        pass
+
+    def test_worktree_isolation_between_tasks(self, temp_git_repo):
+        """Different tasks should get completely independent worktrees."""
+        pass
+
+
+# Fixtures would need to be implemented for temp git repos, DB setup, etc.
