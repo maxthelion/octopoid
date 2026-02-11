@@ -19,7 +19,8 @@
     "templates"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "npm run typecheck && npm run build:bundle",
+    "build:bundle": "npx esbuild@latest src/cli.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/cli.js",
     "watch": "tsc --watch",
     "dev": "tsx src/cli.ts",
     "test": "vitest",
@@ -27,7 +28,7 @@
     "test:coverage": "vitest --coverage",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist",
-    "prepublishOnly": "pnpm build"
+    "prepublishOnly": "npm run build"
   },
   "keywords": [
     "octopoid",
@@ -50,6 +51,7 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.9",
     "@types/node": "^20.11.17",
+    "esbuild": "^0.20.0",
     "tsx": "^4.7.1",
     "typescript": "^5.3.3",
     "vitest": "^1.2.2"
