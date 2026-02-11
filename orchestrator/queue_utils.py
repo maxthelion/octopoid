@@ -20,6 +20,7 @@ import yaml
 from .config import get_queue_dir, get_queue_limits, is_db_enabled, get_orchestrator_dir
 from .git_utils import cleanup_task_worktree
 from .lock_utils import locked
+from . import task_logger
 
 
 def get_queue_subdir(subdir: str) -> Path:
@@ -398,6 +399,16 @@ def claim_task(
                         f.write(f"CLAIMED_AT: {datetime.now().isoformat()}\n")
                 except IOError:
                     pass
+
+            # Log the claim with attempt number
+            task_id = db_task["id"]
+            attempt = task_logger.get_claim_count(task_id) + 1
+            task_logger.log_claimed(
+                task_id=task_id,
+                agent_name=agent_name or "unknown",
+                attempt=attempt
+            )
+
             return _db_task_to_file_format(db_task)
         return None
 
@@ -442,6 +453,16 @@ def claim_task(
                     with open(dest, "a") as f:
                         f.write(f"\nCLAIMED_BY: {agent_name}\n")
                         f.write(f"CLAIMED_AT: {datetime.now().isoformat()}\n")
+
+                # Log the claim with attempt number
+                task_id = task.get("id", "")
+                if task_id:
+                    attempt = task_logger.get_claim_count(task_id) + 1
+                    task_logger.log_claimed(
+                        task_id=task_id,
+                        agent_name=agent_name or "unknown",
+                        attempt=attempt
+                    )
 
                 task["path"] = dest
                 return task
@@ -572,6 +593,13 @@ def submit_completion(
     # Update file_path in DB to reflect new location
     db.update_task(task_id, file_path=str(dest))
 
+    # Log the submission
+    task_logger.log_submitted(
+        task_id=task_id,
+        commits=commits_count,
+        turns=turns_used
+    )
+
     return dest
 
 
@@ -631,6 +659,21 @@ def accept_completion(
     # Clean up ephemeral task worktree (push commits, delete worktree)
     if task_id:
         cleanup_task_worktree(task_id, push_commits=True)
+
+    # Log the acceptance
+    if task_id:
+        # Try to get PR number from task file
+        pr_number = None
+        if dest.exists():
+            content = dest.read_text()
+            pr_match = re.search(r'PR: #?(\d+)', content)
+            if pr_match:
+                pr_number = int(pr_match.group(1))
+        task_logger.log_accepted(
+            task_id=task_id,
+            pr_number=pr_number,
+            reviewer=accepted_by
+        )
 
     # Check for project completion
     if project_id and is_db_enabled():
@@ -701,6 +744,14 @@ def reject_completion(
     # Clean up ephemeral task worktree (worktree is deleted; next attempt gets fresh checkout)
     if task_id:
         cleanup_task_worktree(task_id, push_commits=True)
+
+    # Log the rejection
+    if task_id:
+        task_logger.log_rejected(
+            task_id=task_id,
+            reason=reason,
+            rejected_by=accepted_by or "unknown"
+        )
 
     return dest
 
@@ -932,11 +983,27 @@ def escalate_to_planning(task_path: Path | str, plan_id: str) -> Path:
     dest = escalated_dir / task_path.name
 
     # Append escalation info
+    task_id = None
+    if is_db_enabled():
+        from . import db
+        db_task = db.get_task_by_path(str(task_path))
+        if db_task:
+            task_id = db_task["id"]
+
     with open(task_path, "a") as f:
         f.write(f"\nESCALATED_AT: {datetime.now().isoformat()}\n")
         f.write(f"PLAN_ID: {plan_id}\n")
 
     os.rename(task_path, dest)
+
+    # Log the escalation
+    if task_id:
+        task_logger.log_escalated(
+            task_id=task_id,
+            reason="exceeded max attempts",
+            escalated_by="scheduler"
+        )
+
     return dest
 
 
@@ -980,6 +1047,14 @@ def fail_task(task_path: Path | str, error: str) -> Path:
     # Clean up ephemeral task worktree
     if task_id:
         cleanup_task_worktree(task_id, push_commits=False)
+
+    # Log the failure
+    if task_id:
+        task_logger.log_failed(
+            task_id=task_id,
+            reason=error_summary,
+            failed_by=None
+        )
 
     return dest
 
@@ -1390,6 +1465,16 @@ CREATED_BY: {created_by}
         # Set queue status if not incoming
         if queue != "incoming":
             db.update_task_queue(task_id, queue, history_event="created_in_queue", history_details=f"queue={queue}")
+
+    # Log task creation
+    source_str = f"project={project_id}" if project_id else None
+    task_logger.log_created(
+        task_id=task_id,
+        created_by=created_by,
+        priority=priority,
+        role=role,
+        source=source_str
+    )
 
     return task_path
 
@@ -2424,6 +2509,13 @@ def recycle_to_breakdown(task_path, reason="too_large") -> dict | None:
         file_path=str(recycled_path),
         history_event="recycled",
         history_details=f"reason={reason}, breakdown_task={breakdown_task_id}",
+    )
+
+    # Log the recycling
+    task_logger.log_recycled(
+        task_id=task_id,
+        recycled_by="recycler",
+        reason=reason
     )
 
     # NOTE: We intentionally do NOT rewire dependencies here.
