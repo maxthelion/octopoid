@@ -3,8 +3,10 @@
 Octopoid Dashboard - Tabbed project management TUI.
 
 Usage:
-    python octopoid-dash.py [--refresh N]    # Normal mode (requires .orchestrator)
-    python octopoid-dash.py --demo           # Demo mode with sample data
+    python octopoid-dash.py [--refresh N]                        # Local mode (v1.x)
+    python octopoid-dash.py --server https://...                 # Remote mode (v2.0)
+    python octopoid-dash.py --server https://... --api-key KEY   # Remote mode with auth
+    python octopoid-dash.py --demo                               # Demo mode with sample data
 """
 
 import argparse
@@ -158,8 +160,13 @@ def format_age(iso_str: str | None) -> str:
 # Data layer — wraps reports.py or provides demo data
 # ---------------------------------------------------------------------------
 
-def load_report(demo_mode: bool) -> dict[str, Any]:
-    """Load the project report, either live or demo."""
+def load_report(demo_mode: bool, sdk: Optional[Any] = None) -> dict[str, Any]:
+    """Load the project report, either live or demo.
+
+    Args:
+        demo_mode: If True, return demo data
+        sdk: Optional OctopoidSDK instance for v2.0 API mode
+    """
     if demo_mode:
         return _generate_demo_report()
 
@@ -172,7 +179,7 @@ def load_report(demo_mode: bool) -> dict[str, Any]:
                 sys.path.insert(0, parent)
 
         from orchestrator.reports import get_project_report
-        return get_project_report()
+        return get_project_report(sdk=sdk)
     except Exception as e:
         return {
             "work": {"incoming": [], "in_progress": [], "in_review": [], "done_today": []},
@@ -1468,12 +1475,13 @@ class DashboardState:
 # ---------------------------------------------------------------------------
 
 class Dashboard:
-    def __init__(self, stdscr, refresh_interval: float = 2.0, demo_mode: bool = False):
+    def __init__(self, stdscr, refresh_interval: float = 2.0, demo_mode: bool = False, sdk: Optional[Any] = None):
         self.stdscr = stdscr
         self.stdscr.encoding = 'utf-8'
         self.refresh_interval = refresh_interval
         self.running = True
         self.state = DashboardState(demo_mode=demo_mode)
+        self.sdk = sdk  # Octopoid SDK for v2.0 API mode
 
         # Initialize curses
         curses.curs_set(0)
@@ -1483,7 +1491,7 @@ class Dashboard:
 
     def load_data(self):
         """Load fresh data."""
-        self.state.last_report = load_report(self.state.demo_mode)
+        self.state.last_report = load_report(self.state.demo_mode, sdk=self.sdk)
         self.state.last_drafts = load_drafts(self.state.demo_mode)
 
     def handle_input(self, key: int) -> bool:
@@ -1681,8 +1689,8 @@ class Dashboard:
 # Entry point
 # ---------------------------------------------------------------------------
 
-def main(stdscr, refresh_interval: float, demo_mode: bool):
-    dashboard = Dashboard(stdscr, refresh_interval, demo_mode)
+def main(stdscr, refresh_interval: float, demo_mode: bool, sdk: Optional[Any] = None):
+    dashboard = Dashboard(stdscr, refresh_interval, demo_mode, sdk=sdk)
     dashboard.run()
 
 
@@ -1692,18 +1700,63 @@ if __name__ == "__main__":
                         help="Refresh interval in seconds")
     parser.add_argument("--demo", action="store_true",
                         help="Run in demo mode with sample data")
+    parser.add_argument("--server", type=str,
+                        help="Octopoid server URL for v2.0 API mode (e.g., https://octopoid.example.com)")
+    parser.add_argument("--api-key", type=str,
+                        help="API key for server authentication")
+    parser.add_argument("--local", action="store_true",
+                        help="Force local mode (v1.x) even if .octopoid/config.yaml exists")
     args = parser.parse_args()
 
-    if not args.demo:
-        # Check if .orchestrator directory exists
+    sdk = None
+
+    if not args.demo and not args.local:
+        # Try to initialize SDK if server is specified or config exists
+        server_url = args.server
+        api_key = args.api_key
+
+        # If no explicit --server, try loading from .octopoid/config.yaml
+        if not server_url:
+            config_path = Path.cwd() / ".octopoid" / "config.yaml"
+            if config_path.exists():
+                try:
+                    import yaml
+                    with open(config_path) as f:
+                        config = yaml.safe_load(f)
+                    server_config = config.get("server", {})
+                    if server_config.get("enabled"):
+                        server_url = server_config.get("url")
+                        if not api_key:
+                            api_key = server_config.get("api_key") or os.getenv("OCTOPOID_API_KEY")
+                except Exception as e:
+                    print(f"Warning: Failed to load config from {config_path}: {e}")
+
+        # Initialize SDK if we have a server URL
+        if server_url:
+            try:
+                from octopoid_sdk import OctopoidSDK
+                sdk = OctopoidSDK(server_url=server_url, api_key=api_key)
+                print(f"Connected to Octopoid server: {server_url}")
+                time.sleep(0.5)  # Brief pause so user sees connection message
+            except ImportError:
+                print("Error: octopoid-sdk not installed.")
+                print("Install with: pip install octopoid-sdk")
+                sys.exit(1)
+            except Exception as e:
+                print(f"Error: Failed to connect to server {server_url}: {e}")
+                sys.exit(1)
+
+    if not args.demo and not sdk:
+        # Local mode — check if .orchestrator directory exists
         orch_dir = Path.cwd() / ".orchestrator"
         if not orch_dir.exists():
             print("Error: .orchestrator directory not found.")
             print("Please run this from an octopoid project directory,")
-            print("or use --demo flag to see a demo with sample data.")
+            print("or use --demo flag to see a demo with sample data,")
+            print("or use --server <URL> to connect to a v2.0 server.")
             sys.exit(1)
 
     try:
-        curses.wrapper(lambda stdscr: main(stdscr, args.refresh, args.demo))
+        curses.wrapper(lambda stdscr: main(stdscr, args.refresh, args.demo, sdk=sdk))
     except KeyboardInterrupt:
         pass
