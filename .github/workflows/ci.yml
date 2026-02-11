@@ -24,6 +24,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
+      - name: Build shared package first
+        run: pnpm --filter @octopoid/shared build
+
       - name: Type check
         run: pnpm typecheck
 
@@ -51,7 +54,7 @@ jobs:
         run: pnpm build
 
       - name: Run server unit tests
-        run: pnpm --filter @octopoid/server test --run
+        run: pnpm --filter @octopoid/server test
 
   integration-tests:
     runs-on: ubuntu-latest
