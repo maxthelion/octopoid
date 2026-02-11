@@ -1,0 +1,16 @@
+# Test configuration for Octopoid API Server
+# Uses separate port and database to avoid conflicts with dev server
+
+name = "octopoid-server-test"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+
+# Test-specific D1 database
+[[d1_databases]]
+binding = "DB"
+database_name = "octopoid-test"
+database_id = "" # Will be created by test setup
+
+# Development server settings
+[dev]
+port = 8788  # Different from dev server (8787)
