@@ -541,12 +541,21 @@ class OrchestratorImplRole(ImplementerRole):
 
         self.reset_tool_counter()
 
+        # Create ephemeral task worktree
+        from ..git_utils import create_task_worktree, get_current_branch
+        self.log("Creating ephemeral task worktree...")
+        task_worktree = create_task_worktree(task)
+        self.log(f"Task worktree created at: {task_worktree}")
+
+        # Switch to task worktree for all subsequent operations
+        self.worktree = task_worktree
+
         submodule_path = self._get_submodule_path()
 
         try:
-            # Create feature branch in main repo (for tracking/worktree purposes)
-            branch_name = create_feature_branch(self.worktree, task_id, base_branch)
-            self.log(f"Created branch: {branch_name}")
+            # Feature branch is already created by create_task_worktree
+            branch_name = get_current_branch(self.worktree)
+            self.log(f"Working on branch: {branch_name}")
 
             # Create tooling/<task-id> branch for main repo changes
             tooling_branch = self._create_tooling_branch(self.worktree, task_id)
