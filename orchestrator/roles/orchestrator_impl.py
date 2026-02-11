@@ -756,9 +756,18 @@ Write your progress and findings to this file as you work:
 6. The DB is SQLite \u2014 schema changes need migrations in `db.py`
 7. Commit in the submodule directory, not the main repo root
 
-## CRITICAL: Git Commit Location
+## CRITICAL: Ephemeral Worktree
 
+**Your worktree is EPHEMERAL and scoped to this task only.**
+- Created fresh at task start from origin
+- Will be DELETED after task completion (commits are pushed first)
+- No state carries over between tasks
+- All uncommitted work will be LOST at cleanup
+
+Your task worktree is at: `{self.worktree}`
 Your worktree submodule is at: `{submodule_path}`
+
+## CRITICAL: Git Commit Location
 
 When committing, ALWAYS use one of these patterns:
 - `git -C {submodule_path} add . && git -C {submodule_path} commit -m "..."`

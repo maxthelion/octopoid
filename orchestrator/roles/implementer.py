@@ -633,6 +633,17 @@ Use these to avoid repeating the same exploration and mistakes.
             prompt = f"""You are an implementer agent working on this task.
 
 {instructions}
+
+## ⚠️ EPHEMERAL WORKTREE
+
+Your worktree at `{self.worktree}` is EPHEMERAL and scoped to this task only.
+- Created fresh from origin at task start
+- Will be DELETED after completion (commits are pushed first)
+- No state carries over between tasks
+- All uncommitted work will be LOST
+
+Commit your changes regularly to avoid losing work.
+
 {rejection_banner}
 ## Task Details
 
