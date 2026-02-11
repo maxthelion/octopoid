@@ -7,7 +7,6 @@ import { BaseAgent, type AgentConfig } from './base-agent'
 import { findTaskFile, parseTaskFile } from '../queue-utils'
 import { listTasks } from '../db-interface'
 import {
-  ensureWorktree,
   checkoutBranch,
   pull,
   getDiff,

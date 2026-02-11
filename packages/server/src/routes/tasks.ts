@@ -11,7 +11,6 @@ import type {
   SubmitTaskRequest,
   AcceptTaskRequest,
   RejectTaskRequest,
-  TaskFilters,
   TaskListResponse,
 } from '@octopoid/shared'
 import type { Env } from '../index'
@@ -276,7 +275,7 @@ tasksRoute.post('/claim', async (c) => {
   )
 
   if (!task) {
-    return c.json({ message: 'No tasks available' }, 204)
+    return c.json({ message: 'No tasks available' }, 404)
   }
 
   // Execute claim transition

@@ -2,7 +2,6 @@
  * Implementer agent - claims and implements tasks
  */
 
-import type { Task } from '@octopoid/shared'
 import { BaseAgent, type AgentConfig } from './base-agent'
 import {
   createFeatureBranch,

@@ -14,23 +14,15 @@ import { hostname } from 'node:os'
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
-import type { Task } from '@octopoid/shared'
 import {
   loadConfig,
   isRemoteMode,
-  getServerUrl,
-  findOctopoidDir,
   getAgentsConfig,
   getRuntimeDir,
   getLogsDir,
   type AgentConfigItem,
 } from './config'
 import { OctopoidAPIClient } from './api-client'
-import { listTasks, claimTask } from './db-interface'
-import { BaseAgent } from './roles/base-agent'
-import { Implementer } from './roles/implementer'
-import { Breakdown } from './roles/breakdown'
-import { Gatekeeper } from './roles/gatekeeper'
 import { getAgentByRole } from './roles'
 
 // Agent state tracking
@@ -42,12 +34,6 @@ interface AgentState {
   currentTask?: string
   exitCode?: number
   extra: Record<string, unknown>
-}
-
-interface SchedulerState {
-  orchestratorId?: string
-  running: boolean
-  lastTick?: string
 }
 
 // Global debug flag
@@ -327,7 +313,7 @@ function checkAndUpdateFinishedAgents(): void {
 /**
  * Main scheduler loop - evaluate and spawn agents
  */
-async function runScheduler(orchestratorId: string): Promise<void> {
+async function runScheduler(_orchestratorId: string): Promise<void> {
   console.log(`[${new Date().toISOString()}] Scheduler starting`)
   debugLog('Scheduler tick starting')
 

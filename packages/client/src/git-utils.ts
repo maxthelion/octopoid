@@ -2,7 +2,7 @@
  * Git operations for worktrees, branches, and pull requests
  */
 
-import { execSync, spawn } from 'node:child_process'
+import { execSync } from 'node:child_process'
 import { existsSync, rmSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import simpleGit, { SimpleGit, SimpleGitOptions } from 'simple-git'

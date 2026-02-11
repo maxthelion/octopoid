@@ -3,7 +3,7 @@
  * Creates .octopoid directory and configuration
  */
 
-import { mkdirSync, writeFileSync, existsSync, readFileSync, copyFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync, existsSync, copyFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { hostname } from 'node:os'
 import YAML from 'yaml'

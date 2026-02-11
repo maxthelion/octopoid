@@ -11,7 +11,7 @@ import type {
   StateTransitionGuard,
   StateTransitionSideEffect,
 } from '@octopoid/shared'
-import { query, queryOne, execute } from './database'
+import { queryOne, execute } from './database'
 
 export interface TransitionContext {
   db: D1Database
