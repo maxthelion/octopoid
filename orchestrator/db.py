@@ -968,6 +968,9 @@ def claim_task(
     This checks dependencies before claiming - a task with unresolved
     blocked_by entries cannot be claimed.
 
+    Enforces one-task-per-agent: if agent_name is provided and the agent
+    already has a claimed task, returns None (cannot claim another).
+
     Args:
         role_filter: Only claim tasks with this role
         agent_name: Name of claiming agent
@@ -976,6 +979,17 @@ def claim_task(
     Returns:
         Claimed task or None if no suitable task available
     """
+    # Check if agent already has a claimed task
+    if agent_name:
+        with get_connection() as conn:
+            cursor = conn.execute(
+                "SELECT id FROM tasks WHERE claimed_by = ? AND queue = 'claimed' LIMIT 1",
+                (agent_name,),
+            )
+            if cursor.fetchone():
+                # Agent already has a claimed task - cannot claim another
+                return None
+
     with get_connection() as conn:
         # Build query for claimable tasks
         conditions = [

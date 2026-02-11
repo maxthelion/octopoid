@@ -219,6 +219,49 @@ class TestTaskLifecycle:
             claimed = claim_task()
             assert claimed is None
 
+    def test_claim_task_one_per_agent(self, initialized_db):
+        """Test that an agent cannot claim a second task while already holding one."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, claim_task
+
+            # Create two tasks
+            create_task(task_id="task-a", file_path="/task-a.md", role="implement")
+            create_task(task_id="task-b", file_path="/task-b.md", role="implement")
+
+            # Agent claims first task successfully
+            first_claim = claim_task(role_filter="implement", agent_name="agent-1")
+            assert first_claim is not None
+            assert first_claim["id"] == "task-a"
+            assert first_claim["claimed_by"] == "agent-1"
+
+            # Agent tries to claim second task - should return None
+            second_claim = claim_task(role_filter="implement", agent_name="agent-1")
+            assert second_claim is None
+
+    def test_claim_task_after_completion(self, initialized_db):
+        """Test that an agent can claim a new task after completing the previous one."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, claim_task, submit_completion, accept_completion
+
+            # Create two tasks
+            create_task(task_id="task-c", file_path="/task-c.md", role="implement")
+            create_task(task_id="task-d", file_path="/task-d.md", role="implement")
+
+            # Agent claims first task
+            first_claim = claim_task(role_filter="implement", agent_name="agent-2")
+            assert first_claim is not None
+            assert first_claim["id"] == "task-c"
+
+            # Complete the first task (submit and accept)
+            submit_completion("task-c", commits_count=1)
+            accept_completion("task-c", accepted_by="human")
+
+            # Now agent should be able to claim the second task
+            second_claim = claim_task(role_filter="implement", agent_name="agent-2")
+            assert second_claim is not None
+            assert second_claim["id"] == "task-d"
+            assert second_claim["claimed_by"] == "agent-2"
+
     def test_submit_completion(self, initialized_db):
         """Test submitting a task for pre-check."""
         with patch('orchestrator.db.get_database_path', return_value=initialized_db):
