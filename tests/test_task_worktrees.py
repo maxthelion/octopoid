@@ -2,12 +2,26 @@
 
 import pytest
 from pathlib import Path
-from orchestrator.orchestrator.git_utils import (
-    create_task_worktree,
-    cleanup_task_worktree,
-    get_task_worktree_path,
-    get_task_branch,
-)
+
+# Note: These imports will work when run from the orchestrator/ directory
+# with the proper PYTHONPATH setup
+try:
+    from orchestrator.git_utils import (
+        create_task_worktree,
+        cleanup_task_worktree,
+        get_task_worktree_path,
+        get_task_branch,
+    )
+except ImportError:
+    # Fallback for different import contexts
+    import sys
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+    from orchestrator.git_utils import (
+        create_task_worktree,
+        cleanup_task_worktree,
+        get_task_worktree_path,
+        get_task_branch,
+    )
 
 
 class TestTaskWorktreePath:
@@ -31,10 +45,10 @@ class TestGetTaskBranch:
         pass
 
     def test_breakdown_task_uses_breakdown_branch(self):
-        """Breakdown tasks should use breakdown/<id> branch."""
+        """Breakdown tasks should use breakdown/<breakdown_id> branch."""
         task = {
             "id": "abc12345",
-            "plan_id": "breakdown-xyz",
+            "breakdown_id": "breakdown-xyz",
             "role": "implement",
         }
         branch = get_task_branch(task)
@@ -49,16 +63,14 @@ class TestGetTaskBranch:
         branch = get_task_branch(task)
         assert branch == "orch/abc12345"
 
-    def test_regular_task_uses_agent_branch_with_timestamp(self):
-        """Regular tasks should use agent/<id>-<timestamp> branch."""
+    def test_regular_task_uses_agent_branch(self):
+        """Regular tasks should use agent/<id> branch (no timestamp)."""
         task = {
             "id": "abc12345",
             "role": "implement",
         }
         branch = get_task_branch(task)
-        assert branch.startswith("agent/abc12345-")
-        # Should have timestamp suffix
-        assert len(branch.split("-")) >= 3
+        assert branch == "agent/abc12345"
 
 
 class TestCreateTaskWorktree:
