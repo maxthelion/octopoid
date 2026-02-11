@@ -21,5 +21,8 @@ export * from './git-utils'
 // Agent Roles
 export * from './roles'
 
+// Scheduler
+export { runSchedulerDaemon } from './scheduler'
+
 // Re-export shared types for convenience
 export type * from '@octopoid/shared'

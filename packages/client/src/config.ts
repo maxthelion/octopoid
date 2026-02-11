@@ -69,6 +69,17 @@ export function getRuntimeDir(): string {
 }
 
 /**
+ * Get logs directory
+ */
+export function getLogsDir(): string {
+  const octopoidDir = findOctopoidDir()
+  if (!octopoidDir) {
+    throw new Error('Not in an Octopoid project directory')
+  }
+  return join(octopoidDir, 'logs')
+}
+
+/**
  * Load configuration from .octopoid/config.yaml
  */
 export function loadConfig(reload = false): OctopoidConfig {
@@ -145,4 +156,46 @@ export function getOrchestratorId(): string | null {
     return null
   }
   return `${config.server.cluster}-${config.server.machine_id}`
+}
+
+/**
+ * Agent configuration from agents.yaml
+ */
+export interface AgentConfigItem {
+  name: string
+  role: string
+  interval_seconds?: number
+  paused?: boolean
+  lightweight?: boolean
+  base_branch?: string
+  focus?: string
+  pre_check?: string
+  pre_check_trigger?: 'non_empty' | 'exit_zero' | 'exit_nonzero'
+  model?: string
+  max_turns?: number
+  max_concurrent?: number
+}
+
+/**
+ * Load agents configuration from agents.yaml
+ */
+export function getAgentsConfig(): AgentConfigItem[] {
+  const octopoidDir = findOctopoidDir()
+  if (!octopoidDir) {
+    throw new Error('Not in an Octopoid project directory')
+  }
+
+  const agentsPath = join(octopoidDir, 'agents.yaml')
+  if (!existsSync(agentsPath)) {
+    // Return empty array if no agents.yaml (for fresh installations)
+    return []
+  }
+
+  try {
+    const agentsText = readFileSync(agentsPath, 'utf-8')
+    const parsed = YAML.parse(agentsText) as { agents?: AgentConfigItem[] }
+    return parsed.agents || []
+  } catch (error) {
+    throw new Error(`Failed to parse agents.yaml: ${error}`)
+  }
 }

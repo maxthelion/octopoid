@@ -18,6 +18,7 @@ const packageJson = JSON.parse(
 
 // Import command implementations
 import { initCommand } from './commands/init'
+import { startCommand } from './commands/start'
 import { statusCommand } from './commands/status'
 import { enqueueCommand } from './commands/enqueue'
 import { listCommand } from './commands/list'
@@ -45,11 +46,15 @@ program
   .description('Start orchestrator')
   .option('--daemon', 'Run as daemon', false)
   .option('--once', 'Run single tick (for testing)', false)
+  .option('--debug', 'Enable debug logging', false)
+  .option('--tick-interval <ms>', 'Tick interval in milliseconds', '60000')
   .action(async (options) => {
-    console.log('🚀 Starting orchestrator...')
-    console.log('Options:', options)
-    console.log('❌ Start command not yet implemented')
-    process.exit(1)
+    await startCommand({
+      daemon: options.daemon,
+      once: options.once,
+      debug: options.debug,
+      tickInterval: parseInt(options.tickInterval),
+    })
   })
 
 // Stop command
