@@ -157,6 +157,13 @@ def _get_accepted_by(task_id: str | None) -> str | None:
 
 def _format_task(task: dict[str, Any]) -> dict[str, Any]:
     """Format a task dict into a card-renderable summary."""
+    from .task_logger import (
+        get_claim_count,
+        get_first_claim_time,
+        get_last_claim_time,
+        get_task_log_path,
+    )
+
     title = task.get("title")
     # If title is missing or looks like a raw ID, try extracting from file
     if not title or (len(title) < 20 and " " not in title):
@@ -164,6 +171,20 @@ def _format_task(task: dict[str, Any]) -> dict[str, Any]:
         extracted = _extract_title_from_file(str(file_path) if file_path else None)
         if extracted and extracted != "untitled":
             title = extracted
+
+    # Get claim history from task logs
+    task_id = task.get("id")
+    claim_count = 0
+    first_claim = None
+    last_claim = None
+    log_path = None
+
+    if task_id:
+        claim_count = get_claim_count(task_id)
+        first_claim = get_first_claim_time(task_id)
+        last_claim = get_last_claim_time(task_id)
+        log_path = str(get_task_log_path(task_id))
+
     return {
         "id": task.get("id"),
         "title": title,
@@ -183,6 +204,11 @@ def _format_task(task: dict[str, Any]) -> dict[str, Any]:
         "checks": task.get("checks", []),
         "check_results": task.get("check_results", {}),
         "staging_url": task.get("staging_url"),
+        "file_path": task.get("path") or task.get("file_path"),
+        "claim_count": claim_count,
+        "first_claim_time": first_claim.isoformat() if first_claim else None,
+        "last_claim_time": last_claim.isoformat() if last_claim else None,
+        "log_path": log_path,
     }
 
 
