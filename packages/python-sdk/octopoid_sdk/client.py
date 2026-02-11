@@ -173,6 +173,39 @@ class TasksAPI:
         """
         return self.client._request('PATCH', f'/api/v1/tasks/{task_id}', json=updates)
 
+    def accept(self, task_id: str, accepted_by: Optional[str] = None) -> Dict[str, Any]:
+        """Accept a completed task
+
+        Args:
+            task_id: Task ID
+            accepted_by: Name of accepter (e.g., "gatekeeper", "human")
+
+        Returns:
+            Updated task dictionary
+        """
+        data = {}
+        if accepted_by:
+            data['accepted_by'] = accepted_by
+
+        return self.client._request('POST', f'/api/v1/tasks/{task_id}/accept', json=data)
+
+    def reject(self, task_id: str, reason: str, rejected_by: Optional[str] = None) -> Dict[str, Any]:
+        """Reject a completed task
+
+        Args:
+            task_id: Task ID
+            reason: Rejection reason/feedback
+            rejected_by: Name of rejecter (e.g., "gatekeeper", "human")
+
+        Returns:
+            Updated task dictionary
+        """
+        data = {'reason': reason}
+        if rejected_by:
+            data['rejected_by'] = rejected_by
+
+        return self.client._request('POST', f'/api/v1/tasks/{task_id}/reject', json=data)
+
 
 class DraftsAPI:
     """Drafts API endpoints"""
