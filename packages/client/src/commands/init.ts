@@ -4,10 +4,15 @@
  */
 
 import { mkdirSync, writeFileSync, existsSync, copyFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { hostname } from 'node:os'
 import YAML from 'yaml'
 import type { OctopoidConfig } from '../config'
+
+// ESM-compatible __dirname
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
 
 export interface InitOptions {
   server?: string
