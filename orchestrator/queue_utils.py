@@ -1,7 +1,6 @@
 """Queue management with atomic operations and backpressure.
 
-Supports both file-based (default) and SQLite database backends.
-The backend is selected via the `database.enabled` setting in agents.yaml.
+v2.0: API-only architecture. All task state operations use the Octopoid SDK.
 
 IMPORTANT: Queue operations always happen in the MAIN REPO, not in agent worktrees.
 This ensures queue state is centralized and not affected by git operations in worktrees.
@@ -10,16 +9,85 @@ This ensures queue state is centralized and not affected by git operations in wo
 import os
 import re
 import subprocess
+import socket
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 from uuid import uuid4
 
 import yaml
 
-from .config import get_queue_dir, get_queue_limits, is_db_enabled, get_orchestrator_dir
+from .config import get_queue_dir, get_queue_limits, get_orchestrator_dir
 from .git_utils import cleanup_task_worktree
 from .lock_utils import locked
+
+# Global SDK instance (lazy-initialized)
+_sdk: Optional[Any] = None
+
+
+def get_sdk():
+    """Get or initialize SDK client for API operations.
+
+    Returns:
+        OctopoidSDK instance
+
+    Raises:
+        RuntimeError: If SDK not installed or server not configured
+    """
+    global _sdk
+
+    if _sdk is not None:
+        return _sdk
+
+    try:
+        from octopoid_sdk import OctopoidSDK
+    except ImportError:
+        raise RuntimeError(
+            "octopoid-sdk not installed. Install with: pip install octopoid-sdk"
+        )
+
+    # Load server configuration
+    try:
+        import yaml
+        orchestrator_dir = get_orchestrator_dir()
+        config_path = orchestrator_dir.parent / ".octopoid" / "config.yaml"
+
+        if not config_path.exists():
+            raise RuntimeError(
+                f"No .octopoid/config.yaml found. Run: octopoid init --server <url>"
+            )
+
+        with open(config_path) as f:
+            config = yaml.safe_load(f)
+
+        server_config = config.get("server", {})
+        if not server_config.get("enabled"):
+            raise RuntimeError(
+                "Server not enabled in .octopoid/config.yaml"
+            )
+
+        server_url = server_config.get("url")
+        if not server_url:
+            raise RuntimeError(
+                "Server URL not configured in .octopoid/config.yaml"
+            )
+
+        api_key = server_config.get("api_key") or os.getenv("OCTOPOID_API_KEY")
+
+        _sdk = OctopoidSDK(server_url=server_url, api_key=api_key)
+        return _sdk
+
+    except Exception as e:
+        raise RuntimeError(f"Failed to initialize SDK: {e}")
+
+
+def get_orchestrator_id() -> str:
+    """Get unique orchestrator instance ID.
+
+    Returns:
+        Orchestrator ID (hostname-based)
+    """
+    return socket.gethostname()
 
 
 def get_queue_subdir(subdir: str) -> Path:
@@ -194,38 +262,30 @@ def can_claim_task() -> tuple[bool, str]:
 
 
 def list_tasks(subdir: str) -> list[dict[str, Any]]:
-    """List tasks in a queue subdirectory with metadata.
+    """List tasks in a queue from the API server.
 
     Args:
-        subdir: One of 'incoming', 'claimed', 'done', 'failed', 'provisional'
+        subdir: Queue name ('incoming', 'claimed', 'done', 'failed', 'provisional')
 
     Returns:
-        List of task dictionaries with path, id, role, priority, created, title
+        List of task dictionaries sorted by priority and creation time
     """
-    if is_db_enabled():
-        from . import db
-        db_tasks = db.list_tasks(queue=subdir)
-        # Convert DB format to file format for compatibility
-        return [_db_task_to_file_format(t) for t in db_tasks]
+    try:
+        sdk = get_sdk()
+        tasks = sdk.tasks.list(queue=subdir)
 
-    # File-based fallback
-    path = get_queue_subdir(subdir)
-    tasks = []
+        # Sort by: 1) expedite flag (expedited first), 2) priority (P0 first), 3) created time
+        priority_order = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
+        tasks.sort(key=lambda t: (
+            0 if t.get("expedite") else 1,  # Expedited tasks first
+            priority_order.get(t.get("priority", "P2"), 2),
+            t.get("created_at") or t.get("created") or "",
+        ))
 
-    for task_file in path.glob("*.md"):
-        task_info = parse_task_file(task_file)
-        if task_info:
-            tasks.append(task_info)
-
-    # Sort by: 1) expedite flag (expedited first), 2) priority (P0 first), 3) created time
-    priority_order = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
-    tasks.sort(key=lambda t: (
-        0 if t.get("expedite") else 1,  # Expedited tasks first
-        priority_order.get(t.get("priority", "P2"), 2),
-        t.get("created") or "",
-    ))
-
-    return tasks
+        return tasks
+    except Exception as e:
+        print(f"Warning: Failed to list tasks in queue {subdir}: {e}")
+        return []
 
 
 def _db_task_to_file_format(db_task: dict[str, Any]) -> dict[str, Any]:
@@ -1242,25 +1302,27 @@ def resume_task(task_path: Path | str, agent_name: str | None = None) -> Path:
 
 
 def find_task_by_id(task_id: str, subdirs: list[str] | None = None) -> dict[str, Any] | None:
-    """Find a task by its ID across queue subdirectories.
+    """Find a task by its ID, optionally filtered by queue.
 
     Args:
         task_id: Task ID to find (e.g., "9f5cda4b")
-        subdirs: List of subdirs to search (default: all)
+        subdirs: List of queues to search (default: all queues)
 
     Returns:
-        Task info dict or None if not found
+        Task info dict or None if not found or not in specified queues
     """
-    if subdirs is None:
-        subdirs = ["incoming", "claimed", "needs_continuation", "done", "failed", "rejected"]
+    task = get_task_by_id(task_id)
 
-    for subdir in subdirs:
-        tasks = list_tasks(subdir)
-        for task in tasks:
-            if task.get("id") == task_id:
-                return task
+    if task is None:
+        return None
 
-    return None
+    # If subdirs specified, check if task is in one of those queues
+    if subdirs is not None:
+        task_queue = task.get("queue")
+        if task_queue not in subdirs:
+            return None
+
+    return task
 
 
 def get_continuation_tasks(agent_name: str | None = None) -> list[dict[str, Any]]:
@@ -1519,7 +1581,7 @@ def get_queue_status() -> dict[str, Any]:
 
 
 def get_task_by_id(task_id: str) -> dict[str, Any] | None:
-    """Get a task by its ID.
+    """Get a task by its ID from the API server.
 
     Args:
         task_id: Task identifier (e.g., 'abc12345')
@@ -1527,22 +1589,14 @@ def get_task_by_id(task_id: str) -> dict[str, Any] | None:
     Returns:
         Task dict or None if not found
     """
-    if is_db_enabled():
-        from . import db
-        db_task = db.get_task(task_id)
-        if db_task:
-            return _db_task_to_file_format(db_task)
+    try:
+        sdk = get_sdk()
+        task = sdk.tasks.get(task_id)
+        return task
+    except Exception as e:
+        # Log error but don't crash
+        print(f"Warning: Failed to get task {task_id}: {e}")
         return None
-
-    # File-based: search all queues
-    for subdir in ["incoming", "claimed", "done", "failed", "rejected"]:
-        path = get_queue_subdir(subdir)
-        for task_file in path.glob(f"*{task_id}*.md"):
-            task_info = parse_task_file(task_file)
-            if task_info and task_info["id"] == task_id:
-                return task_info
-
-    return None
 
 
 # =============================================================================
