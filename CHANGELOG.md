@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - README updated with comprehensive troubleshooting section
 - GitHub issue monitor now uses SDK to register tasks with API server
 - Agents now use unified .octopoid/config.yaml for server configuration
+- **BREAKING**: v2.0 is API-only architecture - no database mode, no file-based queue mode
 
 ### Fixed
 - Dashboard now correctly connects to API server via SDK
