@@ -42,8 +42,8 @@ export class Gatekeeper extends BaseAgent {
 
       this.writeStatus(task.id, 'Fetching changes', 20)
 
-      // Ensure worktree and checkout branch
-      const worktreePath = await this.ensureAgentWorktree(task.branch)
+      // Ensure task-specific worktree exists
+      const worktreePath = await this.ensureTaskWorktree(task.id, task.branch)
 
       // Get task content
       const taskFile = findTaskFile(task.id)

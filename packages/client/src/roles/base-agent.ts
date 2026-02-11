@@ -195,22 +195,23 @@ export abstract class BaseAgent {
   }
 
   /**
-   * Ensure worktree exists for this agent
+   * Ensure worktree exists for the current task
+   * Each task gets its own isolated worktree for parallel execution
    */
-  protected async ensureAgentWorktree(baseBranch: string = 'main'): Promise<string> {
-    this.worktreePath = await ensureWorktree(this.config.name, baseBranch)
-    this.log(`Worktree ready: ${this.worktreePath}`)
+  protected async ensureTaskWorktree(taskId: string, baseBranch: string = 'main'): Promise<string> {
+    this.worktreePath = await ensureWorktree(taskId, baseBranch)
+    this.log(`Worktree ready for task ${taskId}: ${this.worktreePath}`)
     return this.worktreePath
   }
 
   /**
-   * Remove worktree for this agent
+   * Remove worktree for the current task
    */
-  protected async cleanupWorktree(): Promise<void> {
+  protected async cleanupWorktree(taskId: string): Promise<void> {
     if (this.worktreePath) {
-      await removeWorktree(this.config.name)
+      await removeWorktree(taskId)
       this.worktreePath = null
-      this.log('Worktree cleaned up')
+      this.log(`Worktree cleaned up for task ${taskId}`)
     }
   }
 
@@ -387,6 +388,8 @@ export abstract class BaseAgent {
    */
   async cleanup(): Promise<void> {
     this.clearStatus()
-    await this.cleanupWorktree()
+    if (this.currentTaskId) {
+      await this.cleanupWorktree(this.currentTaskId)
+    }
   }
 }
