@@ -18,7 +18,7 @@ from .config import get_orchestrator_dir
 _SENTINEL = object()
 
 # Schema version for migrations
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 # Module-level flag to avoid checking schema version on every connection.
 # Reset to False if tests need to re-trigger migration.
@@ -431,6 +431,13 @@ def migrate_schema() -> bool:
             conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_drafts_domain ON drafts(domain)
             """)
+
+        # Migration from v11 to v12: Add file_path column to projects
+        if current < 12:
+            try:
+                conn.execute("ALTER TABLE projects ADD COLUMN file_path TEXT")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
 
         # Update schema version
         conn.execute(
