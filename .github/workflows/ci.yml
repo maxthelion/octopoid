@@ -50,18 +50,10 @@ jobs:
       - name: Build packages
         run: pnpm build
 
-      - name: Apply D1 migrations for integration tests
-        run: |
-          cd packages/server
-          npx wrangler d1 migrations apply octopoid-db --local
-
       - name: Run server unit tests
         run: pnpm --filter @octopoid/server test --run
 
-      - name: Run server integration tests
-        run: pnpm --filter @octopoid/server test:integration --run
-
-  test-client:
+  integration-tests:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -75,26 +67,29 @@ jobs:
           node-version: '18'
           cache: 'pnpm'
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
       - name: Install dependencies
-        run: pnpm install
+        run: |
+          pnpm install
+          pip install pytest requests
 
       - name: Build packages
         run: pnpm build
 
-      - name: Run client unit tests
-        run: pnpm --filter octopoid test --run
-
-      - name: Start server for integration tests
+      - name: Build Python SDK
         run: |
-          cd packages/server
-          npx wrangler d1 migrations apply octopoid-db --local
-          npx wrangler dev --port 8787 &
-          sleep 10  # Wait for server to start
+          cd packages/python-sdk
+          pip install -e .
 
-      - name: Run client integration tests
-        run: pnpm --filter octopoid test:integration --run
-        env:
-          TEST_SERVER_URL: http://localhost:8787
+      - name: Start test server and run integration tests
+        run: |
+          cd tests/integration
+          ./bin/start-test-server.sh
+          pytest -v
+          ./bin/stop-test-server.sh
 
   build:
     runs-on: ubuntu-latest
@@ -117,7 +112,7 @@ jobs:
         run: pnpm build
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: build-artifacts
           path: |
