@@ -150,6 +150,17 @@ class TasksAPI:
 
         return self.client._request('POST', f'/api/v1/tasks/{task_id}/submit', json=data)
 
+    def delete(self, task_id: str) -> Dict[str, Any]:
+        """Delete a task
+
+        Args:
+            task_id: Task ID
+
+        Returns:
+            Deletion confirmation
+        """
+        return self.client._request('DELETE', f'/api/v1/tasks/{task_id}')
+
 
 class DraftsAPI:
     """Drafts API endpoints"""

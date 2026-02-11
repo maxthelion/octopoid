@@ -237,6 +237,25 @@ tasksRoute.patch('/:id', async (c) => {
 })
 
 /**
+ * Delete task
+ * DELETE /api/v1/tasks/:id
+ */
+tasksRoute.delete('/:id', async (c) => {
+  const db = c.env.DB
+  const taskId = c.req.param('id')
+
+  // Delete task and related records
+  await execute(db, 'DELETE FROM task_history WHERE task_id = ?', taskId)
+  const result = await execute(db, 'DELETE FROM tasks WHERE id = ?', taskId)
+
+  if (result.meta.changes === 0) {
+    return c.json({ error: 'Task not found' }, 404)
+  }
+
+  return c.json({ message: 'Task deleted', task_id: taskId })
+})
+
+/**
  * Claim task (atomic with lease)
  * POST /api/v1/tasks/claim
  */
