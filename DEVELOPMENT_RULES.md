@@ -2,6 +2,61 @@
 
 Guidelines for maintaining the Octopoid codebase.
 
+## Architecture
+
+### Rule: v2.0 is API-Only
+
+**In v2.0, all task state operations must go through the API. No database mode, no file-based queue mode.**
+
+v2.0 is a client-server architecture:
+- **Server**: Cloudflare Workers with D1 database (single source of truth)
+- **Clients**: Use SDK to communicate with server
+- **No local database**: SQLite/database mode is removed
+- **No file-based queues**: Queue state is not managed via files
+
+**What uses API:**
+- Task lifecycle (claim, submit, complete, reject, fail)
+- Task queries (list, get, count)
+- Task creation and deletion
+- All task state changes
+
+**What stays local:**
+- Task markdown files (`.octopoid/queue/*.md`) - for content/context
+- Worktree markers (`.octopoid/runtime/*`) - local worktree state
+- Git operations (branches, commits, worktrees)
+- Agent logs
+
+**Bad (v1.x patterns):**
+```python
+if is_db_enabled():
+    from . import db
+    return db.claim_task(...)
+else:
+    # Move file from incoming/ to claimed/
+    task_file.rename(claimed_dir / task_file.name)
+```
+
+**Good (v2.0 pattern):**
+```python
+from octopoid_sdk import OctopoidSDK
+sdk = OctopoidSDK(server_url=config.server.url)
+task = sdk.tasks.claim(orchestrator_id=..., agent_name=...)
+```
+
+**Migration checklist:**
+- [ ] Remove all `is_db_enabled()` checks
+- [ ] Remove all `from . import db` imports
+- [ ] Remove file-based queue operations (moving files between queue dirs)
+- [ ] Replace with SDK calls
+- [ ] Keep only local file reading (parse_task_file) and worktree markers
+
+**Rationale:**
+- Single source of truth (server database)
+- Enables distributed orchestrators
+- Consistent state across all clients
+- No file/database sync issues
+- Proper audit trail in server
+
 ## Testing
 
 ### Rule: Use Separate Test Instance
