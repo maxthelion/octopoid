@@ -35,8 +35,8 @@ export class Implementer extends BaseAgent {
 
       this.writeStatus(task.id, 'Setting up environment', 10)
 
-      // Ensure worktree exists
-      const worktreePath = await this.ensureAgentWorktree(task.branch)
+      // Ensure task-specific worktree exists (for parallel execution)
+      const worktreePath = await this.ensureTaskWorktree(task.id, task.branch)
       this.log(`Working in: ${worktreePath}`)
 
       // Create feature branch

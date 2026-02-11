@@ -70,22 +70,23 @@ export function getRepoRoot(): string {
 }
 
 /**
- * Get worktree path for an agent
+ * Get worktree path for a task
+ * Each task gets its own isolated worktree for parallel execution
  */
-export function getWorktreePath(agentName: string): string {
+export function getWorktreePath(taskId: string): string {
   const runtimeDir = getRuntimeDir()
-  return join(runtimeDir, '..', 'worktrees', agentName)
+  return join(runtimeDir, '..', 'worktrees', taskId)
 }
 
 /**
- * Ensure a git worktree exists for an agent
+ * Ensure a git worktree exists for a task
  */
 export async function ensureWorktree(
-  agentName: string,
+  taskId: string,
   baseBranch: string = 'main'
 ): Promise<string> {
   const repoRoot = getRepoRoot()
-  const worktreePath = getWorktreePath(agentName)
+  const worktreePath = getWorktreePath(taskId)
   const git = getGit(repoRoot)
 
   // Check if worktree already exists and is valid
@@ -155,11 +156,11 @@ export async function ensureWorktree(
 }
 
 /**
- * Remove a git worktree for an agent
+ * Remove a git worktree for a task
  */
-export async function removeWorktree(agentName: string): Promise<void> {
+export async function removeWorktree(taskId: string): Promise<void> {
   const repoRoot = getRepoRoot()
-  const worktreePath = getWorktreePath(agentName)
+  const worktreePath = getWorktreePath(taskId)
   const git = getGit(repoRoot)
 
   if (existsSync(worktreePath)) {
