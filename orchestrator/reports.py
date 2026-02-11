@@ -3,6 +3,9 @@
 Provides a single get_project_report() function that aggregates data from
 all orchestrator sources into a structured dict suitable for dashboards,
 TUIs, and other consumers.
+
+Supports both local mode (v1.x - direct file/DB access) and remote mode
+(v2.0 - API access via SDK).
 """
 
 import json
@@ -10,27 +13,39 @@ import re
 import subprocess
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
+
+# Type hint for SDK (avoid hard dependency)
+try:
+    from typing import TYPE_CHECKING
+    if TYPE_CHECKING:
+        from octopoid_sdk import OctopoidSDK
+except ImportError:
+    pass
 
 
-def get_project_report() -> dict[str, Any]:
+def get_project_report(sdk: Optional["OctopoidSDK"] = None) -> dict[str, Any]:
     """Generate a comprehensive structured project report.
 
     Aggregates data from: DB tasks, agent configs/state, open PRs,
     inbox proposals, agent messages, and agent notes.
+
+    Args:
+        sdk: Optional Octopoid SDK instance for v2.0 API mode.
+             If None, uses local mode (v1.x direct file/DB access).
 
     Returns:
         Structured dict with keys: work, prs, proposals, messages,
         agents, health.
     """
     return {
-        "work": _gather_work(),
-        "done_tasks": _gather_done_tasks(),
-        "prs": _gather_prs(),
+        "work": _gather_work(sdk),
+        "done_tasks": _gather_done_tasks(sdk),
+        "prs": _gather_prs(sdk),
         "proposals": _gather_proposals(),
         "messages": _gather_messages(),
         "agents": _gather_agents(),
-        "health": _gather_health(),
+        "health": _gather_health(sdk),
         "generated_at": datetime.now().isoformat(),
     }
 
@@ -40,15 +55,21 @@ def get_project_report() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _gather_work() -> dict[str, list[dict[str, Any]]]:
+def _gather_work(sdk: Optional["OctopoidSDK"] = None) -> dict[str, list[dict[str, Any]]]:
     """Gather task work items from all relevant queues."""
-    from .queue_utils import list_tasks
-
-    incoming = [_format_task(t) for t in list_tasks("incoming")]
-    claimed = [_format_task(t) for t in list_tasks("claimed")]
+    if sdk:
+        # v2.0 API mode
+        incoming = [_format_task(t) for t in sdk.tasks.list(queue='incoming')]
+        claimed = [_format_task(t) for t in sdk.tasks.list(queue='claimed')]
+        provisional = [_format_task(t) for t in sdk.tasks.list(queue='provisional')]
+    else:
+        # v1.x local mode
+        from .queue_utils import list_tasks
+        incoming = [_format_task(t) for t in list_tasks("incoming")]
+        claimed = [_format_task(t) for t in list_tasks("claimed")]
+        provisional = [_format_task(t) for t in list_tasks("provisional")]
 
     # Split provisional into "checking" (has pending checks) and "in_review" (ready for human)
-    provisional = [_format_task(t) for t in list_tasks("provisional")]
     checking = []
     in_review = []
     for t in provisional:
@@ -69,7 +90,10 @@ def _gather_work() -> dict[str, list[dict[str, Any]]]:
                 checking.append(t)
 
     # "done_today" — tasks completed in the last 24 hours
-    done_all = list_tasks("done")
+    if sdk:
+        done_all = sdk.tasks.list(queue='done')
+    else:
+        done_all = list_tasks("done")
     cutoff = datetime.now() - timedelta(hours=24)
     done_today = [_format_task(t) for t in done_all if _is_recent(t, cutoff)]
 
@@ -82,33 +106,52 @@ def _gather_work() -> dict[str, list[dict[str, Any]]]:
     }
 
 
-def _gather_done_tasks() -> list[dict[str, Any]]:
+def _gather_done_tasks(sdk: Optional["OctopoidSDK"] = None) -> list[dict[str, Any]]:
     """Gather completed tasks from the last 7 days for the Done tab.
 
     Includes merge method derived from task_history 'accepted' events.
     Also includes failed and recycled tasks.
     """
-    from .queue_utils import list_tasks
-
     cutoff = datetime.now() - timedelta(days=7)
 
     # Done tasks
-    done_all = list_tasks("done")
-    done_recent = [t for t in done_all if _is_recent(t, cutoff)]
+    if sdk:
+        done_all = sdk.tasks.list(queue='done')
+        done_recent = [t for t in done_all if _is_recent(t, cutoff)]
 
-    # Failed tasks
-    try:
-        failed_all = list_tasks("failed")
-        failed_recent = [t for t in failed_all if _is_recent(t, cutoff)]
-    except Exception:
-        failed_recent = []
+        # Failed tasks
+        try:
+            failed_all = sdk.tasks.list(queue='failed')
+            failed_recent = [t for t in failed_all if _is_recent(t, cutoff)]
+        except Exception:
+            failed_recent = []
 
-    # Recycled tasks (queue='recycled')
-    try:
-        recycled_all = list_tasks("recycled")
-        recycled_recent = [t for t in recycled_all if _is_recent(t, cutoff)]
-    except Exception:
-        recycled_recent = []
+        # Recycled tasks
+        try:
+            recycled_all = sdk.tasks.list(queue='recycled')
+            recycled_recent = [t for t in recycled_all if _is_recent(t, cutoff)]
+        except Exception:
+            recycled_recent = []
+    else:
+        # v1.x local mode
+        from .queue_utils import list_tasks
+
+        done_all = list_tasks("done")
+        done_recent = [t for t in done_all if _is_recent(t, cutoff)]
+
+        # Failed tasks
+        try:
+            failed_all = list_tasks("failed")
+            failed_recent = [t for t in failed_all if _is_recent(t, cutoff)]
+        except Exception:
+            failed_recent = []
+
+        # Recycled tasks (queue='recycled')
+        try:
+            recycled_all = list_tasks("recycled")
+            recycled_recent = [t for t in recycled_all if _is_recent(t, cutoff)]
+        except Exception:
+            recycled_recent = []
 
     result = []
     for t in done_recent:
@@ -228,7 +271,7 @@ def _turn_limit_for_role(role: str | None) -> int:
 # ---------------------------------------------------------------------------
 
 
-def _gather_prs() -> list[dict[str, Any]]:
+def _gather_prs(sdk: Optional["OctopoidSDK"] = None) -> list[dict[str, Any]]:
     """Gather open pull requests via gh CLI.
 
     For each PR, also attempts to extract a Cloudflare Pages branch preview URL
@@ -258,7 +301,7 @@ def _gather_prs() -> list[dict[str, Any]]:
 
             # If we found a staging URL, try to store it on the associated task
             if staging_url and pr_number:
-                _store_staging_url(pr_number, staging_url, branch_name=pr.get("headRefName"))
+                _store_staging_url(pr_number, staging_url, branch_name=pr.get("headRefName"), sdk=sdk)
 
             pr_list.append({
                 "number": pr_number,
@@ -315,7 +358,7 @@ def _extract_staging_url(pr_number: int) -> str | None:
         return None
 
 
-def _store_staging_url(pr_number: int, staging_url: str, *, branch_name: str | None = None) -> None:
+def _store_staging_url(pr_number: int, staging_url: str, *, branch_name: str | None = None, sdk: Optional["OctopoidSDK"] = None) -> None:
     """Store a staging URL on the task associated with a PR number.
 
     Looks up the task by pr_number first. If that fails and a branch_name
@@ -326,36 +369,59 @@ def _store_staging_url(pr_number: int, staging_url: str, *, branch_name: str | N
         pr_number: PR number to look up
         staging_url: URL to store
         branch_name: Optional branch name for fallback lookup
+        sdk: Optional SDK for v2.0 API mode
     """
     try:
-        from .config import is_db_enabled
-        if not is_db_enabled():
-            return
+        if sdk:
+            # v2.0 API mode
+            # Find task by pr_number
+            tasks = sdk.tasks.list(pr_number=pr_number)
+            if tasks:
+                task = tasks[0]
+                # Update via PATCH endpoint (SDK doesn't expose update yet, skip for now)
+                # TODO: Add update method to SDK
+                return
 
-        from . import db
-        with db.get_connection() as conn:
-            # Primary: find task by pr_number
-            cursor = conn.execute(
-                "SELECT id FROM tasks WHERE pr_number = ?",
-                (pr_number,),
-            )
-            row = cursor.fetchone()
-
-            # Fallback: match by branch name pattern (e.g. agent/<task-id>-*)
-            if not row and branch_name:
+            # Fallback: match by branch name pattern
+            if branch_name:
                 import re
-                # Extract task ID from branch patterns like agent/<task-id>-*
                 m = re.match(r"agent/([a-f0-9]{8})", branch_name)
                 if m:
-                    task_id_prefix = m.group(1)
-                    cursor = conn.execute(
-                        "SELECT id FROM tasks WHERE id = ? ORDER BY updated_at DESC LIMIT 1",
-                        (task_id_prefix,),
-                    )
-                    row = cursor.fetchone()
+                    task_id = m.group(1)
+                    task = sdk.tasks.get(task_id)
+                    if task:
+                        # TODO: Update staging_url via SDK
+                        pass
+        else:
+            # v1.x local mode
+            from .config import is_db_enabled
+            if not is_db_enabled():
+                return
 
-            if row:
-                db.update_task(row["id"], staging_url=staging_url)
+            from . import db
+            with db.get_connection() as conn:
+                # Primary: find task by pr_number
+                cursor = conn.execute(
+                    "SELECT id FROM tasks WHERE pr_number = ?",
+                    (pr_number,),
+                )
+                row = cursor.fetchone()
+
+                # Fallback: match by branch name pattern (e.g. agent/<task-id>-*)
+                if not row and branch_name:
+                    import re
+                    # Extract task ID from branch patterns like agent/<task-id>-*
+                    m = re.match(r"agent/([a-f0-9]{8})", branch_name)
+                    if m:
+                        task_id_prefix = m.group(1)
+                        cursor = conn.execute(
+                            "SELECT id FROM tasks WHERE id = ? ORDER BY updated_at DESC LIMIT 1",
+                            (task_id_prefix,),
+                        )
+                        row = cursor.fetchone()
+
+                if row:
+                    db.update_task(row["id"], staging_url=staging_url)
     except Exception:
         pass  # Best-effort — don't break PR gathering
 
@@ -559,10 +625,9 @@ def _get_agent_notes(notes_dir: Path, current_task: str | None) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def _gather_health() -> dict[str, Any]:
+def _gather_health(sdk: Optional["OctopoidSDK"] = None) -> dict[str, Any]:
     """Gather system health information."""
     from .config import get_agents, get_orchestrator_dir, is_system_paused
-    from .queue_utils import count_queue
     from .state_utils import is_process_running
 
     agents = get_agents()
@@ -587,11 +652,23 @@ def _gather_health() -> dict[str, Any]:
             idle_count += 1
 
     # Queue depth = incoming + claimed + breakdown
-    queue_depth = count_queue("incoming") + count_queue("claimed")
-    try:
-        queue_depth += count_queue("breakdown")
-    except Exception:
-        pass
+    if sdk:
+        # v2.0 API mode
+        incoming = len(sdk.tasks.list(queue='incoming'))
+        claimed = len(sdk.tasks.list(queue='claimed'))
+        try:
+            breakdown = len(sdk.tasks.list(queue='breakdown'))
+        except Exception:
+            breakdown = 0
+        queue_depth = incoming + claimed + breakdown
+    else:
+        # v1.x local mode
+        from .queue_utils import count_queue
+        queue_depth = count_queue("incoming") + count_queue("claimed")
+        try:
+            queue_depth += count_queue("breakdown")
+        except Exception:
+            pass
 
     return {
         "scheduler": scheduler_status,
