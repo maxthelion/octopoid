@@ -486,48 +486,46 @@ def claim_task(
 
 
 def complete_task(task_path: Path | str, result: str | None = None) -> Path:
-    """Move a task to the done queue.
+    """Move a task to the done queue via API.
 
-    Note: In DB mode with pre-check enabled, use submit_completion() instead
-    to go through the provisional queue for pre-check.
+    Note: This directly marks a task as done. For tasks requiring review,
+    use submit_completion() instead to go through the provisional queue.
 
     Args:
         task_path: Path to the claimed task file
         result: Optional result summary to append
 
     Returns:
-        New path in done queue
+        Path to task file (queue change handled by API)
     """
     task_path = Path(task_path)
-    task_id = None
 
-    if is_db_enabled():
-        from . import db
-        db_task = db.get_task_by_path(str(task_path))
-        if db_task:
-            task_id = db_task["id"]
-            db.accept_completion(task_id)
+    try:
+        # Get task ID from file
+        task_info = parse_task_file(task_path)
+        if not task_info:
+            print(f"Warning: Could not parse task file {task_path}")
+            return task_path
 
-    done_dir = get_queue_subdir("done")
-    dest = done_dir / task_path.name
+        task_id = task_info["id"]
 
-    # Append completion info
-    with open(task_path, "a") as f:
-        f.write(f"\nCOMPLETED_AT: {datetime.now().isoformat()}\n")
-        if result:
-            f.write(f"\n## Result\n{result}\n")
+        # Accept completion via API
+        sdk = get_sdk()
+        sdk.tasks.accept(task_id, accepted_by="complete_task")
 
-    os.rename(task_path, dest)
+        # Append completion info to local file
+        with open(task_path, "a") as f:
+            f.write(f"\nCOMPLETED_AT: {datetime.now().isoformat()}\n")
+            if result:
+                f.write(f"\n## Result\n{result}\n")
 
-    # Update file_path in DB to reflect new location
-    if task_id:
-        db.update_task(task_id, file_path=str(dest))
-
-    # Clean up agent notes
-    if task_id:
+        # Clean up agent notes
         cleanup_task_notes(task_id)
 
-    return dest
+        return task_path
+    except Exception as e:
+        print(f"Warning: Failed to complete task: {e}")
+        return task_path
 
 
 def submit_completion(
@@ -989,7 +987,7 @@ def reject_task(
     details: str | None = None,
     rejected_by: str | None = None,
 ) -> Path:
-    """Reject a task and move it to the rejected queue.
+    """Reject a task and move it to the rejected queue via API.
 
     Use this when a task cannot or should not be completed, for example:
     - Functionality already exists (already_implemented)
@@ -1005,23 +1003,36 @@ def reject_task(
         rejected_by: Name of the agent rejecting the task
 
     Returns:
-        New path in rejected queue
+        Path to task file (queue change handled by API)
     """
     task_path = Path(task_path)
-    rejected_dir = get_queue_subdir("rejected")
-    dest = rejected_dir / task_path.name
 
-    # Append rejection info
-    with open(task_path, "a") as f:
-        f.write(f"\nREJECTED_AT: {datetime.now().isoformat()}\n")
-        f.write(f"REJECTION_REASON: {reason}\n")
-        if rejected_by:
-            f.write(f"REJECTED_BY: {rejected_by}\n")
-        if details:
-            f.write(f"\n## Rejection Details\n{details}\n")
+    try:
+        # Get task ID from file
+        task_info = parse_task_file(task_path)
+        if not task_info:
+            print(f"Warning: Could not parse task file {task_path}")
+            return task_path
 
-    os.rename(task_path, dest)
-    return dest
+        task_id = task_info["id"]
+
+        # Update to rejected queue via API
+        sdk = get_sdk()
+        sdk.tasks.update(task_id, queue="rejected")
+
+        # Append rejection info to local file
+        with open(task_path, "a") as f:
+            f.write(f"\nREJECTED_AT: {datetime.now().isoformat()}\n")
+            f.write(f"REJECTION_REASON: {reason}\n")
+            if rejected_by:
+                f.write(f"REJECTED_BY: {rejected_by}\n")
+            if details:
+                f.write(f"\n## Rejection Details\n{details}\n")
+
+        return task_path
+    except Exception as e:
+        print(f"Warning: Failed to reject task: {e}")
+        return task_path
 
 
 def retry_task(task_path: Path | str) -> Path:
@@ -1360,12 +1371,12 @@ def create_task(
     project_line = f"PROJECT: {project_id}\n" if project_id else ""
     checks_line = f"CHECKS: {','.join(checks)}\n" if checks else ""
 
-    # If task belongs to a project, inherit branch from project
-    if project_id and branch == "main" and is_db_enabled():
-        from . import db
-        project = db.get_project(project_id)
-        if project and project.get("branch"):
-            branch = project["branch"]
+    # Get orchestrator directory for local file storage
+    orchestrator_dir = get_orchestrator_dir()
+    task_path = orchestrator_dir.parent / ".octopoid" / "queue" / queue / filename
+
+    # Ensure queue directory exists
+    task_path.parent.mkdir(parents=True, exist_ok=True)
 
     content = f"""# [TASK-{task_id}] {title}
 
@@ -1382,27 +1393,33 @@ CREATED_BY: {created_by}
 {criteria_md}
 """
 
-    queue_dir = get_queue_subdir(queue)
-    task_path = queue_dir / filename
-
+    # Write local file
     task_path.write_text(content)
 
-    # Also create in DB if enabled
-    if is_db_enabled():
-        from . import db
-        db.create_task(
-            task_id=task_id,
+    # Register task with API server
+    try:
+        sdk = get_sdk()
+        sdk.tasks.create(
+            id=task_id,
             file_path=str(task_path),
-            priority=priority,
+            title=title,
             role=role,
+            priority=priority,
+            context=context,
+            acceptance_criteria="\n".join(criteria_lines),
+            queue=queue,
             branch=branch,
-            blocked_by=blocked_by,
-            project_id=project_id,
-            checks=checks,
+            metadata={
+                "created_by": created_by,
+                "blocked_by": blocked_by,
+                "project_id": project_id,
+                "checks": checks,
+            }
         )
-        # Set queue status if not incoming
-        if queue != "incoming":
-            db.update_task_queue(task_id, queue, history_event="created_in_queue", history_details=f"queue={queue}")
+    except Exception as e:
+        print(f"Warning: Failed to register task with API: {e}")
+        # Still return task_path since local file was created
+        # This allows offline task creation
 
     return task_path
 
