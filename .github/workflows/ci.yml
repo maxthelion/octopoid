@@ -47,8 +47,19 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
-      - name: Test server
-        run: pnpm --filter @octopoid/server test || echo "Tests not yet implemented"
+      - name: Build packages
+        run: pnpm build
+
+      - name: Apply D1 migrations for integration tests
+        run: |
+          cd packages/server
+          npx wrangler d1 migrations apply octopoid-db --local
+
+      - name: Run server unit tests
+        run: pnpm --filter @octopoid/server test --run
+
+      - name: Run server integration tests
+        run: pnpm --filter @octopoid/server test:integration --run
 
   test-client:
     runs-on: ubuntu-latest
@@ -67,8 +78,23 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
-      - name: Test client
-        run: pnpm --filter octopoid test || echo "Tests not yet implemented"
+      - name: Build packages
+        run: pnpm build
+
+      - name: Run client unit tests
+        run: pnpm --filter octopoid test --run
+
+      - name: Start server for integration tests
+        run: |
+          cd packages/server
+          npx wrangler d1 migrations apply octopoid-db --local
+          npx wrangler dev --port 8787 &
+          sleep 10  # Wait for server to start
+
+      - name: Run client integration tests
+        run: pnpm --filter octopoid test:integration --run
+        env:
+          TEST_SERVER_URL: http://localhost:8787
 
   build:
     runs-on: ubuntu-latest
