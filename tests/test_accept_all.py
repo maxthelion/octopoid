@@ -16,27 +16,27 @@ class TestAcceptAllRouting:
     """Tests for accept_all routing logic."""
 
     def test_normal_task_accepted(self, mock_config, sample_project_with_tasks):
-        """Task with commits is accepted to done queue."""
+        """Task with commits - check disabled, always returns False."""
         with patch('orchestrator.db.get_database_path', return_value=sample_project_with_tasks["completed_tasks"][0]["path"].parent.parent.parent.parent / "state.db"):
             with patch('orchestrator.queue_utils.is_db_enabled', return_value=True):
                 with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_config / "shared" / "queue"):
                     from orchestrator.queue_utils import is_burned_out
 
-                    # A task with commits should NOT be burned out
+                    # Check disabled - always returns False
                     assert is_burned_out(commits_count=3, turns_used=50) is False
 
     def test_burned_task_detected(self, mock_config, sample_project_with_tasks):
-        """Task with 0 commits and high turns is detected as burned out."""
+        """Task with 0 commits and high turns - check disabled."""
         with patch('orchestrator.db.get_database_path', return_value=sample_project_with_tasks["completed_tasks"][0]["path"].parent.parent.parent.parent / "state.db"):
             with patch('orchestrator.queue_utils.is_db_enabled', return_value=True):
                 with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_config / "shared" / "queue"):
                     from orchestrator.queue_utils import is_burned_out
 
-                    # A task with 0 commits and 100 turns IS burned out
-                    assert is_burned_out(commits_count=0, turns_used=100) is True
+                    # Check disabled - always returns False now
+                    assert is_burned_out(commits_count=0, turns_used=100) is False
 
     def test_burned_task_recycled_not_accepted(self, mock_config, sample_project_with_tasks):
-        """Burned-out task gets recycled, not accepted to done."""
+        """Test recycling logic still works even with check disabled."""
         with patch('orchestrator.db.get_database_path', return_value=sample_project_with_tasks["completed_tasks"][0]["path"].parent.parent.parent.parent / "state.db"):
             with patch('orchestrator.queue_utils.is_db_enabled', return_value=True):
                 with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_config / "shared" / "queue"):
@@ -46,13 +46,13 @@ class TestAcceptAllRouting:
                     burned = sample_project_with_tasks["burned_task"]
                     task = get_task(burned["id"])
 
-                    # Verify it's detected as burned out
+                    # Check disabled - always returns False
                     assert is_burned_out(
                         commits_count=task.get("commits_count", 0),
                         turns_used=task.get("turns_used", 0),
-                    ) is True
+                    ) is False
 
-                    # Recycle it
+                    # Recycling still works (can be invoked manually/other ways)
                     result = recycle_to_breakdown(burned["path"])
                     assert result is not None
                     assert result["action"] == "recycled"
@@ -63,7 +63,7 @@ class TestAcceptAllRouting:
                     assert updated_task["queue"] != "done"
 
     def test_mixed_batch_routes_correctly(self, mock_config, sample_project_with_tasks):
-        """A batch with both normal and burned tasks routes each correctly."""
+        """A batch with mixed tasks - with check disabled, all get accepted."""
         with patch('orchestrator.db.get_database_path', return_value=sample_project_with_tasks["completed_tasks"][0]["path"].parent.parent.parent.parent / "state.db"):
             with patch('orchestrator.queue_utils.is_db_enabled', return_value=True):
                 with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_config / "shared" / "queue"):
@@ -108,7 +108,8 @@ class TestAcceptAllRouting:
                             accept_completion(t["path"], accepted_by="test")
                             accepted.append(t["id"])
 
+                    # With check disabled, both tasks get accepted (neither gets recycled)
                     assert "norm0001" in accepted
-                    assert burned["id"] in recycled
-                    assert len(accepted) == 1
-                    assert len(recycled) == 1
+                    assert burned["id"] in accepted
+                    assert len(accepted) == 2
+                    assert len(recycled) == 0
