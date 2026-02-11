@@ -74,20 +74,34 @@ npx wrangler deploy
 
 ### Client (Each Machine)
 
-Install the Octopoid client globally:
+**Note:** The npm package is not yet published. Install from source for now.
+
+#### Install from Source (Current Method)
 
 ```bash
-# Install from npm
-npm install -g octopoid
-
-# Or install from source
+# Clone repository
 git clone https://github.com/maxthelion/octopoid.git
 cd octopoid
-pnpm install && pnpm build
-cd packages/client && npm link
+
+# Install dependencies (requires pnpm)
+pnpm install
+
+# Build all packages
+pnpm build
+
+# Link client globally
+cd packages/client
+sudo npm link
 
 # Verify installation
 octopoid --version
+```
+
+#### Install from npm (Coming Soon)
+
+```bash
+# Not yet published - use source install above
+npm install -g octopoid
 ```
 
 ## Setup
@@ -350,3 +364,65 @@ MIT License
 - **GitHub**: https://github.com/maxthelion/octopoid
 - **Issues**: https://github.com/maxthelion/octopoid/issues
 - **Documentation**: [REQUIREMENTS_ANALYSIS.md](./REQUIREMENTS_ANALYSIS.md)
+
+## Troubleshooting
+
+### `octopoid: command not found` after npm link
+
+Ensure npm's global bin directory is in your PATH:
+
+```bash
+# Check npm global bin location
+npm config get prefix
+
+# Add to PATH (add to ~/.bashrc or ~/.zshrc)
+export PATH="$(npm config get prefix)/bin:$PATH"
+
+# Reload shell
+source ~/.bashrc  # or source ~/.zshrc
+```
+
+### `permission denied` during npm link
+
+Use sudo for npm link:
+
+```bash
+cd packages/client
+sudo npm link
+```
+
+### Dashboard shows no tasks (API mode)
+
+If running dashboard with `--server` flag but seeing empty queues:
+
+1. Verify server connection:
+   ```bash
+   curl http://localhost:8787/api/health
+   ```
+
+2. Check tasks exist on server:
+   ```bash
+   octopoid list --queue incoming
+   ```
+
+3. Ensure dashboard has latest code:
+   ```bash
+   git pull origin feature/client-server-architecture
+   ```
+
+### Build errors with TypeScript
+
+Clear build cache and rebuild:
+
+```bash
+# Clean all packages
+pnpm clean
+
+# Reinstall dependencies
+rm -rf node_modules packages/*/node_modules
+pnpm install
+
+# Rebuild
+pnpm build
+```
+
