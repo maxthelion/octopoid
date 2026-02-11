@@ -4,6 +4,7 @@ from .base import BaseRole
 from .curator import CuratorRole
 from .gatekeeper import GatekeeperRole
 from .gatekeeper_coordinator import GatekeeperCoordinatorRole
+from .github_issue_monitor import GitHubIssueMonitorRole
 from .implementer import ImplementerRole
 from .orchestrator_impl import OrchestratorImplRole
 from .pr_coordinator import PRCoordinatorRole
@@ -33,4 +34,6 @@ __all__ = [
     "OrchestratorImplRole",
     "TesterRole",
     "ReviewerRole",
+    # Monitoring and automation
+    "GitHubIssueMonitorRole",
 ]
