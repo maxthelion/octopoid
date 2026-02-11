@@ -1,11 +1,10 @@
-"""Structured project report API.
+"""Structured project report API for Octopoid v2.0.
 
 Provides a single get_project_report() function that aggregates data from
-all orchestrator sources into a structured dict suitable for dashboards,
+the Octopoid API server via SDK into a structured dict suitable for dashboards,
 TUIs, and other consumers.
 
-Supports both local mode (v1.x - direct file/DB access) and remote mode
-(v2.0 - API access via SDK).
+V2.0 API-only mode - requires OctopoidSDK instance.
 """
 
 import json
@@ -15,7 +14,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
 
-# Type hint for SDK (avoid hard dependency)
+# Type hint for SDK
 try:
     from typing import TYPE_CHECKING
     if TYPE_CHECKING:
@@ -24,15 +23,14 @@ except ImportError:
     pass
 
 
-def get_project_report(sdk: Optional["OctopoidSDK"] = None) -> dict[str, Any]:
-    """Generate a comprehensive structured project report.
+def get_project_report(sdk: "OctopoidSDK") -> dict[str, Any]:
+    """Generate a comprehensive structured project report from API server.
 
-    Aggregates data from: DB tasks, agent configs/state, open PRs,
+    Aggregates data from: API tasks, agent configs/state, open PRs,
     inbox proposals, agent messages, and agent notes.
 
     Args:
-        sdk: Optional Octopoid SDK instance for v2.0 API mode.
-             If None, uses local mode (v1.x direct file/DB access).
+        sdk: Octopoid SDK instance for v2.0 API access (required).
 
     Returns:
         Structured dict with keys: work, prs, proposals, messages,
@@ -55,19 +53,12 @@ def get_project_report(sdk: Optional["OctopoidSDK"] = None) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _gather_work(sdk: Optional["OctopoidSDK"] = None) -> dict[str, list[dict[str, Any]]]:
-    """Gather task work items from all relevant queues."""
-    if sdk:
-        # v2.0 API mode
-        incoming = [_format_task(t) for t in sdk.tasks.list(queue='incoming')]
-        claimed = [_format_task(t) for t in sdk.tasks.list(queue='claimed')]
-        provisional = [_format_task(t) for t in sdk.tasks.list(queue='provisional')]
-    else:
-        # v1.x local mode
-        from .queue_utils import list_tasks
-        incoming = [_format_task(t) for t in list_tasks("incoming")]
-        claimed = [_format_task(t) for t in list_tasks("claimed")]
-        provisional = [_format_task(t) for t in list_tasks("provisional")]
+def _gather_work(sdk: "OctopoidSDK") -> dict[str, list[dict[str, Any]]]:
+    """Gather task work items from all relevant queues via API."""
+    # Fetch tasks from API server
+    incoming = [_format_task(t) for t in sdk.tasks.list(queue='incoming')]
+    claimed = [_format_task(t) for t in sdk.tasks.list(queue='claimed')]
+    provisional = [_format_task(t) for t in sdk.tasks.list(queue='provisional')]
 
     # Split provisional into "checking" (has pending checks) and "in_review" (ready for human)
     checking = []
@@ -90,10 +81,7 @@ def _gather_work(sdk: Optional["OctopoidSDK"] = None) -> dict[str, list[dict[str
                 checking.append(t)
 
     # "done_today" — tasks completed in the last 24 hours
-    if sdk:
-        done_all = sdk.tasks.list(queue='done')
-    else:
-        done_all = list_tasks("done")
+    done_all = sdk.tasks.list(queue='done')
     cutoff = datetime.now() - timedelta(hours=24)
     done_today = [_format_task(t) for t in done_all if _is_recent(t, cutoff)]
 
