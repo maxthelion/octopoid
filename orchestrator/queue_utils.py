@@ -149,7 +149,7 @@ def get_projects_dir() -> Path:
 
 
 def count_queue(subdir: str) -> int:
-    """Count tasks in a queue.
+    """Count tasks in a queue via API.
 
     Args:
         subdir: One of 'incoming', 'claimed', 'done', 'failed', 'provisional'
@@ -157,13 +157,12 @@ def count_queue(subdir: str) -> int:
     Returns:
         Number of tasks
     """
-    if is_db_enabled():
-        from . import db
-        return db.count_tasks(subdir)
-
-    # File-based fallback
-    path = get_queue_subdir(subdir)
-    return len(list(path.glob("*.md")))
+    try:
+        tasks = list_tasks(subdir)  # Already uses SDK
+        return len(tasks)
+    except Exception as e:
+        print(f"Warning: Failed to count queue {subdir}: {e}")
+        return 0
 
 
 def _get_pr_cache_path() -> Path:
