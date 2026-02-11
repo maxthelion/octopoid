@@ -19,12 +19,39 @@ npm run test:watch
 
 ```
 tests/
+├── integration.test.ts      # End-to-end client-server communication tests
 ├── config.test.ts           # Configuration loading and detection
 ├── offline-mode.test.ts     # Offline mode and sync manager
 ├── queue-utils.test.ts      # Task file parsing and management
 ├── git-utils.test.ts        # Git operations and worktrees
 ├── scheduler.test.ts        # Scheduler and agent spawning
 └── api-client.test.ts       # API client HTTP requests
+```
+
+## Integration Tests
+
+The `integration.test.ts` file tests real client-server communication:
+
+- **API Client**: Health checks, registration, heartbeats
+- **Task Operations**: CRUD operations through API
+- **Task Lifecycle**: Complete flow including claim/submit/accept/reject
+- **Offline Mode**: Network error handling
+- **Concurrent Operations**: Multiple orchestrators working simultaneously
+- **Error Handling**: Invalid requests, missing tasks, etc.
+
+```bash
+# Run integration tests
+npm run test:integration
+```
+
+**Requirements**: Integration tests need a running server at `http://localhost:8787` (or set `TEST_SERVER_URL` env var):
+
+```bash
+# Terminal 1: Start server
+cd packages/server && npx wrangler dev
+
+# Terminal 2: Run integration tests
+cd packages/client && npm run test:integration
 ```
 
 ## Writing Tests
