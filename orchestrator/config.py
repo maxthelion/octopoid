@@ -129,6 +129,15 @@ def get_agents_runtime_dir() -> Path:
     return get_orchestrator_dir() / "agents"
 
 
+def get_tasks_dir() -> Path:
+    """Get the tasks directory for ephemeral worktrees.
+
+    Returns:
+        Path to .orchestrator/tasks/ where ephemeral task worktrees are created
+    """
+    return get_orchestrator_dir() / "tasks"
+
+
 def load_agents_config() -> dict[str, Any]:
     """Load agents configuration from parent project's agents.yaml."""
     config_path = get_agents_config_path()

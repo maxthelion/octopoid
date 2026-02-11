@@ -5,7 +5,7 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
-from .config import find_parent_project, get_agents_runtime_dir
+from .config import find_parent_project, get_agents_runtime_dir, get_tasks_dir
 
 
 def run_git(args: list[str], cwd: Path | str | None = None, check: bool = True) -> subprocess.CompletedProcess:
@@ -123,6 +123,169 @@ def remove_worktree(agent_name: str) -> None:
 
     if worktree_path.exists():
         run_git(["worktree", "remove", "--force", str(worktree_path)], cwd=parent_repo, check=False)
+
+
+# =============================================================================
+# Task-scoped ephemeral worktrees
+# =============================================================================
+
+def get_task_worktree_path(task_id: str) -> Path:
+    """Get the ephemeral worktree path for a task.
+
+    Args:
+        task_id: Task identifier (e.g., 'f7b4d710')
+
+    Returns:
+        Path to .orchestrator/tasks/<task-id>/worktree/
+    """
+    return get_tasks_dir() / task_id / "worktree"
+
+
+def get_task_branch(task: dict) -> str:
+    """Determine which branch a task should work on.
+
+    Branch selection logic:
+    - Project tasks: Use project.branch (all tasks in project share same branch)
+    - Breakdown tasks: Use breakdown/<breakdown-id> branch
+    - Standalone tasks: Use orch/<task-id> for orchestrator_impl, agent/<task-id> for app tasks
+
+    Args:
+        task: Task dictionary with keys: id, project_id, breakdown_id, role
+
+    Returns:
+        Branch name to checkout for this task
+    """
+    # Project tasks use the project's branch
+    if task.get("project_id"):
+        # Must fetch project from DB
+        from . import db
+        project = db.get_project(task["project_id"])
+        if project and project.get("branch"):
+            return project["branch"]
+
+    # Breakdown tasks use a shared breakdown branch
+    if task.get("breakdown_id"):
+        return f"breakdown/{task['breakdown_id']}"
+
+    # Standalone tasks use task-specific branches
+    task_id = task["id"]
+    role = task.get("role", "implement")
+
+    if role == "orchestrator_impl":
+        return f"orch/{task_id}"
+    else:
+        return f"agent/{task_id}"
+
+
+def create_task_worktree(task: dict) -> Path:
+    """Create an ephemeral worktree for a task.
+
+    The worktree is created from origin, not local branches, ensuring
+    freshness. If the target branch doesn't exist on origin, it's created
+    from origin/main.
+
+    Args:
+        task: Task dictionary (must include 'id' and optionally project_id, breakdown_id, role)
+
+    Returns:
+        Path to the created worktree
+
+    Raises:
+        subprocess.CalledProcessError: If git commands fail
+    """
+    import shutil
+
+    parent_repo = find_parent_project()
+    task_id = task["id"]
+    worktree_path = get_task_worktree_path(task_id)
+    branch = get_task_branch(task)
+
+    # Remove any existing worktree at this path (shouldn't happen, but be safe)
+    if worktree_path.exists():
+        if (worktree_path / ".git").exists():
+            # Valid worktree exists — remove via git first
+            try:
+                run_git(["worktree", "remove", "--force", str(worktree_path)], cwd=parent_repo, check=False)
+            except subprocess.CalledProcessError:
+                pass
+        # Remove directory if it still exists
+        if worktree_path.exists():
+            shutil.rmtree(worktree_path)
+
+    # Create parent directory
+    worktree_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Fetch latest from origin
+    try:
+        run_git(["fetch", "origin"], cwd=parent_repo, check=False)
+    except subprocess.CalledProcessError:
+        pass  # May fail if offline
+
+    # Check if branch exists on origin
+    result = run_git(
+        ["ls-remote", "--heads", "origin", branch],
+        cwd=parent_repo,
+        check=False,
+    )
+    branch_exists_on_origin = bool(result.stdout.strip())
+
+    if branch_exists_on_origin:
+        # Pull existing branch from origin
+        run_git(
+            ["worktree", "add", "-b", branch, str(worktree_path), f"origin/{branch}"],
+            cwd=parent_repo,
+        )
+    else:
+        # Create new branch from origin/main
+        run_git(
+            ["worktree", "add", "-b", branch, str(worktree_path), "origin/main"],
+            cwd=parent_repo,
+        )
+
+    return worktree_path
+
+
+def cleanup_task_worktree(task_id: str, push_commits: bool = True) -> bool:
+    """Clean up an ephemeral task worktree after task completion.
+
+    Pushes any unpushed commits to origin, then deletes the worktree.
+
+    Args:
+        task_id: Task identifier
+        push_commits: Whether to push unpushed commits before deleting (default True)
+
+    Returns:
+        True if cleanup succeeded, False otherwise
+    """
+    parent_repo = find_parent_project()
+    worktree_path = get_task_worktree_path(task_id)
+
+    if not worktree_path.exists():
+        return True  # Already cleaned up
+
+    try:
+        # Push unpushed commits if requested
+        if push_commits:
+            # Check for unpushed commits
+            result = run_git(
+                ["rev-list", "@{u}..HEAD", "--count"],
+                cwd=worktree_path,
+                check=False,
+            )
+            if result.returncode == 0:
+                unpushed_count = int(result.stdout.strip())
+                if unpushed_count > 0:
+                    # Push to origin
+                    run_git(["push", "origin", "HEAD"], cwd=worktree_path, check=False)
+
+        # Delete the worktree
+        run_git(["worktree", "remove", "--force", str(worktree_path)], cwd=parent_repo, check=False)
+
+        return True
+
+    except (subprocess.CalledProcessError, ValueError, OSError):
+        # Log the error but don't fail — worktree deletion is best-effort
+        return False
 
 
 def create_feature_branch(

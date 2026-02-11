@@ -18,6 +18,7 @@ from uuid import uuid4
 import yaml
 
 from .config import get_queue_dir, get_queue_limits, is_db_enabled, get_orchestrator_dir
+from .git_utils import cleanup_task_worktree
 from .lock_utils import locked
 
 
@@ -627,6 +628,10 @@ def accept_completion(
     if task_id:
         cleanup_task_notes(task_id)
 
+    # Clean up ephemeral task worktree (push commits, delete worktree)
+    if task_id:
+        cleanup_task_worktree(task_id, push_commits=True)
+
     # Check for project completion
     if project_id and is_db_enabled():
         from . import db
@@ -692,6 +697,10 @@ def reject_completion(
     # Update file_path in DB to reflect new location
     if task_id:
         db.update_task(task_id, file_path=str(dest))
+
+    # Clean up ephemeral task worktree (worktree is deleted; next attempt gets fresh checkout)
+    if task_id:
+        cleanup_task_worktree(task_id, push_commits=True)
 
     return dest
 
@@ -844,9 +853,15 @@ def review_reject_task(
             task_id,
         )
 
-        return dest, "escalated"
+        result = (dest, "escalated")
     else:
-        return dest, "rejected"
+        result = (dest, "rejected")
+
+    # Clean up ephemeral task worktree (task will be retried or escalated)
+    if task_id:
+        cleanup_task_worktree(task_id, push_commits=True)
+
+    return result
 
 
 def get_review_feedback(task_id: str) -> str | None:
@@ -945,6 +960,13 @@ def fail_task(task_path: Path | str, error: str) -> Path:
 
     failed_dir = get_queue_subdir("failed")
     dest = failed_dir / task_path.name
+    task_id = None
+
+    if is_db_enabled():
+        from . import db
+        db_task = db.get_task_by_path(str(task_path))
+        if db_task:
+            task_id = db_task["id"]
 
     # Append error info (truncate to avoid bloating the task file —
     # the full error is already in the agent stderr log)
@@ -954,6 +976,11 @@ def fail_task(task_path: Path | str, error: str) -> Path:
         f.write(f"\n## Error\n```\n{error_summary}\n```\n")
 
     os.rename(task_path, dest)
+
+    # Clean up ephemeral task worktree
+    if task_id:
+        cleanup_task_worktree(task_id, push_commits=False)
+
     return dest
 
 
