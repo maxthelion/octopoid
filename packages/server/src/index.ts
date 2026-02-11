@@ -59,6 +59,17 @@ app.get('/', (c) => {
       'POST /api/v1/tasks/:id/submit',
       'POST /api/v1/tasks/:id/accept',
       'POST /api/v1/tasks/:id/reject',
+      'GET  /api/v1/drafts',
+      'POST /api/v1/drafts',
+      'GET  /api/v1/drafts/:id',
+      'PATCH /api/v1/drafts/:id',
+      'DELETE /api/v1/drafts/:id',
+      'GET  /api/v1/projects',
+      'POST /api/v1/projects',
+      'GET  /api/v1/projects/:id',
+      'GET  /api/v1/projects/:id/tasks',
+      'PATCH /api/v1/projects/:id',
+      'DELETE /api/v1/projects/:id',
     ],
   })
 })
@@ -66,8 +77,12 @@ app.get('/', (c) => {
 // Mount route modules
 import { tasksRoute } from './routes/tasks'
 import { orchestratorsRoute } from './routes/orchestrators'
+import { draftsRoute } from './routes/drafts'
+import { projectsRoute } from './routes/projects'
 app.route('/api/v1/tasks', tasksRoute)
 app.route('/api/v1/orchestrators', orchestratorsRoute)
+app.route('/api/v1/drafts', draftsRoute)
+app.route('/api/v1/projects', projectsRoute)
 
 // 404 handler
 app.notFound((c) => {
