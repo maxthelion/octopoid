@@ -5,11 +5,11 @@ compatibility_date = "2024-01-01"
 # Cloudflare Workers configuration
 # After deploying, update this with your actual database ID
 
-# D1 Database binding (uncomment after creating database)
-# [[d1_databases]]
-# binding = "DB"
-# database_name = "octopoid-db"
-# database_id = "your-database-id-here"
+# D1 Database binding (for local dev, wrangler will create a local DB)
+[[d1_databases]]
+binding = "DB"
+database_name = "octopoid-db"
+database_id = "local-dev-database-id"
 
 # Cron trigger for background jobs (lease expiration, etc.)
 # Runs every minute
