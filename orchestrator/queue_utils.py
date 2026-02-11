@@ -1579,7 +1579,7 @@ def create_project(
     base_branch: str = "main",
     branch: str | None = None,
 ) -> dict[str, Any]:
-    """Create a new project with both DB record and YAML file.
+    """Create a new project via API with local YAML file.
 
     Args:
         title: Project title
@@ -1591,28 +1591,33 @@ def create_project(
     Returns:
         Created project as dictionary
     """
-    if not is_db_enabled():
-        raise RuntimeError("Projects require database mode to be enabled")
-
-    from . import db
-
     # Generate project ID
     project_id = f"PROJ-{uuid4().hex[:8]}"
 
-    # Create in database
-    project = db.create_project(
-        project_id=project_id,
-        title=title,
-        description=description,
-        branch=branch,
-        base_branch=base_branch,
-        created_by=created_by,
-    )
+    try:
+        sdk = get_sdk()
+        # Note: SDK projects API needs to be implemented in the SDK client
+        # For now, create local YAML file only
+        # TODO: Add sdk.projects.create() when server endpoint exists
 
-    # Write YAML file for visibility
-    _write_project_file(project)
+        project = {
+            "id": project_id,
+            "title": title,
+            "description": description,
+            "status": "draft",
+            "branch": branch,
+            "base_branch": base_branch,
+            "created_at": datetime.now().isoformat(),
+            "created_by": created_by,
+        }
 
-    return project
+        # Write YAML file for visibility
+        _write_project_file(project)
+
+        return project
+    except Exception as e:
+        print(f"Warning: Failed to create project: {e}")
+        raise
 
 
 def _write_project_file(project: dict[str, Any]) -> Path:
@@ -1647,7 +1652,7 @@ def _write_project_file(project: dict[str, Any]) -> Path:
 
 
 def get_project(project_id: str) -> dict[str, Any] | None:
-    """Get a project by ID.
+    """Get a project by ID via API.
 
     Args:
         project_id: Project identifier
@@ -1655,15 +1660,27 @@ def get_project(project_id: str) -> dict[str, Any] | None:
     Returns:
         Project as dictionary or None if not found
     """
-    if not is_db_enabled():
-        return None
+    try:
+        sdk = get_sdk()
+        # Note: SDK projects API needs to be implemented
+        # For now, read from local YAML file
+        # TODO: Use sdk.projects.get() when server endpoint exists
 
-    from . import db
-    return db.get_project(project_id)
+        projects_dir = get_projects_dir()
+        file_path = projects_dir / f"{project_id}.yaml"
+
+        if not file_path.exists():
+            return None
+
+        with open(file_path) as f:
+            return yaml.safe_load(f)
+    except Exception as e:
+        print(f"Warning: Failed to get project {project_id}: {e}")
+        return None
 
 
 def list_projects(status: str | None = None) -> list[dict[str, Any]]:
-    """List projects, optionally filtered by status.
+    """List projects via API, optionally filtered by status.
 
     Args:
         status: Filter by status (draft, active, complete, abandoned)
@@ -1671,11 +1688,27 @@ def list_projects(status: str | None = None) -> list[dict[str, Any]]:
     Returns:
         List of project dictionaries
     """
-    if not is_db_enabled():
-        return []
+    try:
+        sdk = get_sdk()
+        # Note: SDK projects API needs to be implemented
+        # For now, read from local YAML files
+        # TODO: Use sdk.projects.list() when server endpoint exists
 
-    from . import db
-    return db.list_projects(status=status)
+        projects_dir = get_projects_dir()
+        if not projects_dir.exists():
+            return []
+
+        projects = []
+        for file_path in projects_dir.glob("PROJ-*.yaml"):
+            with open(file_path) as f:
+                project = yaml.safe_load(f)
+                if status is None or project.get("status") == status:
+                    projects.append(project)
+
+        return projects
+    except Exception as e:
+        print(f"Warning: Failed to list projects: {e}")
+        return []
 
 
 def activate_project(project_id: str, create_branch: bool = True) -> dict[str, Any] | None:

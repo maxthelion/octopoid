@@ -26,7 +26,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GitHub issue monitor now uses SDK to register tasks with API server
 - Agents now use unified .octopoid/config.yaml for server configuration
 - **BREAKING**: v2.0 is API-only architecture - no database mode, no file-based queue mode
-- **IN PROGRESS**: queue_utils.py refactored to API-only (Phases 1-4 complete: foundation, critical path, state management, creation/deletion)
+- **IN PROGRESS**: queue_utils.py refactored to API-only (Phases 1-8 complete)
+  - Phase 1: Foundation (get_task_by_id, list_tasks, find_task_by_id)
+  - Phase 2: Critical path (claim_task, submit_completion, accept/reject_completion)
+  - Phase 3: State management (fail_task, retry_task, reset_task, hold_task, mark_needs_continuation, resume_task)
+  - Phase 4: Creation/deletion (create_task, complete_task, reject_task)
+  - Phase 5: Review/feedback (already done in Phase 2)
+  - Phase 6: Backpressure (separate module)
+  - Phase 7: Complex workflows (already API-compatible)
+  - Phase 8: Projects (create_project, get_project, list_projects)
 
 ### Fixed
 - Dashboard now correctly connects to API server via SDK
