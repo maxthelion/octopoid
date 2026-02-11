@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Octopoid Dashboard - Tabbed project management TUI.
+Octopoid Dashboard - Tabbed project management TUI for v2.0 API.
 
 Usage:
-    python octopoid-dash.py [--refresh N]                        # Local mode (v1.x)
-    python octopoid-dash.py --server https://...                 # Remote mode (v2.0)
-    python octopoid-dash.py --server https://... --api-key KEY   # Remote mode with auth
+    python octopoid-dash.py --server https://...                 # Connect to API server
+    python octopoid-dash.py --server https://... --api-key KEY   # With authentication
     python octopoid-dash.py --demo                               # Demo mode with sample data
+    python octopoid-dash.py [--refresh N]                        # Custom refresh interval
 """
 
 import argparse
@@ -165,10 +165,24 @@ def load_report(demo_mode: bool, sdk: Optional[Any] = None) -> dict[str, Any]:
 
     Args:
         demo_mode: If True, return demo data
-        sdk: Optional OctopoidSDK instance for v2.0 API mode
+        sdk: OctopoidSDK instance for v2.0 API mode (required for non-demo mode)
     """
     if demo_mode:
         return _generate_demo_report()
+
+    if not sdk:
+        return {
+            "work": {"incoming": [], "in_progress": [], "in_review": [], "done_today": []},
+            "done_tasks": [],
+            "prs": [],
+            "proposals": [],
+            "messages": [],
+            "agents": [],
+            "health": {"scheduler": "error: SDK required", "idle_agents": 0, "running_agents": 0,
+                        "paused_agents": 0, "total_agents": 0, "queue_depth": 0,
+                        "system_paused": False},
+            "generated_at": datetime.now().isoformat(),
+        }
 
     try:
         # Add parent of orchestrator package to sys.path if needed
@@ -1747,14 +1761,19 @@ if __name__ == "__main__":
                 sys.exit(1)
 
     if not args.demo and not sdk:
-        # Local mode — check if .orchestrator directory exists
-        orch_dir = Path.cwd() / ".orchestrator"
-        if not orch_dir.exists():
-            print("Error: .orchestrator directory not found.")
-            print("Please run this from an octopoid project directory,")
-            print("or use --demo flag to see a demo with sample data,")
-            print("or use --server <URL> to connect to a v2.0 server.")
-            sys.exit(1)
+        # SDK is required for non-demo mode
+        print("Error: Octopoid v2.0 requires an API server connection.")
+        print("")
+        print("Options:")
+        print("  --demo               Run with demo data (no server needed)")
+        print("  --server <URL>       Connect to Octopoid API server")
+        print("")
+        print("Example:")
+        print("  python octopoid-dash.py --server http://localhost:8787")
+        print("")
+        print("If you have a .octopoid/config.yaml file with server settings,")
+        print("the dashboard will automatically connect to that server.")
+        sys.exit(1)
 
     try:
         curses.wrapper(lambda stdscr: main(stdscr, args.refresh, args.demo, sdk=sdk))
