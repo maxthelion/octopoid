@@ -3,7 +3,7 @@
  * Based on orchestrator/db.py schema
  */
 
-export type TaskQueue = 'incoming' | 'claimed' | 'provisional' | 'done' | 'backlog' | 'blocked'
+export type TaskQueue = 'incoming' | 'claimed' | 'provisional' | 'done' | 'backlog' | 'blocked' | 'needs_continuation'
 
 export type TaskPriority = 'P0' | 'P1' | 'P2' | 'P3'
 
@@ -46,6 +46,11 @@ export interface Task {
   orchestrator_id?: string | null
   lease_expires_at?: string | null
   version: number  // Optimistic locking
+
+  // Enhanced features
+  needs_breakdown?: boolean | null  // For breakdown agent
+  review_round?: number | null      // For multi-check gatekeeper
+  execution_notes?: string | null   // Agent execution summary
 }
 
 export interface CreateTaskRequest {
