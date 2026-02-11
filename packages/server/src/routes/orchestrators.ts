@@ -54,8 +54,7 @@ orchestratorsRoute.post('/register', async (c) => {
            last_heartbeat = ?,
            status = 'active',
            version = ?,
-           capabilities = ?,
-           updated_at = datetime('now')
+           capabilities = ?
        WHERE id = ?`,
       body.hostname || null,
       body.repo_url,

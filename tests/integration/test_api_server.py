@@ -1,6 +1,7 @@
 """Integration tests for API server endpoints."""
 
 import pytest
+import requests
 from octopoid_sdk import OctopoidSDK
 
 
@@ -20,6 +21,87 @@ class TestServerHealth:
         assert 'timestamp' in health
         # Should be ISO format datetime
         assert 'T' in health['timestamp']
+
+
+class TestOrchestratorAPI:
+    """Test orchestrator registration and management."""
+
+    def test_register_orchestrator(self, test_server_url):
+        """Register a new orchestrator."""
+        response = requests.post(
+            f"{test_server_url}/api/v1/orchestrators/register",
+            json={
+                "cluster": "test-cluster",
+                "machine_id": "test-machine-001",
+                "repo_url": "https://github.com/test/repo.git",
+                "hostname": "test-host",
+                "version": "2.0.0-test"
+            }
+        )
+        assert response.status_code in [200, 201]
+        data = response.json()
+        assert data['orchestrator_id'] == 'test-cluster-test-machine-001'
+        assert data['status'] == 'active'
+        assert 'registered_at' in data
+
+    def test_register_orchestrator_idempotent(self, test_server_url):
+        """Re-registering an orchestrator updates its record."""
+        orch_data = {
+            "cluster": "test-cluster",
+            "machine_id": "test-machine-002",
+            "repo_url": "https://github.com/test/repo.git",
+            "hostname": "test-host",
+            "version": "2.0.0"
+        }
+
+        # First registration (may already exist, that's ok)
+        response1 = requests.post(
+            f"{test_server_url}/api/v1/orchestrators/register",
+            json=orch_data
+        )
+        assert response1.status_code in [200, 201]  # Created or updated
+
+        # Second registration (update - should definitely return 200)
+        orch_data['version'] = "2.0.1"
+        response2 = requests.post(
+            f"{test_server_url}/api/v1/orchestrators/register",
+            json=orch_data
+        )
+        assert response2.status_code == 200  # Updated, not created
+        assert response2.json()['orchestrator_id'] == 'test-cluster-test-machine-002'
+
+    def test_list_orchestrators(self, test_server_url):
+        """List all registered orchestrators."""
+        response = requests.get(f"{test_server_url}/api/v1/orchestrators")
+        assert response.status_code == 200
+        data = response.json()
+        assert 'orchestrators' in data
+        assert 'total' in data
+        assert isinstance(data['orchestrators'], list)
+        # Should have at least the test orchestrator from conftest
+        assert len(data['orchestrators']) >= 1
+
+    def test_get_orchestrator_by_id(self, test_server_url, orchestrator_id):
+        """Get specific orchestrator by ID."""
+        response = requests.get(
+            f"{test_server_url}/api/v1/orchestrators/{orchestrator_id}"
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data['id'] == orchestrator_id
+        assert data['cluster'] == 'test'
+        assert 'last_heartbeat' in data
+
+    def test_orchestrator_heartbeat(self, test_server_url, orchestrator_id):
+        """Send heartbeat for orchestrator."""
+        response = requests.post(
+            f"{test_server_url}/api/v1/orchestrators/{orchestrator_id}/heartbeat",
+            json={}
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data['success'] is True
+        assert 'last_heartbeat' in data
 
 
 class TestTaskCRUD:
