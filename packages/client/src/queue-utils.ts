@@ -6,7 +6,6 @@
 import { readFileSync, writeFileSync, existsSync, readdirSync, renameSync, mkdirSync, appendFileSync } from 'node:fs'
 import { join, basename } from 'node:path'
 import { randomBytes } from 'node:crypto'
-import YAML from 'yaml'
 import type { Task, TaskQueue, TaskPriority, TaskRole } from '@octopoid/shared'
 import { loadConfig } from './config'
 

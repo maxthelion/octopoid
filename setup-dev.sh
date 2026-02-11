@@ -5,21 +5,15 @@ set -e
 
 echo "🚀 Setting up Octopoid v2.0 for local testing..."
 
-# Check for pnpm
-if ! command -v pnpm &> /dev/null; then
-    echo "📦 Installing pnpm..."
-    npm install -g pnpm
-fi
-
-# Install dependencies
+# Use npx pnpm to avoid requiring global install
 echo "📦 Installing dependencies..."
-pnpm install
+npx -y pnpm install
 
 # Build packages
 echo "🔨 Building packages..."
-cd packages/shared && pnpm build && cd ../..
-cd packages/server && pnpm build && cd ../..
-cd packages/client && pnpm build && cd ../..
+cd packages/shared && npx pnpm build && cd ../..
+cd packages/server && npx pnpm build && cd ../..
+cd packages/client && npx pnpm build && cd ../..
 
 # Link client for global use
 echo "🔗 Linking client..."

@@ -99,9 +99,9 @@ export default app
 
 // Scheduled handler for cron jobs (lease expiration, etc.)
 export async function scheduled(
-  event: ScheduledEvent,
+  _event: ScheduledEvent,
   env: Env,
-  ctx: ExecutionContext
+  _ctx: ExecutionContext
 ): Promise<void> {
   console.log('Scheduled job triggered at:', new Date().toISOString())
 

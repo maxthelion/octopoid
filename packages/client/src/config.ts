@@ -6,6 +6,7 @@
 import { readFileSync, existsSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import YAML from 'yaml'
+import type { TaskRole } from '@octopoid/shared'
 
 export interface OctopoidConfig {
   // Mode: local (backward compat) or remote (client-server)
@@ -163,7 +164,7 @@ export function getOrchestratorId(): string | null {
  */
 export interface AgentConfigItem {
   name: string
-  role: string
+  role: TaskRole
   interval_seconds?: number
   paused?: boolean
   lightweight?: boolean

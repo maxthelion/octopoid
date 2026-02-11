@@ -33,7 +33,7 @@ export class OctopoidAPIClient {
     this.apiKey = options.apiKey
   }
 
-  private async request<T>(
+  async request<T>(
     method: string,
     path: string,
     body?: unknown
@@ -62,18 +62,18 @@ export class OctopoidAPIClient {
       }
 
       if (!response.ok) {
-        const error = await response.json().catch(() => ({ error: 'Unknown error' }))
+        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }))
         throw new Error(
-          `API error (${response.status}): ${error.error || response.statusText}`
+          `API error (${response.status}): ${(errorData as { error?: string }).error || response.statusText}`
         )
       }
 
       return (await response.json()) as T
-    } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') {
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name === 'AbortError') {
         throw new Error(`Request timeout after ${this.timeout}ms`)
       }
-      throw error
+      throw err
     } finally {
       clearTimeout(timeoutId)
     }

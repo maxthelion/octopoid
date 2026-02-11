@@ -2,7 +2,6 @@
  * Breakdown agent - breaks down large tasks into smaller subtasks
  */
 
-import type { Task } from '@octopoid/shared'
 import { BaseAgent, type AgentConfig } from './base-agent'
 import { findTaskFile, parseTaskFile, createTaskFile, generateTaskId } from '../queue-utils'
 import { createTask } from '../db-interface'

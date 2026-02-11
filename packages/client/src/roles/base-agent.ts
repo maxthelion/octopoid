@@ -7,14 +7,14 @@ import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, writeFileSync, appendFileSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import Anthropic from '@anthropic-ai/sdk'
-import type { Task, ClaimTaskRequest, SubmitTaskRequest } from '@octopoid/shared'
+import type { Task, ClaimTaskRequest, SubmitTaskRequest, TaskRole } from '@octopoid/shared'
 import { loadConfig, getRuntimeDir } from '../config'
 import { claimTask, submitCompletion, acceptCompletion, rejectCompletion } from '../db-interface'
 import { ensureWorktree, removeWorktree } from '../git-utils'
 
 export interface AgentConfig {
   name: string
-  role: string
+  role: TaskRole
   model?: string
   maxTurns?: number
   maxConcurrent?: number
@@ -111,7 +111,7 @@ export abstract class BaseAgent {
   /**
    * Claim a task from the queue
    */
-  protected async claimNextTask(roleFilter?: string): Promise<Task | null> {
+  protected async claimNextTask(roleFilter?: TaskRole | TaskRole[]): Promise<Task | null> {
     const config = loadConfig()
     const orchestratorId = config.server?.cluster && config.server?.machine_id
       ? `${config.server.cluster}-${config.server.machine_id}`

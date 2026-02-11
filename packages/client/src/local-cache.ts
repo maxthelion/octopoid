@@ -5,7 +5,7 @@
 
 import Database from 'better-sqlite3'
 import { join } from 'node:path'
-import { existsSync, mkdirSync } from 'node:fs'
+import { mkdirSync } from 'node:fs'
 import type {
   Task,
   ClaimTaskRequest,
@@ -14,7 +14,7 @@ import type {
   RejectTaskRequest,
   CreateTaskRequest,
   UpdateTaskRequest,
-  ListTasksRequest,
+  TaskFilters,
 } from '@octopoid/shared'
 import { getRuntimeDir } from './config'
 
@@ -103,8 +103,8 @@ export class LocalCache {
     const stmt = this.db.prepare(`
       INSERT INTO tasks (
         id, file_path, queue, priority, role, branch, project_id,
-        created_by, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
 
     stmt.run(
@@ -115,7 +115,6 @@ export class LocalCache {
       request.role || null,
       request.branch || 'main',
       request.project_id || null,
-      request.created_by || null,
       now,
       now
     )
@@ -143,32 +142,29 @@ export class LocalCache {
   /**
    * List tasks
    */
-  async listTasks(request: ListTasksRequest = {}): Promise<Task[]> {
+  async listTasks(filters: TaskFilters = {}): Promise<Task[]> {
     let query = 'SELECT * FROM tasks WHERE 1=1'
     const params: any[] = []
 
-    if (request.queue) {
+    if (filters.queue) {
       query += ' AND queue = ?'
-      params.push(request.queue)
+      params.push(filters.queue)
     }
 
-    if (request.priority) {
+    if (filters.priority) {
       query += ' AND priority = ?'
-      params.push(request.priority)
+      params.push(filters.priority)
     }
 
-    if (request.role) {
+    if (filters.role) {
       query += ' AND role = ?'
-      params.push(request.role)
+      params.push(filters.role)
     }
 
     // Order by priority, then created_at
     query += ' ORDER BY priority ASC, created_at DESC'
 
-    if (request.limit) {
-      query += ' LIMIT ?'
-      params.push(request.limit)
-    }
+    // Note: limit is not in TaskFilters, handle separately if needed
 
     const stmt = this.db.prepare(query)
     const rows = stmt.all(...params) as any[]
@@ -184,14 +180,18 @@ export class LocalCache {
     const tasks = await this.listTasks({
       queue: 'incoming',
       role: request.role_filter,
-      limit: 1,
     })
 
     if (tasks.length === 0) {
       return null
     }
 
+    // Get first available task
     const task = tasks[0]
+    if (!task) {
+      return null
+    }
+
     const now = new Date().toISOString()
 
     // Update task to claimed
@@ -224,7 +224,6 @@ export class LocalCache {
     const stmt = this.db.prepare(`
       UPDATE tasks
       SET queue = 'provisional',
-          pr_url = ?,
           commits_count = ?,
           turns_used = ?,
           submitted_at = ?,
@@ -233,7 +232,6 @@ export class LocalCache {
     `)
 
     stmt.run(
-      request.pr_url || null,
       request.commits_count || 0,
       request.turns_used || 0,
       now,
@@ -430,21 +428,34 @@ export class LocalCache {
       file_path: row.file_path,
       queue: row.queue,
       priority: row.priority,
+      complexity: row.complexity,
       role: row.role,
       branch: row.branch,
-      project_id: row.project_id,
-      created_by: row.created_by,
+      blocked_by: row.blocked_by,
       claimed_by: row.claimed_by,
       claimed_at: row.claimed_at,
+      commits_count: row.commits_count || 0,
+      turns_used: row.turns_used,
+      attempt_count: row.attempt_count || 0,
+      has_plan: Boolean(row.has_plan),
+      plan_id: row.plan_id,
+      project_id: row.project_id,
+      auto_accept: Boolean(row.auto_accept),
+      rejection_count: row.rejection_count || 0,
+      pr_number: row.pr_number,
+      pr_url: row.pr_url,
+      checks: row.checks,
+      check_results: row.check_results,
+      needs_rebase: Boolean(row.needs_rebase),
+      last_rebase_attempt_at: row.last_rebase_attempt_at,
+      staging_url: row.staging_url,
       submitted_at: row.submitted_at,
       completed_at: row.completed_at,
-      pr_url: row.pr_url,
-      commits_count: row.commits_count,
-      turns_used: row.turns_used,
-      blocked_by: row.blocked_by,
-      version: row.version,
       created_at: row.created_at,
       updated_at: row.updated_at,
+      orchestrator_id: row.orchestrator_id,
+      lease_expires_at: row.lease_expires_at,
+      version: row.version || 1,
     }
   }
 
