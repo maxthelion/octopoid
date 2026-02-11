@@ -431,80 +431,49 @@ def claim_task(
     agent_name: str | None = None,
     from_queue: str = "incoming",
 ) -> dict[str, Any] | None:
-    """Atomically claim a task from a queue.
+    """Atomically claim a task from the API server.
 
-    Uses file locking + os.rename for robust race condition prevention.
-    In DB mode, this enforces dependency checking - tasks with unresolved
-    blocked_by entries cannot be claimed.
+    The API server handles atomic claiming with lease-based coordination,
+    preventing race conditions across distributed orchestrators.
 
     Args:
         role_filter: Only claim tasks with this role (e.g., 'implement', 'test', 'breakdown')
         agent_name: Name of claiming agent (for logging in task)
-        from_queue: Queue to claim from (default 'incoming', also supports 'breakdown')
+        from_queue: Queue to claim from (default 'incoming')
 
     Returns:
         Task info dictionary if claimed, None if no suitable task
     """
-    if is_db_enabled():
-        from . import db
-        db_task = db.claim_task(role_filter=role_filter, agent_name=agent_name, from_queue=from_queue)
-        if db_task:
-            # Also update the file with claim info
-            file_path = Path(db_task["file_path"])
-            if file_path.exists() and agent_name:
+    try:
+        sdk = get_sdk()
+        orchestrator_id = get_orchestrator_id()
+
+        # Claim via API (atomic operation with lease)
+        task = sdk.tasks.claim(
+            orchestrator_id=orchestrator_id,
+            agent_name=agent_name or "unknown",
+            role_filter=role_filter
+        )
+
+        if task is None:
+            return None
+
+        # Append claim metadata to local file for human readability
+        if agent_name and task.get("file_path"):
+            file_path = Path(task["file_path"])
+            if file_path.exists():
                 try:
                     with open(file_path, "a") as f:
                         f.write(f"\nCLAIMED_BY: {agent_name}\n")
                         f.write(f"CLAIMED_AT: {datetime.now().isoformat()}\n")
                 except IOError:
-                    pass
-            return _db_task_to_file_format(db_task)
+                    pass  # Non-critical, just for human readability
+
+        return task
+
+    except Exception as e:
+        print(f"Warning: Failed to claim task: {e}")
         return None
-
-    # File-based fallback
-    incoming_dir = get_queue_subdir("incoming")
-    claimed_dir = get_queue_subdir("claimed")
-
-    # Use a global claim lock to prevent race conditions
-    lock_file = get_queue_dir() / ".claim.lock"
-
-    tasks = list_tasks("incoming")
-
-    for task in tasks:
-        # Filter by role if specified
-        if role_filter and task.get("role") != role_filter:
-            continue
-
-        # Check dependencies (file-based simple check)
-        if task.get("blocked_by"):
-            # Skip blocked tasks in file mode
-            continue
-
-        source = task["path"]
-        dest = claimed_dir / source.name
-
-        # Try to acquire lock (non-blocking)
-        with locked(lock_file, blocking=False) as acquired:
-            if not acquired:
-                # Another agent is claiming, skip this task
-                continue
-
-            try:
-                # Double-check file still exists (another agent might have claimed it)
-                if not source.exists():
-                    continue
-
-                # Atomic rename - will fail if file was already claimed
-                os.rename(source, dest)
-
-                # Add claim metadata to file
-                if agent_name:
-                    with open(dest, "a") as f:
-                        f.write(f"\nCLAIMED_BY: {agent_name}\n")
-                        f.write(f"CLAIMED_AT: {datetime.now().isoformat()}\n")
-
-                task["path"] = dest
-                return task
 
             except FileNotFoundError:
                 # Task was claimed by another agent, try next
@@ -566,15 +535,10 @@ def submit_completion(
     commits_count: int = 0,
     turns_used: int | None = None,
 ) -> Path | None:
-    """Submit a task for pre-check (move to provisional queue).
+    """Submit a task for review via API (moves to provisional queue).
 
-    The task stays in provisional until the pre-check accepts or rejects it.
-    Only available in DB mode - in file mode, falls back to complete_task().
-
-    Auto-rejects 0-commit submissions from tasks that were previously claimed
-    (attempt_count > 0 or rejection_count > 0), moving them back to incoming
-    with feedback instead of sending them to provisional where they would
-    waste gatekeeper cycles.
+    The API server handles state transition to provisional queue.
+    Auto-rejects 0-commit submissions from previously-claimed tasks.
 
     Args:
         task_path: Path to the claimed task file
@@ -582,132 +546,108 @@ def submit_completion(
         turns_used: Number of Claude turns used
 
     Returns:
-        New path in provisional queue (or incoming if auto-rejected),
-        or None if DB not enabled
+        Path to the task file (queue change handled by API)
     """
     task_path = Path(task_path)
 
-    if not is_db_enabled():
-        # Fall back to direct completion in file mode
-        return complete_task(task_path, f"commits={commits_count}, turns={turns_used}")
+    try:
+        # Get task ID from file
+        task_info = parse_task_file(task_path)
+        if not task_info:
+            print(f"Warning: Could not parse task file {task_path}")
+            return None
 
-    from . import db
+        task_id = task_info["id"]
 
-    db_task = db.get_task_by_path(str(task_path))
-    if not db_task:
-        # Task not in DB, fall back to file-based
-        return complete_task(task_path, f"commits={commits_count}, turns={turns_used}")
+        # Get current task state from API
+        sdk = get_sdk()
+        task = sdk.tasks.get(task_id)
+        if not task:
+            print(f"Warning: Task {task_id} not found in API")
+            return None
 
-    # Auto-reject 0-commit submissions from previously-claimed tasks.
-    # This prevents empty submissions from flowing to provisional and
-    # wasting gatekeeper cycles on unchanged code.
-    task_id = db_task["id"]
-    attempt_count = db_task.get("attempt_count", 0)
-    rejection_count = db_task.get("rejection_count", 0)
-    previously_claimed = attempt_count > 0 or rejection_count > 0
+        # Auto-reject 0-commit submissions from previously-claimed tasks
+        attempt_count = task.get("attempt_count", 0)
+        rejection_count = task.get("rejection_count", 0)
+        previously_claimed = attempt_count > 0 or rejection_count > 0
 
-    if commits_count == 0 and previously_claimed:
-        return reject_completion(
-            task_path,
-            reason="No commits made. Read the task file and rejection feedback, then implement the required changes.",
-            accepted_by="submit_completion",
+        if commits_count == 0 and previously_claimed:
+            return reject_completion(
+                task_path,
+                reason="No commits made. Read the task file and rejection feedback, then implement the required changes.",
+                accepted_by="submit_completion",
+            )
+
+        # Submit via API (moves to provisional queue)
+        sdk.tasks.submit(
+            task_id=task_id,
+            commits_count=commits_count,
+            turns_used=turns_used or 0
         )
 
-    # Update DB to provisional
-    db.submit_completion(task_id, commits_count=commits_count, turns_used=turns_used)
+        # Append submission metadata to local file for human readability
+        with open(task_path, "a") as f:
+            f.write(f"\nSUBMITTED_AT: {datetime.now().isoformat()}\n")
+            f.write(f"COMMITS_COUNT: {commits_count}\n")
+            if turns_used:
+                f.write(f"TURNS_USED: {turns_used}\n")
 
-    # Move file to provisional directory
-    provisional_dir = get_queue_subdir("provisional")
-    dest = provisional_dir / task_path.name
+        return task_path
 
-    # Append submission info
-    with open(task_path, "a") as f:
-        f.write(f"\nSUBMITTED_AT: {datetime.now().isoformat()}\n")
-        f.write(f"COMMITS_COUNT: {commits_count}\n")
-        if turns_used:
-            f.write(f"TURNS_USED: {turns_used}\n")
-
-    os.rename(task_path, dest)
-
-    # Update file_path in DB to reflect new location
-    db.update_task(task_id, file_path=str(dest))
-
-    return dest
+    except Exception as e:
+        print(f"Warning: Failed to submit completion for {task_path}: {e}")
+        return None
 
 
 def accept_completion(
     task_path: Path | str,
     accepted_by: str | None = None,
 ) -> Path:
-    """Accept a provisional task and move it to done.
+    """Accept a provisional task via API (moves to done queue).
 
     Called by the pre-check or gatekeeper when a task passes.
-    If the task belongs to a project, checks for project completion.
+    The API server handles state transition to done queue.
 
     Args:
         task_path: Path to the provisional task file
         accepted_by: Name of the agent or system that accepted (e.g. "scheduler", "gatekeeper", "human")
 
     Returns:
-        New path in done queue
+        Path to task file (queue change handled by API)
     """
     task_path = Path(task_path)
-    project_id = None
-    task_id = None
 
-    if is_db_enabled():
-        from . import db
-        db_task = db.get_task_by_path(str(task_path))
-        if not db_task:
-            # Path-based lookup failed (stale path) — fall back to task ID from filename
-            match = re.match(r"TASK-(.+)\.md", task_path.name)
-            if match:
-                db_task = db.get_task(match.group(1))
-        if db_task:
-            task_id = db_task["id"]
-            db.accept_completion(task_id, accepted_by=accepted_by)
-            project_id = db_task.get("project_id")
+    try:
+        # Get task ID from file
+        task_info = parse_task_file(task_path)
+        if not task_info:
+            print(f"Warning: Could not parse task file {task_path}")
+            return task_path
 
-    done_dir = get_queue_subdir("done")
-    dest = done_dir / task_path.name
+        task_id = task_info["id"]
 
-    # Append acceptance info
-    if task_path.exists():
-        with open(task_path, "a") as f:
-            f.write(f"\nACCEPTED_AT: {datetime.now().isoformat()}\n")
-            if accepted_by:
-                f.write(f"ACCEPTED_BY: {accepted_by}\n")
+        # Accept via API (moves to done queue)
+        sdk = get_sdk()
+        sdk.tasks.accept(task_id=task_id, accepted_by=accepted_by)
 
-        os.rename(task_path, dest)
+        # Append acceptance metadata to local file
+        if task_path.exists():
+            with open(task_path, "a") as f:
+                f.write(f"\nACCEPTED_AT: {datetime.now().isoformat()}\n")
+                if accepted_by:
+                    f.write(f"ACCEPTED_BY: {accepted_by}\n")
 
-    # Update file_path in DB to reflect new location
-    if task_id:
-        db.update_task(task_id, file_path=str(dest))
-
-    # Clean up agent notes
-    if task_id:
+        # Clean up agent notes
         cleanup_task_notes(task_id)
 
-    # Clean up ephemeral task worktree (push commits, delete worktree)
-    if task_id:
+        # Clean up ephemeral task worktree (push commits, delete worktree)
         cleanup_task_worktree(task_id, push_commits=True)
 
-    # Check for project completion
-    if project_id and is_db_enabled():
-        from . import db
-        if db.check_project_completion(project_id):
-            project = db.get_project(project_id)
-            _write_project_file(project)
-            # For projects with a branch, merge the project branch to main
-            if project and project.get("branch") and project["branch"] != "main":
-                try:
-                    from .roles.orchestrator_impl import merge_project_to_main
-                    merge_project_to_main(project_id)
-                except Exception as e:
-                    import sys
-                    print(f"Warning: project completion merge failed: {e}", file=sys.stderr)
+        return task_path
 
-    return dest
+    except Exception as e:
+        print(f"Warning: Failed to accept completion for {task_path}: {e}")
+        return task_path
 
 
 def reject_completion(
@@ -715,10 +655,10 @@ def reject_completion(
     reason: str,
     accepted_by: str | None = None,
 ) -> Path:
-    """Reject a provisional task and move it back to incoming for retry.
+    """Reject a provisional task via API (moves back to incoming for retry).
 
     Called by the pre-check when a task fails (e.g., no commits).
-    The task's attempt_count is incremented.
+    The API server increments attempt_count and moves to incoming queue.
 
     Args:
         task_path: Path to the provisional task file
@@ -726,43 +666,45 @@ def reject_completion(
         accepted_by: Name of the agent or system that rejected
 
     Returns:
-        New path in incoming queue
+        Path to task file (queue change handled by API)
     """
     task_path = Path(task_path)
-    attempt_count = 0
-    task_id = None
 
-    if is_db_enabled():
-        from . import db
-        db_task = db.get_task_by_path(str(task_path))
-        if db_task:
-            task_id = db_task["id"]
-            updated = db.reject_completion(task_id, reason=reason, rejected_by=accepted_by)
-            if updated:
-                attempt_count = updated.get("attempt_count", 0)
+    try:
+        # Get task ID from file
+        task_info = parse_task_file(task_path)
+        if not task_info:
+            print(f"Warning: Could not parse task file {task_path}")
+            return task_path
 
-    incoming_dir = get_queue_subdir("incoming")
-    dest = incoming_dir / task_path.name
+        task_id = task_info["id"]
 
-    # Append rejection info
-    with open(task_path, "a") as f:
-        f.write(f"\nREJECTED_AT: {datetime.now().isoformat()}\n")
-        f.write(f"REJECTION_REASON: {reason}\n")
-        f.write(f"ATTEMPT_COUNT: {attempt_count}\n")
-        if accepted_by:
-            f.write(f"REJECTED_BY: {accepted_by}\n")
+        # Reject via API (moves to incoming queue, increments attempt_count)
+        sdk = get_sdk()
+        updated_task = sdk.tasks.reject(
+            task_id=task_id,
+            reason=reason,
+            rejected_by=accepted_by
+        )
 
-    os.rename(task_path, dest)
+        attempt_count = updated_task.get("attempt_count", 0)
 
-    # Update file_path in DB to reflect new location
-    if task_id:
-        db.update_task(task_id, file_path=str(dest))
+        # Append rejection metadata to local file
+        with open(task_path, "a") as f:
+            f.write(f"\nREJECTED_AT: {datetime.now().isoformat()}\n")
+            f.write(f"REJECTION_REASON: {reason}\n")
+            f.write(f"ATTEMPT_COUNT: {attempt_count}\n")
+            if accepted_by:
+                f.write(f"REJECTED_BY: {accepted_by}\n")
 
-    # Clean up ephemeral task worktree (worktree is deleted; next attempt gets fresh checkout)
-    if task_id:
+        # Clean up ephemeral task worktree (worktree is deleted; next attempt gets fresh checkout)
         cleanup_task_worktree(task_id, push_commits=True)
 
-    return dest
+        return task_path
+
+    except Exception as e:
+        print(f"Warning: Failed to reject completion for {task_path}: {e}")
+        return task_path
 
 
 def _insert_rejection_feedback(content: str, feedback_section: str) -> str:
