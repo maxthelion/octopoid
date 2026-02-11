@@ -22,6 +22,8 @@ import { startCommand } from './commands/start'
 import { statusCommand } from './commands/status'
 import { enqueueCommand } from './commands/enqueue'
 import { listCommand } from './commands/list'
+import { registerDraftCommands } from './commands/draft'
+import { registerProjectCommands } from './commands/project'
 
 const program = new Command()
 
@@ -107,6 +109,12 @@ program
     console.log('❌ Validate command not yet implemented')
     process.exit(1)
   })
+
+// Draft commands
+registerDraftCommands(program)
+
+// Project commands
+registerProjectCommands(program)
 
 // Parse arguments
 program.parse()
