@@ -1,0 +1,23 @@
+# Octopoid Configuration
+# This file is the single source of truth for all Octopoid components
+
+# Server configuration (v2.0 API mode)
+server:
+  enabled: true
+  url: http://localhost:8787
+  cluster: dev
+  machine_id: local-dev
+
+# Repository settings
+repo:
+  path: /Users/maxwilliams/dev/octopoid
+  main_branch: main
+
+# Agent configuration
+agents:
+  max_concurrent: 3
+
+# Database configuration (not used in v2.0 API mode)
+database:
+  enabled: false
+  path: state.db

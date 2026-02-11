@@ -1,0 +1,11 @@
+# Octopoid runtime files - do not commit
+
+runtime/
+logs/
+worktrees/
+*.db
+*.db-shm
+*.db-wal
+cache.db
+*.pyc
+__pycache__/

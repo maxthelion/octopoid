@@ -1,0 +1,31 @@
+# Octopoid Agents Configuration
+# Agents read server config from config.yaml
+
+agents:
+  # Implementer agents - work on tasks from API server
+  - id: 1
+    name: implementer-1
+    role: implementer
+    enabled: false  # TODO: Update to use SDK instead of local queue_utils
+    interval_seconds: 60
+    max_concurrent: 1
+    max_turns: 50
+    model: sonnet
+
+  - id: 2
+    name: implementer-2
+    role: implementer
+    enabled: false  # TODO: Update to use SDK instead of local queue_utils
+    interval_seconds: 60
+    max_concurrent: 1
+    max_turns: 50
+    model: sonnet
+
+  # GitHub issue monitor - creates tasks from GitHub issues
+  - id: 101
+    name: github-issue-monitor
+    role: github_issue_monitor
+    enabled: false  # TODO: Update to use SDK instead of local create_task
+    interval_seconds: 300
+    max_concurrent: 1
+    lightweight: true
