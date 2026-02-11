@@ -2260,22 +2260,26 @@ BURNED_OUT_TURN_THRESHOLD = 80
 def is_burned_out(commits_count: int, turns_used: int) -> bool:
     """Check if a task is burned out (used many turns without producing commits).
 
-    A task is considered burned out when it has zero commits and has used
-    a significant number of turns, indicating the task scope is too large
-    for a single agent session.
+    DISABLED: This check is currently disabled due to persistent false positives
+    from commit counting bugs. The commit counting system has issues with
+    persistent worktrees + branch switching during agent work, causing tasks
+    with real commits to be incorrectly detected as burned out and recycled.
 
-    This applies to all task roles including orchestrator_impl. The
-    orchestrator_impl role correctly counts submodule commits and reports
-    them via submit_completion(), so the commits_count in the DB is accurate.
+    Multiple false positives observed in 2026-02 (tasks e11a484b, f7b4d710,
+    58e22e70) where tasks reported 0 commits but actually had commits.
+
+    This check can be re-enabled after ephemeral worktrees are implemented
+    (TASK-f7b4d710), which will resolve the underlying commit counting issues.
 
     Args:
         commits_count: Number of commits the agent made
         turns_used: Number of turns the agent used
 
     Returns:
-        True if the task appears burned out
+        Always False (check disabled)
     """
-    return commits_count == 0 and (turns_used or 0) >= BURNED_OUT_TURN_THRESHOLD
+    # Disabled - return False unconditionally to prevent false positive recycling
+    return False
 
 
 def recycle_to_breakdown(task_path, reason="too_large") -> dict | None:

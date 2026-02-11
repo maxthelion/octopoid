@@ -80,7 +80,8 @@ class TestRecyclerNoAutoAcceptOrchestratorImpl:
                             from orchestrator.roles.recycler import RecyclerRole
                             from orchestrator.db import create_task, update_task_queue, get_task
 
-                            # Create an orchestrator_impl task with 0 commits and 100 turns (burned out)
+                            # Create an orchestrator_impl task with 0 commits and 100 turns
+                            # With burnout check disabled, this won't be auto-recycled
                             prov_dir = mock_config / "shared" / "queue" / "provisional"
                             prov_dir.mkdir(parents=True, exist_ok=True)
                             task_path = prov_dir / "TASK-orch0002.md"
@@ -98,10 +99,10 @@ class TestRecyclerNoAutoAcceptOrchestratorImpl:
                             result = role.run()
                             assert result == 0
 
-                            # Task should be recycled — burned out (0 commits, 100 turns >= 80)
+                            # With burnout check disabled, task stays in provisional (not recycled)
                             task = get_task("orch0002")
-                            assert task["queue"] == "recycled", (
-                                f"Expected burned orchestrator_impl task to be recycled, "
+                            assert task["queue"] == "provisional", (
+                                f"With burnout check disabled, task should stay in provisional, "
                                 f"but found in {task['queue']}"
                             )
 
@@ -155,60 +156,70 @@ class TestRecyclerNoAutoAcceptOrchestratorImpl:
 
 
 class TestBurnedOutDetection:
-    """Tests for the burned-out task detection heuristic."""
+    """Tests for the burned-out task detection heuristic.
+
+    NOTE: The is_burned_out() check is currently DISABLED due to false positives
+    from commit counting bugs. All tests now verify that the function returns
+    False unconditionally. This can be reverted after ephemeral worktrees are
+    implemented (TASK-f7b4d710).
+    """
 
     def test_detect_burned_task(self):
-        """Task with 0 commits + 100 turns is burned out."""
+        """Task with 0 commits + 100 turns - check disabled, returns False."""
         from orchestrator.queue_utils import is_burned_out
 
-        assert is_burned_out(commits_count=0, turns_used=100) is True
+        # Check disabled - always returns False now
+        assert is_burned_out(commits_count=0, turns_used=100) is False
 
     def test_detect_burned_task_at_threshold(self):
-        """Task with 0 commits + 80 turns is burned out (threshold)."""
+        """Task with 0 commits + 80 turns - check disabled, returns False."""
         from orchestrator.queue_utils import is_burned_out
 
-        assert is_burned_out(commits_count=0, turns_used=80) is True
+        # Check disabled - always returns False now
+        assert is_burned_out(commits_count=0, turns_used=80) is False
 
     def test_detect_burned_task_low_turns_not_burned(self):
-        """Task with 0 commits + 10 turns is NOT burned (early error, not too-large)."""
+        """Task with 0 commits + 10 turns - check disabled, returns False."""
         from orchestrator.queue_utils import is_burned_out
 
+        # Check disabled - always returns False now
         assert is_burned_out(commits_count=0, turns_used=10) is False
 
     def test_detect_burned_task_below_threshold_not_burned(self):
-        """Task with 0 commits + 50 turns is NOT burned (below threshold)."""
+        """Task with 0 commits + 50 turns - check disabled, returns False."""
         from orchestrator.queue_utils import is_burned_out
 
+        # Check disabled - always returns False now
         assert is_burned_out(commits_count=0, turns_used=50) is False
 
     def test_detect_normal_task_with_commits(self):
-        """Task with 3 commits + 100 turns is normal."""
+        """Task with 3 commits + 100 turns - check disabled, returns False."""
         from orchestrator.queue_utils import is_burned_out
 
+        # Check disabled - always returns False now
         assert is_burned_out(commits_count=3, turns_used=100) is False
 
     def test_orchestrator_impl_zero_commits_high_turns_is_burned(self):
-        """orchestrator_impl task with 0 commits + 100 turns IS burned out.
+        """orchestrator_impl task with 0 commits + 100 turns - check disabled.
 
-        The orchestrator_impl role counts submodule commits and reports them
-        via submit_completion(). If commits_count is 0, the agent genuinely
-        produced no commits, so burn-out detection applies the same as for
-        regular tasks.
+        The check is disabled due to commit counting bugs that affect all roles
+        including orchestrator_impl. Even though the role counts submodule commits,
+        the persistent worktree + branch switching issue causes false positives.
         """
         from orchestrator.queue_utils import is_burned_out
 
-        # No role exemption — 0 commits + high turns = burned out
-        assert is_burned_out(commits_count=0, turns_used=100) is True
+        # Check disabled - always returns False now
+        assert is_burned_out(commits_count=0, turns_used=100) is False
 
     def test_orchestrator_impl_with_submodule_commits_not_burned(self):
-        """orchestrator_impl task with submodule commits is NOT burned out.
+        """orchestrator_impl task with submodule commits - check disabled.
 
         When the orchestrator_impl role correctly counts submodule commits,
         a task with commits should never be considered burned out.
         """
         from orchestrator.queue_utils import is_burned_out
 
-        # Submodule commits reported correctly — not burned out
+        # Check disabled - always returns False now
         assert is_burned_out(commits_count=3, turns_used=100) is False
 
 

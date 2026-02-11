@@ -556,15 +556,23 @@ project is finished — rather than after each individual task.
 
 ### Detection
 
-A task is "burned out" when:
+**IMPORTANT: The burnout check is currently DISABLED** (as of 2026-02-11) due to persistent false positives from commit counting bugs with persistent worktrees.
+
+The `is_burned_out()` function exists but returns `False` unconditionally:
 ```python
 def is_burned_out(commits_count, turns_used):
-    return commits_count == 0 and (turns_used or 0) >= BURNED_OUT_TURN_THRESHOLD
+    # DISABLED - return False unconditionally to prevent false positive recycling
+    return False
 ```
 
-`BURNED_OUT_TURN_THRESHOLD = 80` (defined in `queue_utils.py`).
+The original logic was:
+```python
+return commits_count == 0 and (turns_used or 0) >= BURNED_OUT_TURN_THRESHOLD  # 80
+```
 
-This applies to ALL roles including `orchestrator_impl`. The orchestrator_impl role correctly counts submodule commits and reports them via `submit_completion()`.
+This check can be re-enabled after ephemeral worktrees are implemented (TASK-f7b4d710), which will resolve the underlying commit counting issues.
+
+**Current behavior:** Tasks with 0 commits are rejected back to incoming (via `attempt_count`) rather than being immediately recycled. After 3 failed attempts (`max_attempts_before_planning`), they are recycled or escalated via the cumulative catch.
 
 ### Recycling Flow
 

@@ -364,11 +364,11 @@ class TestPreCheckNoAutoAcceptOrchestratorImpl:
                                 assert task["queue"] == "done"
 
     def test_orchestrator_impl_burned_out_gets_recycled(self, mock_config, initialized_db):
-        """An orchestrator_impl task with 0 commits and high turns gets recycled by validator.
+        """With burnout check disabled, 0-commit tasks get rejected not recycled.
 
-        Now that orchestrator_impl tasks go through the same burn-out detection
-        as regular tasks, a task with 0 submodule commits and 100+ turns should
-        be recycled, not just rejected.
+        The burnout check is disabled due to false positives from commit counting bugs.
+        Tasks with 0 commits now get rejected back to incoming (via attempt_count increment)
+        rather than being immediately recycled to breakdown.
         """
         with patch('orchestrator.db.get_database_path', return_value=initialized_db):
             with patch('orchestrator.roles.pre_check.is_db_enabled', return_value=True):
@@ -415,9 +415,9 @@ class TestPreCheckNoAutoAcceptOrchestratorImpl:
                                 result = role.run()
                                 assert result == 0
 
-                                # Task should be recycled (burned out: 0 commits, 100 turns >= 80)
+                                # With burnout check disabled, task gets rejected to incoming (not recycled)
                                 task = get_task("orchburn1")
-                                assert task["queue"] == "recycled", (
-                                    f"Expected burned orchestrator_impl task to be recycled, "
+                                assert task["queue"] == "incoming", (
+                                    f"Expected 0-commit task to be rejected to incoming, "
                                     f"but found in {task['queue']}"
                                 )
