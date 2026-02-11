@@ -1,0 +1,29 @@
+{
+  "name": "octopoid-monorepo",
+  "version": "2.0.0",
+  "description": "Distributed AI orchestrator - monorepo containing server and client packages",
+  "private": true,
+  "scripts": {
+    "build": "pnpm --filter \"@octopoid/*\" build",
+    "test": "pnpm --filter \"@octopoid/*\" test",
+    "dev:server": "pnpm --filter @octopoid/server dev",
+    "dev:client": "pnpm --filter @octopoid/client dev",
+    "lint": "pnpm --filter \"@octopoid/*\" lint",
+    "typecheck": "pnpm --filter \"@octopoid/*\" typecheck",
+    "clean": "pnpm --filter \"@octopoid/*\" clean && rm -rf node_modules"
+  },
+  "keywords": [
+    "ai",
+    "orchestrator",
+    "distributed",
+    "cloudflare",
+    "workers"
+  ],
+  "author": "Octopoid Contributors",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0",
+    "pnpm": ">=8.0.0"
+  },
+  "packageManager": "pnpm@8.15.0"
+}

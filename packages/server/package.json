@@ -1,0 +1,38 @@
+{
+  "name": "@octopoid/server",
+  "version": "2.0.0",
+  "description": "Octopoid server - Cloudflare Workers API",
+  "type": "module",
+  "main": "./src/index.ts",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "test": "vitest",
+    "test:coverage": "vitest --coverage",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist",
+    "db:create": "wrangler d1 create octopoid-db",
+    "db:migrations:apply": "wrangler d1 migrations apply octopoid-db",
+    "db:migrations:create": "wrangler d1 migrations create octopoid-db"
+  },
+  "keywords": [
+    "octopoid",
+    "server",
+    "cloudflare",
+    "workers"
+  ],
+  "author": "Octopoid Contributors",
+  "license": "MIT",
+  "dependencies": {
+    "@octopoid/shared": "workspace:*",
+    "hono": "^4.0.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240208.0",
+    "typescript": "^5.3.3",
+    "vitest": "^1.2.2",
+    "wrangler": "^3.28.0"
+  }
+}

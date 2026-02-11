@@ -1,0 +1,59 @@
+{
+  "name": "octopoid",
+  "version": "2.0.0",
+  "description": "Octopoid client - CLI and orchestrator for AI-driven development",
+  "type": "module",
+  "bin": {
+    "octopoid": "./dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "templates"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "dev": "tsx src/cli.ts",
+    "test": "vitest",
+    "test:coverage": "vitest --coverage",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "pnpm build"
+  },
+  "keywords": [
+    "octopoid",
+    "client",
+    "cli",
+    "ai",
+    "orchestrator"
+  ],
+  "author": "Octopoid Contributors",
+  "license": "MIT",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.20.0",
+    "@octopoid/shared": "workspace:*",
+    "commander": "^11.1.0",
+    "yaml": "^2.3.4",
+    "simple-git": "^3.22.0",
+    "better-sqlite3": "^9.4.0",
+    "chalk": "^5.3.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.9",
+    "@types/node": "^20.11.17",
+    "tsx": "^4.7.1",
+    "typescript": "^5.3.3",
+    "vitest": "^1.2.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
