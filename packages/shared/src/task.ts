@@ -56,6 +56,7 @@ export interface Task {
 export interface CreateTaskRequest {
   id: string
   file_path: string
+  title?: string
   queue?: TaskQueue
   priority?: TaskPriority
   complexity?: TaskComplexity
