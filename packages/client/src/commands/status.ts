@@ -7,7 +7,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import chalk from 'chalk'
 import { loadConfig, isRemoteMode, getRuntimeDir } from '../config'
-import { healthCheck, listTasks } from '../db-interface'
+import { healthCheck, listTasks, getSyncStatus, isOfflineMode } from '../db-interface'
 import { OctopoidAPIClient } from '../api-client'
 
 export async function statusCommand(): Promise<void> {
@@ -30,6 +30,11 @@ export async function statusCommand(): Promise<void> {
     // Server connection (remote mode)
     if (isRemoteMode() && config.server?.url) {
       console.log(chalk.bold('Server Connection:'))
+
+      // Check offline mode
+      const offline = isOfflineMode()
+      const syncStatus = getSyncStatus()
+
       try {
         const healthy = await healthCheck()
         if (healthy) {
@@ -56,6 +61,26 @@ export async function statusCommand(): Promise<void> {
           console.log(chalk.gray(`    ${error.message}`))
         }
       }
+
+      // Show offline mode status
+      if (offline || syncStatus.pending || syncStatus.failed) {
+        console.log('')
+        console.log(chalk.bold('Offline Mode:'))
+        if (offline) {
+          console.log(chalk.yellow('  ⚠️  Working offline'))
+        } else {
+          console.log(chalk.green('  ✓ Online'))
+        }
+
+        if (syncStatus.pending) {
+          console.log(chalk.yellow(`  Pending sync: ${syncStatus.pending} operations`))
+        }
+
+        if (syncStatus.failed) {
+          console.log(chalk.red(`  Failed sync: ${syncStatus.failed} operations`))
+        }
+      }
+
       console.log('')
     }
 
