@@ -1,0 +1,38 @@
+{
+  "name": "octopoid-sdk",
+  "version": "2.0.0",
+  "description": "Node.js/TypeScript SDK for Octopoid - write custom scripts and automation",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "test": "echo \"No tests yet\"",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "octopoid",
+    "sdk",
+    "automation",
+    "ai",
+    "orchestration"
+  ],
+  "author": "Octopoid Contributors",
+  "license": "MIT",
+  "dependencies": {
+    "octopoid": "workspace:*",
+    "@octopoid/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/org/octopoid.git",
+    "directory": "packages/sdk"
+  }
+}
