@@ -482,10 +482,17 @@ def _gather_messages() -> list[dict[str, Any]]:
 
 def _gather_agents() -> list[dict[str, Any]]:
     """Gather agent status from config and state files."""
-    from .config import get_agents, get_agents_runtime_dir, get_notes_dir
-    from .state_utils import is_process_running
+    try:
+        from .config import get_agents, get_agents_runtime_dir, get_notes_dir
+        from .state_utils import is_process_running
 
-    agents = get_agents()
+        agents = get_agents()
+    except FileNotFoundError:
+        # Agents config not found - return empty list (API-only mode)
+        return []
+    except Exception:
+        # Other errors - return empty list gracefully
+        return []
     runtime_dir = get_agents_runtime_dir()
     notes_dir = get_notes_dir()
 
@@ -627,29 +634,37 @@ def _get_agent_notes(notes_dir: Path, current_task: str | None) -> str | None:
 
 def _gather_health(sdk: Optional["OctopoidSDK"] = None) -> dict[str, Any]:
     """Gather system health information."""
-    from .config import get_agents, get_orchestrator_dir, is_system_paused
     from .state_utils import is_process_running
 
-    agents = get_agents()
-
-    # Determine scheduler status
-    scheduler_status = _get_scheduler_status()
+    # Try to load agent config, but gracefully handle API-only mode
+    try:
+        from .config import get_agents, get_orchestrator_dir, is_system_paused
+        agents = get_agents()
+        scheduler_status = _get_scheduler_status()
+        runtime_dir = get_orchestrator_dir() / "agents"
+        system_paused = is_system_paused()
+    except (FileNotFoundError, Exception):
+        # API-only mode or config not found - use defaults
+        agents = []
+        scheduler_status = "api-only"
+        runtime_dir = None
+        system_paused = False
 
     # Count idle agents (non-paused, not running)
-    runtime_dir = get_orchestrator_dir() / "agents"
     idle_count = 0
     running_count = 0
     paused_count = 0
 
-    for agent in agents:
-        if agent.get("paused"):
-            paused_count += 1
-            continue
-        state = _load_agent_state(runtime_dir / agent["name"] / "state.json")
-        if state.get("running") and is_process_running(state.get("pid")):
-            running_count += 1
-        else:
-            idle_count += 1
+    if runtime_dir:
+        for agent in agents:
+            if agent.get("paused"):
+                paused_count += 1
+                continue
+            state = _load_agent_state(runtime_dir / agent["name"] / "state.json")
+            if state.get("running") and is_process_running(state.get("pid")):
+                running_count += 1
+            else:
+                idle_count += 1
 
     # Queue depth = incoming + claimed + breakdown
     if sdk:
@@ -672,7 +687,7 @@ def _gather_health(sdk: Optional["OctopoidSDK"] = None) -> dict[str, Any]:
 
     return {
         "scheduler": scheduler_status,
-        "system_paused": is_system_paused(),
+        "system_paused": system_paused,
         "idle_agents": idle_count,
         "running_agents": running_count,
         "paused_agents": paused_count,
