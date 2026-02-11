@@ -24,6 +24,7 @@ import { enqueueCommand } from './commands/enqueue'
 import { listCommand } from './commands/list'
 import { registerDraftCommands } from './commands/draft'
 import { registerProjectCommands } from './commands/project'
+import { approveCommand, rejectCommand, showTaskCommand } from './commands/task'
 
 const program = new Command()
 
@@ -115,6 +116,24 @@ registerDraftCommands(program)
 
 // Project commands
 registerProjectCommands(program)
+
+// Task management commands
+program
+  .command('approve <task-id>')
+  .description('Approve a task completion (move from provisional to done)')
+  .option('--by <name>', 'Who is approving (defaults to config user or "manual-review")')
+  .action(approveCommand)
+
+program
+  .command('reject <task-id> <reason>')
+  .description('Reject a task completion (move back to incoming for retry)')
+  .option('--by <name>', 'Who is rejecting (defaults to config user or "manual-review")')
+  .action(rejectCommand)
+
+program
+  .command('show <task-id>')
+  .description('Show detailed task information')
+  .action(showTaskCommand)
 
 // Parse arguments
 program.parse()
