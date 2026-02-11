@@ -96,13 +96,31 @@ export class Gatekeeper extends BaseAgent {
       // Parse review decision
       const decision = this.parseReviewDecision(response)
 
+      const currentRound = task.review_round || 0
+      const maxRounds = 3
+
       if (decision.approved) {
-        this.log(`✅ Task ${task.id} APPROVED`)
+        this.log(`✅ Task ${task.id} APPROVED (round ${currentRound + 1})`)
         await this.acceptTask(task.id)
         this.writeStatus(task.id, 'Approved', 100)
       } else {
-        this.log(`❌ Task ${task.id} REJECTED: ${decision.reason}`)
-        await this.rejectTask(task.id, decision.reason || 'Failed review')
+        this.log(`❌ Task ${task.id} REJECTED (round ${currentRound + 1}/${maxRounds}): ${decision.reason}`)
+
+        if (currentRound + 1 >= maxRounds) {
+          // Max rounds reached - escalate to human
+          this.log(`⚠️  Task ${task.id} reached max review rounds - needs human intervention`)
+          await this.rejectTask(
+            task.id,
+            `Max review rounds (${maxRounds}) reached. Last feedback: ${decision.reason}. Human review required.`
+          )
+        } else {
+          // Reject and increment round counter for retry
+          await this.rejectTask(
+            task.id,
+            `Round ${currentRound + 1} feedback: ${decision.reason}. Please address and resubmit.`
+          )
+        }
+
         this.writeStatus(task.id, 'Rejected', 100)
       }
     } catch (error) {

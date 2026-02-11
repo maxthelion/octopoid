@@ -5,6 +5,7 @@
 import { Hono } from 'hono'
 import type {
   Task,
+  TaskQueue,
   CreateTaskRequest,
   UpdateTaskRequest,
   ClaimTaskRequest,
@@ -333,8 +334,31 @@ tasksRoute.post('/:id/submit', async (c) => {
     )
   }
 
-  // Execute submit transition
-  const transitionResult = await executeTransition(db, taskId, TRANSITIONS.submit, {
+  // Burnout detection: Check if agent is stuck
+  const BURNOUT_TURN_THRESHOLD = 80
+  const MAX_TURN_LIMIT = 100
+  let burnoutDetected = false
+
+  if (body.commits_count === 0 && body.turns_used >= BURNOUT_TURN_THRESHOLD) {
+    // Agent made no progress but used many turns - stuck
+    burnoutDetected = true
+    console.warn(
+      `⚠️  Burnout detected for task ${taskId}: 0 commits, ${body.turns_used} turns`
+    )
+  } else if (body.turns_used >= MAX_TURN_LIMIT) {
+    // Hit absolute turn limit
+    burnoutDetected = true
+    console.warn(
+      `⚠️  Turn limit reached for task ${taskId}: ${body.turns_used}/${MAX_TURN_LIMIT}`
+    )
+  }
+
+  // Execute submit transition (or route to needs_continuation if burnout)
+  const transition = burnoutDetected
+    ? { ...TRANSITIONS.submit, to: 'needs_continuation' as TaskQueue }
+    : TRANSITIONS.submit
+
+  const transitionResult = await executeTransition(db, taskId, transition, {
     commits_count: body.commits_count,
     turns_used: body.turns_used,
   })
@@ -361,6 +385,22 @@ tasksRoute.post('/:id/submit', async (c) => {
     body.check_results || null,
     taskId
   )
+
+  // Record burnout event if detected
+  if (burnoutDetected) {
+    await execute(
+      db,
+      `INSERT INTO task_history (task_id, event, details, timestamp)
+       VALUES (?, ?, ?, datetime('now'))`,
+      taskId,
+      'burnout_detected',
+      JSON.stringify({
+        commits_count: body.commits_count,
+        turns_used: body.turns_used,
+        threshold: BURNOUT_TURN_THRESHOLD,
+      })
+    )
+  }
 
   const task = await queryOne<Task>(db, 'SELECT * FROM tasks WHERE id = ?', taskId)
 
