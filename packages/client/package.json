@@ -23,6 +23,7 @@
     "watch": "tsc --watch",
     "dev": "tsx src/cli.ts",
     "test": "vitest",
+    "test:integration": "vitest run tests/integration.test.ts",
     "test:coverage": "vitest --coverage",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist",

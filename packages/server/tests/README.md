@@ -19,10 +19,32 @@ npm run test:watch
 
 ```
 tests/
+├── integration.test.ts      # End-to-end API tests with real HTTP server
 ├── state-machine.test.ts    # State transition logic tests
 ├── routes-tasks.test.ts     # Task API endpoint tests
 ├── routes-orchestrators.test.ts  # Orchestrator API tests
 └── scheduled.test.ts        # Scheduled job tests
+```
+
+## Integration Tests
+
+The `integration.test.ts` file contains end-to-end tests that start a real wrangler dev server:
+
+- **Health Check**: Verifies server status and database connection
+- **Orchestrator Lifecycle**: Registration, heartbeat, re-registration
+- **Task CRUD**: Creating, reading, listing, filtering tasks
+- **Task Lifecycle**: Full flow from claim → submit → accept/reject
+- **Concurrent Operations**: Multiple orchestrators claiming tasks
+- **Error Handling**: 404s, 400s, invalid operations
+
+```bash
+# Run integration tests specifically
+npm run test:integration
+```
+
+**Note**: Integration tests require D1 database migrations to be applied first:
+```bash
+npx wrangler d1 migrations apply octopoid-db --local
 ```
 
 ## Writing Tests
