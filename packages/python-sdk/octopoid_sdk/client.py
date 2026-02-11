@@ -34,6 +34,122 @@ class TasksAPI:
                 return None
             raise
 
+    def create(
+        self,
+        id: str,
+        file_path: str,
+        title: Optional[str] = None,
+        role: Optional[str] = None,
+        priority: Optional[str] = None,
+        context: Optional[str] = None,
+        acceptance_criteria: Optional[str] = None,
+        queue: str = 'incoming',
+        branch: str = 'main',
+        metadata: Optional[Dict[str, Any]] = None,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """Create a new task
+
+        Args:
+            id: Task ID (e.g., 'task-001')
+            file_path: Path to task markdown file
+            title: Task title
+            role: Agent role (e.g., 'implement', 'test')
+            priority: Priority level (P0, P1, P2)
+            context: Task context/description
+            acceptance_criteria: Success criteria
+            queue: Initial queue (default: 'incoming')
+            branch: Base branch (default: 'main')
+            metadata: Additional metadata
+            **kwargs: Additional task fields
+
+        Returns:
+            Created task dictionary
+        """
+        data = {
+            'id': id,
+            'file_path': file_path,
+            'queue': queue,
+            'branch': branch,
+        }
+
+        if title:
+            data['title'] = title
+        if role:
+            data['role'] = role
+        if priority:
+            data['priority'] = priority
+        if metadata:
+            data['metadata'] = metadata
+
+        # Add any additional fields
+        data.update(kwargs)
+
+        return self.client._request('POST', '/api/v1/tasks', json=data)
+
+    def claim(
+        self,
+        orchestrator_id: str,
+        agent_name: str,
+        role_filter: Optional[str] = None,
+        lease_duration_seconds: Optional[int] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Claim an available task
+
+        Args:
+            orchestrator_id: Orchestrator identifier
+            agent_name: Agent name
+            role_filter: Filter by role (e.g., 'implement')
+            lease_duration_seconds: Lease duration in seconds
+
+        Returns:
+            Claimed task dictionary, or None if no tasks available
+        """
+        data = {
+            'orchestrator_id': orchestrator_id,
+            'agent_name': agent_name,
+        }
+
+        if role_filter:
+            data['role_filter'] = role_filter
+        if lease_duration_seconds:
+            data['lease_duration_seconds'] = lease_duration_seconds
+
+        try:
+            return self.client._request('POST', '/api/v1/tasks/claim', json=data)
+        except requests.HTTPError as e:
+            if e.response.status_code == 404:
+                return None
+            raise
+
+    def submit(
+        self,
+        task_id: str,
+        commits_count: int,
+        turns_used: int,
+        check_results: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Submit task completion
+
+        Args:
+            task_id: Task ID
+            commits_count: Number of commits made
+            turns_used: Number of turns/iterations used
+            check_results: Optional check results
+
+        Returns:
+            Updated task dictionary
+        """
+        data = {
+            'commits_count': commits_count,
+            'turns_used': turns_used,
+        }
+
+        if check_results:
+            data['check_results'] = check_results
+
+        return self.client._request('POST', f'/api/v1/tasks/{task_id}/submit', json=data)
+
 
 class DraftsAPI:
     """Drafts API endpoints"""

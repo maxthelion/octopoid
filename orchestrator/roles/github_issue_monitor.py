@@ -1,22 +1,22 @@
-"""GitHub issue monitor role - polls GitHub issues and creates tasks for new ones."""
+"""GitHub issue monitor role - polls GitHub issues and creates tasks via API."""
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
-from ..queue_utils import can_create_task, create_task
 from .base import BaseRole, main_entry
 
 
 class GitHubIssueMonitorRole(BaseRole):
-    """Monitor GitHub issues and create tasks for new ones.
+    """Monitor GitHub issues and create tasks for new ones via API.
 
     This agent:
     - Polls GitHub issues using the gh CLI
     - Tracks which issues have been processed
-    - Creates tasks for new issues
+    - Creates tasks via Octopoid API server (v2.0)
     - Uses issue number to avoid duplicates
     """
 
@@ -25,6 +25,47 @@ class GitHubIssueMonitorRole(BaseRole):
         super().__init__()
         self.state_file = self.orchestrator_dir / "runtime" / "github_issues_state.json"
         self.state_file.parent.mkdir(parents=True, exist_ok=True)
+
+        # Initialize SDK for API access
+        self.sdk = self._init_sdk()
+
+    def _init_sdk(self):
+        """Initialize Octopoid SDK from config.
+
+        Returns:
+            OctopoidSDK instance or None if not configured
+        """
+        try:
+            import yaml
+            from octopoid_sdk import OctopoidSDK
+
+            # Try to load from .octopoid/config.yaml
+            config_path = self.parent_project / ".octopoid" / "config.yaml"
+            if not config_path.exists():
+                self.log("Warning: No .octopoid/config.yaml found, cannot use SDK")
+                return None
+
+            with open(config_path) as f:
+                config = yaml.safe_load(f)
+
+            server_config = config.get("server", {})
+            if not server_config.get("enabled"):
+                self.log("Warning: Server not enabled in config, cannot use SDK")
+                return None
+
+            server_url = server_config.get("url")
+            api_key = server_config.get("api_key") or os.getenv("OCTOPOID_API_KEY")
+
+            sdk = OctopoidSDK(server_url=server_url, api_key=api_key)
+            self.log(f"Connected to Octopoid API server: {server_url}")
+            return sdk
+
+        except ImportError:
+            self.log("Error: octopoid-sdk not installed. Install with: pip install octopoid-sdk")
+            return None
+        except Exception as e:
+            self.log(f"Error initializing SDK: {e}")
+            return None
 
     def load_state(self) -> dict[str, Any]:
         """Load the state of processed issues.
@@ -149,27 +190,70 @@ class GitHubIssueMonitorRole(BaseRole):
             "Code follows project conventions",
         ]
 
-        # Check if we can create the task
-        if not can_create_task():
-            self.log(f"Cannot create task for issue #{issue_number} - queue limit reached")
+        # Check SDK is available
+        if not self.sdk:
+            self.log(f"Cannot create task for issue #{issue_number} - SDK not initialized")
             return False
 
         try:
-            # Create the task
-            task_path = create_task(
-                title=f"[GH-{issue_number}] {title}",
+            # Generate task ID
+            import uuid
+            from datetime import datetime, timezone
+            task_id = f"gh-{issue_number}-{uuid.uuid4().hex[:8]}"
+
+            # Create markdown file content
+            frontmatter = f"""---
+id: {task_id}
+title: "[GH-{issue_number}] {title}"
+priority: {priority}
+role: {role}
+queue: incoming
+created_by: {self.agent_name}
+created_at: {datetime.now(timezone.utc).isoformat()}
+github_issue: {issue_number}
+github_url: {url}
+---
+
+# Task: [GH-{issue_number}] {title}
+
+{context}
+
+## Acceptance Criteria
+
+{chr(10).join(f"- {criterion}" for criterion in acceptance_criteria)}
+"""
+
+            # Write task file locally
+            queue_dir = self.parent_project / ".octopoid" / "queue" / "incoming"
+            queue_dir.mkdir(parents=True, exist_ok=True)
+            task_file = queue_dir / f"{task_id}.md"
+
+            with open(task_file, "w") as f:
+                f.write(frontmatter)
+
+            self.debug_log(f"Created task file: {task_file}")
+
+            # Register task with API server
+            relative_path = task_file.relative_to(self.parent_project)
+            task_title = f"[GH-{issue_number}] {title}"
+            task = self.sdk.tasks.create(
+                id=task_id,
+                file_path=str(relative_path),
+                title=task_title,
                 role=role,
-                context=context,
-                acceptance_criteria=acceptance_criteria,
                 priority=priority,
-                created_by=self.agent_name,
                 queue="incoming",
+                metadata={
+                    "created_by": self.agent_name,
+                    "github_issue": issue_number,
+                    "github_url": url,
+                },
             )
 
-            self.log(f"Created task for issue #{issue_number}: {task_path.name}")
+            self.log(f"Created task for issue #{issue_number}: {task_id}")
 
             # Add a comment to the issue noting that a task was created
-            self._comment_on_issue(issue_number, task_path.name)
+            self._comment_on_issue(issue_number, task_id)
 
             return True
 
