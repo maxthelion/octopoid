@@ -57,7 +57,13 @@ dist/
 .dev.vars
 
 # Octopoid runtime
-.octopoid/
+# Octopoid runtime files (but commit config files)
+.octopoid/runtime/
+.octopoid/logs/
+.octopoid/worktrees/
+.octopoid/*.db
+.octopoid/*.db-shm
+.octopoid/*.db-wal
 .octopoid-test/
 *.pid
 *.lock
