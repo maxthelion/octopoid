@@ -1,0 +1,24 @@
+# Agent Definitions
+# Configure agents that run on this orchestrator
+
+agents:
+  - name: implementer-1
+    role: implement
+    model: sonnet
+    max_concurrent: 1
+    enabled: true
+
+  - name: breakdown-1
+    role: breakdown
+    model: sonnet
+    max_concurrent: 1
+    enabled: true
+
+  - name: gatekeeper-1
+    role: review
+    model: opus
+    max_concurrent: 1
+    enabled: true
+
+# Add more agents as needed
+# Each agent will claim tasks matching its role

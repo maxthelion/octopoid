@@ -63,11 +63,11 @@ app.get('/', (c) => {
   })
 })
 
-// Mount route modules (will be implemented in next tasks)
-// import { tasksRoute } from './routes/tasks'
-// import { orchestratorsRoute } from './routes/orchestrators'
-// app.route('/api/v1/tasks', tasksRoute)
-// app.route('/api/v1/orchestrators', orchestratorsRoute)
+// Mount route modules
+import { tasksRoute } from './routes/tasks'
+import { orchestratorsRoute } from './routes/orchestrators'
+app.route('/api/v1/tasks', tasksRoute)
+app.route('/api/v1/orchestrators', orchestratorsRoute)
 
 // 404 handler
 app.notFound((c) => {
@@ -106,6 +106,6 @@ export async function scheduled(
   console.log('Scheduled job triggered at:', new Date().toISOString())
 
   // Import and run scheduled jobs
-  // const { runLeaseMonitor } = await import('./scheduled/lease-monitor')
-  // await runLeaseMonitor(env.DB)
+  const { runLeaseMonitor } = await import('./scheduled/lease-monitor')
+  await runLeaseMonitor(env.DB)
 }
