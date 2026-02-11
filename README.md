@@ -1,474 +1,352 @@
-# Octopoid
+# Octopoid v2.0
 
-A distributed AI orchestrator for software development. Queue work locally, execute on VMs, coordinate across multiple machines.
+**Distributed AI orchestrator for software development** - Run multiple AI agents in parallel across machines to build software autonomously.
 
 ## What is Octopoid?
 
-Octopoid manages autonomous Claude Code agents that work on tasks in parallel. It supports two versions:
+Octopoid is a **distributed task orchestration system** that uses Claude AI to automatically implement features, fix bugs, and manage software development workflows. Think of it as CI/CD, but for development itself.
 
-- **v2.0 (New)** - TypeScript client-server architecture with offline mode, distributed orchestration, and SDKs
-- **v1.x (Legacy)** - Python orchestrator as git submodule
+**Key Features:**
+- 🤖 **Multiple AI agents** working in parallel (implementer, gatekeeper, breakdown)
+- 🌐 **Distributed execution** - Run orchestrators on multiple machines (local, VMs, cloud)
+- 📋 **Task queue system** with priorities, dependencies, and state management
+- 🔄 **Automated code review** via gatekeeper agent (multi-round reviews)
+- 📝 **Drafts & Projects** - Organize ideas and multi-task features
+- 🌳 **Task-specific worktrees** - Parallel execution without conflicts
+- 📊 **Turn tracking & logging** - Per-task and per-agent logs
+- ☁️ **Cloudflare Workers** backend - Serverless, globally distributed
 
-This README covers **v2.0**. For v1.x documentation, see [README-v1.md](./README-v1.md).
-
-## v2.0 Architecture
+## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    Central Server                            │
-│  ┌────────────────────────────────────────────────────────┐ │
-│  │  REST API (Hono + Cloudflare Workers)                  │ │
-│  │  - Task operations (claim, submit, accept, reject)     │ │
-│  │  - Orchestrator registration & heartbeat               │ │
-│  │  - State machine enforcement                           │ │
-│  └────────────────────────────────────────────────────────┘ │
-│  ┌────────────────────────────────────────────────────────┐ │
-│  │  D1 Database (SQLite at the edge)                      │ │
-│  │  - Tasks, Projects, Agents, Orchestrators              │ │
-│  │  - Task history and audit trail                        │ │
-│  └────────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────┘
-                            ▲
-                            │ HTTPS/REST
-            ┌───────────────┴───────────────┐
-            │                               │
-┌───────────▼──────────┐        ┌──────────▼───────────┐
-│  Orchestrator Client │        │  Orchestrator Client  │
-│  (Machine 1)         │        │  (Machine 2)          │
-│  - Scheduler         │        │  - Scheduler          │
-│  - Agent Roles       │        │  - Agent Roles        │
-│  - Git Worktrees     │        │  - Git Worktrees      │
-└─────────────────────┘        └──────────────────────┘
+┌─────────────────────────────────────────────┐
+│        Cloudflare Workers Server            │
+│  ┌────────────────────────────────────────┐ │
+│  │  REST API (Hono framework)             │ │
+│  │  - Tasks, Projects, Drafts, Orchestrators │
+│  │  - State machine with lease management │ │
+│  └────────────────────────────────────────┘ │
+│  ┌────────────────────────────────────────┐ │
+│  │  D1 Database (SQLite at the edge)      │ │
+│  └────────────────────────────────────────┘ │
+└─────────────────────────────────────────────┘
+             ▲              ▲
+             │              │
+    ┌────────┴───────┐   ┌─┴──────────┐
+    │ Orchestrator 1  │   │ Orchestrator 2 │
+    │ (Laptop)        │   │ (GPU VM)       │
+    │                 │   │                │
+    │ - Scheduler     │   │ - Scheduler    │
+    │ - Agents        │   │ - Agents       │
+    │ - Worktrees     │   │ - Worktrees    │
+    │ - Local tasks   │   │ - Local tasks  │
+    └─────────────────┘   └────────────────┘
 ```
 
-## Quick Start (v2.0)
+## Installation
 
-### Option 1: Local Mode (No Server)
+### Server (One-Time Setup)
+
+Deploy the Cloudflare Workers server:
 
 ```bash
+# Clone repository
+git clone https://github.com/maxthelion/octopoid.git
+cd octopoid
+
 # Install dependencies
-npm install -g pnpm
 pnpm install
 
-# Build packages
-cd packages/shared && pnpm build && cd ../..
-cd packages/client && pnpm build && cd ../..
-
-# Link client globally
-cd packages/client && npm link && cd ../..
-
-# Initialize Octopoid
-octopoid init --local
-
-# Start orchestrator
-octopoid start
-```
-
-### Option 2: Client-Server Mode
-
-**Server (Cloudflare Workers):**
-
-```bash
+# Deploy server to Cloudflare Workers
 cd packages/server
-
-# Install wrangler
-npm install -g wrangler
-
-# Create database
-wrangler d1 create octopoid-db
+npx wrangler d1 create octopoid-db
+# Copy database_id to wrangler.toml
 
 # Run migrations
-wrangler d1 migrations apply octopoid-db
+npx wrangler d1 migrations apply octopoid-db
+npx wrangler d1 migrations apply octopoid-db --remote
 
-# Deploy to Cloudflare
-wrangler deploy
+# Deploy
+npx wrangler deploy
 
-# Or run locally
-wrangler dev
+# Server URL: https://octopoid-server.your-username.workers.dev
 ```
 
-**Client:**
+### Client (Each Machine)
+
+Install the Octopoid client globally:
 
 ```bash
-cd packages/client
+# Install from npm
+npm install -g octopoid
 
-# Build and link
-pnpm build
-npm link
+# Or install from source
+git clone https://github.com/maxthelion/octopoid.git
+cd octopoid
+pnpm install && pnpm build
+cd packages/client && npm link
 
-# Initialize with server URL
-octopoid init \
-  --server https://octopoid-server.username.workers.dev \
-  --cluster prod \
-  --machine-id my-machine
-
-# Start orchestrator
-octopoid start --debug
+# Verify installation
+octopoid --version
 ```
 
-### Automated Setup
+## Setup
 
-We provide a setup script for local development:
+### Initialize Octopoid in Your Project
 
 ```bash
-./setup-dev.sh
+# Navigate to your project
+cd ~/my-project
+
+# Initialize Octopoid (creates .octopoid/ directory)
+octopoid init --server https://octopoid-server.your-username.workers.dev --cluster prod
+
+# This creates:
+# .octopoid/
+# ├── config.yaml      # Server connection, cluster settings
+# ├── agents.yaml      # Agent configurations
+# ├── runtime/         # PIDs, locks, orchestrator ID
+# ├── logs/            # Scheduler, agent, and task logs
+# └── worktrees/       # Git worktrees (one per task)
 ```
 
-This installs dependencies and builds all packages.
+### Configuration Files
 
-## Use Cases
-
-### 1. Queue Locally, Execute on VM
-
-```bash
-# On laptop: Create tasks
-octopoid enqueue "Add user authentication" --role implement --priority P1
-
-# On VM with GPU: Run orchestrator
-ssh vm
-octopoid start --daemon
-```
-
-### 2. Multiple Computers Without Conflicts
-
-```bash
-# Mac Studio
-octopoid init --cluster home --machine-id mac-studio
-octopoid start
-
-# Linux Workstation (same cluster)
-octopoid init --cluster home --machine-id linux-ws
-octopoid start
-
-# Server coordinates - no conflicts!
-```
-
-### 3. Offline Mode
-
-Works even when server is down:
-
-```bash
-octopoid enqueue "Fix bug" --role implement
-# ✓ Task created locally, will sync when server available
-
-octopoid status
-# ⚠️  Working offline
-# Pending sync: 3 operations
-```
-
-## CLI Commands
-
-```bash
-# Initialize project
-octopoid init [--server URL] [--cluster NAME] [--local]
-
-# Start orchestrator
-octopoid start [--daemon] [--debug] [--once]
-
-# Stop orchestrator
-octopoid stop
-
-# Check status
-octopoid status
-
-# Create task
-octopoid enqueue <description> [--role ROLE] [--priority P0-P3]
-
-# List tasks
-octopoid list [--queue QUEUE] [--priority PRIORITY] [--role ROLE]
-
-# Validate setup
-octopoid validate
-```
-
-## Configuration
-
-After running `octopoid init`, configuration is stored in `.octopoid/config.yaml`:
+#### `.octopoid/config.yaml`
 
 ```yaml
-# Mode: local or remote
-mode: remote
-
-# Server configuration (remote mode)
+# Server connection (remote mode)
 server:
   enabled: true
-  url: https://octopoid-server.username.workers.dev
-  cluster: production
-  machine_id: my-machine
-  api_key: your-api-key  # Optional
+  url: https://octopoid-server.your-username.workers.dev
+  cluster: prod
+  machine_id: laptop-001
 
-# Agent configuration
-agents:
-  max_concurrent: 3
-
-# Repository
+# Repository settings
 repo:
-  path: /path/to/project
-  main_branch: main
+  path: /path/to/your/project
+  base_branch: main
 ```
 
-### Agent Definitions
-
-Configure agents in `.octopoid/agents.yaml`:
+#### `.octopoid/agents.yaml`
 
 ```yaml
 agents:
   - name: implementer-1
     role: implement
-    interval_seconds: 300
     model: claude-sonnet-4-20250514
     max_turns: 50
-
-  - name: breakdown-agent
-    role: breakdown
-    interval_seconds: 600
-    model: claude-sonnet-4-20250514
+    interval_seconds: 300
+    paused: false
 
   - name: gatekeeper-1
     role: review
-    interval_seconds: 300
-    model: claude-opus-4-20250514
+    model: claude-opus-4-20250514  # Use Opus for reviews
+    max_turns: 20
+    interval_seconds: 600
+    paused: false
+
+  - name: breakdown-1
+    role: breakdown
+    model: claude-sonnet-4-20250514
+    max_turns: 30
+    interval_seconds: 900
+    paused: false
 ```
 
-## Custom Scripts (SDKs)
-
-### Node.js/TypeScript SDK
+### Set API Key
 
 ```bash
-npm install octopoid-sdk
+# Required for agent execution
+export ANTHROPIC_API_KEY="sk-ant-..."
+
+# Add to your shell profile for persistence
+echo 'export ANTHROPIC_API_KEY="sk-ant-..."' >> ~/.zshrc
 ```
 
-```typescript
-import { OctopoidSDK } from 'octopoid-sdk'
+## What Files Does Octopoid Create?
 
-const sdk = new OctopoidSDK({
-  serverUrl: 'https://octopoid-server.username.workers.dev',
-  apiKey: process.env.OCTOPOID_API_KEY
-})
+When you run `octopoid init`, these files and directories are created:
 
-// Create a task
-const task = await sdk.tasks.create({
-  id: 'my-task-123',
-  file_path: 'tasks/incoming/TASK-my-task-123.md',
-  queue: 'incoming',
-  priority: 'P1',
-  role: 'implement'
-})
+### `.octopoid/` - Main Directory
 
-// List tasks
-const tasks = await sdk.tasks.list({ queue: 'incoming' })
-
-// Auto-approve tasks
-for (const task of tasks) {
-  if (task.role === 'docs' && task.commits_count > 0) {
-    await sdk.tasks.accept(task.id, { accepted_by: 'auto-approve' })
-  }
-}
+```
+.octopoid/
+├── config.yaml          # Server URL, cluster name, machine ID
+├── agents.yaml          # Agent definitions (what roles run)
+├── runtime/             # Runtime state (don't commit)
+│   ├── orchestrator_id.txt    # Your registered orchestrator ID
+│   ├── orchestrator.pid       # Process ID when running
+│   └── agents/                # Per-agent state
+│       ├── implementer-1/
+│       │   └── state.json     # Running, last finished, etc.
+│       └── gatekeeper-1/
+│           └── state.json
+├── logs/                # All logs (don't commit)
+│   ├── scheduler-2026-02-11.log    # Scheduler activity
+│   ├── agents/                      # Per-agent logs
+│   │   ├── implementer-1-2026-02-11.log
+│   │   └── gatekeeper-1-2026-02-11.log
+│   └── tasks/                       # Per-task logs (aggregated)
+│       ├── task-123.log
+│       └── task-456.log
+└── worktrees/           # Git worktrees (one per task)
+    ├── task-123/        # Isolated working directory for task-123
+    │   └── .git         # Worktree git metadata
+    └── task-456/        # Isolated working directory for task-456
+        └── .git
 ```
 
-See [packages/sdk/README.md](./packages/sdk/README.md) for full API reference.
+### `.gitignore` Updates
 
-### Python SDK
+Add these to your `.gitignore`:
+
+```gitignore
+# Octopoid runtime files
+.octopoid/runtime/
+.octopoid/logs/
+.octopoid/worktrees/
+```
+
+## Usage
+
+### Start the Orchestrator
 
 ```bash
-pip install octopoid-sdk
+# Start orchestrator (runs continuously)
+octopoid start
+
+# Or run in background
+octopoid start --daemon
+
+# Check status
+octopoid status
+
+# Stop orchestrator
+octopoid stop
 ```
 
-```python
-from octopoid_sdk import OctopoidSDK
+### Create Tasks
 
-sdk = OctopoidSDK(
-    server_url='https://octopoid-server.username.workers.dev',
-    api_key='your-api-key'
-)
-
-# Create a task
-task = sdk.tasks.create(
-    id='my-task-123',
-    file_path='tasks/incoming/TASK-my-task-123.md',
-    queue='incoming',
-    priority='P1',
-    role='implement'
-)
+```bash
+# Enqueue a task
+octopoid enqueue "Add user authentication" \
+  --role implement \
+  --priority P1 \
+  --complexity M
 
 # List tasks
-tasks = sdk.tasks.list(queue='incoming')
+octopoid list --queue incoming
 
-# Auto-approve tasks
-for task in tasks:
-    if task['role'] == 'docs' and task.get('commits_count', 0) > 0:
-        sdk.tasks.accept(task['id'], accepted_by='auto-approve')
+# Show task details
+octopoid show task-123
 ```
 
-See [packages/python-sdk/README.md](./packages/python-sdk/README.md) for full API reference.
-
-## Architecture
-
-### Packages
-
-```
-packages/
-├── shared/          # TypeScript types (Task, Project, Orchestrator)
-├── server/          # Cloudflare Workers server with D1 database
-├── client/          # CLI + library (scheduler, agents, git ops)
-├── sdk/             # Node.js/TypeScript SDK for custom scripts
-└── python-sdk/      # Python SDK for custom scripts
-```
-
-### Task Lifecycle
-
-```
-incoming → claimed → provisional → done
-    ↑         │           │
-    └─────────┴───────────┘
-       (reject/retry)
-```
-
-Tasks are:
-- **Claimed** by agents (with lease expiration)
-- **Submitted** to provisional queue after implementation
-- **Accepted** into done queue after review
-- **Rejected** back to incoming for retry
-
-### State Machine
-
-All state transitions are validated server-side:
-
-- **Guards**: Check preconditions (dependencies resolved, role matches)
-- **Side Effects**: Record history, unblock dependents, update leases
-- **Optimistic Locking**: Version checking prevents conflicts
-
-### Offline Mode
-
-When server is unreachable:
-- Operations saved to local SQLite cache
-- Background sync manager retries every 30 seconds
-- Transparent fallback with user notifications
-- Conflict resolution (server state wins)
-
-## Deployment
-
-### Server (Cloudflare Workers)
+### Manage Drafts
 
 ```bash
-cd packages/server
+# Create a draft (idea/proposal)
+octopoid draft create "Add dark mode support" \
+  --author "Your Name" \
+  --status idea \
+  --domain frontend
 
-# Create D1 database
-wrangler d1 create octopoid-db
+# List drafts
+octopoid draft list --status idea
 
-# Copy database ID to wrangler.toml
-# database_id = "your-database-id"
-
-# Run migrations
-wrangler d1 migrations apply octopoid-db
-
-# Deploy
-wrangler deploy
+# Update draft status
+octopoid draft update dark-mode-support --status approved
 ```
 
-Cost: **Free tier includes 100k requests/day**
-
-### Client (npm)
+### Manage Projects
 
 ```bash
-cd packages/client
+# Create a project (multi-task container)
+octopoid project create "User Dashboard Redesign" \
+  --description "Complete redesign of user dashboard" \
+  --status active \
+  --auto-accept  # Skip gatekeeper for all project tasks
 
-# Build
-pnpm build
+# Show project with all tasks
+octopoid project show user-dashboard-redesign
 
-# Publish to npm
-npm publish
-
-# Users install globally
-npm install -g octopoid
+# Update project
+octopoid project update user-dashboard-redesign --status completed
 ```
 
-## Monitoring
+## How It Works
 
-### Server Health
+1. **Task Creation**: Create tasks via `octopoid enqueue` or manually edit `.md` files
+2. **Server Sync**: Client syncs tasks to Cloudflare Workers server
+3. **Orchestrator Registration**: Each client registers with the server (cluster + machine ID)
+4. **Scheduler Loop**: Every 60 seconds, scheduler evaluates which agents should run
+5. **Agent Spawning**: Agents claim tasks from server (atomic, lease-based)
+6. **Task Execution**:
+   - Agent creates task-specific worktree (`.octopoid/worktrees/{task_id}/`)
+   - Agent creates feature branch (`agent/{task_id}-timestamp`)
+   - Agent invokes Claude Code to implement the task
+   - Agent commits changes and pushes to origin
+   - Agent creates pull request
+   - Agent submits completion to server (moves to `provisional` queue)
+7. **Gatekeeper Review**: Gatekeeper agent claims `provisional` tasks, reviews changes
+   - **Accept**: Task moves to `done` queue, PR can be merged
+   - **Reject**: Task returns to `incoming` queue with feedback (up to 3 rounds)
+8. **Cleanup**: Worktree removed after task completion
+
+## Multi-Machine Setup
+
+Run orchestrators on multiple machines pointing at the same server:
 
 ```bash
-curl https://octopoid-server.username.workers.dev/api/health
+# Machine 1 (Laptop)
+octopoid init --server https://... --cluster prod --machine-id laptop-001
+octopoid start --daemon
+
+# Machine 2 (GPU VM)
+octopoid init --server https://... --cluster prod --machine-id vm-gpu-001
+octopoid start --daemon
+
+# Machine 3 (Linux Workstation)
+octopoid init --server https://... --cluster prod --machine-id workstation-001
+octopoid start --daemon
 ```
 
-### Client Status
+**Result**: All three orchestrators coordinate via the server. Each claims different tasks. No conflicts, no double-claiming.
+
+## Troubleshooting
+
+### "ANTHROPIC_API_KEY not found"
 
 ```bash
-octopoid status
+# Set API key
+export ANTHROPIC_API_KEY="sk-ant-..."
 ```
 
-Shows:
-- Server connection status
-- Online/offline mode
-- Pending sync operations
-- Task counts by queue
-- Orchestrator info
-
-## Migration from v1.x
-
-If you're using the Python orchestrator (v1.x):
-
-1. **Export current state**:
-   ```bash
-   python orchestrator/scripts/export_state.py --output backup.json
-   ```
-
-2. **Deploy v2.0 server** (see Deployment section)
-
-3. **Import state to server**:
-   ```bash
-   curl -X POST https://your-server/api/admin/import \
-     -H "Content-Type: application/json" \
-     -d @backup.json
-   ```
-
-4. **Install v2.0 client**:
-   ```bash
-   npm install -g octopoid
-   octopoid init --server https://your-server --cluster prod
-   ```
-
-5. **Test in parallel** before switching fully
-
-See [docs/migration-v2.md](./docs/migration-v2.md) for detailed migration guide.
-
-## Documentation
-
-- [Architecture](./docs/architecture-v2.md) - System design and components
-- [Quick Start](./docs/quickstart-v2.md) - 5-minute setup guide
-- [Migration](./docs/migration-v2.md) - Migrate from v1.x to v2.0
-- [Deployment](./docs/deployment.md) - Production deployment guide
-- [API Reference](./packages/server/README.md) - REST API documentation
-- [SDK Guide](./packages/sdk/README.md) - Node.js SDK reference
-- [Python SDK Guide](./packages/python-sdk/README.md) - Python SDK reference
-
-## Development
+### "Server unreachable"
 
 ```bash
-# Install dependencies
-pnpm install
+# Check server status
+curl https://octopoid-server.your-username.workers.dev/api/health
 
-# Build all packages
-pnpm build
+# Test with local mode
+octopoid init --local
+octopoid start
+```
 
-# Run tests
-pnpm test
+### "Worktree already exists"
 
-# Run server locally
-cd packages/server && wrangler dev
-
-# Run client in debug mode
-octopoid start --debug --once
+```bash
+# Clean up stale worktrees
+rm -rf .octopoid/worktrees/task-123
+git worktree prune
 ```
 
 ## License
 
-MIT
+MIT License
 
-## Contributing
+## Links
 
-Contributions welcome! See [CONTRIBUTING.md](./CONTRIBUTING.md) for guidelines.
-
----
-
-**v1.x Documentation:** For the legacy Python orchestrator, see [README-v1.md](./README-v1.md)
+- **GitHub**: https://github.com/maxthelion/octopoid
+- **Issues**: https://github.com/maxthelion/octopoid/issues
+- **Documentation**: [REQUIREMENTS_ANALYSIS.md](./REQUIREMENTS_ANALYSIS.md)
