@@ -18,5 +18,8 @@ export * from './queue-utils'
 // Git Utilities
 export * from './git-utils'
 
+// Agent Roles
+export * from './roles'
+
 // Re-export shared types for convenience
 export type * from '@octopoid/shared'
