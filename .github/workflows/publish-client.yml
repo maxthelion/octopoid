@@ -24,10 +24,24 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
 
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
+
+      - name: Type check all packages
+        run: |
+          cd packages/shared && pnpm typecheck
+          cd ../server && pnpm typecheck
+          cd ../client && pnpm typecheck
 
       - name: Build all packages
-        run: pnpm build
+        run: |
+          cd packages/shared && pnpm build
+          cd ../server && pnpm build
+          cd ../client && pnpm build
+
+      - name: Run tests
+        run: |
+          cd packages/shared && pnpm test --run
+          cd ../client && pnpm test --run
 
       - name: Publish @octopoid/shared
         run: pnpm --filter @octopoid/shared publish --access public
