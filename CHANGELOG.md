@@ -12,11 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dashboard now requires API server connection (v2.0 mode)
 - GitHub issue monitor agent for automatic task creation from issues
 - Production agents.yaml configuration with implementers and issue monitor
-- SDK methods for task creation, claiming, submission, and deletion (create, claim, submit, delete)
+- SDK methods for task operations (create, claim, submit, delete, update)
 - Title field to tasks table for better display in dashboards and UIs
 - DELETE endpoint for tasks (API cleanup support)
 - Cleanup script for removing test data (scripts/cleanup-test-data.py)
 - DEVELOPMENT_RULES.md with guidelines for testing and database operations
+- v2.0 API-only architecture rule (no database/file queue modes)
 
 ### Changed
 - Dashboard is now API-only, removed local database mode

@@ -161,6 +161,18 @@ class TasksAPI:
         """
         return self.client._request('DELETE', f'/api/v1/tasks/{task_id}')
 
+    def update(self, task_id: str, **updates) -> Dict[str, Any]:
+        """Update task fields
+
+        Args:
+            task_id: Task ID
+            **updates: Fields to update (queue, priority, title, etc.)
+
+        Returns:
+            Updated task dictionary
+        """
+        return self.client._request('PATCH', f'/api/v1/tasks/{task_id}', json=updates)
+
 
 class DraftsAPI:
     """Drafts API endpoints"""
