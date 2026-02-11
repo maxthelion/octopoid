@@ -9,8 +9,9 @@ compatibility_date = "2024-01-01"
 [[d1_databases]]
 binding = "DB"
 database_name = "octopoid-test"
-database_id = "" # Will be created by test setup
+database_id = "test-database-id"
+migrations_dir = "migrations"
 
 # Development server settings
 [dev]
-port = 8788  # Different from dev server (8787)
+port = 9787  # 1000 higher than dev server (8787)

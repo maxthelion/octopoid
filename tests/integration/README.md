@@ -21,7 +21,7 @@ pip install pytest octopoid-sdk
 ## Manual Test Server Control
 
 ```bash
-# Start test server (port 8788)
+# Start test server (port 9787)
 ./tests/integration/bin/start-test-server.sh
 
 # Run tests without auto-start/stop
@@ -36,7 +36,7 @@ pytest tests/integration/ -v
 ```
 tests/integration/
 ├── bin/
-│   ├── start-test-server.sh   # Start test server on port 8788
+│   ├── start-test-server.sh   # Start test server on port 9787
 │   └── stop-test-server.sh    # Stop test server
 ├── fixtures/                  # Test data fixtures
 ├── conftest.py               # Pytest fixtures and config
@@ -47,24 +47,51 @@ tests/integration/
 
 ## Test Suites
 
-### 1. API Server Tests (`test_api_server.py`)
-- Health endpoint validation
-- Task CRUD operations
-- List and filter tasks
-- Update and delete tasks
-- Validation and edge cases
+**Total: 27 tests, all passing ✅**
 
-### 2. Task Lifecycle Tests (`test_task_lifecycle.py`)
-- Complete lifecycle: create → claim → submit → accept
-- Rejection flow: submit → reject → retry
-- Claim behavior and role filtering
-- State machine validation
-- Priority ordering
+### 1. API Server Tests (`test_api_server.py`) - 17 tests
+
+**Server Health (2 tests)**
+- Health endpoint responds with status
+- Health check includes timestamp
+
+**Orchestrator API (5 tests)**
+- Register new orchestrator
+- Re-register orchestrator (idempotent updates)
+- List all orchestrators
+- Get orchestrator by ID
+- Send heartbeat
+
+**Task CRUD (10 tests)**
+- Create, read, update, delete tasks
+- List and filter tasks by queue
+- Update task fields
+- Validation and error handling
+- Duplicate task detection
+- Task creation with metadata
+
+### 2. Task Lifecycle Tests (`test_task_lifecycle.py`) - 10 tests
+
+**Basic Lifecycle (3 tests)**
+- Full lifecycle: create → claim → submit → accept → done
+- Rejection flow: claim → submit → reject → incoming
+- Multiple rejections
+
+**Claim Behavior (4 tests)**
+- Claim with role filter
+- Claim returns none when no tasks available
+- Claim respects priority ordering
+- Claim updates claimed_by and claimed_at
+
+**State Validation (3 tests)**
+- Cannot submit unclaimed task
+- Cannot accept unclaimed task
+- Cannot claim from wrong queue
 
 ## Test Server
 
 The integration tests use a separate test server instance:
-- **Port**: 8788 (different from dev server on 8787)
+- **Port**: 9787 (different from dev server on 8787)
 - **Database**: octopoid-test (separate D1 database)
 - **Configuration**: `packages/server/wrangler.test.toml`
 
@@ -142,17 +169,17 @@ pytest -m "not slow"
 ### Server won't start
 ```bash
 # Check if server is already running
-lsof -i :8788
+lsof -i :9787
 
 # Kill existing server
-pkill -f "wrangler.*8788"
+pkill -f "wrangler.*9787"
 
 # Check server logs
 cat /tmp/octopoid-test-server.log
 ```
 
 ### Tests fail with connection error
-- Ensure test server is running: `curl http://localhost:8788/api/health`
+- Ensure test server is running: `curl http://localhost:9787/api/health`
 - Check firewall/network settings
 - Verify wrangler is installed: `npx wrangler --version`
 

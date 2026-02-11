@@ -1,5 +1,5 @@
 #!/bin/bash
-# Start test server on port 8788 with test database
+# Start test server on port 9787 with test database
 
 set -e
 
@@ -24,8 +24,19 @@ echo $! > /tmp/octopoid-test-server.pid
 
 echo "Waiting for server to be ready..."
 for i in {1..30}; do
-    if curl -s http://localhost:8788/api/health > /dev/null 2>&1; then
-        echo "✓ Test server ready on port 8788"
+    if curl -s http://localhost:9787/api/health > /dev/null 2>&1; then
+        echo "✓ Test server ready on port 9787"
+
+        # Apply migrations to local D1 database using wrangler
+        echo "Applying migrations..."
+
+        for migration in migrations/*.sql; do
+            echo "  - Applying $(basename $migration)..."
+            npx wrangler d1 execute octopoid-test --local --config wrangler.test.toml --file="$migration" 2>&1 | grep -v "^$" | head -3
+        done
+
+        echo "✓ Migrations applied"
+
         exit 0
     fi
     sleep 1

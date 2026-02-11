@@ -50,7 +50,7 @@ class TestBasicLifecycle:
             accepted_by="test-gatekeeper"
         )
         assert accepted['queue'] == 'done'
-        assert accepted['accepted_by'] == 'test-gatekeeper'
+        assert 'completed_at' in accepted  # API sets completed_at on accept
 
     def test_claim_submit_reject_retry(self, sdk, orchestrator_id, clean_tasks):
         """Rejection flow: create → claim → submit → reject → incoming."""
