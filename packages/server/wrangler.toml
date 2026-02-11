@@ -1,0 +1,26 @@
+name = "octopoid-server"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+
+# Cloudflare Workers configuration
+# After deploying, update this with your actual database ID
+
+# D1 Database binding (uncomment after creating database)
+# [[d1_databases]]
+# binding = "DB"
+# database_name = "octopoid-db"
+# database_id = "your-database-id-here"
+
+# Cron trigger for background jobs (lease expiration, etc.)
+# Runs every minute
+[triggers]
+crons = ["*/1 * * * *"]
+
+# Custom domain (optional - configure after deployment)
+# routes = [
+#   { pattern = "octopoid.example.com/*", custom_domain = true }
+# ]
+
+# Environment variables (set using `wrangler secret put`)
+# - ANTHROPIC_API_KEY (optional, for future server-side agent features)
+# - API_SECRET_KEY (for admin endpoints)
