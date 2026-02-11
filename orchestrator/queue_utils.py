@@ -943,47 +943,44 @@ def escalate_to_planning(task_path: Path | str, plan_id: str) -> Path:
 
 
 def fail_task(task_path: Path | str, error: str) -> Path:
-    """Move a task to the failed queue with error information.
+    """Fail a task via API (moves to failed queue).
 
     Args:
         task_path: Path to the claimed task file
         error: Error message/description
 
     Returns:
-        New path in failed queue
+        Path to task file (queue change handled by API)
     """
     task_path = Path(task_path)
 
-    if is_db_enabled():
-        from . import db
-        db_task = db.get_task_by_path(str(task_path))
-        if db_task:
-            db.fail_task(db_task["id"], error=error)
+    try:
+        # Get task ID from file
+        task_info = parse_task_file(task_path)
+        if not task_info:
+            print(f"Warning: Could not parse task file {task_path}")
+            return task_path
 
-    failed_dir = get_queue_subdir("failed")
-    dest = failed_dir / task_path.name
-    task_id = None
+        task_id = task_info["id"]
 
-    if is_db_enabled():
-        from . import db
-        db_task = db.get_task_by_path(str(task_path))
-        if db_task:
-            task_id = db_task["id"]
+        # Fail via API (moves to failed queue)
+        sdk = get_sdk()
+        sdk.tasks.update(task_id, queue="failed")
 
-    # Append error info (truncate to avoid bloating the task file —
-    # the full error is already in the agent stderr log)
-    error_summary = error[:500] + ("..." if len(error) > 500 else "")
-    with open(task_path, "a") as f:
-        f.write(f"\nFAILED_AT: {datetime.now().isoformat()}\n")
-        f.write(f"\n## Error\n```\n{error_summary}\n```\n")
+        # Append error info to local file (truncated)
+        error_summary = error[:500] + ("..." if len(error) > 500 else "")
+        with open(task_path, "a") as f:
+            f.write(f"\nFAILED_AT: {datetime.now().isoformat()}\n")
+            f.write(f"\n## Error\n```\n{error_summary}\n```\n")
 
-    os.rename(task_path, dest)
-
-    # Clean up ephemeral task worktree
-    if task_id:
+        # Clean up ephemeral task worktree
         cleanup_task_worktree(task_id, push_commits=False)
 
-    return dest
+        return task_path
+
+    except Exception as e:
+        print(f"Warning: Failed to fail task {task_path}: {e}")
+        return task_path
 
 
 def reject_task(
@@ -1028,158 +1025,138 @@ def reject_task(
 
 
 def retry_task(task_path: Path | str) -> Path:
-    """Move a task from failed back to incoming queue.
+    """Retry a failed task via API (moves back to incoming).
 
     Args:
         task_path: Path to the failed task file
 
     Returns:
-        New path in incoming queue
+        Path to task file (queue change handled by API)
     """
     task_path = Path(task_path)
 
-    if is_db_enabled():
-        from . import db
-        db_task = db.get_task_by_path(str(task_path))
-        if db_task:
-            db.update_task_queue(
-                db_task["id"],
-                "incoming",
-                claimed_by=None,
-                claimed_at=None,
-                history_event="retried",
-            )
+    try:
+        task_info = parse_task_file(task_path)
+        if not task_info:
+            return task_path
 
-    incoming_dir = get_queue_subdir("incoming")
-    dest = incoming_dir / task_path.name
+        sdk = get_sdk()
+        sdk.tasks.update(task_info["id"], queue="incoming", claimed_by=None, claimed_at=None)
 
-    # Append retry info
-    with open(task_path, "a") as f:
-        f.write(f"\nRETRIED_AT: {datetime.now().isoformat()}\n")
+        with open(task_path, "a") as f:
+            f.write(f"\nRETRIED_AT: {datetime.now().isoformat()}\n")
 
-    os.rename(task_path, dest)
-    return dest
+        return task_path
+    except Exception as e:
+        print(f"Warning: Failed to retry task: {e}")
+        return task_path
 
 
 def reset_task(task_id: str) -> dict[str, Any]:
-    """Reset a task to incoming with clean state.
-
-    Locates the task file via find_task_file(), moves it to incoming/,
-    and resets all transient DB fields (queue, claimed_by, checks,
-    check_results, rejection_count).
+    """Reset a task to incoming via API with clean state.
 
     Args:
         task_id: Task identifier (e.g. "9f5cda4b")
 
     Returns:
-        Dict with 'task_id', 'old_path', 'new_path', 'action'
+        Dict with 'task_id', 'action'
 
     Raises:
-        FileNotFoundError: If the task file cannot be found in any queue
-        LookupError: If the task does not exist in the DB (when DB is enabled)
+        RuntimeError: If the API update fails
     """
-    # Locate the file
-    old_path = find_task_file(task_id)
-    if old_path is None:
-        raise FileNotFoundError(f"Task file TASK-{task_id}.md not found in any queue directory")
+    try:
+        sdk = get_sdk()
 
-    incoming_dir = get_queue_subdir("incoming")
-    dest = incoming_dir / old_path.name
+        # Get current task to find file path
+        task = sdk.tasks.get(task_id)
+        if not task:
+            raise LookupError(f"Task {task_id} not found in API")
 
-    # Move file (skip if already in incoming)
-    if old_path != dest:
-        os.rename(old_path, dest)
+        old_queue = task.get("queue", "unknown")
 
-    # Reset DB state
-    if is_db_enabled():
-        from . import db
-        db_task = db.get_task(task_id)
-        if not db_task:
-            raise LookupError(f"Task {task_id} not found in database")
-
-        db.update_task_queue(
+        # Reset task state via API
+        sdk.tasks.update(
             task_id,
-            "incoming",
+            queue="incoming",
             claimed_by=None,
             claimed_at=None,
-            file_path=str(dest),
-            history_event="reset",
-            history_details="manual reset via reset_task()",
-        )
-        # Clear checks, check_results, rejection_count
-        db.update_task(
-            task_id,
             checks=None,
             check_results=None,
             rejection_count=0,
         )
 
-    return {
-        "task_id": task_id,
-        "old_path": str(old_path),
-        "new_path": str(dest),
-        "action": "reset",
-    }
+        # Append reset marker to local file for human readability
+        if task.get("file_path"):
+            file_path = Path(task["file_path"])
+            if file_path.exists():
+                try:
+                    with open(file_path, "a") as f:
+                        f.write(f"\nRESET_AT: {datetime.now().isoformat()}\n")
+                        f.write(f"RESET_FROM: {old_queue}\n")
+                except IOError:
+                    pass
+
+        return {
+            "task_id": task_id,
+            "old_queue": old_queue,
+            "new_queue": "incoming",
+            "action": "reset",
+        }
+    except Exception as e:
+        raise RuntimeError(f"Failed to reset task {task_id}: {e}")
 
 
 def hold_task(task_id: str) -> dict[str, Any]:
-    """Park a task in the escalated queue so the scheduler ignores it.
-
-    Locates the task file via find_task_file(), moves it to escalated/,
-    and updates the DB (queue=escalated, clears claimed_by, checks,
-    check_results).
+    """Park a task in the escalated queue via API so the scheduler ignores it.
 
     Args:
         task_id: Task identifier (e.g. "9f5cda4b")
 
     Returns:
-        Dict with 'task_id', 'old_path', 'new_path', 'action'
+        Dict with 'task_id', 'action'
 
     Raises:
-        FileNotFoundError: If the task file cannot be found in any queue
-        LookupError: If the task does not exist in the DB (when DB is enabled)
+        RuntimeError: If the API update fails
     """
-    # Locate the file
-    old_path = find_task_file(task_id)
-    if old_path is None:
-        raise FileNotFoundError(f"Task file TASK-{task_id}.md not found in any queue directory")
+    try:
+        sdk = get_sdk()
 
-    escalated_dir = get_queue_subdir("escalated")
-    dest = escalated_dir / old_path.name
+        # Get current task to find file path
+        task = sdk.tasks.get(task_id)
+        if not task:
+            raise LookupError(f"Task {task_id} not found in API")
 
-    # Move file (skip if already in escalated)
-    if old_path != dest:
-        os.rename(old_path, dest)
+        old_queue = task.get("queue", "unknown")
 
-    # Update DB state
-    if is_db_enabled():
-        from . import db
-        db_task = db.get_task(task_id)
-        if not db_task:
-            raise LookupError(f"Task {task_id} not found in database")
-
-        db.update_task_queue(
+        # Move task to escalated queue via API
+        sdk.tasks.update(
             task_id,
-            "escalated",
+            queue="escalated",
             claimed_by=None,
             claimed_at=None,
-            file_path=str(dest),
-            history_event="held",
-            history_details="manual hold via hold_task()",
-        )
-        # Clear checks and check_results
-        db.update_task(
-            task_id,
             checks=None,
             check_results=None,
         )
 
-    return {
-        "task_id": task_id,
-        "old_path": str(old_path),
-        "new_path": str(dest),
-        "action": "held",
-    }
+        # Append hold marker to local file for human readability
+        if task.get("file_path"):
+            file_path = Path(task["file_path"])
+            if file_path.exists():
+                try:
+                    with open(file_path, "a") as f:
+                        f.write(f"\nHELD_AT: {datetime.now().isoformat()}\n")
+                        f.write(f"HELD_FROM: {old_queue}\n")
+                except IOError:
+                    pass
+
+        return {
+            "task_id": task_id,
+            "old_queue": old_queue,
+            "new_queue": "escalated",
+            "action": "held",
+        }
+    except Exception as e:
+        raise RuntimeError(f"Failed to hold task {task_id}: {e}")
 
 
 def mark_needs_continuation(
@@ -1188,7 +1165,7 @@ def mark_needs_continuation(
     branch_name: str | None = None,
     agent_name: str | None = None,
 ) -> Path:
-    """Mark a task as needing continuation and move to needs_continuation queue.
+    """Mark a task as needing continuation via API and move to needs_continuation queue.
 
     Use this when an agent exits before completing work (e.g., max turns reached).
     The task can be resumed by the same or another agent.
@@ -1200,47 +1177,79 @@ def mark_needs_continuation(
         agent_name: Agent that was working on the task
 
     Returns:
-        New path in needs_continuation queue
+        Path to the task file (unchanged, local file only)
     """
     task_path = Path(task_path)
-    continuation_dir = get_queue_subdir("needs_continuation")
-    dest = continuation_dir / task_path.name
 
-    # Append continuation info
-    with open(task_path, "a") as f:
-        f.write(f"\nNEEDS_CONTINUATION_AT: {datetime.now().isoformat()}\n")
-        f.write(f"CONTINUATION_REASON: {reason}\n")
-        if branch_name:
-            f.write(f"WIP_BRANCH: {branch_name}\n")
-        if agent_name:
-            f.write(f"LAST_AGENT: {agent_name}\n")
+    try:
+        # Get task ID from file
+        task_info = parse_task_file(task_path)
+        if not task_info:
+            print(f"Warning: Could not parse task file {task_path}")
+            return task_path
 
-    os.rename(task_path, dest)
-    return dest
+        task_id = task_info["id"]
+
+        # Update queue via API
+        sdk = get_sdk()
+        sdk.tasks.update(task_id, queue="needs_continuation")
+
+        # Append continuation info to local file
+        with open(task_path, "a") as f:
+            f.write(f"\nNEEDS_CONTINUATION_AT: {datetime.now().isoformat()}\n")
+            f.write(f"CONTINUATION_REASON: {reason}\n")
+            if branch_name:
+                f.write(f"WIP_BRANCH: {branch_name}\n")
+            if agent_name:
+                f.write(f"LAST_AGENT: {agent_name}\n")
+
+        return task_path
+    except Exception as e:
+        print(f"Warning: Failed to mark task for continuation: {e}")
+        return task_path
 
 
 def resume_task(task_path: Path | str, agent_name: str | None = None) -> Path:
-    """Move a task from needs_continuation back to claimed for resumption.
+    """Move a task from needs_continuation back to claimed via API for resumption.
 
     Args:
         task_path: Path to the needs_continuation task file
         agent_name: Agent resuming the task
 
     Returns:
-        New path in claimed queue
+        Path to the task file (unchanged, local file only)
     """
     task_path = Path(task_path)
-    claimed_dir = get_queue_subdir("claimed")
-    dest = claimed_dir / task_path.name
 
-    # Append resume info
-    with open(task_path, "a") as f:
-        f.write(f"\nRESUMED_AT: {datetime.now().isoformat()}\n")
-        if agent_name:
-            f.write(f"RESUMED_BY: {agent_name}\n")
+    try:
+        # Get task ID from file
+        task_info = parse_task_file(task_path)
+        if not task_info:
+            print(f"Warning: Could not parse task file {task_path}")
+            return task_path
 
-    os.rename(task_path, dest)
-    return dest
+        task_id = task_info["id"]
+
+        # Update queue via API
+        sdk = get_sdk()
+        orchestrator_id = get_orchestrator_id()
+        sdk.tasks.update(
+            task_id,
+            queue="claimed",
+            claimed_by=agent_name or "unknown",
+            orchestrator_id=orchestrator_id,
+        )
+
+        # Append resume info to local file
+        with open(task_path, "a") as f:
+            f.write(f"\nRESUMED_AT: {datetime.now().isoformat()}\n")
+            if agent_name:
+                f.write(f"RESUMED_BY: {agent_name}\n")
+
+        return task_path
+    except Exception as e:
+        print(f"Warning: Failed to resume task: {e}")
+        return task_path
 
 
 def find_task_by_id(task_id: str, subdirs: list[str] | None = None) -> dict[str, Any] | None:
