@@ -29,7 +29,9 @@ export abstract class BaseAgent {
   protected worktreePath: string | null = null
   protected currentTaskId: string | null = null
   protected logFile: string | null = null
+  protected taskLogFile: string | null = null
   protected anthropic: Anthropic
+  protected turnsCount: number = 0
 
   constructor(config: AgentConfig) {
     this.config = config
@@ -127,6 +129,8 @@ export abstract class BaseAgent {
       const task = await claimTask(request)
       if (task) {
         this.currentTaskId = task.id
+        this.resetTurnCounter()  // Reset turn counter for new task
+        this.setupTaskLogging(task.id)  // Setup per-task logging
         this.log(`Claimed task: ${task.id}`)
         this.debug(`Task details: ${JSON.stringify(task, null, 2)}`)
       }
@@ -138,21 +142,60 @@ export abstract class BaseAgent {
   }
 
   /**
+   * Setup per-task logging
+   */
+  private setupTaskLogging(taskId: string): void {
+    const runtimeDir = getRuntimeDir()
+    const logsDir = join(runtimeDir, '..', 'logs', 'tasks')
+    mkdirSync(logsDir, { recursive: true })
+
+    this.taskLogFile = join(logsDir, `${taskId}.log`)
+    const timestamp = new Date().toISOString()
+    const initMsg = `[${timestamp}] Task ${taskId} claimed by ${this.config.name}\n`
+
+    try {
+      appendFileSync(this.taskLogFile, initMsg, 'utf-8')
+    } catch {
+      // Don't fail if we can't write logs
+    }
+  }
+
+  /**
+   * Write to task log (aggregates all agent activity for this task)
+   */
+  protected taskLog(message: string): void {
+    if (!this.taskLogFile) return
+
+    const timestamp = new Date().toISOString()
+    const logLine = `[${timestamp}] [${this.config.name}] ${message}\n`
+
+    try {
+      appendFileSync(this.taskLogFile, logLine, 'utf-8')
+    } catch {
+      // Don't fail if we can't write logs
+    }
+  }
+
+  /**
    * Submit task completion
+   * Automatically uses tracked turn count if not provided
    */
   protected async submitTaskCompletion(
     taskId: string,
     commitsCount: number,
-    turnsUsed: number
+    turnsUsed?: number
   ): Promise<boolean> {
     try {
+      const actualTurns = turnsUsed !== undefined ? turnsUsed : this.turnsCount
+
       const request: SubmitTaskRequest = {
         commits_count: commitsCount,
-        turns_used: turnsUsed,
+        turns_used: actualTurns,
       }
 
       await submitCompletion(taskId, request)
-      this.log(`Submitted completion for task: ${taskId}`)
+      this.log(`Submitted completion for task: ${taskId} (${actualTurns} turns, ${commitsCount} commits)`)
+      this.taskLog(`Submission: ${actualTurns} turns, ${commitsCount} commits`)
       return true
     } catch (error) {
       this.error('Failed to submit completion', error as Error)
@@ -217,6 +260,7 @@ export abstract class BaseAgent {
 
   /**
    * Call Anthropic API with a message
+   * Automatically tracks turn count for the current task
    */
   protected async callAnthropic(
     prompt: string,
@@ -238,6 +282,10 @@ export abstract class BaseAgent {
     this.debug(`Prompt length: ${prompt.length} chars`)
 
     try {
+      // Auto-increment turn count
+      this.turnsCount++
+      this.debug(`Turn ${this.turnsCount} starting`)
+
       const message = await this.anthropic.messages.create({
         model,
         max_tokens: maxTokens,
@@ -253,7 +301,7 @@ export abstract class BaseAgent {
 
       const response = message.content[0]
       if (response.type === 'text') {
-        this.debug(`Response length: ${response.text.length} chars`)
+        this.debug(`Turn ${this.turnsCount} complete - Response length: ${response.text.length} chars`)
         return response.text
       }
 
@@ -262,6 +310,20 @@ export abstract class BaseAgent {
       this.error('Anthropic API call failed', error as Error)
       throw error
     }
+  }
+
+  /**
+   * Get current turn count for the task
+   */
+  protected getTurnCount(): number {
+    return this.turnsCount
+  }
+
+  /**
+   * Reset turn counter (called when starting a new task)
+   */
+  protected resetTurnCounter(): void {
+    this.turnsCount = 0
   }
 
   /**
