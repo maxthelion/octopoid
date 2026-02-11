@@ -15,5 +15,8 @@ export * from './db-interface'
 // Queue Utilities
 export * from './queue-utils'
 
+// Git Utilities
+export * from './git-utils'
+
 // Re-export shared types for convenience
 export type * from '@octopoid/shared'
