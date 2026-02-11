@@ -474,15 +474,6 @@ def claim_task(
         print(f"Warning: Failed to claim task: {e}")
         return None
 
-            except FileNotFoundError:
-                # Task was claimed by another agent, try next
-                continue
-            except OSError:
-                # Other error, try next
-                continue
-
-    return None
-
 
 def complete_task(task_path: Path | str, result: str | None = None) -> Path:
     """Move a task to the done queue via API.

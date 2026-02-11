@@ -10,7 +10,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Tuple
 
-from .config import get_orchestrator_dir, get_queue_limits, is_db_enabled
+from .config import get_orchestrator_dir, get_queue_limits
+from . import queue_utils
 
 
 def check_open_prs(max_prs: int = None) -> Tuple[bool, str]:
@@ -87,12 +88,7 @@ def check_claimed_tasks(max_claimed: int = None) -> Tuple[bool, str]:
         limits = get_queue_limits()
         max_claimed = limits.get("max_claimed", 5)
 
-    if is_db_enabled():
-        from . import db
-        count = db.count_tasks(queue="claimed")
-    else:
-        queue_dir = get_orchestrator_dir() / "shared" / "queue" / "claimed"
-        count = len(list(queue_dir.glob("TASK-*.md"))) if queue_dir.exists() else 0
+    count = queue_utils.count_queue("claimed")
 
     if count >= max_claimed:
         return False, f"claimed_limit:{count}/{max_claimed}"
@@ -100,17 +96,12 @@ def check_claimed_tasks(max_claimed: int = None) -> Tuple[bool, str]:
 
 
 def check_incoming_tasks() -> Tuple[bool, str]:
-    """Check if there are any incoming tasks to work on.
+    """Check if there are any incoming tasks to work on via API.
 
     Returns:
         Tuple of (can_proceed, reason)
     """
-    if is_db_enabled():
-        from . import db
-        count = db.count_tasks(queue="incoming")
-    else:
-        queue_dir = get_orchestrator_dir() / "shared" / "queue" / "incoming"
-        count = len(list(queue_dir.glob("TASK-*.md"))) if queue_dir.exists() else 0
+    count = queue_utils.count_queue("incoming")
 
     if count == 0:
         return False, "no_tasks"
@@ -118,17 +109,12 @@ def check_incoming_tasks() -> Tuple[bool, str]:
 
 
 def check_breakdown_queue() -> Tuple[bool, str]:
-    """Check if there are any tasks in the breakdown queue.
+    """Check if there are any tasks in the breakdown queue via API.
 
     Returns:
         Tuple of (can_proceed, reason)
     """
-    if is_db_enabled():
-        from . import db
-        count = db.count_tasks(queue="breakdown")
-    else:
-        queue_dir = get_orchestrator_dir() / "shared" / "queue" / "breakdown"
-        count = len(list(queue_dir.glob("TASK-*.md"))) if queue_dir.exists() else 0
+    count = queue_utils.count_queue("breakdown")
 
     if count == 0:
         return False, "no_breakdown_tasks"
@@ -181,12 +167,7 @@ def check_recycler_backpressure() -> Tuple[bool, str]:
     Returns:
         Tuple of (can_proceed, reason)
     """
-    if is_db_enabled():
-        from . import db
-        count = db.count_tasks(queue="provisional")
-    else:
-        queue_dir = get_orchestrator_dir() / "shared" / "queue" / "provisional"
-        count = len(list(queue_dir.glob("TASK-*.md"))) if queue_dir.exists() else 0
+    count = queue_utils.count_queue("provisional")
 
     if count == 0:
         return False, "no_provisional_tasks"
@@ -197,18 +178,12 @@ def check_gatekeeper_backpressure() -> Tuple[bool, str]:
     """Backpressure check for gatekeeper agents.
 
     Only proceed if there are provisional tasks with pending checks.
-    Uses the DB check system (task.checks + task.check_results).
 
     Returns:
         Tuple of (can_proceed, reason)
     """
-    if not is_db_enabled():
-        return False, "gatekeeper_requires_db"
-
     try:
-        from . import db
-
-        tasks = db.list_tasks(queue="provisional")
+        tasks = queue_utils.list_tasks("provisional")
         for task in tasks:
             checks = task.get("checks", [])
             if not checks:
