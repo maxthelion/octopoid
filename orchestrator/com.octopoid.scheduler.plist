@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.octopoid.scheduler</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <!-- Point this at the venv's python or the installed entry-point -->
+        <string>/path/to/your/project/.orchestrator/venv/bin/orchestrator-scheduler</string>
+        <string>--debug</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/path/to/your/project</string>
+
+    <key>StartInterval</key>
+    <integer>60</integer>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>ANTHROPIC_API_KEY</key>
+        <string>sk-ant-REPLACE_ME</string>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/path/to/your/project/.orchestrator/venv/bin</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/path/to/your/project/.orchestrator/logs/launchd-stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/path/to/your/project/.orchestrator/logs/launchd-stderr.log</string>
+
+    <key>KeepAlive</key>
+    <false/>
+</dict>
+</plist>

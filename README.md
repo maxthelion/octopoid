@@ -261,6 +261,42 @@ octopoid status
 octopoid stop
 ```
 
+### Running with launchd or cron
+
+The scheduler runs a single tick per invocation (evaluate agents, spawn any that are due, exit), so it's designed to be triggered by an external timer. A file-based lock (`scheduler.lock`) prevents overlapping runs.
+
+#### macOS launchd (recommended)
+
+1. Copy the template plist and fill in placeholders:
+
+```bash
+cp orchestrator/com.octopoid.scheduler.plist ~/Library/LaunchAgents/com.octopoid.scheduler.plist
+```
+
+2. Edit `~/Library/LaunchAgents/com.octopoid.scheduler.plist` — replace every `/path/to/your/project` with your actual project path and set your `ANTHROPIC_API_KEY`.
+
+3. Load the agent:
+
+```bash
+launchctl load ~/Library/LaunchAgents/com.octopoid.scheduler.plist
+```
+
+4. To stop:
+
+```bash
+launchctl unload ~/Library/LaunchAgents/com.octopoid.scheduler.plist
+```
+
+#### cron (Linux / macOS)
+
+Add a one-liner to your crontab (`crontab -e`):
+
+```cron
+* * * * * cd /path/to/your/project && ANTHROPIC_API_KEY="sk-ant-..." .orchestrator/venv/bin/orchestrator-scheduler --debug
+```
+
+This fires every 60 seconds. The scheduler lock ensures that if a tick takes longer than a minute, the next invocation exits immediately rather than overlapping.
+
 ### Create Tasks
 
 ```bash
