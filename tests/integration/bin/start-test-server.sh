@@ -3,7 +3,7 @@
 
 set -e
 
-cd "$(dirname "$0")/../../../packages/server"
+cd "$(dirname "$0")/../../../submodules/server"
 
 echo "Starting test server..."
 

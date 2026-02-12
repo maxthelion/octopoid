@@ -1,3 +1,7 @@
+// NOTE: These types are also copied into packages/server/src/types/shared.ts
+// so the server can be deployed independently. Keep both in sync — integration
+// tests catch drift.
+
 /**
  * Shared types for Octopoid v2.0
  * @module @octopoid/shared

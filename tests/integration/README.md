@@ -111,12 +111,28 @@ tests/integration/
 - Cannot accept unclaimed task
 - Cannot claim from wrong queue
 
+## Server as Submodule
+
+The server lives in its own repository ([octopoid-server](https://github.com/maxthelion/octopoid-server))
+and is included here as a git submodule at `submodules/server/`. It has no dependency
+on `@octopoid/shared` or the monorepo root `tsconfig.base.json` — shared types
+are self-contained in `submodules/server/src/types/shared.ts`.
+
+To initialize the submodule after cloning:
+
+```bash
+git submodule update --init
+```
+
+Integration tests verify that the server's copy of shared types hasn't drifted
+from the canonical `packages/shared/` definitions.
+
 ## Test Server
 
 The integration tests use a separate test server instance:
 - **Port**: 9787 (different from dev server on 8787)
 - **Database**: octopoid-test (separate D1 database)
-- **Configuration**: `packages/server/wrangler.test.toml`
+- **Configuration**: `submodules/server/wrangler.test.toml`
 
 This ensures tests don't interfere with development work.
 
