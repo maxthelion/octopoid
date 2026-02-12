@@ -36,6 +36,44 @@ PENDING_QUEUES: list[TaskQueue] = ["incoming", "backlog", "blocked"]
 TERMINAL_QUEUES: list[TaskQueue] = ["done", "failed", "rejected", "escalated", "recycled"]
 
 
+# ---------------------------------------------------------------------------
+# Agent roles (agents.yaml 'role' field) and task roles (task 'role' field)
+# ---------------------------------------------------------------------------
+
+# Agent roles as configured in agents.yaml
+AgentRole = Literal[
+    "implementer",
+    "orchestrator_impl",
+    "breakdown",
+    "gatekeeper",
+    "proposer",
+    "reviewer",
+    "tester",
+    "github_issue_monitor",
+]
+
+# Task roles as stored in task files / API
+TaskRole = Literal[
+    "implement",
+    "orchestrator_impl",
+    "breakdown",
+    "review",
+    "test",
+]
+
+# Agent roles that claim tasks (role -> task role_filter)
+AGENT_TASK_ROLE: dict[str, str] = {
+    "implementer": "implement",
+    "orchestrator_impl": "orchestrator_impl",
+    "breakdown": "breakdown",
+    "reviewer": "review",
+    "tester": "test",
+}
+
+# Agent roles that claim tasks before spawning (scheduler pre-claims)
+CLAIMABLE_AGENT_ROLES: set[str] = {"implementer", "orchestrator_impl"}
+
+
 # Port allocation
 BASE_PORT = 41000
 PORT_STRIDE = 10
