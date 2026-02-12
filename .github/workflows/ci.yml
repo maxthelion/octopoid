@@ -11,6 +11,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - uses: pnpm/action-setup@v2
         with:
@@ -24,7 +26,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
-      - name: Build shared package first
+      - name: Build shared package
         run: pnpm --filter @octopoid/shared build
 
       - name: Type check
@@ -37,6 +39,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - uses: pnpm/action-setup@v2
         with:
@@ -50,9 +54,6 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
-      - name: Build packages
-        run: pnpm build
-
       - name: Run server unit tests
         run: pnpm --filter @octopoid/server vitest run tests/state-machine.test.ts tests/routes-tasks.test.ts
 
@@ -60,6 +61,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - uses: pnpm/action-setup@v2
         with:
@@ -79,9 +82,6 @@ jobs:
           pnpm install
           pip install pytest requests
 
-      - name: Build packages
-        run: pnpm build
-
       - name: Build Python SDK
         run: |
           cd packages/python-sdk
@@ -98,6 +98,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - uses: pnpm/action-setup@v2
         with:

@@ -47,29 +47,33 @@ Octopoid is a **distributed task orchestration system** that uses Claude AI to a
 
 ### Server (One-Time Setup)
 
-Deploy the Cloudflare Workers server:
+The server lives in its own repo: **[octopoid-server](https://github.com/maxthelion/octopoid-server)**
+
+**Option A: One-click deploy** — Use the Deploy button in the octopoid-server repo.
+
+**Option B: Manual deploy:**
 
 ```bash
-# Clone repository
-git clone https://github.com/maxthelion/octopoid.git
-cd octopoid
+git clone https://github.com/maxthelion/octopoid-server.git
+cd octopoid-server
+npm install
 
-# Install dependencies
-pnpm install
-
-# Deploy server to Cloudflare Workers
-cd packages/server
+# Create D1 database and copy database_id to wrangler.toml
 npx wrangler d1 create octopoid-db
-# Copy database_id to wrangler.toml
 
-# Run migrations
-npx wrangler d1 migrations apply octopoid-db
+# Apply migrations and deploy
 npx wrangler d1 migrations apply octopoid-db --remote
-
-# Deploy
 npx wrangler deploy
 
 # Server URL: https://octopoid-server.your-username.workers.dev
+```
+
+**For development** the server is included as a git submodule at `submodules/server/`:
+
+```bash
+git clone --recurse-submodules https://github.com/maxthelion/octopoid.git
+# Or if already cloned:
+git submodule update --init
 ```
 
 ### Client (Each Machine)

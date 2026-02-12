@@ -1,0 +1,3 @@
+[submodule "submodules/server"]
+	path = submodules/server
+	url = https://github.com/maxthelion/octopoid-server.git

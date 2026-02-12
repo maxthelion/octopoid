@@ -4,8 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'packages/server/**'
-      - 'packages/shared/**'
+      - 'submodules/server/**'
       - '.github/workflows/deploy-server.yml'
 
   workflow_dispatch:
@@ -24,6 +23,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - uses: pnpm/action-setup@v2
         with:
@@ -37,16 +38,13 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
-      - name: Build shared package
-        run: pnpm --filter @octopoid/shared build
-
       - name: Deploy to Cloudflare Workers
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: deploy
-          workingDirectory: packages/server
+          workingDirectory: submodules/server
 
       - name: Apply database migrations
         uses: cloudflare/wrangler-action@v3
@@ -54,7 +52,7 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: d1 migrations apply octopoid-db
-          workingDirectory: packages/server
+          workingDirectory: submodules/server
 
       - name: Notify deployment
         run: |
