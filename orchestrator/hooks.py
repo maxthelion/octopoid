@@ -294,7 +294,6 @@ def hook_merge_pr(ctx: HookContext) -> HookResult:
     merge_cmd = [
         "gh", "pr", "merge", str(pr_number),
         f"--{merge_method}",
-        "--delete-branch",
     ]
 
     try:

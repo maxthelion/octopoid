@@ -2,6 +2,7 @@
 """Main scheduler - runs on 1-minute ticks to evaluate and spawn agents."""
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
@@ -21,6 +22,7 @@ from .config import (
     get_gatekeeper_config,
     get_gatekeepers,
     get_global_instructions_path,
+    get_main_branch,
     get_orchestrator_dir,
     get_templates_dir,
     is_db_enabled,
@@ -212,6 +214,78 @@ def peek_task_branch(role: str) -> str | None:
     # Return the branch of the first (highest priority) task
     branch = tasks[0].get("branch")
     return branch if branch and branch != "main" else None
+
+
+def check_continuation_for_agent(agent_name: str) -> dict | None:
+    """Check if an agent has continuation work to resume.
+
+    Looks for:
+    1. Task marker file (current_task.json) linking agent to a task
+    2. Tasks in needs_continuation queue assigned to this agent
+
+    Args:
+        agent_name: Name of the agent to check
+
+    Returns:
+        Task dict with '_continuation' flag if work found, None otherwise
+    """
+    from .config import ACTIVE_QUEUES
+
+    # Check task marker first - most reliable signal
+    marker = queue_utils.read_task_marker_for(agent_name)
+    if marker:
+        task_id = marker.get("task_id")
+        if task_id and queue_utils.is_task_still_valid(task_id):
+            task = queue_utils.find_task_by_id(task_id, queues=ACTIVE_QUEUES)
+            if task:
+                task["_continuation"] = True
+                return task
+        else:
+            # Task is done/failed - clear stale marker
+            queue_utils.clear_task_marker_for(agent_name)
+
+    # Check needs_continuation queue
+    continuation_tasks = queue_utils.get_continuation_tasks(agent_name=agent_name)
+    if continuation_tasks:
+        task = continuation_tasks[0]
+        task["_continuation"] = True
+        return task
+
+    return None
+
+
+def claim_and_prepare_task(agent_name: str, role: str) -> dict | None:
+    """Claim a task and write it to the agent's runtime dir.
+
+    Checks for continuation work first, then tries to claim a fresh task.
+    Writes the full task dict (including file content) to claimed_task.json
+    so the agent can read it without resolving file paths.
+
+    Args:
+        agent_name: Name of the agent
+        role: Agent role (e.g. 'implement')
+
+    Returns:
+        Task dict if work is available, None otherwise
+    """
+    # 1. Check for continuation work
+    task = check_continuation_for_agent(agent_name)
+
+    # 2. If no continuation, claim a fresh task
+    if task is None:
+        task = queue_utils.claim_task(role_filter=role, agent_name=agent_name)
+
+    if task is None:
+        return None
+
+    # 3. Write full task dict to agent runtime dir
+    agent_dir = get_agents_runtime_dir() / agent_name
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    task_file = agent_dir / "claimed_task.json"
+    with open(task_file, "w") as f:
+        json.dump(task, f, indent=2)
+
+    return task
 
 
 def get_scheduler_lock_path() -> Path:
@@ -483,6 +557,10 @@ def write_agent_env(agent_name: str, agent_id: int, role: str, agent_config: dic
         f"export ORCHESTRATOR_DIR='{get_orchestrator_dir()}'",
     ]
 
+    # Add model override from agent config
+    if agent_config and "model" in agent_config:
+        lines.append(f"export AGENT_MODEL='{agent_config['model']}'")
+
     # Add focus for proposers and gatekeepers (specialists)
     if agent_config and role in ("proposer", "gatekeeper") and "focus" in agent_config:
         lines.append(f"export AGENT_FOCUS='{agent_config['focus']}'")
@@ -537,6 +615,10 @@ def spawn_agent(agent_name: str, agent_id: int, role: str, agent_config: dict) -
         env["PYTHONPATH"] = f"{orchestrator_submodule}:{existing_pythonpath}"
     else:
         env["PYTHONPATH"] = str(orchestrator_submodule)
+
+    # Pass model override from agent config (e.g., "sonnet", "opus")
+    if "model" in agent_config:
+        env["AGENT_MODEL"] = agent_config["model"]
 
     # Pass focus for proposers and gatekeepers (specialists)
     if role in ("proposer", "gatekeeper") and "focus" in agent_config:
@@ -915,9 +997,10 @@ def dispatch_gatekeeper_agents() -> None:
                 # Set up worktree
                 is_lightweight = dispatch_config.get("lightweight", False)
                 if not is_lightweight:
-                    base_branch = dispatch_config.get("base_branch", "main")
+                    main_branch = get_main_branch()
+                    base_branch = dispatch_config.get("base_branch", main_branch)
                     task_branch = task.get("branch")
-                    if task_branch and task_branch != "main":
+                    if task_branch and task_branch != main_branch:
                         base_branch = task_branch
                     ensure_worktree(gk_name, base_branch)
                     setup_agent_commands(gk_name, "gatekeeper")
@@ -1744,10 +1827,35 @@ def check_queue_health() -> None:
         debug_log(f"Queue health check failed: {e}")
 
 
+def _register_orchestrator() -> None:
+    """Register this orchestrator with the API server (idempotent)."""
+    try:
+        from .queue_utils import get_sdk, get_orchestrator_id
+        sdk = get_sdk()
+        orch_id = get_orchestrator_id()
+        parts = orch_id.split("-", 1)
+        cluster = parts[0] if len(parts) > 1 else "default"
+        machine_id = parts[1] if len(parts) > 1 else orch_id
+        sdk._request("POST", "/api/v1/orchestrators/register", json={
+            "id": orch_id,
+            "cluster": cluster,
+            "machine_id": machine_id,
+            "repo_url": "",
+            "version": "2.0.0",
+            "max_agents": 3,
+        })
+        debug_log(f"Registered orchestrator: {orch_id}")
+    except Exception as e:
+        debug_log(f"Orchestrator registration failed (non-fatal): {e}")
+
+
 def run_scheduler() -> None:
     """Main scheduler loop - evaluate and spawn agents."""
     print(f"[{datetime.now().isoformat()}] Scheduler starting")
     debug_log("Scheduler tick starting")
+
+    # Register orchestrator with API server (idempotent)
+    _register_orchestrator()
 
     # Check global pause flag
     if is_system_paused():
@@ -1873,6 +1981,16 @@ def run_scheduler() -> None:
                 debug_log(f"Agent {agent_name} pre-check returned no work")
                 continue
 
+            # For implementer agents: claim task before spawning.
+            # This ensures the agent has work and avoids wasted startups.
+            claimed_task = None
+            if role == "implement":
+                claimed_task = claim_and_prepare_task(agent_name, role)
+                if claimed_task is None:
+                    debug_log(f"No task available for {agent_name}")
+                    continue
+                debug_log(f"Claimed task {claimed_task['id']} for {agent_name}")
+
             print(f"[{datetime.now().isoformat()}] Starting agent {agent_name} (role: {role})")
             debug_log(f"Starting agent {agent_name} (role: {role})")
 
@@ -1881,14 +1999,20 @@ def run_scheduler() -> None:
 
             if not is_lightweight:
                 # Determine base branch for worktree
-                base_branch = agent_config.get("base_branch", "main")
+                base_branch = agent_config.get("base_branch", get_main_branch())
 
-                # For agents that work on specific queues, peek at the next task's branch
-                # This avoids agents wasting turns on git checkout
-                task_branch = peek_task_branch(role)
-                if task_branch:
-                    debug_log(f"Peeked task branch for {agent_name}: {task_branch}")
-                    base_branch = task_branch
+                if claimed_task:
+                    # Use the claimed task's branch for the worktree
+                    task_branch = claimed_task.get("branch")
+                    if task_branch and task_branch != "main":
+                        debug_log(f"Using claimed task branch for {agent_name}: {task_branch}")
+                        base_branch = task_branch
+                else:
+                    # For non-implementer agents, peek at queue for branch hint
+                    task_branch = peek_task_branch(role)
+                    if task_branch:
+                        debug_log(f"Peeked task branch for {agent_name}: {task_branch}")
+                        base_branch = task_branch
 
                 debug_log(f"Ensuring worktree for {agent_name} on branch {base_branch}")
                 ensure_worktree(agent_name, base_branch)

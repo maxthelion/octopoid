@@ -3,11 +3,13 @@
 import json
 import re
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
 from ..config import get_notes_dir
 from ..git_utils import (
+    cleanup_task_worktree,
     create_feature_branch,
     create_task_worktree,
     extract_task_id_from_branch,
@@ -20,6 +22,7 @@ from ..git_utils import (
     push_submodule_to_main,
     stage_submodule_pointer,
 )
+from ..config import ACTIVE_QUEUES
 from ..hooks import HookContext, HookPoint, HookStatus, run_hooks
 from ..queue_utils import (
     can_claim_task,
@@ -37,8 +40,10 @@ from ..queue_utils import (
     resume_task,
     save_task_notes,
     submit_completion,
+    unclaim_task,
     write_task_marker,
 )
+from ..config import get_agents_runtime_dir
 from .base import BaseRole, main_entry
 
 
@@ -103,6 +108,30 @@ class ImplementerRole(BaseRole):
         except Exception:
             pass  # Best-effort — don't break PR flow
 
+    def _load_claimed_task(self) -> dict | None:
+        """Load the task pre-claimed by the scheduler.
+
+        The scheduler writes claimed_task.json to the agent's runtime dir
+        before spawning the agent. This avoids file resolution issues in
+        worktrees and prevents wasted agent startups.
+
+        Returns:
+            Task dict if found, None otherwise
+        """
+        task_file = get_agents_runtime_dir() / self.agent_name / "claimed_task.json"
+        if not task_file.exists():
+            self.log("No claimed_task.json found - scheduler should have provided one")
+            return None
+
+        try:
+            task = json.loads(task_file.read_text())
+            # Clean up so it's not stale on next run
+            task_file.unlink()
+            return task
+        except (IOError, json.JSONDecodeError) as e:
+            self.log(f"Failed to read claimed_task.json: {e}")
+            return None
+
     def _check_for_continuation_work(self) -> dict | None:
         """Check if there's continuation work to resume.
 
@@ -120,7 +149,7 @@ class ImplementerRole(BaseRole):
             task_id = marker.get("task_id")
             # Validate the task is still active (not in done/failed)
             if task_id and is_task_still_valid(task_id):
-                task = find_task_by_id(task_id, subdirs=["claimed", "needs_continuation"])
+                task = find_task_by_id(task_id, queues=ACTIVE_QUEUES)
                 if task:
                     self.log(f"Found task marker for {task_id} - resuming")
                     task["wip_branch"] = get_current_branch(self.worktree)
@@ -156,7 +185,7 @@ class ImplementerRole(BaseRole):
 
             if has_changes or has_commits:
                 # Find the task in active queues only
-                task = find_task_by_id(task_id, subdirs=["claimed", "needs_continuation"])
+                task = find_task_by_id(task_id, queues=ACTIVE_QUEUES)
                 if task:
                     self.log(f"Found work-in-progress for task {task_id} on branch {current_branch}")
                     task["wip_branch"] = current_branch
@@ -214,6 +243,10 @@ class ImplementerRole(BaseRole):
     def _resume_task(self, task: dict) -> int:
         """Resume a task that was previously interrupted.
 
+        Enriches the task with worktree state (branch, uncommitted changes,
+        commits ahead of base) since this info requires the worktree which
+        the scheduler doesn't have access to.
+
         Args:
             task: Task info dict (may have wip_branch, has_uncommitted, has_commits)
 
@@ -224,6 +257,16 @@ class ImplementerRole(BaseRole):
         task_title = task["title"]
         base_branch = task.get("branch", "main")
         task_path = task["file_path"]
+
+        # Enrich with worktree state if not already present
+        # (scheduler can't do this — it doesn't have the worktree)
+        if "wip_branch" not in task:
+            task["wip_branch"] = get_current_branch(self.worktree)
+        if "has_uncommitted" not in task:
+            task["has_uncommitted"] = has_uncommitted_changes(self.worktree)
+        if "has_commits" not in task:
+            task["has_commits"] = has_commits_ahead_of_base(self.worktree, "main")
+
         wip_branch = task.get("wip_branch")
 
         self.log(f"Resuming task {task_id}: {task_title}")
@@ -236,8 +279,8 @@ class ImplementerRole(BaseRole):
             task_title=task_title,
         )
 
-        # If task is in needs_continuation, move it back to claimed
-        if "needs_continuation" in str(task_path):
+        # If task is in needs_continuation, move it back to claimed via API
+        if task.get("queue") == "needs_continuation":
             task_path = resume_task(task_path, agent_name=self.agent_name)
             task["path"] = task_path
 
@@ -325,10 +368,16 @@ Update this whenever you complete a step in your plan. Calculate progress_percen
                 "Skill",
             ]
 
+            # Snapshot HEAD before invoking Claude so we can detect
+            # NEW commits made this session vs prior session commits.
+            head_before = get_head_ref(self.worktree)
+            self.debug_log(f"HEAD before resume: {head_before[:8] if head_before else 'None'}")
+
             exit_code, stdout, stderr = self.invoke_claude(
                 prompt,
                 allowed_tools=allowed_tools,
                 max_turns=50,
+                model=self.model,
             )
 
             # Handle the result
@@ -342,11 +391,14 @@ Update this whenever you complete a step in your plan. Calculate progress_percen
                 stdout=stdout,
                 stderr=stderr,
                 skip_pr=task.get("skip_pr", False),
+                head_before=head_before,
             )
 
         except Exception as e:
             self.log(f"Task resumption failed: {e}")
             fail_task(task_path, str(e))
+            self.clear_status()
+            clear_task_marker()
             return 1
 
     def _handle_implementation_result(
@@ -360,6 +412,7 @@ Update this whenever you complete a step in your plan. Calculate progress_percen
         stdout: str,
         stderr: str,
         skip_pr: bool = False,
+        head_before: str | None = None,
     ) -> int:
         """Handle the result of a Claude implementation session.
 
@@ -370,14 +423,25 @@ Update this whenever you complete a step in your plan. Calculate progress_percen
 
         Args:
             skip_pr: If True, skip PR creation and merge directly to main
+            head_before: HEAD ref at start of this session. When provided,
+                "new work" is measured against this ref (not base_branch),
+                so prior-session commits don't count as progress.
 
         Returns:
             Exit code
         """
+        # Determine if THIS session made new commits.
+        # head_before is the ref at session start — only commits after
+        # it count as progress. Without it, fall back to base_branch.
+        if head_before:
+            new_commits = get_commit_count(self.worktree, since_ref=head_before) > 0
+        else:
+            new_commits = has_commits_ahead_of_base(self.worktree, base_branch)
+
         if exit_code != 0:
             self.log(f"Implementation failed: {stderr}")
-            # Check if there's partial work to preserve
-            if has_uncommitted_changes(self.worktree) or has_commits_ahead_of_base(self.worktree, base_branch):
+            # Check if there's partial work from THIS session to preserve
+            if has_uncommitted_changes(self.worktree) or new_commits:
                 self.log("Partial work detected - marking for continuation")
                 mark_needs_continuation(
                     task_path,
@@ -387,11 +451,13 @@ Update this whenever you complete a step in your plan. Calculate progress_percen
                 )
             else:
                 fail_task(task_path, f"Claude invocation failed with exit code {exit_code}\n{stderr}")
+                self.clear_status()
+                clear_task_marker()
             return exit_code
 
-        # Check for uncommitted changes after Claude exits
+        # Check for work done in THIS session
         has_uncommitted = has_uncommitted_changes(self.worktree)
-        has_commits = has_commits_ahead_of_base(self.worktree, base_branch)
+        has_commits = new_commits
 
         if not has_commits and not has_uncommitted:
             # No work was done
@@ -464,6 +530,7 @@ Update this whenever you complete a step in your plan. Calculate progress_percen
                 return 0
 
         # Run before_submit hooks
+        commits_count = get_commit_count(self.worktree, since_ref=head_before) if head_before else 0
         hook_ctx = HookContext(
             task_id=task_id,
             task_title=task_title,
@@ -473,7 +540,7 @@ Update this whenever you complete a step in your plan. Calculate progress_percen
             base_branch=base_branch,
             worktree=self.worktree,
             agent_name=self.agent_name,
-            commits_count=0,
+            commits_count=commits_count,
             extra={"stdout": stdout},
         )
 
@@ -517,24 +584,37 @@ Update this whenever you complete a step in your plan. Calculate progress_percen
         return 0
 
     def run(self) -> int:
-        """Claim a task and implement it.
+        """Implement a task pre-claimed by the scheduler.
+
+        The scheduler claims the task and writes claimed_task.json before
+        spawning this agent, so we just read it. This avoids file resolution
+        issues in worktrees and prevents wasted agent startups.
+
+        Falls back to self-claiming if no claimed_task.json exists (e.g.
+        manual agent runs or tests).
 
         Returns:
             Exit code (0 for success)
         """
-        # First check for continuation work
-        continuation_task = self._check_for_continuation_work()
-        if continuation_task:
-            return self._resume_task(continuation_task)
+        # Load task pre-claimed by the scheduler
+        task = self._load_claimed_task()
 
-        # Note: Backpressure is now checked by the scheduler before spawning.
-        # This avoids wasting resources on agent startup when blocked.
+        # Fallback: self-claim if no pre-claimed task (manual runs, tests)
+        if task is None:
+            task = self._check_for_continuation_work()
+            if task is not None:
+                task["_continuation"] = True
+            else:
+                task = claim_task(role_filter="implement", agent_name=self.agent_name)
 
-        # Try to claim a task
-        task = claim_task(role_filter="implement", agent_name=self.agent_name)
         if not task:
-            self.log("No tasks available to claim")
+            self.log("No tasks available")
             return 0
+
+        # Handle continuation tasks
+        is_continuation = task.pop("_continuation", False)
+        if is_continuation:
+            return self._resume_task(task)
 
         task_id = task["id"]
         task_title = task["title"]
@@ -719,12 +799,15 @@ Remember:
                 "Skill",
             ]
 
+            start_time = time.monotonic()
             exit_code, stdout, stderr = self.invoke_claude(
                 prompt,
                 allowed_tools=allowed_tools,
                 max_turns=100,
                 stdout_log=stdout_log,
+                model=self.model,
             )
+            elapsed = time.monotonic() - start_time
 
             # Count commits made during this session only
             if head_before:
@@ -735,9 +818,12 @@ Remember:
 
             # Append stdout tail to notes as backup (Claude may have written
             # structured notes already, this adds raw output context)
-            # Read actual tool call count (falls back to max_turns if counter missing)
+            # Read actual tool call count. Fall back to 0 (not max_turns) so
+            # the circuit breaker can detect instant failures even when the
+            # counter file is missing.
             tool_count = self.read_tool_count()
-            turns_used = tool_count if tool_count is not None else 100
+            turns_used = tool_count if tool_count is not None else 0
+            self.debug_log(f"Tool count: {tool_count}, turns_used: {turns_used}, elapsed: {elapsed:.1f}s")
 
             save_task_notes(task_id, self.agent_name, stdout, commits=commits_made, turns=turns_used)
 
@@ -748,9 +834,36 @@ Remember:
                 except IOError:
                     pass
 
+            # Circuit breaker: if Claude died instantly (< 15s, 0 turns),
+            # this is a system-level issue (auth, config, etc.), not a task problem.
+            # Return the task to incoming instead of marking it failed.
+            if exit_code != 0 and elapsed < 15 and turns_used == 0:
+                error_msg = stdout.strip() or stderr.strip() or f"exit code {exit_code}"
+                self.log(f"SYSTEM ERROR: Claude failed instantly ({elapsed:.0f}s, 0 turns): {error_msg}")
+
+                # Escalate auth issues immediately so the user sees them
+                combined = f"{stdout} {stderr}".lower()
+                if any(s in combined for s in ("credit balance", "api key", "unauthorized", "authentication")):
+                    self.send_error(
+                        "Claude authentication failure",
+                        f"Agent `{self.agent_name}` cannot authenticate with Claude.\n\n"
+                        f"Error: {error_msg}\n\n"
+                        "Check your auth setup: session auth (default) or API key "
+                        "(set OCTOPOID_USE_API_KEY=1). Don't use both.",
+                    )
+
+                unclaim_task(task_path)
+                self.clear_status()
+                clear_task_marker()
+                cleanup_task_worktree(task_id)
+                return exit_code
+
             if exit_code != 0:
                 self.log(f"Implementation failed: {stderr}")
                 fail_task(task_path, f"Claude invocation failed with exit code {exit_code}\n{stderr}")
+                self.clear_status()
+                clear_task_marker()
+                cleanup_task_worktree(task_id)
                 return exit_code
 
             # Check if any changes were made
@@ -823,7 +936,9 @@ Remember:
                 # Leave status file to show what was in progress
             else:
                 fail_task(task_path, str(e))
-                self.clear_status()  # Task failed completely
+                self.clear_status()
+                clear_task_marker()
+                cleanup_task_worktree(task_id)
             return 1
 
 
