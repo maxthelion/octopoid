@@ -15,6 +15,7 @@ setup(
     ],
     entry_points={
         "console_scripts": [
+            "octopoid=orchestrator.cli:main",
             "orchestrator-scheduler=orchestrator.scheduler:main",
             "orchestrator-init=orchestrator.init:init_orchestrator",
             "orchestrator-migrate=orchestrator.migrate:main",

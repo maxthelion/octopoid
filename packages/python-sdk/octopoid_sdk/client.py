@@ -92,7 +92,8 @@ class TasksAPI:
         orchestrator_id: str,
         agent_name: str,
         role_filter: Optional[str] = None,
-        lease_duration_seconds: Optional[int] = None
+        lease_duration_seconds: Optional[int] = None,
+        max_claimed: Optional[int] = None
     ) -> Optional[Dict[str, Any]]:
         """Claim an available task
 
@@ -101,6 +102,7 @@ class TasksAPI:
             agent_name: Agent name
             role_filter: Filter by role (e.g., 'implement')
             lease_duration_seconds: Lease duration in seconds
+            max_claimed: Max claimed tasks for this orchestrator (server enforced)
 
         Returns:
             Claimed task dictionary, or None if no tasks available
@@ -114,11 +116,13 @@ class TasksAPI:
             data['role_filter'] = role_filter
         if lease_duration_seconds:
             data['lease_duration_seconds'] = lease_duration_seconds
+        if max_claimed is not None:
+            data['max_claimed'] = max_claimed
 
         try:
             return self.client._request('POST', '/api/v1/tasks/claim', json=data)
         except requests.HTTPError as e:
-            if e.response.status_code == 404:
+            if e.response.status_code in (404, 429):
                 return None
             raise
 
@@ -205,6 +209,17 @@ class TasksAPI:
             data['rejected_by'] = rejected_by
 
         return self.client._request('POST', f'/api/v1/tasks/{task_id}/reject', json=data)
+
+    def requeue(self, task_id: str) -> Dict[str, Any]:
+        """Requeue a claimed task back to incoming
+
+        Args:
+            task_id: Task ID
+
+        Returns:
+            Updated task dictionary
+        """
+        return self.client._request('POST', f'/api/v1/tasks/{task_id}/requeue', json={})
 
 
 class DraftsAPI:
