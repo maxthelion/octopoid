@@ -421,6 +421,7 @@ def get_pre_checkers() -> list[dict[str, Any]]:
 # Default hooks when nothing is configured
 DEFAULT_HOOKS_CONFIG: dict[str, list[str]] = {
     "before_submit": ["create_pr"],
+    "before_merge": ["merge_pr"],
 }
 
 

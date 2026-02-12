@@ -698,7 +698,10 @@ def process_auto_accept_tasks() -> None:
 
             if auto_accept:
                 debug_log(f"Auto-accepting task {task_id}")
-                db.accept_completion(task_id, accepted_by="scheduler")
+                merge_result = queue_utils.approve_and_merge(task_id)
+                if merge_result.get("error"):
+                    debug_log(f"Auto-accept failed for {task_id}: {merge_result['error']}")
+                    continue
                 print(f"[{datetime.now().isoformat()}] Auto-accepted task {task_id}")
 
     except Exception as e:

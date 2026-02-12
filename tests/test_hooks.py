@@ -14,6 +14,7 @@ from orchestrator.hooks import (
     BUILTIN_HOOKS,
     DEFAULT_HOOKS,
     hook_create_pr,
+    hook_merge_pr,
     hook_rebase_on_main,
     hook_run_tests,
     resolve_hooks,
@@ -259,6 +260,76 @@ class TestHookRunTests:
 
 
 # ---------------------------------------------------------------------------
+# hook_merge_pr
+# ---------------------------------------------------------------------------
+
+
+class TestHookMergePr:
+    """Tests for the merge_pr built-in hook."""
+
+    def test_success(self):
+        """Successful merge returns SUCCESS with pr_number in context."""
+        ctx = _make_ctx(extra={"pr_number": 42, "pr_url": "https://github.com/test/pr/42"})
+
+        with patch("orchestrator.hooks.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="Merged", stderr="")
+            result = hook_merge_pr(ctx)
+
+        assert result.status == HookStatus.SUCCESS
+        assert result.context["pr_number"] == 42
+        assert result.context["pr_url"] == "https://github.com/test/pr/42"
+        assert "42" in result.message
+        # Verify the command used
+        mock_run.assert_called_once()
+        cmd = mock_run.call_args[0][0]
+        assert cmd == ["gh", "pr", "merge", "42", "--merge", "--delete-branch"]
+
+    def test_squash_method(self):
+        """merge_method=squash passes --squash to gh."""
+        ctx = _make_ctx(extra={"pr_number": 10, "merge_method": "squash"})
+
+        with patch("orchestrator.hooks.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+            result = hook_merge_pr(ctx)
+
+        assert result.status == HookStatus.SUCCESS
+        cmd = mock_run.call_args[0][0]
+        assert "--squash" in cmd
+
+    def test_no_pr_skips(self):
+        """When no pr_number in extra, returns SKIP."""
+        ctx = _make_ctx(extra={})
+        result = hook_merge_pr(ctx)
+
+        assert result.status == HookStatus.SKIP
+        assert "No pr_number" in result.message
+
+    def test_merge_failure(self):
+        """Non-zero exit code returns FAILURE."""
+        ctx = _make_ctx(extra={"pr_number": 99})
+
+        with patch("orchestrator.hooks.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(
+                returncode=1, stdout="", stderr="PR is not mergeable"
+            )
+            result = hook_merge_pr(ctx)
+
+        assert result.status == HookStatus.FAILURE
+        assert "not mergeable" in result.message
+
+    def test_timeout(self):
+        """Timeout during merge returns FAILURE."""
+        ctx = _make_ctx(extra={"pr_number": 7})
+
+        with patch("orchestrator.hooks.subprocess.run",
+                    side_effect=subprocess.TimeoutExpired(["gh"], 60)):
+            result = hook_merge_pr(ctx)
+
+        assert result.status == HookStatus.FAILURE
+        assert "Timeout" in result.message
+
+
+# ---------------------------------------------------------------------------
 # Config resolution
 # ---------------------------------------------------------------------------
 
@@ -328,10 +399,31 @@ class TestResolveHooks:
     def test_empty_hook_point(self):
         """Hook points with no config and no defaults return empty list."""
         with patch("orchestrator.config.get_hooks_for_type", return_value=None), \
-             patch("orchestrator.config.get_hooks_config", return_value={}):
+             patch("orchestrator.config.get_hooks_config", return_value={}), \
+             patch("orchestrator.hooks.DEFAULT_HOOKS", {"before_submit": ["create_pr"]}):
             hooks = resolve_hooks(HookPoint.BEFORE_MERGE, task_type=None)
 
         assert hooks == []
+
+    def test_before_merge_defaults(self):
+        """BEFORE_MERGE defaults to [merge_pr] when no config."""
+        with patch("orchestrator.config.get_hooks_for_type", return_value=None), \
+             patch("orchestrator.config.get_hooks_config", return_value={}):
+            hooks = resolve_hooks(HookPoint.BEFORE_MERGE, task_type=None)
+
+        assert len(hooks) == 1
+        assert hooks[0] is BUILTIN_HOOKS["merge_pr"]
+
+    def test_before_merge_type_override(self):
+        """Task-type-specific hooks override defaults for BEFORE_MERGE."""
+        with patch("orchestrator.config.get_hooks_for_type", return_value={
+                 "before_merge": ["merge_pr"]
+             }), \
+             patch("orchestrator.config.get_hooks_config", return_value={}):
+            hooks = resolve_hooks(HookPoint.BEFORE_MERGE, task_type="product")
+
+        assert len(hooks) == 1
+        assert hooks[0] is BUILTIN_HOOKS["merge_pr"]
 
 
 # ---------------------------------------------------------------------------
@@ -481,3 +573,107 @@ class TestConfigIntegration:
             result = get_hooks_for_type("unknown_type")
 
         assert result is None
+
+
+# ---------------------------------------------------------------------------
+# approve_and_merge (queue_utils integration with hooks)
+# ---------------------------------------------------------------------------
+
+
+class TestApproveAndMerge:
+    """Tests for queue_utils.approve_and_merge using BEFORE_MERGE hooks."""
+
+    def _mock_task(self, **overrides):
+        """Return a fake task dict."""
+        task = {
+            "id": "TSK-100",
+            "title": "Implement feature X",
+            "file_path": "/tasks/TSK-100.md",
+            "type": None,
+            "branch_name": "task/TSK-100",
+            "base_branch": "main",
+            "assigned_to": "implementer-1",
+            "pr_number": 55,
+            "pr_url": "https://github.com/test/pr/55",
+        }
+        task.update(overrides)
+        return task
+
+    @patch("orchestrator.queue_utils.cleanup_task_notes")
+    @patch("orchestrator.hooks.run_hooks")
+    @patch("orchestrator.queue_utils.get_sdk")
+    def test_success_flow(self, mock_get_sdk, mock_run_hooks, mock_cleanup):
+        """Hooks pass → task accepted via SDK."""
+        from orchestrator.queue_utils import approve_and_merge
+
+        mock_sdk = MagicMock()
+        mock_sdk.tasks.get.return_value = self._mock_task()
+        mock_get_sdk.return_value = mock_sdk
+
+        mock_run_hooks.return_value = (True, [
+            HookResult(status=HookStatus.SUCCESS, message="Merged", context={"pr_number": 55}),
+        ])
+
+        result = approve_and_merge("TSK-100")
+
+        assert result["merged"] is True
+        assert result.get("error") is None
+        mock_sdk.tasks.accept.assert_called_once_with("TSK-100", accepted_by="scheduler")
+        mock_cleanup.assert_called_once_with("TSK-100")
+
+    @patch("orchestrator.queue_utils.cleanup_task_notes")
+    @patch("orchestrator.hooks.run_hooks")
+    @patch("orchestrator.queue_utils.get_sdk")
+    def test_hook_failure_blocks_accept(self, mock_get_sdk, mock_run_hooks, mock_cleanup):
+        """Hook failure → task NOT accepted, error returned."""
+        from orchestrator.queue_utils import approve_and_merge
+
+        mock_sdk = MagicMock()
+        mock_sdk.tasks.get.return_value = self._mock_task()
+        mock_get_sdk.return_value = mock_sdk
+
+        mock_run_hooks.return_value = (False, [
+            HookResult(status=HookStatus.FAILURE, message="PR is not mergeable"),
+        ])
+
+        result = approve_and_merge("TSK-100")
+
+        assert "error" in result
+        assert "not mergeable" in result["error"]
+        mock_sdk.tasks.accept.assert_not_called()
+        mock_cleanup.assert_not_called()
+
+    @patch("orchestrator.queue_utils.get_sdk")
+    def test_missing_task(self, mock_get_sdk):
+        """Non-existent task returns error."""
+        from orchestrator.queue_utils import approve_and_merge
+
+        mock_sdk = MagicMock()
+        mock_sdk.tasks.get.return_value = None
+        mock_get_sdk.return_value = mock_sdk
+
+        result = approve_and_merge("TSK-MISSING")
+
+        assert "error" in result
+        assert "not found" in result["error"]
+
+    @patch("orchestrator.queue_utils.cleanup_task_notes")
+    @patch("orchestrator.hooks.run_hooks")
+    @patch("orchestrator.queue_utils.get_sdk")
+    def test_no_pr_skips_merge_still_accepts(self, mock_get_sdk, mock_run_hooks, mock_cleanup):
+        """Task without PR: merge_pr hook skips, task still accepted."""
+        from orchestrator.queue_utils import approve_and_merge
+
+        mock_sdk = MagicMock()
+        mock_sdk.tasks.get.return_value = self._mock_task(pr_number=None, pr_url=None)
+        mock_get_sdk.return_value = mock_sdk
+
+        mock_run_hooks.return_value = (True, [
+            HookResult(status=HookStatus.SKIP, message="No pr_number"),
+        ])
+
+        result = approve_and_merge("TSK-100")
+
+        assert result.get("error") is None
+        assert result["merged"] is False  # No hook set merged
+        mock_sdk.tasks.accept.assert_called_once()
