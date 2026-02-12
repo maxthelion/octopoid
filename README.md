@@ -117,6 +117,36 @@ agents:
 
 If you need agent-specific instructions beyond your `claude.md`, you can add them to `.orchestrator/global-instructions.md`. Most projects won't need this.
 
+### IDE Permissions
+
+When running agents in IDEs with permission systems (like Claude Code), agents need approval to run shell commands. Octopoid declares a command whitelist so you can bulk-approve these upfront instead of being prompted per-command.
+
+**View required commands:**
+
+```bash
+orchestrator-permissions summary
+```
+
+**Generate IDE permission config:**
+
+```bash
+# For Claude Code
+orchestrator-permissions export --format claude-code > .claude/octopoid-permissions.json
+```
+
+**Extend the defaults** by adding a `commands:` section to `agents.yaml`:
+
+```yaml
+commands:
+  npm:
+    - run lint
+  cargo:
+    - build
+    - test
+```
+
+User entries are additive — they extend the built-in defaults (git, gh, python, npm) rather than replacing them.
+
 ## Proposal Model (v2)
 
 The proposal model separates concerns into three layers:

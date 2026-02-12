@@ -157,8 +157,19 @@ def init_orchestrator(
             if line:
                 print(f"    {line}")
 
-    # Print instructions
+    # Display permission summary
     print()
+    print("Octopoid agents will need permission to run:")
+    from .permissions import format_summary
+    print(format_summary())
+    print()
+    print("Your IDE may prompt you to approve these commands.")
+    print("To generate an IDE-specific permission config, run:")
+    print()
+    print("  orchestrator-permissions export --format claude-code")
+    print()
+
+    # Print instructions
     print("=" * 60)
     print("Setup complete!")
     print("=" * 60)
@@ -212,6 +223,17 @@ queue_limits:
 #   require_commits: true           # Reject tasks with no commits
 #   max_attempts_before_planning: 3 # Escalate to planning after N failures
 #   claim_timeout_minutes: 60       # Reset stuck claimed tasks after N minutes
+
+# Command whitelist for IDE permission systems (extends defaults)
+# Declare additional commands agents need beyond the built-in defaults.
+# Run 'orchestrator-permissions summary' to see the full list.
+# Run 'orchestrator-permissions export --format claude-code' to generate IDE config.
+# commands:
+#   npm:
+#     - run lint
+#   cargo:
+#     - build
+#     - test
 
 # Proposal limits (for proposal model)
 # proposal_limits:
