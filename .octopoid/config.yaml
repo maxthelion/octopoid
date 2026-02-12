@@ -6,7 +6,7 @@ server:
   enabled: true
   url: http://localhost:8787
   cluster: dev
-  machine_id: local-dev
+  machine_id: Maxs-MacBook-Air.local
 
 # Repository settings
 repo:

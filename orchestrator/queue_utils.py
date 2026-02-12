@@ -85,9 +85,30 @@ def get_orchestrator_id() -> str:
     """Get unique orchestrator instance ID.
 
     Returns:
-        Orchestrator ID (hostname-based)
+        Orchestrator ID in format: {cluster}-{machine_id}
     """
-    return socket.gethostname()
+    import yaml
+    from .config import get_orchestrator_dir
+
+    try:
+        orchestrator_dir = get_orchestrator_dir()
+        config_path = orchestrator_dir.parent / ".octopoid" / "config.yaml"
+
+        if not config_path.exists():
+            # Fallback to hostname if no config
+            return socket.gethostname()
+
+        with open(config_path) as f:
+            config = yaml.safe_load(f)
+
+        server_config = config.get("server", {})
+        cluster = server_config.get("cluster", "default")
+        machine_id = server_config.get("machine_id", socket.gethostname())
+
+        return f"{cluster}-{machine_id}"
+    except Exception:
+        # Fallback to hostname on any error
+        return socket.gethostname()
 
 
 def get_queue_subdir(subdir: str) -> Path:
