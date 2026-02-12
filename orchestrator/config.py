@@ -7,6 +7,35 @@ from typing import Any, Literal
 import yaml
 
 
+# ---------------------------------------------------------------------------
+# Task queue states — must match packages/shared/src/task.ts TaskQueue type
+# ---------------------------------------------------------------------------
+
+TaskQueue = Literal[
+    "incoming",
+    "claimed",
+    "provisional",
+    "done",
+    "failed",
+    "rejected",
+    "escalated",
+    "recycled",
+    "breakdown",
+    "needs_continuation",
+    "backlog",
+    "blocked",
+]
+
+# Queues where a task is still actively being worked on
+ACTIVE_QUEUES: list[TaskQueue] = ["claimed", "needs_continuation"]
+
+# Queues where a task is waiting for work
+PENDING_QUEUES: list[TaskQueue] = ["incoming", "backlog", "blocked"]
+
+# Terminal queues — task is finished (successfully or not)
+TERMINAL_QUEUES: list[TaskQueue] = ["done", "failed", "rejected", "escalated", "recycled"]
+
+
 # Port allocation
 BASE_PORT = 41000
 PORT_STRIDE = 10
@@ -95,6 +124,33 @@ def get_agents_config_path() -> Path:
 def get_global_instructions_path() -> Path:
     """Get path to global-instructions.md in parent project."""
     return get_orchestrator_dir() / "global-instructions.md"
+
+
+def get_main_branch() -> str:
+    """Get the configured main branch from .octopoid/config.yaml.
+
+    Reads ``repo.main_branch``. Defaults to ``"main"`` if not set.
+    """
+    try:
+        config_path = find_parent_project() / ".octopoid" / "config.yaml"
+        if config_path.exists():
+            with open(config_path) as f:
+                config = yaml.safe_load(f) or {}
+            return config.get("repo", {}).get("main_branch", "main")
+    except Exception:
+        pass
+    return "main"
+
+
+def get_tasks_file_dir() -> Path:
+    """Get the single directory where all task files live.
+
+    Task state is owned by the API. The filesystem just stores content.
+    All task .md files go in .octopoid/tasks/ regardless of queue state.
+    """
+    d = find_parent_project() / ".octopoid" / "tasks"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
 
 def get_queue_dir() -> Path:
