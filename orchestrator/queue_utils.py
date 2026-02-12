@@ -467,12 +467,15 @@ def claim_task(
     try:
         sdk = get_sdk()
         orchestrator_id = get_orchestrator_id()
+        limits = get_queue_limits()
 
         # Claim via API (atomic operation with lease)
+        # Server enforces max_claimed to prevent races between agents
         task = sdk.tasks.claim(
             orchestrator_id=orchestrator_id,
             agent_name=agent_name or "unknown",
-            role_filter=role_filter
+            role_filter=role_filter,
+            max_claimed=limits.get("max_claimed"),
         )
 
         if task is None:
