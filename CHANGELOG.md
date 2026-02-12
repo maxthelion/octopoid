@@ -31,6 +31,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - v2.0 API-only architecture rule (no database/file queue modes)
 
 ### Changed
+- Improved `init` command UX with welcome message, cleaner output, and comprehensive post-init next steps guidance (GH-8)
+  - Added welcome banner with project description
+  - Summarized directory creation instead of listing every directory
+  - Added counts for installed skills and gitignore entries
+  - Post-init guidance now includes: CLAUDE.md setup, agent config, scheduler start (with single-run option), task creation, status commands, and documentation link
+  - Skipped options now show how to enable them later
+  - Added `--local` and `--server` mode selection flags (`--server` shows informative "not yet available" message)
+  - Help text now documents deployment modes
 - Dashboard is now API-only, removed local database mode
 - Installation documentation updated to reflect source-only installation
 - README updated with comprehensive troubleshooting section

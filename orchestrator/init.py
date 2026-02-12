@@ -49,6 +49,7 @@ def init_orchestrator(
     install_skills: bool | None = None,
     update_gitignore: bool | None = None,
     non_interactive: bool = False,
+    mode: str = "local",
 ) -> None:
     """Initialize orchestrator in the parent project.
 
@@ -56,11 +57,17 @@ def init_orchestrator(
         install_skills: Install management skills (None = ask)
         update_gitignore: Update .gitignore (None = ask)
         non_interactive: If True, use defaults instead of asking
+        mode: Deployment mode - "local" (default) or "remote"
     """
     parent = find_parent_project()
     submodule = get_orchestrator_submodule()
 
-    print(f"Initializing orchestrator in: {parent}")
+    print()
+    print("  Welcome to Octopoid!")
+    print("  A file-driven orchestrator for Claude Code agents.")
+    print()
+    print(f"  Project: {parent}")
+    print(f"  Mode:    {mode}")
     print()
 
     # Create .orchestrator directory structure
@@ -85,18 +92,27 @@ def init_orchestrator(
         orchestrator_dir / "shared" / "proposals" / "rejected",
     ]
 
-    print("Creating directory structure...")
+    created_count = 0
     for d in dirs_to_create:
+        if not d.exists():
+            created_count += 1
         d.mkdir(parents=True, exist_ok=True)
-        print(f"  {d.relative_to(parent)}/")
 
     # Copy example agents.yaml if not exists
     agents_yaml = orchestrator_dir / "agents.yaml"
+    agents_yaml_created = False
     if not agents_yaml.exists():
         agents_yaml.write_text(EXAMPLE_AGENTS_YAML)
-        print(f"  Created: {agents_yaml.relative_to(parent)}")
+        agents_yaml_created = True
+
+    if created_count > 0:
+        print(f"  Created .orchestrator/ directory structure ({created_count} directories)")
     else:
-        print(f"  Exists:  {agents_yaml.relative_to(parent)}")
+        print("  Directory structure already exists")
+    if agents_yaml_created:
+        print("  Created .orchestrator/agents.yaml with example configuration")
+    else:
+        print("  Using existing .orchestrator/agents.yaml")
 
     # Create default flow files
     from .flow import generate_default_flow, generate_project_flow
@@ -133,14 +149,20 @@ def init_orchestrator(
 
         management_commands = submodule / "commands" / "management"
         if management_commands.exists():
-            print("Installing management skills...")
-            for cmd_file in management_commands.glob("*.md"):
+            installed = []
+            for cmd_file in sorted(management_commands.glob("*.md")):
                 dest = claude_commands / cmd_file.name
                 shutil.copy2(cmd_file, dest)
-                print(f"  .claude/commands/{cmd_file.name}")
+                installed.append(cmd_file.stem)
+            if installed:
+                print(f"  Installed {len(installed)} management skills to .claude/commands/")
+                print(f"    Commands: /{', /'.join(installed)}")
+            else:
+                print("  No management skills found to install")
     else:
-        print("Skipping skill installation.")
-        print("  You can manually copy from orchestrator/commands/management/ later.")
+        print("  Skipping skill installation.")
+        print("    Run again with --skills to install, or copy from")
+        print("    orchestrator/commands/management/ manually.")
 
     print()
 
@@ -165,44 +187,56 @@ def init_orchestrator(
                 f.write("\n# Orchestrator\n")
                 for line in new_ignores:
                     f.write(f"{line}\n")
-            print("Updated .gitignore")
+            print(f"  Updated .gitignore ({len(new_ignores)} entries added)")
         else:
-            print("Gitignore entries already present")
+            print("  .gitignore already has orchestrator entries")
     else:
-        print("Skipping .gitignore update.")
-        print("  Recommended entries:")
+        print("  Skipping .gitignore update.")
+        print("    Run again with --gitignore to add entries, or add these manually:")
         for line in GITIGNORE_ADDITIONS.strip().split("\n"):
-            if line:
-                print(f"    {line}")
+            if line and not line.startswith("#"):
+                print(f"      {line}")
 
-    # Print instructions
+    # Print success and next steps
     print()
     print("=" * 60)
-    print("Setup complete!")
+    print("  Setup complete!")
     print("=" * 60)
     print()
-    print("Next steps:")
+    print("  Next steps:")
     print()
-    print("1. Add these lines to your claude.md (or create one):")
+    print("  1. Update your project's CLAUDE.md (create one if needed):")
     print()
-    print("   ---")
-    print("   If .agent-instructions.md exists in this directory,")
-    print("   read and follow those instructions.")
+    print("     Add these two lines so agents can find their instructions:")
     print()
-    print("   Check .orchestrator/messages/ for any agent messages")
-    print("   and inform the user of warnings or questions.")
-    print("   ---")
+    print("       If .agent-instructions.md exists in this directory,")
+    print("       read and follow those instructions.")
     print()
-    print("2. Configure agents in .orchestrator/agents.yaml")
+    print("       Check .orchestrator/messages/ for any agent messages")
+    print("       and inform the user of warnings or questions.")
     print()
-    print("3. Set up the scheduler to run every minute:")
+    print("  2. Configure your agents in .orchestrator/agents.yaml")
+    print("     The default config includes a PM agent and one implementer.")
+    print("     Adjust agent names, roles, models, and intervals as needed.")
     print()
-    print("   # crontab -e")
-    print(f"   * * * * * cd {parent} && python orchestrator/orchestrator/scheduler.py >> /var/log/orchestrator.log 2>&1")
+    print("  3. Start the scheduler:")
     print()
-    print("4. Create your first task:")
+    print("     # Run once (good for testing):")
+    print(f"     python {submodule.relative_to(parent)}/orchestrator/scheduler.py")
     print()
-    print("   /enqueue")
+    print("     # Run on a schedule (crontab -e):")
+    print(f"     * * * * * cd {parent} && python {submodule.relative_to(parent)}/orchestrator/scheduler.py >> /var/log/orchestrator.log 2>&1")
+    print()
+    print("  4. Create your first task:")
+    print()
+    print("     /enqueue")
+    print()
+    print("  5. Check status:")
+    print()
+    print("     /queue-status     # see task queue")
+    print("     /agent-status     # see agent states")
+    print()
+    print("  Documentation: orchestrator/README.md")
     print()
 
 
@@ -320,12 +354,36 @@ def main():
         description="Initialize orchestrator in the parent project",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
+Deployment modes:
+  Local mode (default):
+    SQLite database, scheduler runs on this machine.
+    Best for single-user, local development.
+
+  Remote mode (not yet available):
+    Cloudflare Workers backend for distributed teams.
+
 Examples:
-  python init.py                     # Interactive mode
-  python init.py -y                  # Accept all defaults
-  python init.py --no-skills         # Skip skill installation
+  python init.py                       # Local mode, interactive
+  python init.py --local               # Local mode (explicit)
+  python init.py -y                    # Accept all defaults
+  python init.py --no-skills           # Skip skill installation
   python init.py --skills --gitignore  # Install skills and update gitignore
 """,
+    )
+
+    # Mode selection
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument(
+        "--local",
+        action="store_true",
+        default=False,
+        help="Use local mode with SQLite database (default)",
+    )
+    mode_group.add_argument(
+        "--server",
+        metavar="URL",
+        default=None,
+        help="Use remote mode with a Cloudflare Workers backend (not yet available)",
     )
 
     parser.add_argument(
@@ -357,6 +415,19 @@ Examples:
     )
 
     args = parser.parse_args()
+
+    # Resolve mode
+    if args.server is not None:
+        print()
+        print("  Remote mode is not yet available.")
+        print()
+        print("  Octopoid currently supports local mode only:")
+        print("    python init.py          # default (local mode)")
+        print("    python init.py --local  # explicit local mode")
+        print()
+        print("  Remote mode with Cloudflare Workers is planned for a future release.")
+        print()
+        sys.exit(1)
 
     # Resolve skill flags
     install_skills = None
