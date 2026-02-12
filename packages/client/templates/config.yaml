@@ -28,3 +28,30 @@ agents:
 repo:
   path: .
   main_branch: main
+
+# Hooks — lifecycle actions run during task processing
+# Built-in hooks: rebase_on_main, create_pr, run_tests
+# Default: before_submit: [create_pr]
+# hooks:
+#   before_submit:
+#     - rebase_on_main
+#     - create_pr
+
+# Task type definitions — override hooks and agent assignment per type
+# task_types:
+#   product:
+#     hooks:
+#       before_submit:
+#         - rebase_on_main
+#         - run_tests
+#         - create_pr
+#   infrastructure:
+#     hooks:
+#       before_submit:
+#         - rebase_on_main
+#         - create_pr
+#   hotfix:
+#     hooks:
+#       before_submit:
+#         - run_tests
+#         - create_pr

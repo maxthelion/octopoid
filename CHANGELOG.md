@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Hooks system for task lifecycle (`orchestrator/hooks.py`)
+  - Declarative `before_submit` hooks: `rebase_on_main`, `create_pr`, `run_tests`
+  - Per-task-type hook configuration via `task_types:` in config.yaml
+  - Remediation support: hooks can return prompts for Claude to fix issues (e.g. rebase conflicts)
+  - Default behavior unchanged: `before_submit: [create_pr]`
+- Task `type` field for classifying tasks (e.g. "product", "infrastructure", "hotfix")
+  - Migration `0004_add_task_type.sql` adds column to D1 database
+  - Type field supported in create/update API endpoints
+- Hook configuration in `.octopoid/config.yaml` (`hooks:` and `task_types:` keys)
+- Config functions: `get_hooks_config()`, `get_task_types_config()`, `get_hooks_for_type()`
+- Unit tests for hooks system (29 tests in `tests/test_hooks.py`)
 - Unified configuration system (.octopoid/config.yaml) as single source of truth
 - Dashboard now requires API server connection (v2.0 mode)
 - GitHub issue monitor agent for automatic task creation from issues

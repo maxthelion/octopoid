@@ -140,6 +140,23 @@ server:
 repo:
   path: /path/to/your/project
   base_branch: main
+
+# Hooks — lifecycle actions run during task processing
+# Default: before_submit: [create_pr]
+# Built-in hooks: rebase_on_main, create_pr, run_tests
+hooks:
+  before_submit:
+    - rebase_on_main
+    - create_pr
+
+# Task type definitions — override hooks per type
+# task_types:
+#   product:
+#     hooks:
+#       before_submit: [rebase_on_main, run_tests, create_pr]
+#   hotfix:
+#     hooks:
+#       before_submit: [run_tests, create_pr]
 ```
 
 #### `.octopoid/agents.yaml`
@@ -299,8 +316,9 @@ octopoid project update user-dashboard-redesign --status completed
    - Agent creates task-specific worktree (`.octopoid/worktrees/{task_id}/`)
    - Agent creates feature branch (`agent/{task_id}-timestamp`)
    - Agent invokes Claude Code to implement the task
-   - Agent commits changes and pushes to origin
-   - Agent creates pull request
+   - Agent commits changes
+   - **Before-submit hooks** run in order (e.g. `rebase_on_main`, `run_tests`, `create_pr`)
+   - If a hook fails with a remediation prompt, Claude attempts to fix and retries
    - Agent submits completion to server (moves to `provisional` queue)
 7. **Gatekeeper Review**: Gatekeeper agent claims `provisional` tasks, reviews changes
    - **Accept**: Task moves to `done` queue, PR can be merged
