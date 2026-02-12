@@ -17,7 +17,14 @@ from uuid import uuid4
 
 import yaml
 
-from .config import get_queue_dir, get_queue_limits, get_orchestrator_dir
+from .config import (
+    ACTIVE_QUEUES,
+    TaskQueue,
+    get_queue_dir,
+    get_queue_limits,
+    get_orchestrator_dir,
+    get_tasks_file_dir,
+)
 from .git_utils import cleanup_task_worktree
 from .lock_utils import locked
 
@@ -27,6 +34,10 @@ _sdk: Optional[Any] = None
 
 def get_sdk():
     """Get or initialize SDK client for API operations.
+
+    The server URL is resolved in this order:
+    1. OCTOPOID_SERVER_URL env var (useful for tests and CI)
+    2. .octopoid/config.yaml server.url
 
     Returns:
         OctopoidSDK instance
@@ -46,7 +57,14 @@ def get_sdk():
             "octopoid-sdk not installed. Install with: pip install octopoid-sdk"
         )
 
-    # Load server configuration
+    # Check env var override first (tests, CI, Docker)
+    env_url = os.environ.get("OCTOPOID_SERVER_URL")
+    if env_url:
+        api_key = os.getenv("OCTOPOID_API_KEY")
+        _sdk = OctopoidSDK(server_url=env_url, api_key=api_key)
+        return _sdk
+
+    # Load server configuration from config file
     try:
         import yaml
         orchestrator_dir = get_orchestrator_dir()
@@ -135,23 +153,28 @@ ALL_QUEUE_DIRS = [
 
 
 def find_task_file(task_id: str) -> Path | None:
-    """Find a task's markdown file by scanning all queue directories.
+    """Find a task's markdown file in the tasks directory.
 
-    Searches every queue subdirectory for TASK-<id>.md. This is the
-    canonical way to locate a task file when the DB's file_path may
-    be stale.
+    All task files live in .octopoid/tasks/. Also checks legacy queue
+    subdirectories for backward compatibility with pre-migration files.
 
     Args:
         task_id: Task identifier (e.g. "9f5cda4b")
 
     Returns:
-        Full Path to the task file, or None if not found in any queue
+        Full Path to the task file, or None if not found
     """
-    filename = f"TASK-{task_id}.md"
-    queue_dir = get_queue_dir()
+    # Primary location: single tasks directory
+    tasks_dir = get_tasks_file_dir()
+    for pattern in [f"TASK-{task_id}.md", f"*{task_id}*.md"]:
+        for candidate in tasks_dir.glob(pattern):
+            if candidate.exists():
+                return candidate
 
+    # Legacy fallback: search queue subdirectories
+    queue_dir = get_queue_dir()
     for subdir in ALL_QUEUE_DIRS:
-        candidate = queue_dir / subdir / filename
+        candidate = queue_dir / subdir / f"TASK-{task_id}.md"
         if candidate.exists():
             return candidate
 
@@ -446,6 +469,35 @@ def parse_task_file(task_path: Path) -> dict[str, Any] | None:
     }
 
 
+def resolve_task_file(filename: str) -> Path:
+    """Resolve a task filename to its absolute path.
+
+    The API stores just the filename. Task files all live in one directory.
+    Legacy paths (relative or absolute) are also handled for backward
+    compatibility — the basename is extracted and looked up in the tasks dir.
+
+    Args:
+        filename: Filename from the API (e.g., 'gh-8-2a4ad137.md')
+
+    Returns:
+        Absolute path to the task file
+
+    Raises:
+        FileNotFoundError: If the file doesn't exist in the tasks directory
+    """
+    # Extract basename in case API has a legacy full/relative path
+    basename = Path(filename).name
+    fp = get_tasks_file_dir() / basename
+    if not fp.exists():
+        raise FileNotFoundError(
+            f"Task file not found: {fp} (API file_path={filename!r}). "
+            f"The API is the source of truth for file_path — if the file "
+            f"is missing, the task was created with a bad filename or the "
+            f"file was deleted."
+        )
+    return fp
+
+
 def claim_task(
     role_filter: str | None = None,
     agent_name: str | None = None,
@@ -456,47 +508,72 @@ def claim_task(
     The API server handles atomic claiming with lease-based coordination,
     preventing race conditions across distributed orchestrators.
 
+    After claiming, reads the task file from disk to populate 'content',
+    since the API stores the filename but not file content.
+
     Args:
         role_filter: Only claim tasks with this role (e.g., 'implement', 'test', 'breakdown')
         agent_name: Name of claiming agent (for logging in task)
         from_queue: Queue to claim from (default 'incoming')
 
     Returns:
-        Task info dictionary if claimed, None if no suitable task
+        Task info dictionary (with 'content' from file) if claimed, None if no task
+
+    Raises:
+        FileNotFoundError: If the claimed task's file doesn't exist on disk
     """
-    try:
-        sdk = get_sdk()
-        orchestrator_id = get_orchestrator_id()
-        limits = get_queue_limits()
+    sdk = get_sdk()
+    orchestrator_id = get_orchestrator_id()
+    limits = get_queue_limits()
 
-        # Claim via API (atomic operation with lease)
-        # Server enforces max_claimed to prevent races between agents
-        task = sdk.tasks.claim(
-            orchestrator_id=orchestrator_id,
-            agent_name=agent_name or "unknown",
-            role_filter=role_filter,
-            max_claimed=limits.get("max_claimed"),
-        )
+    # Claim via API (atomic operation with lease)
+    # Server enforces max_claimed to prevent races between agents
+    task = sdk.tasks.claim(
+        orchestrator_id=orchestrator_id,
+        agent_name=agent_name or "unknown",
+        role_filter=role_filter,
+        max_claimed=limits.get("max_claimed"),
+    )
 
-        if task is None:
-            return None
-
-        # Append claim metadata to local file for human readability
-        if agent_name and task.get("file_path"):
-            file_path = Path(task["file_path"])
-            if file_path.exists():
-                try:
-                    with open(file_path, "a") as f:
-                        f.write(f"\nCLAIMED_BY: {agent_name}\n")
-                        f.write(f"CLAIMED_AT: {datetime.now().isoformat()}\n")
-                except IOError:
-                    pass  # Non-critical, just for human readability
-
-        return task
-
-    except Exception as e:
-        print(f"Warning: Failed to claim task: {e}")
+    if task is None:
         return None
+
+    # Resolve filename → absolute path and read content.
+    # The API stores the filename; all task files live in .octopoid/tasks/.
+    file_path_str = task.get("file_path")
+    if file_path_str:
+        fp = resolve_task_file(file_path_str)
+        task["file_path"] = str(fp)  # Absolute path for downstream code
+        parsed = parse_task_file(fp)
+        if parsed:
+            task["content"] = parsed["content"]
+
+    return task
+
+
+def unclaim_task(task_path: Path | str) -> None:
+    """Return a claimed task to the incoming queue via API.
+
+    Used when a system-level error (not a task error) prevents work,
+    e.g. Claude dies instantly due to auth issues. The task is returned
+    cleanly so another agent can pick it up later.
+
+    Args:
+        task_path: Path to the claimed task file
+    """
+    task_path = Path(task_path)
+
+    try:
+        task_info = parse_task_file(task_path)
+        if not task_info:
+            print(f"Warning: Could not parse task file {task_path}")
+            return
+
+        task_id = task_info["id"]
+        sdk = get_sdk()
+        sdk.tasks.update(task_id, queue="incoming", claimed_by=None)
+    except Exception as e:
+        print(f"Warning: Failed to unclaim task: {e}")
 
 
 def complete_task(task_path: Path | str, result: str | None = None) -> Path:
@@ -787,35 +864,35 @@ def review_reject_task(
     Rejection feedback is inserted near the top of the task file (after the
     metadata block, before ## Context) so agents see it immediately.
 
+    The file stays in .octopoid/tasks/ — only the API queue state changes.
+
     Args:
-        task_path: Path to the task file (provisional or incoming)
+        task_path: Path to the task file
         feedback: Aggregated review feedback markdown
         rejected_by: Name of the reviewer/coordinator
         max_rejections: Maximum rejections before escalation (default 3)
 
     Returns:
-        Tuple of (new_path, action) where action is 'rejected' or 'escalated'
+        Tuple of (task_path, action) where action is 'rejected' or 'escalated'
     """
     task_path = Path(task_path)
+    task_info = parse_task_file(task_path)
+    task_id = task_info["id"] if task_info else None
+
+    # Get current rejection count from API
     rejection_count = 0
-    task_id = None
+    if task_id:
+        try:
+            sdk = get_sdk()
+            api_task = sdk.tasks.get(task_id)
+            if api_task:
+                rejection_count = (api_task.get("rejection_count") or 0) + 1
+        except Exception:
+            pass
 
-    if is_db_enabled():
-        from . import db
-        db_task = db.get_task_by_path(str(task_path))
-        if db_task:
-            task_id = db_task["id"]
-            rejection_count = (db_task.get("rejection_count") or 0) + 1
+    escalated = rejection_count >= max_rejections
 
-    # Determine destination before any DB or file changes
-    if rejection_count >= max_rejections:
-        dest = get_queue_subdir("escalated") / task_path.name
-    else:
-        dest = get_queue_subdir("incoming") / task_path.name
-
-    # Read original content, insert feedback near top, write to destination, delete source.
-    # This must happen BEFORE the DB update so the file is fully ready at its
-    # new path before the scheduler can see the task as claimable.
+    # Insert feedback into the task file (file stays in place)
     original_content = task_path.read_text()
 
     feedback_section = f"## Rejection Notice (rejection #{rejection_count})\n\n"
@@ -828,36 +905,24 @@ def review_reject_task(
         feedback_section += f"REVIEW_REJECTED_BY: {rejected_by}\n"
 
     new_content = _insert_rejection_feedback(original_content, feedback_section)
-    dest.write_text(new_content)
+    task_path.write_text(new_content)
 
-    # Remove source file
-    if task_path != dest:
-        task_path.unlink()
+    # Update API state — queue changes, file stays put
+    if task_id:
+        try:
+            sdk = get_sdk()
+            if escalated:
+                sdk.tasks.update(task_id, queue="escalated", claimed_by=None)
+            else:
+                sdk.tasks.reject(
+                    task_id=task_id,
+                    reason=feedback[:500],
+                    rejected_by=rejected_by,
+                )
+        except Exception as e:
+            print(f"Warning: Failed to update task {task_id} via API: {e}")
 
-    # Now update the DB — the file is already at its final path with full content
-    if task_id and is_db_enabled():
-        if rejection_count >= max_rejections:
-            db.update_task_queue(
-                task_id,
-                "escalated",
-                claimed_by=None,
-                claimed_at=None,
-                file_path=str(dest),
-                history_event="review_escalated",
-                history_agent=rejected_by,
-                history_details=f"rejection_count={rejection_count}, max={max_rejections}",
-            )
-            db.update_task(task_id, rejection_count=rejection_count)
-        else:
-            db.review_reject_completion(
-                task_id,
-                reason=feedback[:500],
-                reviewer=rejected_by,
-            )
-            db.update_task(task_id, file_path=str(dest))
-
-    if rejection_count >= max_rejections:
-        # Send message to human
+    if escalated:
         from . import message_utils
         message_utils.warning(
             f"Task {task_id or task_path.stem} escalated after {rejection_count} rejections",
@@ -867,15 +932,13 @@ def review_reject_task(
             task_id,
         )
 
-        result = (dest, "escalated")
-    else:
-        result = (dest, "rejected")
+    action = "escalated" if escalated else "rejected"
 
     # Clean up ephemeral task worktree (task will be retried or escalated)
     if task_id:
         cleanup_task_worktree(task_id, push_commits=True)
 
-    return result
+    return (task_path, action)
 
 
 def get_review_feedback(task_id: str) -> str | None:
@@ -927,31 +990,31 @@ def escalate_to_planning(task_path: Path | str, plan_id: str) -> Path:
     Creates a planning task to break down the original task into micro-tasks.
     Called when a task has exceeded max_attempts_before_planning.
 
+    The file stays in .octopoid/tasks/ — only the API queue state changes.
+
     Args:
         task_path: Path to the task file being escalated
         plan_id: ID of the new planning task
 
     Returns:
-        New path in escalated queue
+        Path to the task file (unchanged)
     """
     task_path = Path(task_path)
 
-    if is_db_enabled():
-        from . import db
-        db_task = db.get_task_by_path(str(task_path))
-        if db_task:
-            db.escalate_to_planning(db_task["id"], plan_id=plan_id)
+    task_info = parse_task_file(task_path)
+    if task_info:
+        try:
+            sdk = get_sdk()
+            sdk.tasks.update(task_info["id"], queue="escalated")
+        except Exception as e:
+            print(f"Warning: Failed to escalate task via API: {e}")
 
-    escalated_dir = get_queue_subdir("escalated")
-    dest = escalated_dir / task_path.name
-
-    # Append escalation info
+    # Append escalation info to local file
     with open(task_path, "a") as f:
         f.write(f"\nESCALATED_AT: {datetime.now().isoformat()}\n")
         f.write(f"PLAN_ID: {plan_id}\n")
 
-    os.rename(task_path, dest)
-    return dest
+    return task_path
 
 
 def fail_task(task_path: Path | str, error: str) -> Path:
@@ -1277,26 +1340,42 @@ def resume_task(task_path: Path | str, agent_name: str | None = None) -> Path:
         return task_path
 
 
-def find_task_by_id(task_id: str, subdirs: list[str] | None = None) -> dict[str, Any] | None:
-    """Find a task by its ID, optionally filtered by queue.
+def find_task_by_id(task_id: str, queues: list[str] | None = None) -> dict[str, Any] | None:
+    """Find a task by its ID, optionally filtered by queue state.
+
+    Fetches from the API and reads the task file from disk to populate
+    'content', just like claim_task() does.
 
     Args:
         task_id: Task ID to find (e.g., "9f5cda4b")
-        subdirs: List of queues to search (default: all queues)
+        queues: Only return the task if it's in one of these queues
+                (e.g., ["claimed", "needs_continuation"])
 
     Returns:
-        Task info dict or None if not found or not in specified queues
+        Task info dict (with content) or None if not found / not in specified queues
     """
     task = get_task_by_id(task_id)
 
     if task is None:
         return None
 
-    # If subdirs specified, check if task is in one of those queues
-    if subdirs is not None:
+    # Filter by queue state (API is the source of truth)
+    if queues is not None:
         task_queue = task.get("queue")
-        if task_queue not in subdirs:
+        if task_queue not in queues:
             return None
+
+    # Resolve filename → absolute path and read content from disk
+    file_path_str = task.get("file_path")
+    if file_path_str and "content" not in task:
+        try:
+            fp = resolve_task_file(file_path_str)
+            task["file_path"] = str(fp)
+            parsed = parse_task_file(fp)
+            if parsed:
+                task["content"] = parsed["content"]
+        except FileNotFoundError:
+            pass  # Task file missing — content stays empty
 
     return task
 
@@ -1385,12 +1464,8 @@ def create_task(
     project_line = f"PROJECT: {project_id}\n" if project_id else ""
     checks_line = f"CHECKS: {','.join(checks)}\n" if checks else ""
 
-    # Get orchestrator directory for local file storage
-    orchestrator_dir = get_orchestrator_dir()
-    task_path = orchestrator_dir.parent / ".octopoid" / "queue" / queue / filename
-
-    # Ensure queue directory exists
-    task_path.parent.mkdir(parents=True, exist_ok=True)
+    # All task files go in one directory — API owns the queue state
+    task_path = get_tasks_file_dir() / filename
 
     content = f"""# [TASK-{task_id}] {title}
 
@@ -1415,7 +1490,7 @@ CREATED_BY: {created_by}
         sdk = get_sdk()
         sdk.tasks.create(
             id=task_id,
-            file_path=str(task_path),
+            file_path=filename,
             title=title,
             role=role,
             priority=priority,
@@ -1478,17 +1553,16 @@ def write_task_marker(task_id: str, task_path: Path) -> None:
     marker_path.write_text(json.dumps(marker_data, indent=2))
 
 
-def read_task_marker() -> dict[str, Any] | None:
-    """Read the task marker file from agent's state directory.
+def read_task_marker_for(agent_name: str) -> dict[str, Any] | None:
+    """Read the task marker file for a specific agent.
+
+    Args:
+        agent_name: Name of the agent
 
     Returns:
         Task marker data or None if not present
     """
-    state_dir = _get_agent_state_dir()
-    if not state_dir:
-        return None
-
-    marker_path = state_dir / "current_task.json"
+    marker_path = get_orchestrator_dir() / "agents" / agent_name / "current_task.json"
     if not marker_path.exists():
         return None
 
@@ -1499,22 +1573,52 @@ def read_task_marker() -> dict[str, Any] | None:
         return None
 
 
+def clear_task_marker_for(agent_name: str) -> None:
+    """Clear the task marker file for a specific agent.
+
+    Args:
+        agent_name: Name of the agent
+    """
+    marker_path = get_orchestrator_dir() / "agents" / agent_name / "current_task.json"
+    if marker_path.exists():
+        marker_path.unlink()
+
+
+def read_task_marker() -> dict[str, Any] | None:
+    """Read the task marker file from agent's state directory.
+
+    Returns:
+        Task marker data or None if not present
+    """
+    state_dir = _get_agent_state_dir()
+    if not state_dir:
+        return None
+
+    agent_name = os.environ.get("AGENT_NAME")
+    if not agent_name:
+        return None
+
+    return read_task_marker_for(agent_name)
+
+
 def clear_task_marker() -> None:
     """Clear the task marker file from agent's state directory."""
     state_dir = _get_agent_state_dir()
     if not state_dir:
         return
 
-    marker_path = state_dir / "current_task.json"
-    if marker_path.exists():
-        marker_path.unlink()
+    agent_name = os.environ.get("AGENT_NAME")
+    if not agent_name:
+        return
+
+    clear_task_marker_for(agent_name)
 
 
 def is_task_still_valid(task_id: str) -> bool:
     """Check if a task is still valid to work on.
 
-    A task is valid if it exists in 'claimed' or 'needs_continuation'.
-    If it's in 'done', 'failed', or 'rejected', it should not be resumed.
+    A task is valid if it's in an active queue (claimed or needs_continuation).
+    If it's in a terminal queue (done, failed, rejected, etc.), it should not be resumed.
 
     Args:
         task_id: Task ID to check
@@ -1522,8 +1626,7 @@ def is_task_still_valid(task_id: str) -> bool:
     Returns:
         True if task can still be worked on
     """
-    # Check if task exists in active queues
-    task = find_task_by_id(task_id, subdirs=["claimed", "needs_continuation"])
+    task = find_task_by_id(task_id, queues=ACTIVE_QUEUES)
     return task is not None
 
 
