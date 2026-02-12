@@ -15,6 +15,8 @@ from string import Template
 
 from .backpressure import check_backpressure_for_role
 from .config import (
+    AGENT_TASK_ROLE,
+    CLAIMABLE_AGENT_ROLES,
     find_parent_project,
     get_agents,
     get_agents_runtime_dir,
@@ -1981,11 +1983,12 @@ def run_scheduler() -> None:
                 debug_log(f"Agent {agent_name} pre-check returned no work")
                 continue
 
-            # For implementer agents: claim task before spawning.
+            # For claimable agents: claim task before spawning.
             # This ensures the agent has work and avoids wasted startups.
             claimed_task = None
-            if role == "implement":
-                claimed_task = claim_and_prepare_task(agent_name, role)
+            if role in CLAIMABLE_AGENT_ROLES:
+                task_role = AGENT_TASK_ROLE[role]
+                claimed_task = claim_and_prepare_task(agent_name, task_role)
                 if claimed_task is None:
                     debug_log(f"No task available for {agent_name}")
                     continue
