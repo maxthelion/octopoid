@@ -47,6 +47,9 @@ export interface Task {
   lease_expires_at?: string | null
   version: number  // Optimistic locking
 
+  // Task classification
+  type?: string | null  // Task type (e.g. "product", "infrastructure", "hotfix")
+
   // Enhanced features
   needs_breakdown?: boolean | null  // For breakdown agent
   review_round?: number | null      // For multi-check gatekeeper
@@ -61,6 +64,7 @@ export interface CreateTaskRequest {
   priority?: TaskPriority
   complexity?: TaskComplexity
   role?: TaskRole
+  type?: string
   branch?: string
   blocked_by?: string
   project_id?: string
@@ -72,6 +76,7 @@ export interface UpdateTaskRequest {
   priority?: TaskPriority
   complexity?: TaskComplexity
   role?: TaskRole
+  type?: string
   branch?: string
   blocked_by?: string
   claimed_by?: string

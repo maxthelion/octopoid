@@ -141,9 +141,9 @@ tasksRoute.post('/', async (c) => {
   const result = await execute(
     db,
     `INSERT INTO tasks (
-      id, file_path, title, queue, priority, complexity, role, branch,
+      id, file_path, title, queue, priority, complexity, role, type, branch,
       blocked_by, project_id, auto_accept, created_at, updated_at, version
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'), 1)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'), 1)`,
     body.id,
     body.file_path,
     body.title || body.id,
@@ -151,6 +151,7 @@ tasksRoute.post('/', async (c) => {
     body.priority || 'P2',
     body.complexity || null,
     body.role || null,
+    body.type || null,
     body.branch || 'main',
     body.blocked_by || null,
     body.project_id || null,
@@ -186,6 +187,7 @@ tasksRoute.patch('/:id', async (c) => {
     'priority',
     'complexity',
     'role',
+    'type',
     'branch',
     'blocked_by',
     'claimed_by',

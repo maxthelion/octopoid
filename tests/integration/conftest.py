@@ -68,7 +68,7 @@ def _cleanup_test_tasks(sdk):
             if any(task_id.startswith(prefix) for prefix in [
                 'test-', 'lifecycle-', 'race-', 'mock-', 'qu-',
                 'wrong-queue-', 'unclaimed-', 'lease-', 'multi-', 'reject-',
-                'claim-', 'not-', 'debug-'  # Added claim-, not-, debug-
+                'claim-', 'not-', 'debug-', 'hooks-',
             ]):
                 try:
                     sdk.tasks.delete(task_id)

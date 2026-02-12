@@ -41,13 +41,14 @@ tests/integration/
 ├── fixtures/                  # Test data fixtures
 ├── conftest.py               # Pytest fixtures and config
 ├── test_api_server.py        # API endpoint tests
+├── test_hooks.py             # Hooks system and task type tests
 ├── test_task_lifecycle.py    # Task lifecycle and state machine tests
 └── run_tests.sh              # Main test runner
 ```
 
 ## Test Suites
 
-**Total: 27 tests, all passing ✅**
+**Total: 41 tests, all passing ✅**
 
 ### 1. API Server Tests (`test_api_server.py`) - 17 tests
 
@@ -70,7 +71,29 @@ tests/integration/
 - Duplicate task detection
 - Task creation with metadata
 
-### 2. Task Lifecycle Tests (`test_task_lifecycle.py`) - 10 tests
+### 2. Hooks System Tests (`test_hooks.py`) - 14 tests
+
+**Task Type API (5 tests)**
+- Create task with type field
+- Create task without type (null)
+- Type persists on read
+- Update task type
+- Type survives full lifecycle (claim → submit → accept)
+
+**Hook Resolution with Config (4 tests)**
+- Resolve hooks from project config.yaml
+- Type-specific hooks override project-level
+- Unknown type falls through to project hooks
+- No config uses defaults (just create_pr)
+
+**Hook Execution (5 tests)**
+- Rebase skips when up to date
+- run_tests detects pytest from real directory
+- Full pipeline resolved from config
+- Pipeline fail-fast (failed hook stops execution)
+- Pipeline uses type-specific hooks
+
+### 3. Task Lifecycle Tests (`test_task_lifecycle.py`) - 10 tests
 
 **Basic Lifecycle (3 tests)**
 - Full lifecycle: create → claim → submit → accept → done

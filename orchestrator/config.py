@@ -412,3 +412,79 @@ def get_pre_checkers() -> list[dict[str, Any]]:
     """Get list of configured pre-check agents."""
     agents = get_agents()
     return [a for a in agents if a.get("role") in ("pre_check", "validator")]
+
+
+# =============================================================================
+# Hooks Configuration
+# =============================================================================
+
+# Default hooks when nothing is configured
+DEFAULT_HOOKS_CONFIG: dict[str, list[str]] = {
+    "before_submit": ["create_pr"],
+}
+
+
+def _load_project_config() -> dict[str, Any]:
+    """Load .octopoid/config.yaml from the parent project.
+
+    Returns:
+        Parsed YAML config dict, or empty dict if not found
+    """
+    try:
+        config_path = find_parent_project() / ".octopoid" / "config.yaml"
+        if not config_path.exists():
+            return {}
+        with open(config_path) as f:
+            return yaml.safe_load(f) or {}
+    except (RuntimeError, IOError):
+        return {}
+
+
+def get_hooks_config() -> dict[str, list[str]]:
+    """Get project-level hooks configuration.
+
+    Reads the top-level ``hooks:`` key from .octopoid/config.yaml.
+
+    Returns:
+        Dict mapping hook point names to ordered lists of hook names.
+        Falls back to DEFAULT_HOOKS_CONFIG if not configured.
+    """
+    config = _load_project_config()
+    hooks = config.get("hooks")
+    if hooks and isinstance(hooks, dict):
+        return hooks
+    return DEFAULT_HOOKS_CONFIG.copy()
+
+
+def get_task_types_config() -> dict[str, Any]:
+    """Get task type definitions from .octopoid/config.yaml.
+
+    Returns:
+        Dict mapping type name to its config (hooks, agents, etc).
+        Empty dict if not configured.
+    """
+    config = _load_project_config()
+    types = config.get("task_types")
+    if types and isinstance(types, dict):
+        return types
+    return {}
+
+
+def get_hooks_for_type(task_type: str) -> dict[str, list[str]] | None:
+    """Get hooks configuration for a specific task type.
+
+    Args:
+        task_type: The task type name (e.g. "product", "infrastructure")
+
+    Returns:
+        Dict mapping hook point names to hook name lists, or None if
+        the type has no hooks defined.
+    """
+    types = get_task_types_config()
+    type_config = types.get(task_type)
+    if not type_config or not isinstance(type_config, dict):
+        return None
+    hooks = type_config.get("hooks")
+    if hooks and isinstance(hooks, dict):
+        return hooks
+    return None
