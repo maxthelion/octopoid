@@ -370,3 +370,45 @@ class TestInitModeSelection:
 
         output = capsys.readouterr().out
         assert "local mode" in output.lower()
+
+    def test_default_mode_shown_in_output(self, mock_project, capsys):
+        """Running init without mode flag shows 'local' mode."""
+        project_dir, submodule = mock_project
+
+        with patch("orchestrator.init.find_parent_project", return_value=project_dir):
+            with patch("orchestrator.init.get_orchestrator_submodule", return_value=submodule):
+                init_orchestrator(
+                    install_skills=False,
+                    update_gitignore=False,
+                    non_interactive=True,
+                )
+
+        output = capsys.readouterr().out
+        assert "Mode:    local" in output
+
+    def test_explicit_local_mode_shown(self, mock_project, capsys):
+        """Passing mode='local' explicitly shows in output."""
+        project_dir, submodule = mock_project
+
+        with patch("orchestrator.init.find_parent_project", return_value=project_dir):
+            with patch("orchestrator.init.get_orchestrator_submodule", return_value=submodule):
+                init_orchestrator(
+                    install_skills=False,
+                    update_gitignore=False,
+                    non_interactive=True,
+                    mode="local",
+                )
+
+        output = capsys.readouterr().out
+        assert "Mode:    local" in output
+
+    def test_help_text_describes_modes(self, capsys):
+        """--help includes mode documentation."""
+        with patch("sys.argv", ["init.py", "--help"]):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+
+        assert exc_info.value.code == 0
+        output = capsys.readouterr().out
+        assert "Local mode" in output
+        assert "Remote mode" in output
