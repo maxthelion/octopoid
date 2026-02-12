@@ -178,48 +178,40 @@ def get_task_branch(task: dict) -> str:
 
 
 def create_task_worktree(task: dict) -> Path:
-    """Create an ephemeral worktree for a task.
+    """Ensure a worktree exists for a task, reusing any existing one.
 
-    The worktree is created from origin, not local branches, ensuring
-    freshness. If the target branch doesn't exist on origin, it's created
-    from origin/main.
+    If a valid worktree already exists for this task, returns it as-is
+    so that partial work (commits, uncommitted changes) is preserved.
+    Only creates a new worktree if one doesn't exist.
 
     Args:
         task: Task dictionary (must include 'id' and optionally project_id, breakdown_id, role)
 
     Returns:
-        Path to the created worktree
+        Path to the worktree
 
     Raises:
         subprocess.CalledProcessError: If git commands fail
     """
-    import shutil
-
     parent_repo = find_parent_project()
     task_id = task["id"]
     worktree_path = get_task_worktree_path(task_id)
     branch = get_task_branch(task)
 
-    # Remove any existing worktree at this path (shouldn't happen, but be safe)
+    # Reuse existing valid worktree
+    if worktree_path.exists() and (worktree_path / ".git").exists():
+        return worktree_path
+
+    # Clean up broken directory (no .git — not a valid worktree)
     if worktree_path.exists():
-        if (worktree_path / ".git").exists():
-            # Valid worktree exists — remove via git first
-            try:
-                run_git(["worktree", "remove", "--force", str(worktree_path)], cwd=parent_repo, check=False)
-            except subprocess.CalledProcessError:
-                pass
-        # Remove directory if it still exists
-        if worktree_path.exists():
-            shutil.rmtree(worktree_path)
+        import shutil
+        shutil.rmtree(worktree_path)
 
     # Create parent directory
     worktree_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Fetch latest from origin
-    try:
-        run_git(["fetch", "origin"], cwd=parent_repo, check=False)
-    except subprocess.CalledProcessError:
-        pass  # May fail if offline
+    run_git(["fetch", "origin"], cwd=parent_repo, check=False)
 
     # Check if branch exists on origin
     result = run_git(
@@ -228,6 +220,16 @@ def create_task_worktree(task: dict) -> Path:
         check=False,
     )
     branch_exists_on_origin = bool(result.stdout.strip())
+
+    # Delete stale local branch if it exists (left over from previous failed runs
+    # where the worktree was cleaned up but the branch wasn't)
+    local_check = run_git(
+        ["rev-parse", "--verify", branch],
+        cwd=parent_repo,
+        check=False,
+    )
+    if local_check.returncode == 0:
+        run_git(["branch", "-D", branch], cwd=parent_repo, check=False)
 
     if branch_exists_on_origin:
         # Pull existing branch from origin
