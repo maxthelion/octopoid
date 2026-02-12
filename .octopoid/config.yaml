@@ -27,6 +27,8 @@ database:
 hooks:
   before_submit:
     - create_pr
+  before_merge:
+    - merge_pr
 
 # Task type definitions — override hooks and agent assignment per type
 # task_types:

@@ -2563,9 +2563,10 @@ def approve_and_merge(
     task_id: str,
     merge_method: str = "merge",
 ) -> dict[str, Any]:
-    """Approve a task and merge its PR.
+    """Approve a task and merge its PR via BEFORE_MERGE hooks.
 
-    Moves the task to done and merges the associated PR using gh CLI.
+    Runs configured BEFORE_MERGE hooks (default: merge_pr) then accepts
+    the task via the SDK.  If hooks fail, the task is NOT accepted.
 
     Args:
         task_id: Task identifier
@@ -2574,57 +2575,54 @@ def approve_and_merge(
     Returns:
         Dict with result info (merged, pr_url, error)
     """
-    if not is_db_enabled():
-        raise RuntimeError("approve_and_merge requires database mode")
+    from .hooks import HookContext, HookPoint, HookStatus, run_hooks
 
-    from . import db
-
-    task = db.get_task(task_id)
+    sdk = get_sdk()
+    task = sdk.tasks.get(task_id)
     if not task:
         return {"error": f"Task {task_id} not found"}
 
     pr_number = task.get("pr_number")
     pr_url = task.get("pr_url")
 
-    result = {"task_id": task_id, "merged": False, "pr_url": pr_url}
+    result: dict[str, Any] = {"task_id": task_id, "merged": False, "pr_url": pr_url}
 
-    # Try to merge the PR if we have a PR number
-    if pr_number:
-        try:
-            merge_cmd = [
-                "gh", "pr", "merge", str(pr_number),
-                f"--{merge_method}",
-                "--delete-branch",
-            ]
-            merge_result = subprocess.run(
-                merge_cmd,
-                capture_output=True,
-                text=True,
-                timeout=60,
-            )
+    # Build hook context
+    ctx = HookContext(
+        task_id=task_id,
+        task_title=task.get("title", ""),
+        task_path=task.get("file_path", ""),
+        task_type=task.get("type"),
+        branch_name=task.get("branch_name", ""),
+        base_branch=task.get("base_branch", "main"),
+        worktree=Path(task.get("file_path", "")).parent,
+        agent_name=task.get("assigned_to", ""),
+        extra={
+            "pr_number": pr_number,
+            "pr_url": pr_url,
+            "merge_method": merge_method,
+        },
+    )
 
-            if merge_result.returncode == 0:
-                result["merged"] = True
-            else:
-                result["merge_error"] = merge_result.stderr
-        except (subprocess.TimeoutExpired, subprocess.SubprocessError) as e:
-            result["merge_error"] = str(e)
+    # Run BEFORE_MERGE hooks (e.g. merge_pr)
+    all_ok, hook_results = run_hooks(HookPoint.BEFORE_MERGE, ctx)
 
-    # Move task to done regardless of merge result.
-    # Always use db.accept_completion(task_id) directly — the stored file_path
-    # can be stale (e.g. still pointing to incoming/ when the file has moved
-    # to provisional/), causing path-based lookup to silently fail.
-    db.accept_completion(task_id, accepted_by="human")
+    if not all_ok:
+        last = hook_results[-1] if hook_results else None
+        error_msg = last.message if last else "BEFORE_MERGE hooks failed"
+        result["error"] = error_msg
+        return result
 
-    # Move the task file to done/ if we can find it
-    task_file_path = task.get("file_path", "")
-    _move_task_file_to_done(task_id, task_file_path)
+    # Check hook results for merge info
+    for hr in hook_results:
+        if hr.status == HookStatus.SUCCESS and hr.context.get("pr_number"):
+            result["merged"] = True
+            break
 
-    db.add_history_event(task_id, "approved_and_merged", details=f"merged={result['merged']}")
+    # Accept the task via SDK
+    sdk.tasks.accept(task_id, accepted_by="scheduler")
 
-    # Clean up review tracking
-    from .review_utils import cleanup_review
-    cleanup_review(task_id)
+    cleanup_task_notes(task_id)
 
     return result
 

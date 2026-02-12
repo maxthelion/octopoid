@@ -5,12 +5,13 @@ Hooks are resolved per task type, with fallback to project defaults.
 
 Hook points:
 - BEFORE_SUBMIT: Runs agent-side before submitting completed work
-- BEFORE_MERGE: Runs scheduler-side before merging (future, phase 2)
+- BEFORE_MERGE: Runs scheduler-side before merging/accepting a task
 
 Built-in hooks:
 - rebase_on_main: Fetch and rebase on base branch
 - create_pr: Push branch and create a pull request
 - run_tests: Detect and run test suite
+- merge_pr: Merge a pull request via gh CLI
 """
 
 import subprocess
@@ -275,6 +276,60 @@ def hook_run_tests(ctx: HookContext) -> HookResult:
         )
 
 
+def hook_merge_pr(ctx: HookContext) -> HookResult:
+    """Merge a pull request via gh CLI.
+
+    Reads ``pr_number`` and optional ``merge_method`` from ``ctx.extra``.
+    Returns SKIP if no ``pr_number`` is present (allows tasks without PRs
+    to pass through).
+    """
+    pr_number = ctx.extra.get("pr_number")
+    if not pr_number:
+        return HookResult(
+            status=HookStatus.SKIP,
+            message="No pr_number in context, skipping merge",
+        )
+
+    merge_method = ctx.extra.get("merge_method", "merge")
+    merge_cmd = [
+        "gh", "pr", "merge", str(pr_number),
+        f"--{merge_method}",
+        "--delete-branch",
+    ]
+
+    try:
+        result = subprocess.run(
+            merge_cmd,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if result.returncode == 0:
+            return HookResult(
+                status=HookStatus.SUCCESS,
+                message=f"Merged PR #{pr_number}",
+                context={
+                    "pr_number": pr_number,
+                    "pr_url": ctx.extra.get("pr_url", ""),
+                },
+            )
+        else:
+            return HookResult(
+                status=HookStatus.FAILURE,
+                message=f"Failed to merge PR #{pr_number}: {result.stderr}",
+            )
+    except subprocess.TimeoutExpired:
+        return HookResult(
+            status=HookStatus.FAILURE,
+            message=f"Timeout merging PR #{pr_number}",
+        )
+    except subprocess.SubprocessError as e:
+        return HookResult(
+            status=HookStatus.FAILURE,
+            message=f"Error merging PR #{pr_number}: {e}",
+        )
+
+
 # ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
@@ -283,10 +338,12 @@ BUILTIN_HOOKS: dict[str, HookFn] = {
     "rebase_on_main": hook_rebase_on_main,
     "create_pr": hook_create_pr,
     "run_tests": hook_run_tests,
+    "merge_pr": hook_merge_pr,
 }
 
 DEFAULT_HOOKS: dict[str, list[str]] = {
     "before_submit": ["create_pr"],
+    "before_merge": ["merge_pr"],
 }
 
 
