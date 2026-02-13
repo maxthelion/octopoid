@@ -305,6 +305,25 @@ class TestTaskLifecycle:
 
             assert result["queue"] == "done"
 
+    def test_accept_completion_with_execution_notes(self, initialized_db):
+        """Test accepting a task directly with execution notes (bypassing provisional)."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, claim_task, accept_completion, get_task
+
+            create_task(task_id="accept_notes", file_path="/accept_notes.md")
+            claim_task()
+
+            # Directly accept (e.g., from breakdown, review, test roles)
+            notes = "Breakdown file created. Ready for review."
+            result = accept_completion("accept_notes", execution_notes=notes)
+
+            assert result["queue"] == "done"
+            assert result["execution_notes"] == notes
+
+            # Verify it's persisted
+            task = get_task("accept_notes")
+            assert task["execution_notes"] == notes
+
     def test_reject_completion(self, initialized_db):
         """Test rejecting a provisional task."""
         with patch('orchestrator.db.get_database_path', return_value=initialized_db):

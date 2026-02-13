@@ -309,6 +309,50 @@ class BaseRole(ABC):
         """
         return self.shared_dir / "queue" / subdir
 
+    def _generate_execution_notes(self, **kwargs) -> str:
+        """Generate a concise execution summary for the task.
+
+        This is a base implementation that subclasses can override.
+        Subclasses should extract relevant information from kwargs.
+
+        Args:
+            **kwargs: Role-specific information (e.g., commits_made, turns_used, stdout)
+
+        Returns:
+            Concise summary string for execution_notes field
+        """
+        parts = []
+
+        # Extract common fields
+        turns_used = kwargs.get("turns_used")
+        if turns_used is not None:
+            parts.append(f"Used {turns_used} turns")
+
+        # Try to extract summary from stdout if provided
+        stdout = kwargs.get("stdout", "")
+        if stdout:
+            # Get last 300 chars for summary extraction
+            tail = stdout[-300:] if len(stdout) > 300 else stdout
+            lines = tail.strip().split('\n')
+
+            # Look for the last non-empty line as a summary
+            for line in reversed(lines):
+                line = line.strip()
+                if line and len(line) > 15 and len(line) < 150:
+                    parts.append(line)
+                    break
+
+        # If we have something, join it
+        if parts:
+            notes = ". ".join(parts) + "."
+            # Truncate if too long
+            if len(notes) > 450:
+                notes = notes[:450] + "..."
+            return notes
+
+        # Default fallback
+        return f"{self.agent_role.capitalize()} task completed"
+
     @abstractmethod
     def run(self) -> int:
         """Execute the role's main logic.

@@ -240,10 +240,12 @@ Output ONLY the JSON array:
             )
 
             # Complete the breakdown task
+            execution_notes = f"Created breakdown file: {breakdown_file.name}. Ready for review."
             complete_task(
                 task_path,
                 f"Breakdown ready for review: {breakdown_file.name}\n"
-                f"Review with: /approve-breakdown {project_id or breakdown_file.stem}"
+                f"Review with: /approve-breakdown {project_id or breakdown_file.stem}",
+                execution_notes=execution_notes
             )
             self.log(f"Wrote breakdown file: {breakdown_file}")
 

@@ -173,6 +173,31 @@ class TestCompleteTask:
                 assert "COMPLETED_AT:" in content
                 assert "Task completed successfully" in content
 
+    def test_complete_task_with_execution_notes_file_based(self, mock_orchestrator_dir, sample_task_file):
+        """Test completing a task with execution notes in file-based mode."""
+        # First move to claimed
+        claimed_dir = mock_orchestrator_dir / "shared" / "queue" / "claimed"
+        claimed_path = claimed_dir / sample_task_file.name
+        sample_task_file.rename(claimed_path)
+
+        with patch('orchestrator.queue_utils.is_db_enabled', return_value=False):
+            with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "shared" / "queue"):
+                from orchestrator.queue_utils import complete_task
+
+                result_path = complete_task(
+                    claimed_path,
+                    result="Task completed successfully",
+                    execution_notes="Created 2 commits. Used 15 turns."
+                )
+
+                assert "done" in str(result_path)
+                assert result_path.exists()
+
+                content = result_path.read_text()
+                assert "COMPLETED_AT:" in content
+                assert "EXECUTION_NOTES: Created 2 commits. Used 15 turns." in content
+                assert "Task completed successfully" in content
+
 
 class TestSubmitCompletion:
     """Tests for submit_completion function."""

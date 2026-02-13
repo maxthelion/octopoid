@@ -90,7 +90,16 @@ Remember:
                 return exit_code
 
             # Complete the task with review results
-            complete_task(task_path, f"Review complete.\n\n{stdout[-2000:]}")
+            turns_used = self.read_tool_count()
+            execution_notes = self._generate_execution_notes(
+                turns_used=turns_used,
+                stdout=stdout,
+            )
+            complete_task(
+                task_path,
+                f"Review complete.\n\n{stdout[-2000:]}",
+                execution_notes=execution_notes
+            )
             self.log("Review task complete")
             return 0
 

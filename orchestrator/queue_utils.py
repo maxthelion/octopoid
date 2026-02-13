@@ -456,7 +456,7 @@ def claim_task(
     return None
 
 
-def complete_task(task_path: Path | str, result: str | None = None) -> Path:
+def complete_task(task_path: Path | str, result: str | None = None, execution_notes: str | None = None) -> Path:
     """Move a task to the done queue.
 
     Note: In DB mode with pre-check enabled, use submit_completion() instead
@@ -465,6 +465,7 @@ def complete_task(task_path: Path | str, result: str | None = None) -> Path:
     Args:
         task_path: Path to the claimed task file
         result: Optional result summary to append
+        execution_notes: Optional concise summary of what was done (for database field)
 
     Returns:
         New path in done queue
@@ -477,7 +478,7 @@ def complete_task(task_path: Path | str, result: str | None = None) -> Path:
         db_task = db.get_task_by_path(str(task_path))
         if db_task:
             task_id = db_task["id"]
-            db.accept_completion(task_id)
+            db.accept_completion(task_id, execution_notes=execution_notes)
 
     done_dir = get_queue_subdir("done")
     dest = done_dir / task_path.name
@@ -485,6 +486,8 @@ def complete_task(task_path: Path | str, result: str | None = None) -> Path:
     # Append completion info
     with open(task_path, "a") as f:
         f.write(f"\nCOMPLETED_AT: {datetime.now().isoformat()}\n")
+        if execution_notes:
+            f.write(f"EXECUTION_NOTES: {execution_notes}\n")
         if result:
             f.write(f"\n## Result\n{result}\n")
 

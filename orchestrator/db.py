@@ -1092,7 +1092,7 @@ def submit_completion(
     )
 
 
-def accept_completion(task_id: str, accepted_by: str | None = None) -> dict[str, Any] | None:
+def accept_completion(task_id: str, accepted_by: str | None = None, execution_notes: str | None = None) -> dict[str, Any] | None:
     """Accept a provisional task and move it to done.
 
     Side effects (guaranteed by update_task_queue):
@@ -1103,17 +1103,25 @@ def accept_completion(task_id: str, accepted_by: str | None = None) -> dict[str,
     Args:
         task_id: Task identifier
         accepted_by: Name of the agent or system that accepted (e.g. "scheduler", "gatekeeper", "human")
+        execution_notes: Optional summary of what was done (only set if not already populated)
 
     Returns:
         Updated task or None if not found
     """
     now = datetime.now().isoformat()
+    kwargs = {
+        "completed_at": now,
+        "history_event": "accepted",
+        "history_agent": accepted_by,
+    }
+    # Only set execution_notes if provided
+    if execution_notes is not None:
+        kwargs["execution_notes"] = execution_notes
+
     return update_task_queue(
         task_id,
         "done",
-        completed_at=now,
-        history_event="accepted",
-        history_agent=accepted_by,
+        **kwargs,
     )
 
 
