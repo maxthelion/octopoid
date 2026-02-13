@@ -246,9 +246,19 @@ def create_task_worktree(task: dict) -> Path:
             cwd=parent_repo,
         )
     else:
-        # Create new branch from origin/main
+        # Create new branch from the task's base branch (falls back to main)
+        base_branch = task.get("branch") or get_main_branch()
+        start_point = f"origin/{base_branch}"
+        # Verify the start point exists, fall back to origin/main
+        verify = run_git(
+            ["rev-parse", "--verify", start_point],
+            cwd=parent_repo,
+            check=False,
+        )
+        if verify.returncode != 0:
+            start_point = "origin/main"
         run_git(
-            ["worktree", "add", "-b", branch, str(worktree_path), "origin/main"],
+            ["worktree", "add", "-b", branch, str(worktree_path), start_point],
             cwd=parent_repo,
         )
 
