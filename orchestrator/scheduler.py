@@ -839,7 +839,7 @@ def invoke_claude(task_dir: Path, agent_config: dict) -> int:
     prompt = prompt_path.read_text()
 
     model = agent_config.get("model", "sonnet")
-    max_turns = agent_config.get("max_turns", 50)
+    max_turns = agent_config.get("max_turns", 200)
 
     cmd = [
         "claude",
