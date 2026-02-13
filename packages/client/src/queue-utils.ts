@@ -42,6 +42,7 @@ export interface TaskMetadata {
   created?: string
   created_by?: string
   blocked_by?: string
+  breakdown_depth?: number
   claimed_by?: string
   claimed_at?: string
   submitted_at?: string
@@ -159,6 +160,16 @@ export function parseTaskContent(filePath: string, content: string): TaskFile {
   metadata.created = extractField('CREATED')
   metadata.created_by = extractField('CREATED_BY')
   metadata.blocked_by = extractField('BLOCKED_BY')
+
+  // Parse breakdown_depth as number
+  const breakdownDepthStr = extractField('BREAKDOWN_DEPTH')
+  if (breakdownDepthStr) {
+    const depth = parseInt(breakdownDepthStr, 10)
+    if (!isNaN(depth)) {
+      metadata.breakdown_depth = depth
+    }
+  }
+
   metadata.claimed_by = extractField('CLAIMED_BY')
   metadata.claimed_at = extractField('CLAIMED_AT')
   metadata.submitted_at = extractField('SUBMITTED_AT')
@@ -252,6 +263,7 @@ export interface CreateTaskFileOptions {
   description?: string
   created_by?: string
   blocked_by?: string
+  breakdown_depth?: number
   project_id?: string
   checks?: string[]
 }
@@ -269,6 +281,7 @@ export function createTaskFile(
     description = '',
     created_by,
     blocked_by,
+    breakdown_depth,
     project_id,
     checks = [],
   } = options
@@ -291,6 +304,7 @@ export function createTaskFile(
   lines.push(`CREATED: ${new Date().toISOString()}`)
   if (created_by) lines.push(`CREATED_BY: ${created_by}`)
   if (blocked_by) lines.push(`BLOCKED_BY: ${blocked_by}`)
+  if (breakdown_depth !== undefined) lines.push(`BREAKDOWN_DEPTH: ${breakdown_depth}`)
   if (project_id) lines.push(`PROJECT_ID: ${project_id}`)
   if (checks.length > 0) lines.push(`CHECKS: ${checks.join(', ')}`)
 

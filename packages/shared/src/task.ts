@@ -63,6 +63,7 @@ export interface Task {
 
   // Enhanced features
   needs_breakdown?: boolean | null  // For breakdown agent
+  breakdown_depth?: number | null   // Track depth in breakdown tree to prevent infinite loops
   review_round?: number | null      // For multi-check gatekeeper
   execution_notes?: string | null   // Agent execution summary
 }
@@ -78,6 +79,7 @@ export interface CreateTaskRequest {
   type?: string
   branch?: string
   blocked_by?: string
+  breakdown_depth?: number
   project_id?: string
   auto_accept?: boolean
 }
