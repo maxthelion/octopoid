@@ -1491,7 +1491,7 @@ def run_scheduler() -> None:
 
     # Check global pause flag
     if is_system_paused():
-        print("System is paused (set 'paused: false' in agents.yaml to resume)")
+        print("System is paused (rm .octopoid/PAUSE or set 'paused: false' in agents.yaml)")
         debug_log("System is paused globally")
         return
 

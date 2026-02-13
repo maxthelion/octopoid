@@ -292,25 +292,78 @@ launchctl unload ~/Library/LaunchAgents/com.octopoid.scheduler.plist
 Add a one-liner to your crontab (`crontab -e`):
 
 ```cron
-* * * * * cd /path/to/your/project && ANTHROPIC_API_KEY="sk-ant-..." .orchestrator/venv/bin/orchestrator-scheduler --debug
+* * * * * cd /path/to/your/project && ANTHROPIC_API_KEY="sk-ant-..." orchestrator/venv/bin/orchestrator-scheduler --debug
 ```
 
 This fires every 60 seconds. The scheduler lock ensures that if a tick takes longer than a minute, the next invocation exits immediately rather than overlapping.
 
-### Create Tasks
+#### Pausing / Resuming
+
+The scheduler checks for a `PAUSE` file on each tick. No need to unload launchd or stop cron.
 
 ```bash
-# Enqueue a task
+# Pause (scheduler skips all ticks while paused)
+./scripts/pause.sh on
+
+# Resume
+./scripts/pause.sh off
+
+# Toggle
+./scripts/pause.sh
+
+# Check current state
+./scripts/pause.sh status
+```
+
+Running agents are not killed when you pause — they finish their current task. Pausing just prevents new agents from being spawned.
+
+### CLI Commands
+
+| Command | Description | Key Flags |
+|---------|-------------|-----------|
+| `octopoid tasks` | List tasks | `--queue` / `-q` filter by queue |
+| `octopoid task <id>` | Show task detail | `--verbose` / `-v` show all fields |
+| `octopoid requeue <id>` | Move a claimed/failed task back to incoming | |
+| `octopoid cancel <id>` | Delete a task | `--force` / `-f` skip confirmation |
+| `octopoid worktrees` | List task worktrees | |
+| `octopoid worktrees-clean` | Prune stale task worktrees | `--dry-run` preview only |
+
+```bash
+# Create a task
 octopoid enqueue "Add user authentication" \
   --role implement \
   --priority P1 \
   --complexity M
 
-# List tasks
-octopoid list --queue incoming
+# List incoming tasks
+octopoid tasks --queue incoming
 
-# Show task details
-octopoid show task-123
+# Inspect a specific task
+octopoid task gh-8-2a4ad137 --verbose
+
+# Requeue a failed task for retry
+octopoid requeue gh-7-3b950eb4
+
+# Cancel a stuck or unwanted task
+octopoid cancel fae4ad46
+
+# Clean up orphaned worktrees
+octopoid worktrees-clean --dry-run
+```
+
+### Dashboard
+
+A terminal UI for monitoring tasks, agents, PRs, and queue state. Reads the server URL from `.octopoid/config.yaml` automatically.
+
+```bash
+# Launch dashboard (reads server from config.yaml)
+python octopoid-dash.py
+
+# Or override the server URL
+python octopoid-dash.py --server http://localhost:8787
+
+# Demo mode (no server needed)
+python octopoid-dash.py --demo
 ```
 
 ### Manage Drafts
