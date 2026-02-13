@@ -94,3 +94,13 @@ export type {
   BatchOperationRequest,
   BatchOperationResponse,
 } from './api.js'
+
+// Debug and observability types
+export type {
+  TaskDebugInfo,
+  QueueDebugInfo,
+  AgentActivity,
+  OrchestratorHealth,
+  AgentDebugInfo,
+  SystemStatusInfo,
+} from './debug.js'

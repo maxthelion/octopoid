@@ -171,6 +171,193 @@ def cmd_worktrees_clean(args: argparse.Namespace) -> None:
         print(f"\n{cleaned} worktree(s) removed.")
 
 
+def cmd_debug_task(args: argparse.Namespace) -> None:
+    """Show debug information for a specific task."""
+    sdk = get_sdk()
+    try:
+        debug_info = sdk.debug.task(args.id)
+    except Exception as e:
+        print(f"Failed to get debug info for {args.id}: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Task: {debug_info.get('task_id', args.id)}")
+    print(f"  State:              {debug_info.get('state', 'unknown')}")
+
+    if debug_info.get('lease_expires_at'):
+        print(f"  Lease Expires:      {debug_info.get('lease_expires_in', 'N/A')} ({debug_info.get('lease_expires_at', 'N/A')})")
+
+    blocking = debug_info.get('blocking', {})
+    print(f"\nBlocking:")
+    print(f"  Is Blocked:         {blocking.get('is_blocked', False)}")
+    print(f"  Blocked By:         {blocking.get('blocked_by') or 'none'}")
+    blocks = blocking.get('blocks', [])
+    print(f"  Blocks:             {', '.join(blocks) if blocks else 'none'}")
+
+    burnout = debug_info.get('burnout', {})
+    print(f"\nBurnout:")
+    print(f"  Is Burned Out:      {burnout.get('is_burned_out', False)}")
+    print(f"  Turns Used:         {burnout.get('turns_used', 0)}")
+    print(f"  Commits Count:      {burnout.get('commits_count', 0)}")
+    print(f"  Threshold:          {burnout.get('threshold', 0)}")
+
+    gatekeeper = debug_info.get('gatekeeper', {})
+    print(f"\nGatekeeper:")
+    print(f"  Review Round:       {gatekeeper.get('review_round', 0)}")
+    print(f"  Max Rounds:         {gatekeeper.get('max_rounds', 3)}")
+    print(f"  Rejection Count:    {gatekeeper.get('rejection_count', 0)}")
+
+    attempts = debug_info.get('attempts', {})
+    print(f"\nAttempts:")
+    print(f"  Attempt Count:      {attempts.get('attempt_count', 0)}")
+    if attempts.get('last_claimed_at'):
+        print(f"  Last Claimed:       {attempts.get('last_claimed_at')}")
+    if attempts.get('last_submitted_at'):
+        print(f"  Last Submitted:     {attempts.get('last_submitted_at')}")
+
+
+def cmd_debug_queues(args: argparse.Namespace) -> None:
+    """Show debug information for all queues."""
+    sdk = get_sdk()
+    try:
+        debug_info = sdk.debug.queues()
+    except Exception as e:
+        print(f"Failed to get queue debug info: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    queues = debug_info.get('queues', {})
+    print("Queue Status:")
+    print()
+
+    for queue_name in ['incoming', 'claimed', 'provisional', 'done', 'failed', 'rejected', 'blocked']:
+        queue_info = queues.get(queue_name)
+        if not queue_info:
+            continue
+
+        count = queue_info.get('count', 0)
+        print(f"  {queue_name:15s}  {count:4d} task(s)", end='')
+
+        oldest = queue_info.get('oldest_task')
+        if oldest:
+            print(f"  (oldest: {oldest.get('id', 'unknown')}, age: {oldest.get('age', 'unknown')})")
+        else:
+            print()
+
+    claimed = debug_info.get('claimed', {})
+    claimed_tasks = claimed.get('tasks', [])
+    if claimed_tasks:
+        print(f"\nClaimed Tasks ({len(claimed_tasks)}):")
+        for task in claimed_tasks:
+            print(f"  {task.get('id', 'unknown'):30s}  claimed by: {task.get('claimed_by', 'unknown'):20s}  "
+                  f"for: {task.get('claimed_for', 'unknown'):8s}  expires in: {task.get('lease_expires_in', 'unknown')}")
+
+
+def cmd_debug_agents(args: argparse.Namespace) -> None:
+    """Show debug information for all agents and orchestrators."""
+    sdk = get_sdk()
+    try:
+        debug_info = sdk.debug.agents()
+    except Exception as e:
+        print(f"Failed to get agent debug info: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    summary = debug_info.get('summary', {})
+    print("Agent Summary:")
+    print(f"  Total Orchestrators:    {summary.get('total_orchestrators', 0)}")
+    print(f"  Active Orchestrators:   {summary.get('active_orchestrators', 0)}")
+    print(f"  Total Agents:           {summary.get('total_agents', 0)}")
+    print(f"  Total Claimed Tasks:    {summary.get('total_claimed_tasks', 0)}")
+    print()
+
+    orchestrators = debug_info.get('orchestrators', [])
+    if orchestrators:
+        print("Orchestrators:")
+        for orch in orchestrators:
+            print(f"  {orch.get('orchestrator_id', 'unknown'):30s}  "
+                  f"status: {orch.get('status', 'unknown'):8s}  "
+                  f"cluster: {orch.get('cluster', 'unknown'):10s}  "
+                  f"tasks: {orch.get('current_tasks', 0)}/{orch.get('total_completed', 0)}")
+            if orch.get('last_heartbeat_at'):
+                print(f"    Last heartbeat: {orch.get('heartbeat_age', 'unknown')} ago ({orch.get('last_heartbeat_at')})")
+        print()
+
+    agents = debug_info.get('agents', [])
+    if agents:
+        print("Agents:")
+        for agent in agents:
+            stats = agent.get('stats', {})
+            success_rate = stats.get('success_rate', 0.0) * 100
+            print(f"  {agent.get('agent_name', 'unknown'):20s}  "
+                  f"role: {agent.get('role', 'unknown'):10s}  "
+                  f"success: {success_rate:.1f}%  "
+                  f"({stats.get('tasks_completed', 0)}/{stats.get('tasks_claimed', 0)} claimed)")
+
+            current = agent.get('current_task')
+            if current:
+                print(f"    Current: {current.get('id', 'unknown')} (claimed at {current.get('claimed_at', 'unknown')})")
+
+
+def cmd_debug_status(args: argparse.Namespace) -> None:
+    """Show comprehensive system status overview."""
+    sdk = get_sdk()
+    try:
+        status = sdk.debug.status()
+    except Exception as e:
+        print(f"Failed to get system status: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"System Status - {status.get('timestamp', 'unknown')}")
+    print("=" * 80)
+    print()
+
+    # Queue summary
+    queues = status.get('queues', {}).get('queues', {})
+    print("Queues:")
+    for queue_name in ['incoming', 'claimed', 'provisional', 'done', 'failed']:
+        queue_info = queues.get(queue_name, {})
+        count = queue_info.get('count', 0)
+        print(f"  {queue_name:15s}  {count:4d} task(s)")
+    print()
+
+    # Agent summary
+    agents = status.get('agents', {}).get('summary', {})
+    print("Agents:")
+    print(f"  Active Orchestrators:   {agents.get('active_orchestrators', 0)}")
+    print(f"  Total Agents:           {agents.get('total_agents', 0)}")
+    print(f"  Claimed Tasks:          {agents.get('total_claimed_tasks', 0)}")
+    print()
+
+    # Health metrics
+    health = status.get('health', {})
+    oldest = health.get('oldest_incoming_task')
+    if oldest:
+        print("Health:")
+        print(f"  Oldest Incoming Task:   {oldest.get('id', 'unknown')} (age: {oldest.get('age', 'unknown')})")
+
+    stuck = health.get('stuck_tasks', [])
+    if stuck:
+        print(f"  Stuck Tasks:            {len(stuck)}")
+        for task in stuck[:5]:  # Show first 5
+            print(f"    - {task.get('id', 'unknown'):30s}  {task.get('issue', 'unknown')}")
+
+    zombies = health.get('zombie_claims', [])
+    if zombies:
+        print(f"  Zombie Claims:          {len(zombies)}")
+        for task in zombies[:5]:  # Show first 5
+            print(f"    - {task.get('id', 'unknown'):30s}  claimed by {task.get('claimed_by', 'unknown')}")
+
+    if oldest or stuck or zombies:
+        print()
+
+    # Performance metrics
+    metrics = status.get('metrics', {})
+    print("Performance (24h):")
+    print(f"  Avg Time to Claim:      {metrics.get('avg_time_to_claim', 'N/A')}")
+    print(f"  Avg Time to Complete:   {metrics.get('avg_time_to_complete', 'N/A')}")
+    print(f"  Tasks Created:          {metrics.get('tasks_created_24h', 0)}")
+    print(f"  Tasks Completed:        {metrics.get('tasks_completed_24h', 0)}")
+    print(f"  Tasks Failed:           {metrics.get('tasks_failed_24h', 0)}")
+
+
 # ---------------------------------------------------------------------------
 # Argument parser
 # ---------------------------------------------------------------------------
@@ -212,6 +399,23 @@ def build_parser() -> argparse.ArgumentParser:
     p_wtc = sub.add_parser("worktrees-clean", help="Prune stale task worktrees")
     p_wtc.add_argument("--dry-run", action="store_true", help="Show what would be removed")
     p_wtc.set_defaults(func=cmd_worktrees_clean)
+
+    # debug task <id>
+    p_debug_task = sub.add_parser("debug-task", help="Show debug info for a task")
+    p_debug_task.add_argument("id", help="Task ID")
+    p_debug_task.set_defaults(func=cmd_debug_task)
+
+    # debug queues
+    p_debug_queues = sub.add_parser("debug-queues", help="Show debug info for all queues")
+    p_debug_queues.set_defaults(func=cmd_debug_queues)
+
+    # debug agents
+    p_debug_agents = sub.add_parser("debug-agents", help="Show debug info for agents")
+    p_debug_agents.set_defaults(func=cmd_debug_agents)
+
+    # debug status
+    p_debug_status = sub.add_parser("debug-status", help="Show comprehensive system status")
+    p_debug_status.set_defaults(func=cmd_debug_status)
 
     return parser
 

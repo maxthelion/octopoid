@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Debug and observability endpoints for troubleshooting (GH-9)
+  - New debug API types in `packages/shared/src/debug.ts`
+  - SDK methods: `sdk.debug.task()`, `sdk.debug.queues()`, `sdk.debug.agents()`, `sdk.debug.status()`
+  - CLI commands: `octopoid debug-task <id>`, `debug-queues`, `debug-agents`, `debug-status`
+  - Provides visibility into task states, lease status, blocking relationships, burnout metrics, queue health, and agent activity
 - Hooks system for task lifecycle (`orchestrator/hooks.py`)
   - Declarative `before_submit` hooks: `rebase_on_main`, `create_pr`, `run_tests`
   - Per-task-type hook configuration via `task_types:` in config.yaml

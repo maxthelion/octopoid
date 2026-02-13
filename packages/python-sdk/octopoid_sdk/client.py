@@ -309,6 +309,50 @@ class StatusAPI:
         return self.client._request('GET', '/api/health')
 
 
+class DebugAPI:
+    """Debug and observability API endpoints"""
+
+    def __init__(self, client: 'OctopoidSDK'):
+        self.client = client
+
+    def task(self, task_id: str) -> Dict[str, Any]:
+        """Get debug information for a specific task
+
+        Args:
+            task_id: Task ID
+
+        Returns:
+            Task debug information including lease status, blocking info,
+            burnout metrics, and gatekeeper stats
+        """
+        return self.client._request('GET', f'/api/v1/tasks/{task_id}/debug')
+
+    def queues(self) -> Dict[str, Any]:
+        """Get debug information for all queues
+
+        Returns:
+            Queue stats including task counts, oldest tasks, and claimed task details
+        """
+        return self.client._request('GET', '/api/v1/debug/queues')
+
+    def agents(self) -> Dict[str, Any]:
+        """Get debug information for all agents and orchestrators
+
+        Returns:
+            Agent activity, orchestrator health, and summary statistics
+        """
+        return self.client._request('GET', '/api/v1/debug/agents')
+
+    def status(self) -> Dict[str, Any]:
+        """Get comprehensive system status overview
+
+        Returns:
+            Complete system status including queues, agents, health metrics,
+            and performance statistics
+        """
+        return self.client._request('GET', '/api/v1/debug/status')
+
+
 class OctopoidSDK:
     """
     Main Octopoid SDK client
@@ -342,6 +386,7 @@ class OctopoidSDK:
         self.drafts = DraftsAPI(self)
         self.projects = ProjectsAPI(self)
         self.status = StatusAPI(self)
+        self.debug = DebugAPI(self)
 
     def _request(
         self,

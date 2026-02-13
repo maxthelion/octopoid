@@ -327,6 +327,10 @@ Running agents are not killed when you pause — they finish their current task.
 | `octopoid cancel <id>` | Delete a task | `--force` / `-f` skip confirmation |
 | `octopoid worktrees` | List task worktrees | |
 | `octopoid worktrees-clean` | Prune stale task worktrees | `--dry-run` preview only |
+| `octopoid debug-task <id>` | Show debug info for a task (lease, blocking, burnout) | |
+| `octopoid debug-queues` | Show queue health (counts, oldest tasks, claims) | |
+| `octopoid debug-agents` | Show agent activity and orchestrator health | |
+| `octopoid debug-status` | Comprehensive system status overview | |
 
 ```bash
 # Create a task
@@ -349,6 +353,18 @@ octopoid cancel fae4ad46
 
 # Clean up orphaned worktrees
 octopoid worktrees-clean --dry-run
+
+# Debug a stuck task
+octopoid debug-task gh-8-2a4ad137
+
+# Check queue health
+octopoid debug-queues
+
+# Monitor agent activity
+octopoid debug-agents
+
+# Get comprehensive system status
+octopoid debug-status
 ```
 
 ### Dashboard
