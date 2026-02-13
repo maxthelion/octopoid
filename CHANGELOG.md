@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Execution notes field now properly populated by agents on task submission (GH-13)
+  - `_generate_execution_notes()` creates concise summaries from commits and turns
+  - Includes up to 5 most recent commit messages in the summary
+  - Automatically sent to server via SDK when tasks are submitted
+  - Integration and unit tests verify functionality across the full lifecycle
 - Hooks system for task lifecycle (`orchestrator/hooks.py`)
   - Declarative `before_submit` hooks: `rebase_on_main`, `create_pr`, `run_tests`
   - Per-task-type hook configuration via `task_types:` in config.yaml

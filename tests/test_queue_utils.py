@@ -230,12 +230,16 @@ class TestSubmitCompletion:
 
             result_path = submit_completion(sample_task_file, commits_count=5, turns_used=30)
 
-            # SDK submit should be called
-            mock_sdk.tasks.submit.assert_called_once_with(
-                task_id="abc12345",
-                commits_count=5,
-                turns_used=30,
-            )
+            # SDK submit should be called with execution_notes
+            assert mock_sdk.tasks.submit.called
+            call_args = mock_sdk.tasks.submit.call_args
+            assert call_args.kwargs['task_id'] == "abc12345"
+            assert call_args.kwargs['commits_count'] == 5
+            assert call_args.kwargs['turns_used'] == 30
+            # execution_notes should be present and non-empty
+            assert 'execution_notes' in call_args.kwargs
+            assert call_args.kwargs['execution_notes']  # not empty
+            assert "Created 5 commits" in call_args.kwargs['execution_notes']
 
             # File should have metadata appended
             assert result_path is not None
@@ -243,6 +247,7 @@ class TestSubmitCompletion:
             assert "SUBMITTED_AT:" in content
             assert "COMMITS_COUNT: 5" in content
             assert "TURNS_USED: 30" in content
+            assert "EXECUTION_NOTES:" in content
 
 
 class TestCreateTask:
