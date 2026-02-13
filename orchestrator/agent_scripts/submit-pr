@@ -64,6 +64,10 @@ def main() -> int:
             "pr_number": pr.number,
         })
 
+        # Call the server submit endpoint directly to ensure task transitions
+        # This provides immediate feedback even if the agent continues running
+        _submit_to_server(pr.url, pr.number)
+
         return 0
 
     except Exception as e:
@@ -96,6 +100,68 @@ def _write_result(data: dict) -> None:
         result_path.write_text(json.dumps(data, indent=2))
     except Exception as e:
         print(f"Warning: Failed to write result: {e}", file=sys.stderr)
+
+
+def _submit_to_server(pr_url: str, pr_number: int) -> None:
+    """Submit the task completion to the API server.
+
+    This transitions the task from 'claimed' to 'provisional' immediately,
+    without waiting for the agent process to exit.
+
+    Args:
+        pr_url: URL of the created pull request
+        pr_number: PR number
+    """
+    if not SERVER_URL or not TASK_ID:
+        return
+
+    try:
+        import urllib.request
+
+        # Count commits
+        worktree = Path.cwd()
+        commits = 0
+        try:
+            import subprocess
+            base = os.environ.get("BASE_BRANCH", "main")
+            count_result = subprocess.run(
+                ["git", "rev-list", "--count", f"origin/{base}..HEAD"],
+                cwd=worktree, capture_output=True, text=True, check=False,
+            )
+            if count_result.returncode == 0:
+                commits = int(count_result.stdout.strip())
+        except (ValueError, subprocess.SubprocessError):
+            pass
+
+        # Submit to server
+        url = f"{SERVER_URL}/api/v1/tasks/{TASK_ID}/submit"
+        payload = json.dumps({
+            "commits_count": commits,
+            "turns_used": 0,  # Could be tracked in the future
+        }).encode()
+
+        req = urllib.request.Request(
+            url, data=payload, method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        response = urllib.request.urlopen(req, timeout=10)
+        print(f"Task {TASK_ID} submitted to server (status: {response.status})")
+
+        # Update PR info on the task
+        update_url = f"{SERVER_URL}/api/v1/tasks/{TASK_ID}"
+        update_payload = json.dumps({
+            "pr_url": pr_url,
+            "pr_number": pr_number,
+        }).encode()
+        update_req = urllib.request.Request(
+            update_url, data=update_payload, method="PATCH",
+            headers={"Content-Type": "application/json"},
+        )
+        urllib.request.urlopen(update_req, timeout=10)
+
+    except Exception as e:
+        print(f"Warning: Failed to submit to server: {e}", file=sys.stderr)
+        # Non-fatal - the scheduler will handle it when the agent exits
 
 
 if __name__ == "__main__":

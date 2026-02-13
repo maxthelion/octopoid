@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `submit-pr` script now calls server submit endpoint directly, ensuring tasks transition from `claimed` to `provisional` even if agents don't exit immediately
+
 ### Added
 - Hooks system for task lifecycle (`orchestrator/hooks.py`)
   - Declarative `before_submit` hooks: `rebase_on_main`, `create_pr`, `run_tests`
