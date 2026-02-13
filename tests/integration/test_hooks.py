@@ -348,3 +348,165 @@ class TestHookExecution:
         assert all_ok is True
         assert len(results) == 1
         assert results[0].context["pr_url"] == "https://github.com/test/pr/99"
+
+
+# ---------------------------------------------------------------------------
+# Server-side hook enforcement (Phase 2)
+# ---------------------------------------------------------------------------
+
+
+class TestServerHooks:
+    """Test server-side hook storage and evidence recording."""
+
+    def test_create_task_with_hooks(self, sdk, clean_tasks):
+        """Tasks can be created with a hooks field (JSON string)."""
+        import json
+        hooks = json.dumps([
+            {"name": "run_tests", "point": "before_submit", "type": "agent", "status": "pending"},
+            {"name": "create_pr", "point": "before_submit", "type": "agent", "status": "pending"},
+            {"name": "merge_pr", "point": "before_merge", "type": "orchestrator", "status": "pending"},
+        ])
+        task = sdk.tasks.create(
+            id="hooks-server-001",
+            file_path="/tmp/hooks-server-001.md",
+            title="Hooks Server Test",
+            role="implement",
+            hooks=hooks,
+        )
+        assert task["id"] == "hooks-server-001"
+        stored = task.get("hooks")
+        assert stored is not None
+        parsed = json.loads(stored) if isinstance(stored, str) else stored
+        assert len(parsed) == 3
+        assert parsed[0]["name"] == "run_tests"
+        assert parsed[0]["status"] == "pending"
+
+    def test_hooks_persist_through_lifecycle(self, sdk, orchestrator_id, clean_tasks):
+        """Hooks field persists through claim and submit."""
+        import json
+        hooks = json.dumps([
+            {"name": "create_pr", "point": "before_submit", "type": "agent", "status": "pending"},
+        ])
+        sdk.tasks.create(
+            id="hooks-persist-lc-001",
+            file_path="/tmp/hooks-persist-lc-001.md",
+            title="Hooks Persist Lifecycle",
+            role="implement",
+            hooks=hooks,
+        )
+        claimed = sdk.tasks.claim(
+            orchestrator_id=orchestrator_id,
+            agent_name="test-agent",
+            role_filter="implement",
+        )
+        assert claimed["id"] == "hooks-persist-lc-001"
+        stored = claimed.get("hooks")
+        assert stored is not None
+        parsed = json.loads(stored) if isinstance(stored, str) else stored
+        assert parsed[0]["name"] == "create_pr"
+
+        submitted = sdk.tasks.submit(
+            task_id="hooks-persist-lc-001",
+            commits_count=1,
+            turns_used=5,
+        )
+        stored = submitted.get("hooks")
+        assert stored is not None
+
+    def test_record_hook_evidence(self, sdk, clean_tasks):
+        """Hook evidence endpoint updates hook status."""
+        import json
+        import requests
+
+        hooks = json.dumps([
+            {"name": "run_tests", "point": "before_submit", "type": "agent", "status": "pending"},
+            {"name": "create_pr", "point": "before_submit", "type": "agent", "status": "pending"},
+        ])
+        sdk.tasks.create(
+            id="hooks-evidence-001",
+            file_path="/tmp/hooks-evidence-001.md",
+            title="Hook Evidence Test",
+            hooks=hooks,
+        )
+
+        resp = requests.post(
+            "http://localhost:9787/api/v1/tasks/hooks-evidence-001/hooks/run_tests/complete",
+            json={"status": "passed", "evidence": {"output": "3 tests passed"}},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        parsed = json.loads(data["hooks"]) if isinstance(data.get("hooks"), str) else data.get("hooks", [])
+        run_tests = next(h for h in parsed if h["name"] == "run_tests")
+        create_pr = next(h for h in parsed if h["name"] == "create_pr")
+        assert run_tests["status"] == "passed"
+        assert run_tests.get("evidence", {}).get("output") == "3 tests passed"
+        assert create_pr["status"] == "pending"
+
+    def test_record_evidence_unknown_hook(self, sdk, clean_tasks):
+        """Recording evidence for a non-existent hook returns 404."""
+        import json
+        import requests
+
+        hooks = json.dumps([
+            {"name": "run_tests", "point": "before_submit", "type": "agent", "status": "pending"},
+        ])
+        sdk.tasks.create(
+            id="hooks-unknown-001",
+            file_path="/tmp/hooks-unknown-001.md",
+            title="Unknown Hook Test",
+            hooks=hooks,
+        )
+        resp = requests.post(
+            "http://localhost:9787/api/v1/tasks/hooks-unknown-001/hooks/nonexistent/complete",
+            json={"status": "passed"},
+        )
+        assert resp.status_code == 404
+
+    def test_record_evidence_invalid_status(self, sdk, clean_tasks):
+        """Recording evidence with invalid status returns 400."""
+        import json
+        import requests
+
+        hooks = json.dumps([
+            {"name": "run_tests", "point": "before_submit", "type": "agent", "status": "pending"},
+        ])
+        sdk.tasks.create(
+            id="hooks-invalid-001",
+            file_path="/tmp/hooks-invalid-001.md",
+            title="Invalid Status Test",
+            hooks=hooks,
+        )
+        resp = requests.post(
+            "http://localhost:9787/api/v1/tasks/hooks-invalid-001/hooks/run_tests/complete",
+            json={"status": "maybe"},
+        )
+        assert resp.status_code == 400
+
+    def test_hooks_update_via_patch(self, sdk, clean_tasks):
+        """Hooks can be updated via PATCH."""
+        import json
+
+        hooks = json.dumps([
+            {"name": "run_tests", "point": "before_submit", "type": "agent", "status": "pending"},
+        ])
+        sdk.tasks.create(
+            id="hooks-patch-001",
+            file_path="/tmp/hooks-patch-001.md",
+            title="Hooks Patch Test",
+            hooks=hooks,
+        )
+        new_hooks = json.dumps([
+            {"name": "run_tests", "point": "before_submit", "type": "agent", "status": "passed"},
+        ])
+        updated = sdk.tasks.update("hooks-patch-001", hooks=new_hooks)
+        parsed = json.loads(updated["hooks"]) if isinstance(updated.get("hooks"), str) else updated.get("hooks", [])
+        assert parsed[0]["status"] == "passed"
+
+    def test_task_without_hooks(self, sdk, clean_tasks):
+        """Tasks created without hooks have hooks=null."""
+        task = sdk.tasks.create(
+            id="hooks-none-001",
+            file_path="/tmp/hooks-none-001.md",
+            title="No Hooks Task",
+        )
+        assert task.get("hooks") is None

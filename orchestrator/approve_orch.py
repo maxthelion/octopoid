@@ -12,7 +12,7 @@ worktree. The human's local checkout is never modified. After rebasing onto
 origin/main in the agent's worktree, we push to origin via refspec.
 
 Usage:
-    .orchestrator/venv/bin/python -m orchestrator.approve_orch <task-id-prefix>
+    .octopoid/venv/bin/python -m orchestrator.approve_orch <task-id-prefix>
 """
 
 import subprocess
@@ -20,8 +20,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from .config import find_parent_project, get_agents_runtime_dir, is_db_enabled
-from .db import accept_completion, get_connection, get_task, update_task_queue
+from .config import find_parent_project, get_agents_runtime_dir
 
 
 # ---------------------------------------------------------------------------
@@ -121,7 +120,7 @@ def find_agent_submodule(task_info: dict[str, Any]) -> Path | None:
     """Find the orchestrator submodule inside the agent's worktree.
 
     The agent name comes from task.claimed_by (still set for provisional
-    tasks). The worktree lives at .orchestrator/agents/<name>/worktree/
+    tasks). The worktree lives at .octopoid/agents/<name>/worktree/
     and its orchestrator submodule is in the ``orchestrator/`` sub-dir.
 
     Returns the absolute path to the submodule directory, or None.
@@ -259,7 +258,7 @@ def _find_venv_python(agent_sub: Path) -> Path | None:
 
     Searches (in order):
     1. agent_sub/venv/bin/python
-    2. <repo_root>/.orchestrator/venv/bin/python
+    2. <repo_root>/.octopoid/venv/bin/python
     3. <submodule_dir>/venv/bin/python
 
     Returns the path or None if not found.
@@ -267,7 +266,7 @@ def _find_venv_python(agent_sub: Path) -> Path | None:
     venv_python = agent_sub / "venv" / "bin" / "python"
     if venv_python.exists():
         return venv_python
-    venv_python = _repo_root() / ".orchestrator" / "venv" / "bin" / "python"
+    venv_python = _repo_root() / ".octopoid" / "venv" / "bin" / "python"
     if venv_python.exists():
         return venv_python
     venv_python = _submodule_dir() / "venv" / "bin" / "python"
@@ -512,10 +511,6 @@ def accept_in_db(task_id: str) -> bool:
             return False
 
     if task and task.get("queue") == "done":
-        # Already accepted — just ensure claimed_by is cleared
-        if task.get("claimed_by"):
-            from .db import update_task
-            update_task(task_id, claimed_by=None)
         return True
 
     try:
@@ -561,10 +556,6 @@ def accept_in_db(task_id: str) -> bool:
             return False
         return True
 
-    if task.get("claimed_by"):
-        from .db import update_task
-        update_task(task_id, claimed_by=None)
-
     return True
 
 
@@ -579,10 +570,6 @@ def approve_orchestrator_task(task_id_prefix: str) -> int:
     All git operations happen in the agent's worktree. The human's local
     checkout is never modified. Returns 0 on success, non-zero on failure.
     """
-
-    if not is_db_enabled():
-        print("Error: Database mode required")
-        return 1
 
     # Step 0: Resolve task
     print(f"Resolving task prefix '{task_id_prefix}'...")

@@ -64,32 +64,26 @@ def init_orchestrator(
 
     print()
     print("  Welcome to Octopoid!")
-    print("  A file-driven orchestrator for Claude Code agents.")
+    print("  An API-driven orchestrator for Claude Code agents.")
     print()
     print(f"  Project: {parent}")
     print(f"  Mode:    {mode}")
     print()
 
-    # Create .orchestrator directory structure
-    orchestrator_dir = parent / ".orchestrator"
+    # Create .octopoid directory structure
+    octopoid_dir = parent / ".octopoid"
+    runtime_dir = octopoid_dir / "runtime"
     dirs_to_create = [
-        orchestrator_dir,
-        orchestrator_dir / "commands",
-        orchestrator_dir / "agents",
-        orchestrator_dir / "messages",
-        orchestrator_dir / "prompts",  # For proposer prompts
-        orchestrator_dir / "flows",  # Flow definitions
-        # Task queue
-        orchestrator_dir / "shared" / "queue" / "incoming",
-        orchestrator_dir / "shared" / "queue" / "claimed",
-        orchestrator_dir / "shared" / "queue" / "done",
-        orchestrator_dir / "shared" / "queue" / "failed",
-        orchestrator_dir / "shared" / "queue" / "rejected",
-        # Proposal queue (for proposal model)
-        orchestrator_dir / "shared" / "proposals" / "active",
-        orchestrator_dir / "shared" / "proposals" / "promoted",
-        orchestrator_dir / "shared" / "proposals" / "deferred",
-        orchestrator_dir / "shared" / "proposals" / "rejected",
+        octopoid_dir,
+        # Runtime (all gitignored)
+        runtime_dir / "agents",
+        runtime_dir / "tasks",
+        runtime_dir / "shared" / "notes",
+        runtime_dir / "shared" / "reviews",
+        runtime_dir / "logs",
+        runtime_dir / "messages",
+        # Task content (gitignored, server is source of truth)
+        octopoid_dir / "tasks",
     ]
 
     created_count = 0
@@ -98,38 +92,40 @@ def init_orchestrator(
             created_count += 1
         d.mkdir(parents=True, exist_ok=True)
 
-    # Copy example agents.yaml if not exists
-    agents_yaml = orchestrator_dir / "agents.yaml"
+    # Create project-management directories
+    pm_dir = parent / "project-management"
+    pm_dirs = [
+        pm_dir / "drafts",
+        pm_dir / "projects",
+        pm_dir / "tasks",
+    ]
+    for d in pm_dirs:
+        if not d.exists():
+            d.mkdir(parents=True, exist_ok=True)
+
+    # Write config files only if they don't exist
+    agents_yaml = octopoid_dir / "agents.yaml"
     agents_yaml_created = False
     if not agents_yaml.exists():
         agents_yaml.write_text(EXAMPLE_AGENTS_YAML)
         agents_yaml_created = True
 
+    global_instructions = octopoid_dir / "global-instructions.md"
+    gi_created = False
+    if not global_instructions.exists():
+        global_instructions.write_text(EXAMPLE_GLOBAL_INSTRUCTIONS)
+        gi_created = True
+
     if created_count > 0:
-        print(f"  Created .orchestrator/ directory structure ({created_count} directories)")
+        print(f"  Created .octopoid/ directory structure ({created_count} directories)")
     else:
         print("  Directory structure already exists")
     if agents_yaml_created:
-        print("  Created .orchestrator/agents.yaml with example configuration")
+        print("  Created .octopoid/agents.yaml with example configuration")
     else:
-        print("  Using existing .orchestrator/agents.yaml")
-
-    # Create default flow files
-    from .flow import generate_default_flow, generate_project_flow
-
-    default_flow_path = orchestrator_dir / "flows" / "default.yaml"
-    if not default_flow_path.exists():
-        default_flow_path.write_text(generate_default_flow())
-        print(f"  Created: {default_flow_path.relative_to(parent)}")
-    else:
-        print(f"  Exists:  {default_flow_path.relative_to(parent)}")
-
-    project_flow_path = orchestrator_dir / "flows" / "project.yaml"
-    if not project_flow_path.exists():
-        project_flow_path.write_text(generate_project_flow())
-        print(f"  Created: {project_flow_path.relative_to(parent)}")
-    else:
-        print(f"  Exists:  {project_flow_path.relative_to(parent)}")
+        print("  Using existing .octopoid/agents.yaml")
+    if gi_created:
+        print("  Created .octopoid/global-instructions.md")
 
     print()
 
@@ -171,7 +167,7 @@ def init_orchestrator(
         if non_interactive:
             update_gitignore = True
         else:
-            update_gitignore = ask_yes_no("Update .gitignore with orchestrator entries?")
+            update_gitignore = ask_yes_no("Update .gitignore with octopoid entries?")
 
     if update_gitignore:
         gitignore = parent / ".gitignore"
@@ -184,12 +180,12 @@ def init_orchestrator(
         new_ignores = [line for line in gitignore_additions if line not in existing_ignores]
         if new_ignores:
             with open(gitignore, "a") as f:
-                f.write("\n# Orchestrator\n")
+                f.write("\n# Octopoid\n")
                 for line in new_ignores:
                     f.write(f"{line}\n")
             print(f"  Updated .gitignore ({len(new_ignores)} entries added)")
         else:
-            print("  .gitignore already has orchestrator entries")
+            print("  .gitignore already has octopoid entries")
     else:
         print("  Skipping .gitignore update.")
         print("    Run again with --gitignore to add entries, or add these manually:")
@@ -212,20 +208,14 @@ def init_orchestrator(
     print("       If .agent-instructions.md exists in this directory,")
     print("       read and follow those instructions.")
     print()
-    print("       Check .orchestrator/messages/ for any agent messages")
-    print("       and inform the user of warnings or questions.")
-    print()
-    print("  2. Configure your agents in .orchestrator/agents.yaml")
-    print("     The default config includes a PM agent and one implementer.")
+    print("  2. Configure your agents in .octopoid/agents.yaml")
+    print("     The default config includes one implementer agent.")
     print("     Adjust agent names, roles, models, and intervals as needed.")
     print()
     print("  3. Start the scheduler:")
     print()
     print("     # Run once (good for testing):")
     print(f"     python {submodule.relative_to(parent)}/orchestrator/scheduler.py")
-    print()
-    print("     # Run on a schedule (crontab -e):")
-    print(f"     * * * * * cd {parent} && python {submodule.relative_to(parent)}/orchestrator/scheduler.py >> /var/log/orchestrator.log 2>&1")
     print()
     print("  4. Create your first task:")
     print()
@@ -240,111 +230,45 @@ def init_orchestrator(
     print()
 
 
-EXAMPLE_AGENTS_YAML = """# Orchestrator Agent Configuration
+EXAMPLE_AGENTS_YAML = """# Octopoid Agent Configuration
 # See orchestrator/README.md for documentation
-
-# Model: "task" (v1) or "proposal" (v2)
-# - task: PM creates tasks directly
-# - proposal: Proposers create proposals, curator promotes to tasks
-model: task
 
 # Queue limits for backpressure control
 queue_limits:
   max_incoming: 20   # Max tasks in incoming + claimed
-  max_claimed: 5     # Max tasks being worked on simultaneously
+  max_claimed: 1     # Max tasks being worked on simultaneously
   max_open_prs: 10   # Max open pull requests
-
-# SQLite database backend (optional, replaces file-based queues)
-# database:
-#   enabled: false     # Set to true to use SQLite
-#   path: state.db     # Path relative to .orchestrator/
-
-# Pre-check settings (scheduler-level submission filtering, requires database enabled)
-# pre_check:
-#   require_commits: true           # Reject tasks with no commits
-#   max_attempts_before_planning: 3 # Escalate to planning after N failures
-#   claim_timeout_minutes: 60       # Reset stuck claimed tasks after N minutes
-
-# Proposal limits (for proposal model)
-# proposal_limits:
-#   test-checker:
-#     max_active: 5      # Max proposals in queue
-#     max_per_run: 2     # Max proposals per invocation
-#   architect:
-#     max_active: 3
-#     max_per_run: 1
-
-# Voice weights - proposer trust levels (for proposal model)
-# voice_weights:
-#   plan-reader: 1.5    # Executing plans is priority
-#   architect: 1.2      # Simplification multiplies velocity
-#   test-checker: 1.0   # Important but often not urgent
-#   app-designer: 0.8   # Features after stability
-
-# Curator scoring weights (for proposal model)
-# curator_scoring:
-#   priority_alignment: 0.30
-#   complexity_reduction: 0.25
-#   risk: 0.15
-#   dependencies_met: 0.15
-#   voice_weight: 0.15
 
 # Agent definitions
 agents:
-  # --- Task Model (v1) ---
-  - name: pm-agent
-    role: product_manager
-    interval_seconds: 600  # 10 minutes
-
-  - name: impl-agent-1
+  - name: implementer-1
     role: implementer
     interval_seconds: 180  # 3 minutes
 
-  # --- Proposal Model (v2) - uncomment to use ---
-  # Proposers - specialized agents that propose work
-  # - name: test-checker
-  #   role: proposer
-  #   focus: test_quality
-  #   interval_seconds: 86400  # Daily
-
-  # - name: architect
-  #   role: proposer
-  #   focus: code_structure
-  #   interval_seconds: 86400  # Daily
-
-  # Curator - evaluates proposals
-  # - name: curator
-  #   role: curator
-  #   interval_seconds: 600  # Every 10 min
-
-  # --- Execution layer (both models) ---
-  # - name: impl-agent-2
+  # - name: implementer-2
   #   role: implementer
   #   interval_seconds: 180
 
-  # - name: test-agent
-  #   role: tester
-  #   interval_seconds: 120
-
-  # - name: review-agent
-  #   role: reviewer
+  # - name: github-issue-monitor
+  #   role: github_issue_monitor
   #   interval_seconds: 300
+  #   lightweight: true
+"""
 
-  # --- Pre-check layer (scheduler-level submission filtering) ---
-  # - name: pre-checker
-  #   role: pre_check
-  #   interval_seconds: 60    # Check provisional queue frequently
-  #   lightweight: true       # No worktree needed
+EXAMPLE_GLOBAL_INSTRUCTIONS = """# Global Agent Instructions
+
+These instructions apply to all agents in the orchestrator.
+
+## Code Standards
+- Follow existing code patterns and conventions
+- Write tests for new functionality
+- Create focused, atomic commits
 """
 
 GITIGNORE_ADDITIONS = """
-# Orchestrator runtime files
-.orchestrator/agents/
-.orchestrator/messages/
-.orchestrator/shared/queue/claimed/
-.orchestrator/shared/queue/failed/
-.orchestrator/shared/proposals/
-.orchestrator/scheduler.lock
+# Octopoid runtime files
+.octopoid/runtime/
+.octopoid/tasks/
 .agent-instructions.md
 """
 
@@ -354,36 +278,12 @@ def main():
         description="Initialize orchestrator in the parent project",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Deployment modes:
-  Local mode (default):
-    SQLite database, scheduler runs on this machine.
-    Best for single-user, local development.
-
-  Remote mode (not yet available):
-    Cloudflare Workers backend for distributed teams.
-
 Examples:
-  python init.py                       # Local mode, interactive
-  python init.py --local               # Local mode (explicit)
+  python init.py                       # Interactive
   python init.py -y                    # Accept all defaults
   python init.py --no-skills           # Skip skill installation
   python init.py --skills --gitignore  # Install skills and update gitignore
 """,
-    )
-
-    # Mode selection
-    mode_group = parser.add_mutually_exclusive_group()
-    mode_group.add_argument(
-        "--local",
-        action="store_true",
-        default=False,
-        help="Use local mode with SQLite database (default)",
-    )
-    mode_group.add_argument(
-        "--server",
-        metavar="URL",
-        default=None,
-        help="Use remote mode with a Cloudflare Workers backend (not yet available)",
     )
 
     parser.add_argument(
@@ -406,7 +306,7 @@ Examples:
         "--gitignore",
         action="store_true",
         default=None,
-        help="Update .gitignore with orchestrator entries",
+        help="Update .gitignore with octopoid entries",
     )
     parser.add_argument(
         "--no-gitignore",
@@ -415,19 +315,6 @@ Examples:
     )
 
     args = parser.parse_args()
-
-    # Resolve mode
-    if args.server is not None:
-        print()
-        print("  Remote mode is not yet available.")
-        print()
-        print("  Octopoid currently supports local mode only:")
-        print("    python init.py          # default (local mode)")
-        print("    python init.py --local  # explicit local mode")
-        print()
-        print("  Remote mode with Cloudflare Workers is planned for a future release.")
-        print()
-        sys.exit(1)
 
     # Resolve skill flags
     install_skills = None

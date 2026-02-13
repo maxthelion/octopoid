@@ -92,6 +92,7 @@ class TasksAPI:
         orchestrator_id: str,
         agent_name: str,
         role_filter: Optional[str] = None,
+        type_filter: Optional[str] = None,
         lease_duration_seconds: Optional[int] = None,
         max_claimed: Optional[int] = None
     ) -> Optional[Dict[str, Any]]:
@@ -101,6 +102,7 @@ class TasksAPI:
             orchestrator_id: Orchestrator identifier
             agent_name: Agent name
             role_filter: Filter by role (e.g., 'implement')
+            type_filter: Filter by task type (e.g., 'product')
             lease_duration_seconds: Lease duration in seconds
             max_claimed: Max claimed tasks for this orchestrator (server enforced)
 
@@ -114,6 +116,8 @@ class TasksAPI:
 
         if role_filter:
             data['role_filter'] = role_filter
+        if type_filter:
+            data['type_filter'] = type_filter
         if lease_duration_seconds:
             data['lease_duration_seconds'] = lease_duration_seconds
         if max_claimed is not None:
@@ -131,7 +135,8 @@ class TasksAPI:
         task_id: str,
         commits_count: int,
         turns_used: int,
-        check_results: Optional[str] = None
+        check_results: Optional[str] = None,
+        execution_notes: Optional[str] = None
     ) -> Dict[str, Any]:
         """Submit task completion
 
@@ -140,6 +145,7 @@ class TasksAPI:
             commits_count: Number of commits made
             turns_used: Number of turns/iterations used
             check_results: Optional check results
+            execution_notes: Optional execution summary (high-level overview)
 
         Returns:
             Updated task dictionary
@@ -151,6 +157,8 @@ class TasksAPI:
 
         if check_results:
             data['check_results'] = check_results
+        if execution_notes:
+            data['execution_notes'] = execution_notes
 
         return self.client._request('POST', f'/api/v1/tasks/{task_id}/submit', json=data)
 
@@ -239,6 +247,36 @@ class DraftsAPI:
         if isinstance(response, dict) and 'drafts' in response:
             return response['drafts']
         return response if isinstance(response, list) else []
+
+    def create(
+        self,
+        title: str,
+        author: str,
+        file_path: Optional[str] = None,
+        status: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Create a new draft. Server auto-assigns an integer ID.
+
+        Args:
+            title: Draft title
+            author: Author name (e.g., 'human')
+            file_path: Path to draft markdown file
+            status: Draft status (default: 'idea')
+
+        Returns:
+            Created draft dictionary including server-assigned 'id'
+        """
+        data: Dict[str, Any] = {
+            'title': title,
+            'author': author,
+        }
+
+        if file_path:
+            data['file_path'] = file_path
+        if status:
+            data['status'] = status
+
+        return self.client._request('POST', '/api/v1/drafts', json=data)
 
 
 class ProjectsAPI:

@@ -1,6 +1,5 @@
 /**
  * Project types for Octopoid
- * Based on orchestrator/db.py schema
  */
 
 export type ProjectStatus = 'draft' | 'active' | 'completed' | 'archived'

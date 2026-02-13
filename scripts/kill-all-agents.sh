@@ -5,7 +5,7 @@
 set -e
 
 BOXEN_DIR="${BOXEN_DIR:-/Users/maxwilliams/dev/boxen}"
-AGENTS_DIR="$BOXEN_DIR/.orchestrator/agents"
+AGENTS_DIR="$BOXEN_DIR/.octopoid/runtime/agents"
 SCRIPT_DIR="$(dirname "$0")"
 
 echo "Killing all agents..."
@@ -55,8 +55,8 @@ cd "$BOXEN_DIR" && git worktree prune 2>/dev/null || true
 echo "Pruned git worktrees"
 
 # Clean up claimed queue (move back to incoming or delete stale)
-CLAIMED_DIR="$BOXEN_DIR/.orchestrator/shared/queue/claimed"
-INCOMING_DIR="$BOXEN_DIR/.orchestrator/shared/queue/incoming"
+CLAIMED_DIR="$BOXEN_DIR/.octopoid/runtime/shared/queue/claimed"
+INCOMING_DIR="$BOXEN_DIR/.octopoid/runtime/shared/queue/incoming"
 
 if [ -d "$CLAIMED_DIR" ]; then
     for task in "$CLAIMED_DIR"/*.md; do

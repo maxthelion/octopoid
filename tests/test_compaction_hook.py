@@ -220,13 +220,17 @@ class TestHookScriptBehavior:
 
 
 class TestImplementerSetsTaskId:
-    """Test that the implementer role sets current_task_id before invoke_claude."""
+    """Test that the base role sets current_task_id.
 
-    @patch("orchestrator.roles.implementer.get_current_branch", return_value="main")
-    def test_implementer_sets_current_task_id(self, _mock_branch):
-        """ImplementerRole should set current_task_id after claiming a task."""
+    Note: ImplementerRole has been removed. Implementers now use scripts mode
+    (prepare_task_directory + invoke_claude in scheduler.py). This test verifies
+    that BaseRole supports current_task_id, which is used by all roles.
+    """
+
+    def test_base_role_supports_current_task_id(self):
+        """BaseRole should support setting current_task_id."""
         import os
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import patch
 
         env = {
             "AGENT_NAME": "impl-test",
@@ -239,39 +243,21 @@ class TestImplementerSetsTaskId:
         }
 
         with patch.dict(os.environ, env):
-            from orchestrator.roles.implementer import ImplementerRole
+            from orchestrator.roles.base import BaseRole
 
-            role = ImplementerRole()
+            class TestRole(BaseRole):
+                def run(self):
+                    return 0
 
-            mock_task = {
-                "id": "test123",
-                "title": "Test task",
-                "branch": "main",
-                "path": "/tmp/task.md",
-                "content": "Do the thing",
-            }
+            role = TestRole()
 
-            with (
-                patch("orchestrator.roles.implementer.claim_task", return_value=mock_task),
-                patch("orchestrator.roles.implementer.create_feature_branch", return_value="agent/test"),
-                patch("orchestrator.roles.implementer.get_head_ref", return_value="abc123"),
-                patch("orchestrator.roles.implementer.get_notes_dir", return_value=Path("/tmp/notes")),
-                patch("orchestrator.roles.implementer.get_review_feedback", return_value=None),
-                patch("orchestrator.roles.implementer.get_task_notes", return_value=None),
-                patch.object(role, "invoke_claude", return_value=(0, "done", "")) as mock_invoke,
-                patch("orchestrator.roles.implementer.get_commit_count", return_value=1),
-                patch("orchestrator.roles.implementer.save_task_notes"),
-                patch("orchestrator.roles.implementer.has_uncommitted_changes", return_value=False),
-                patch("orchestrator.roles.implementer.create_pull_request", return_value="https://pr"),
-                patch("orchestrator.roles.implementer.is_db_enabled", return_value=False),
-                patch("orchestrator.roles.implementer.complete_task"),
-                patch.object(role, "_load_claimed_task", return_value=None),
-                patch.object(role, "_check_for_continuation_work", return_value=None),
-            ):
-                role.run()
+            # BaseRole should initialize current_task_id as None
+            assert role.current_task_id is None
 
-                # Verify current_task_id was set before invoke_claude
-                assert role.current_task_id == "test123"
+            # Setting current_task_id should work
+            role.current_task_id = "test123"
+            assert role.current_task_id == "test123"
 
-                # Verify invoke_claude was called (it would have CURRENT_TASK_ID in env)
-                assert mock_invoke.called
+            # CURRENT_TASK_ID should be included in claude env when set
+            claude_env = role._build_claude_env()
+            assert claude_env["CURRENT_TASK_ID"] == "test123"

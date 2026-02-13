@@ -1,4 +1,4 @@
-"""Hooks system for task lifecycle actions.
+"""Legacy execution pipeline for hooks — will be removed with implementer.py (Phase D2).
 
 Provides declarative, configurable hook points that run during task processing.
 Hooks are resolved per task type, with fallback to project defaults.
@@ -330,7 +330,7 @@ def hook_merge_pr(ctx: HookContext) -> HookResult:
 
 
 # ---------------------------------------------------------------------------
-# Registry
+# Registry — canonical DEFAULT_HOOKS lives in hook_manager.py
 # ---------------------------------------------------------------------------
 
 BUILTIN_HOOKS: dict[str, HookFn] = {
@@ -340,10 +340,7 @@ BUILTIN_HOOKS: dict[str, HookFn] = {
     "merge_pr": hook_merge_pr,
 }
 
-DEFAULT_HOOKS: dict[str, list[str]] = {
-    "before_submit": ["create_pr"],
-    "before_merge": ["merge_pr"],
-}
+from .hook_manager import DEFAULT_HOOKS  # noqa: E402
 
 
 # ---------------------------------------------------------------------------

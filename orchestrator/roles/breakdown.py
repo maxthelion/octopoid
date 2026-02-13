@@ -5,7 +5,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-from ..config import is_db_enabled, get_orchestrator_dir
+from ..config import get_orchestrator_dir
 from ..queue_utils import (
     claim_task,
     complete_task,
@@ -29,10 +29,6 @@ class BreakdownRole(BaseRole):
         Returns:
             Exit code (0 for success)
         """
-        if not is_db_enabled():
-            self.log("Breakdown role requires database mode")
-            return 1
-
         # Claim from breakdown queue
         task = claim_task(role_filter="breakdown", agent_name=self.agent_name, from_queue="breakdown")
         if not task:

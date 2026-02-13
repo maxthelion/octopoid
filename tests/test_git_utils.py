@@ -451,7 +451,7 @@ class TestGetSubmoduleStatus:
         result = get_submodule_status(temp_dir)
         assert result["exists"] is False
 
-    def test_submodule_on_sqlite_model(self, temp_dir):
+    def test_submodule_on_main_branch(self, temp_dir):
         """Reports branch correctly when on main."""
         from orchestrator.git_utils import get_submodule_status
 

@@ -10,16 +10,22 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 # Add scripts directory to path
-SCRIPTS_DIR = Path(__file__).parent.parent.parent / ".orchestrator" / "scripts"
+SCRIPTS_DIR = Path(__file__).parent.parent.parent / ".octopoid" / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-from diagnose_queue_health import (  # noqa: E402
-    detect_file_db_mismatches,
-    detect_orphan_files,
-    detect_zombie_claims,
-    find_all_task_files,
-    run_diagnostics,
-)
+try:
+    from diagnose_queue_health import (  # noqa: E402
+        detect_file_db_mismatches,
+        detect_orphan_files,
+        detect_zombie_claims,
+        find_all_task_files,
+        run_diagnostics,
+    )
+    _HAS_DIAG = True
+except ImportError:
+    _HAS_DIAG = False
+
+pytestmark = pytest.mark.skipif(not _HAS_DIAG, reason="diagnose_queue_health script not installed")
 
 
 @pytest.fixture

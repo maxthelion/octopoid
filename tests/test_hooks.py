@@ -6,13 +6,13 @@ from unittest.mock import MagicMock, patch, call
 
 import pytest
 
+from orchestrator.hook_manager import DEFAULT_HOOKS
 from orchestrator.hooks import (
     HookContext,
     HookPoint,
     HookResult,
     HookStatus,
     BUILTIN_HOOKS,
-    DEFAULT_HOOKS,
     hook_create_pr,
     hook_merge_pr,
     hook_rebase_on_main,
@@ -282,7 +282,7 @@ class TestHookMergePr:
         # Verify the command used
         mock_run.assert_called_once()
         cmd = mock_run.call_args[0][0]
-        assert cmd == ["gh", "pr", "merge", "42", "--merge", "--delete-branch"]
+        assert cmd == ["gh", "pr", "merge", "42", "--merge"]
 
     def test_squash_method(self):
         """merge_method=squash passes --squash to gh."""

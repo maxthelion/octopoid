@@ -136,7 +136,7 @@ def get_task_worktree_path(task_id: str) -> Path:
         task_id: Task identifier (e.g., 'f7b4d710')
 
     Returns:
-        Path to .orchestrator/tasks/<task-id>/worktree/
+        Path to .octopoid/runtime/tasks/<task-id>/worktree/
     """
     return get_tasks_dir() / task_id / "worktree"
 
@@ -157,9 +157,8 @@ def get_task_branch(task: dict) -> str:
     """
     # Project tasks use the project's branch
     if task.get("project_id"):
-        # Must fetch project from DB
-        from . import db
-        project = db.get_project(task["project_id"])
+        from .queue_utils import get_project
+        project = get_project(task["project_id"])
         if project and project.get("branch"):
             return project["branch"]
 
@@ -221,8 +220,17 @@ def create_task_worktree(task: dict) -> Path:
     )
     branch_exists_on_origin = bool(result.stdout.strip())
 
-    # Delete stale local branch if it exists (left over from previous failed runs
-    # where the worktree was cleaned up but the branch wasn't)
+    # Clean up stale state from previous failed runs.
+    # A worktree may still reference the branch (preventing deletion),
+    # so force-remove the worktree first, then delete the branch.
+    run_git(
+        ["worktree", "remove", "--force", str(worktree_path)],
+        cwd=parent_repo,
+        check=False,
+    )
+    # Also prune any worktree entries pointing to non-existent paths
+    run_git(["worktree", "prune"], cwd=parent_repo, check=False)
+
     local_check = run_git(
         ["rev-parse", "--verify", branch],
         cwd=parent_repo,

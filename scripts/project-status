@@ -8,14 +8,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from orchestrator.queue_utils import get_project_status, list_projects
-from orchestrator.config import is_db_enabled
 
 
 def main():
-    if not is_db_enabled():
-        print("Error: Database mode required for project status")
-        sys.exit(1)
-
     if len(sys.argv) < 2:
         # List all projects
         projects = list_projects()

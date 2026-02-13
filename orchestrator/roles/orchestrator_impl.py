@@ -1,9 +1,9 @@
 """Orchestrator specialist role - implements orchestrator infrastructure changes.
 
-This is a variant of the implementer role that:
+This is a variant of the base role that:
 - Claims tasks with role='orchestrator_impl' (not 'implement')
 - Works on the orchestrator Python codebase (submodule)
-- Can also write tooling files to the main repo (.claude/commands/, .orchestrator/prompts/, etc.)
+- Can also write tooling files to the main repo (.claude/commands/, .octopoid/prompts/, etc.)
 - Commits to orch/<task-id> in the submodule and/or tooling/<task-id> in the main repo
 - Self-merges to main when tests pass; falls back to provisional queue on failure
 """
@@ -11,12 +11,11 @@ This is a variant of the implementer role that:
 import subprocess
 from pathlib import Path
 
-from .implementer import ImplementerRole
 from ..queue_utils import claim_task
-from .base import main_entry
+from .base import BaseRole, main_entry
 
 
-class OrchestratorImplRole(ImplementerRole):
+class OrchestratorImplRole(BaseRole):
     """Specialist implementer for orchestrator infrastructure work.
 
     Key differences from regular ImplementerRole:
@@ -44,7 +43,7 @@ class OrchestratorImplRole(ImplementerRole):
         """Create a tooling/<task-id> branch in the main repo worktree.
 
         This branch isolates main repo changes (e.g., .claude/commands/,
-        .orchestrator/prompts/) so they never go directly on main.
+        .octopoid/prompts/) so they never go directly on main.
 
         Args:
             worktree_path: Path to the agent's worktree (main repo)
@@ -487,7 +486,7 @@ class OrchestratorImplRole(ImplementerRole):
         if venv_python.exists():
             return venv_python
 
-        venv_python = self.parent_project / ".orchestrator" / "venv" / "bin" / "python"
+        venv_python = self.parent_project / "orchestrator" / "venv" / "bin" / "python"
         if venv_python.exists():
             return venv_python
 
@@ -515,7 +514,7 @@ class OrchestratorImplRole(ImplementerRole):
         6. Skips PR creation -- self-merges or goes to provisional queue
         """
         from pathlib import Path
-        from ..config import is_db_enabled, get_notes_dir
+        from ..config import get_notes_dir
         import subprocess
         from ..git_utils import (
             create_feature_branch,
@@ -661,55 +660,7 @@ class OrchestratorImplRole(ImplementerRole):
 
             result_msg = f"Implementation complete ({sub_commits} submodule + {main_commits} main repo commits)"
 
-            if is_db_enabled():
-                # Determine target branch: project tasks merge to project branch
-                merge_target = "main"
-                from .. import db as _db
-                db_task = _db.get_task(task_id)
-                if db_task and db_task.get("project_id"):
-                    project = _db.get_project(db_task["project_id"])
-                    if project and project.get("branch"):
-                        merge_target = project["branch"]
-                        self.log(f"Project task: targeting branch '{merge_target}'")
-
-                if total_commits > 0:
-                    merged = self._try_merge_to_main(
-                        submodule_path,
-                        task_id,
-                        has_sub_commits=sub_commits > 0,
-                        has_main_commits=main_commits > 0,
-                        target_branch=merge_target,
-                    )
-                    if merged:
-                        accept_completion(
-                            task_path,
-                            accepted_by="self-merge",
-                        )
-                        self.log(f"Self-merged to {merge_target} ({sub_commits} submodule + {main_commits} main repo commits)")
-                    else:
-                        # Push feature branches to origin before submit_completion
-                        # so commits are available for review even if worktree is deleted
-                        self._push_feature_branches(
-                            submodule_path,
-                            task_id,
-                            has_sub_commits=sub_commits > 0,
-                            has_main_commits=main_commits > 0,
-                        )
-                        submit_completion(
-                            task_path,
-                            commits_count=total_commits,
-                            turns_used=turns_used,
-                        )
-                        self.log(f"Self-merge failed, submitted for review ({total_commits} commits)")
-                else:
-                    submit_completion(
-                        task_path,
-                        commits_count=0,
-                        turns_used=turns_used,
-                    )
-                    self.log("No commits, submitted for pre-check")
-            else:
-                complete_task(task_path, result_msg)
+            complete_task(task_path, result_msg)
 
             return 0
 
@@ -751,7 +702,7 @@ Write your progress and findings to this file as you work:
 1. All code changes go in the `orchestrator/` submodule (Python)
 2. Run tests with: `cd orchestrator && ./venv/bin/python -m pytest tests/ -v`
 3. {pip_warning}
-4. The orchestrator venv is at `.orchestrator/venv/` or `orchestrator/venv/`
+4. The orchestrator venv is at `.octopoid/venv/` or `orchestrator/venv/`
 5. Key files: `orchestrator/orchestrator/db.py`, `queue_utils.py`, `scheduler.py`
 6. The DB is SQLite \u2014 schema changes need migrations in `db.py`
 7. Commit in the submodule directory, not the main repo root
@@ -785,7 +736,7 @@ git -C {submodule_path} rev-parse --show-toplevel
 ## Main Repo Tooling Files
 
 If your task involves creating files in the main repo (e.g., `.claude/commands/`,
-`.orchestrator/prompts/`, `project-management/scripts/`), commit those changes
+`.octopoid/prompts/`, `project-management/scripts/`), commit those changes
 on the `{tooling_branch}` branch:
 
 ```bash
@@ -843,92 +794,10 @@ def merge_project_to_main(project_id: str, parent_project: Path | None = None) -
         True if merge succeeded, False on failure
     """
     import sys
-    from ..config import is_db_enabled
-    from .. import db
 
-    if not is_db_enabled():
-        return False
-
-    project = db.get_project(project_id)
-    if not project:
-        print(f"merge_project_to_main: project {project_id} not found", file=sys.stderr)
-        return False
-
-    branch = project.get("branch")
-    if not branch or branch == "main":
-        # No project branch to merge — tasks already merged to main
-        return True
-
-    if parent_project is None:
-        from ..config import get_orchestrator_dir
-        parent_project = get_orchestrator_dir().parent
-
-    main_checkout_sub = parent_project / "orchestrator"
-
-    def run_cmd(cmd, cwd, timeout=120):
-        return subprocess.run(
-            cmd, capture_output=True, text=True, cwd=cwd, timeout=timeout
-        )
-
-    # Step 1: Merge project branch to main in submodule
-    print(f"merge_project_to_main: merging {branch} -> main in submodule", file=sys.stderr)
-
-    # Fetch latest
-    run_cmd(["git", "fetch", "origin"], cwd=main_checkout_sub)
-
-    # Checkout main
-    result = run_cmd(["git", "checkout", "main"], cwd=main_checkout_sub)
-    if result.returncode != 0:
-        print(f"merge_project_to_main: checkout main failed: {result.stderr.strip()}", file=sys.stderr)
-        return False
-
-    # Pull latest main
-    run_cmd(["git", "pull", "--ff-only", "origin", "main"], cwd=main_checkout_sub)
-
-    # Merge project branch (fast-forward if possible, otherwise regular merge)
-    result = run_cmd(
-        ["git", "merge", "--ff-only", f"origin/{branch}"],
-        cwd=main_checkout_sub,
-    )
-    if result.returncode != 0:
-        # Try a regular merge if ff-only fails
-        result = run_cmd(
-            ["git", "merge", f"origin/{branch}", "-m",
-             f"Merge project {project_id} branch '{branch}' to main"],
-            cwd=main_checkout_sub,
-        )
-        if result.returncode != 0:
-            print(f"merge_project_to_main: merge failed: {result.stderr.strip()}", file=sys.stderr)
-            return False
-
-    # Push submodule main
-    result = run_cmd(["git", "push", "origin", "main"], cwd=main_checkout_sub)
-    if result.returncode != 0:
-        print(f"merge_project_to_main: submodule push failed: {result.stderr.strip()}", file=sys.stderr)
-        # Continue — local merge succeeded
-
-    # Step 2: Update submodule ref in main repo and push
-    print(f"merge_project_to_main: updating submodule ref in main repo", file=sys.stderr)
-    run_cmd(["git", "add", "orchestrator"], cwd=parent_project)
-    diff = run_cmd(["git", "diff", "--cached", "--quiet"], cwd=parent_project)
-    if diff.returncode != 0:
-        result = run_cmd(
-            ["git", "commit", "-m",
-             f"chore: update orchestrator submodule (project {project_id} complete)"],
-            cwd=parent_project,
-        )
-        if result.returncode != 0:
-            print(f"merge_project_to_main: submodule ref commit failed: {result.stderr.strip()}", file=sys.stderr)
-        else:
-            push = run_cmd(["git", "push", "origin", "main"], cwd=parent_project)
-            if push.returncode != 0:
-                print("merge_project_to_main: main repo push failed (human can push later)", file=sys.stderr)
-
-    # Step 3: Update project status to complete
-    db.update_project(project_id, status="complete")
-
-    print(f"merge_project_to_main: project {project_id} merged to main", file=sys.stderr)
-    return True
+    # Project merge is handled via the API in v2.0
+    print(f"merge_project_to_main: not supported in API mode (project {project_id})", file=sys.stderr)
+    return False
 
 
 def main():

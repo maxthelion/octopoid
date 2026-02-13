@@ -17,7 +17,7 @@ class TestVerifyInstallPath:
     def test_agent_worktree_path_exits(self):
         """Detects orchestrator loaded from an agent worktree and exits."""
         hijacked_path = (
-            "/Users/dev/myproject/.orchestrator/agents/impl-1/worktree"
+            "/Users/dev/myproject/.octopoid/runtime/agents/impl-1/worktree"
             "/orchestrator/orchestrator/scheduler.py"
         )
         with patch("orchestrator.scheduler.__file__", hijacked_path):
@@ -43,7 +43,7 @@ class TestVerifyInstallPath:
     def test_error_message_includes_path(self, capsys):
         """Exit message includes the offending path for debugging."""
         hijacked_path = (
-            "/Users/dev/myproject/.orchestrator/agents/impl-1/worktree"
+            "/Users/dev/myproject/.octopoid/runtime/agents/impl-1/worktree"
             "/orchestrator/orchestrator/scheduler.py"
         )
         with patch("orchestrator.scheduler.__file__", hijacked_path):

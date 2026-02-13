@@ -12,10 +12,6 @@ server:
   machine_id: machine-001
   # api_key: your-api-key-here  # Optional
 
-# Local database (local mode only)
-# database:
-#   path: state.db
-
 # Agent configuration
 agents:
   max_concurrent: 3

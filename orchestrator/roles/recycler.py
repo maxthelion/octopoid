@@ -7,8 +7,6 @@ so tasks don't get permanently stuck. This is a lightweight role that
 doesn't need a worktree or invoke Claude.
 """
 
-from ..config import is_db_enabled
-from ..db import reconcile_stale_blockers
 from ..queue_utils import (
     accept_completion,
     is_burned_out,
@@ -27,10 +25,6 @@ class RecyclerRole(BaseRole):
         Returns:
             Exit code (0 for success)
         """
-        if not is_db_enabled():
-            self.log("Recycler requires database mode to be enabled")
-            return 0
-
         provisional_tasks = list_tasks("provisional")
         self.log(f"Found {len(provisional_tasks)} provisional tasks")
 
@@ -63,14 +57,6 @@ class RecyclerRole(BaseRole):
 
         if recycled or accepted:
             self.log(f"Done: {recycled} recycled, {accepted} accepted (depth cap)")
-
-        # Reconcile stale blockers: tasks blocked by done tasks get unblocked
-        unblocked = reconcile_stale_blockers()
-        for item in unblocked:
-            self.log(
-                f"Cleared stale blockers on {item['task_id']}: "
-                f"{', '.join(item['stale_blockers'])}"
-            )
 
         return 0
 

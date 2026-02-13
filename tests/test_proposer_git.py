@@ -13,8 +13,8 @@ _ENV = {
     "AGENT_ROLE": "proposer",
     "PARENT_PROJECT": "/fake/project",
     "WORKTREE": "/fake/agents/draft-processor/worktree",
-    "SHARED_DIR": "/fake/.orchestrator/shared",
-    "ORCHESTRATOR_DIR": "/fake/.orchestrator",
+    "SHARED_DIR": "/fake/.octopoid/runtime/shared",
+    "ORCHESTRATOR_DIR": "/fake/.octopoid",
     "AGENT_FOCUS": "drafts",
 }
 

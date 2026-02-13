@@ -41,7 +41,7 @@ def main():
         print()
         print("Next steps:")
         print("  1. Run breakdown agent: python -m orchestrator.orchestrator.roles.breakdown")
-        print(f"  2. Review breakdown: cat .orchestrator/shared/breakdowns/{result['project_id']}-breakdown.md")
+        print(f"  2. Review breakdown: cat .octopoid/runtime/shared/breakdowns/{result['project_id']}-breakdown.md")
         print(f"  3. Approve: ./scripts/approve-breakdown {result['project_id']}")
     else:
         print(f"Created task: {Path(result['task_path']).name}")

@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from .config import get_queue_dir, is_db_enabled
+from .config import get_queue_dir
 from .queue_utils import parse_task_file
 
 
@@ -61,7 +61,7 @@ broken down into smaller, more achievable steps.
 ## Acceptance Criteria
 
 - [ ] Analyze why the original task may have failed
-- [ ] Create a plan document at `.orchestrator/plans/PLAN-{plan_id}.md`
+- [ ] Create a plan document at `.octopoid/plans/PLAN-{plan_id}.md`
 - [ ] Break the task into 2-5 micro-tasks with clear acceptance criteria
 - [ ] Each micro-task should be achievable in a single implementation session
 - [ ] Specify dependencies between micro-tasks if any exist
@@ -112,17 +112,6 @@ The plan document should follow this format:
     # Create plans directory
     plans_dir = get_queue_dir().parent / "plans"
     plans_dir.mkdir(parents=True, exist_ok=True)
-
-    # Also create in DB if enabled
-    if is_db_enabled():
-        from . import db
-        db.create_task(
-            task_id=plan_id,
-            file_path=str(task_path),
-            priority="P1",
-            role="implement",
-            branch=original_task.get("branch", "main"),
-        )
 
     return plan_id
 
@@ -239,23 +228,5 @@ def create_micro_tasks(
         task_id = task_path.stem.replace("TASK-", "")
         created_ids.append(task_id)
         number_to_id[mt["number"]] = task_id
-
-    # Second pass: set up dependencies
-    if is_db_enabled():
-        from . import db
-
-        for mt in micro_tasks:
-            if mt["dependencies"]:
-                task_id = number_to_id.get(mt["number"])
-                if task_id:
-                    # Convert dependency numbers to task IDs
-                    blocker_ids = [
-                        number_to_id[dep]
-                        for dep in mt["dependencies"]
-                        if dep in number_to_id
-                    ]
-                    if blocker_ids:
-                        blocked_by = ",".join(blocker_ids)
-                        db.update_task(task_id, blocked_by=blocked_by)
 
     return created_ids

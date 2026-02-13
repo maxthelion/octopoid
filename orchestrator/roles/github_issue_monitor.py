@@ -223,26 +223,28 @@ github_url: {url}
 {chr(10).join(f"- {criterion}" for criterion in acceptance_criteria)}
 """
 
-            # Write task file locally
-            queue_dir = self.parent_project / ".octopoid" / "queue" / "incoming"
-            queue_dir.mkdir(parents=True, exist_ok=True)
-            task_file = queue_dir / f"{task_id}.md"
+            # Write task file locally — all task files live in one directory
+            from ..config import get_tasks_file_dir
+            tasks_dir = get_tasks_file_dir()
+            filename = f"{task_id}.md"
+            task_file = tasks_dir / filename
 
             with open(task_file, "w") as f:
                 f.write(frontmatter)
 
             self.debug_log(f"Created task file: {task_file}")
 
-            # Register task with API server
-            relative_path = task_file.relative_to(self.parent_project)
+            # Register task with API server — store just the filename
             task_title = f"[GH-{issue_number}] {title}"
+            from ..config import get_main_branch
             task = self.sdk.tasks.create(
                 id=task_id,
-                file_path=str(relative_path),
+                file_path=filename,
                 title=task_title,
                 role=role,
                 priority=priority,
                 queue="incoming",
+                branch=get_main_branch(),
                 metadata={
                     "created_by": self.agent_name,
                     "github_issue": issue_number,
@@ -287,6 +289,82 @@ github_url: {url}
             # Don't fail if we can't comment - the task is still created
             self.debug_log(f"Could not comment on issue #{issue_number}: {e}")
 
+    def _is_server_issue(self, issue: dict[str, Any]) -> bool:
+        """Check if an issue is labelled for the server repo.
+
+        Args:
+            issue: Issue dictionary with labels list
+
+        Returns:
+            True if any label name is "server"
+        """
+        labels = [label["name"] for label in issue.get("labels", [])]
+        return "server" in labels
+
+    def _create_cross_repo_issue(self, issue: dict[str, Any]) -> bool:
+        """Forward a server-labelled issue to the octopoid-server repo.
+
+        Creates a new issue on maxthelion/octopoid-server with a back-link,
+        then comments on the original issue noting the forwarding.
+
+        Args:
+            issue: Issue dictionary with number, title, url, body
+
+        Returns:
+            True if the cross-repo issue was created successfully
+        """
+        issue_number = issue["number"]
+        title = issue["title"]
+        url = issue["url"]
+        body = issue.get("body", "") or ""
+
+        cross_body = (
+            f"Forwarded from octopoid issue [{issue_number}]({url}).\n\n"
+            f"---\n\n"
+            f"{body}"
+        )
+
+        try:
+            result = subprocess.run(
+                [
+                    "gh", "issue", "create",
+                    "--repo", "maxthelion/octopoid-server",
+                    "--title", title,
+                    "--body", cross_body,
+                ],
+                cwd=self.parent_project,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+
+            if result.returncode != 0:
+                self.log(f"Failed to create server issue for #{issue_number}: {result.stderr}")
+                return False
+
+            server_issue_url = result.stdout.strip()
+            self.log(f"Created server issue for #{issue_number}: {server_issue_url}")
+
+            # Comment on original issue
+            comment = (
+                f"This issue has been forwarded to the server repo: {server_issue_url}"
+            )
+            subprocess.run(
+                [
+                    "gh", "issue", "comment", str(issue_number),
+                    "--body", comment,
+                ],
+                cwd=self.parent_project,
+                capture_output=True,
+                timeout=10,
+            )
+
+            return True
+
+        except Exception as e:
+            self.log(f"Error creating cross-repo issue for #{issue_number}: {e}")
+            return False
+
     def run(self) -> int:
         """Execute the GitHub issue monitor.
 
@@ -312,6 +390,7 @@ github_url: {url}
 
         # Process new issues
         new_issues_count = 0
+        forwarded_count = 0
         for issue in issues:
             issue_number = issue["number"]
 
@@ -321,7 +400,14 @@ github_url: {url}
 
             self.log(f"Processing new issue #{issue_number}: {issue['title']}")
 
-            if self.create_task_from_issue(issue):
+            if self._is_server_issue(issue):
+                self.log(f"Issue #{issue_number} has 'server' label, forwarding to octopoid-server")
+                if self._create_cross_repo_issue(issue):
+                    processed_issues.add(issue_number)
+                    forwarded_count += 1
+                else:
+                    self.log(f"Failed to forward issue #{issue_number} to server repo")
+            elif self.create_task_from_issue(issue):
                 processed_issues.add(issue_number)
                 new_issues_count += 1
             else:
@@ -333,7 +419,9 @@ github_url: {url}
 
         if new_issues_count > 0:
             self.log(f"Created {new_issues_count} new tasks from GitHub issues")
-        else:
+        if forwarded_count > 0:
+            self.log(f"Forwarded {forwarded_count} issues to octopoid-server")
+        if new_issues_count == 0 and forwarded_count == 0:
             self.log("No new issues to process")
 
         return 0

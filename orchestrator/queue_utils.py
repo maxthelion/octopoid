@@ -185,7 +185,7 @@ def get_projects_dir() -> Path:
     """Get the projects directory.
 
     Returns:
-        Path to .orchestrator/shared/projects/
+        Path to .octopoid/shared/projects/
     """
     projects_dir = get_orchestrator_dir() / "shared" / "projects"
     projects_dir.mkdir(parents=True, exist_ok=True)
@@ -331,75 +331,6 @@ def list_tasks(subdir: str) -> list[dict[str, Any]]:
         return []
 
 
-def _db_task_to_file_format(db_task: dict[str, Any]) -> dict[str, Any]:
-    """Convert a database task record to file-format task dict.
-
-    Args:
-        db_task: Task from database
-
-    Returns:
-        Task dict compatible with file-based format
-    """
-    file_path = Path(db_task.get("file_path", ""))
-
-    # Read content from file if it exists
-    content = ""
-    title = db_task["id"]
-    if file_path.exists():
-        try:
-            content = file_path.read_text()
-            # Extract title from content
-            title_match = re.search(r"^#\s*\[TASK-[^\]]+\]\s*(.+)$", content, re.MULTILINE)
-            if title_match:
-                title = title_match.group(1).strip()
-        except IOError:
-            pass
-
-    # checks comes back as a list from db.get_task() / db.list_tasks()
-    checks = db_task.get("checks", [])
-    if isinstance(checks, str):
-        # Fallback: if raw string slips through, parse it
-        checks = [c.strip() for c in checks.split(",") if c.strip()] if checks else []
-
-    # check_results comes back as a dict from db.get_task() / db.list_tasks()
-    check_results = db_task.get("check_results", {})
-    if isinstance(check_results, str):
-        import json
-        try:
-            check_results = json.loads(check_results) if check_results else {}
-        except (json.JSONDecodeError, TypeError):
-            check_results = {}
-
-    return {
-        "path": file_path,
-        "id": db_task["id"],
-        "title": title,
-        "role": db_task.get("role"),
-        "priority": db_task.get("priority", "P2"),
-        "branch": db_task.get("branch", "main"),
-        "created": db_task.get("created_at"),
-        "created_by": None,
-        "content": content,
-        # Additional DB fields
-        "blocked_by": db_task.get("blocked_by"),
-        "claimed_by": db_task.get("claimed_by"),
-        "claimed_at": db_task.get("claimed_at"),
-        "submitted_at": db_task.get("submitted_at"),
-        "completed_at": db_task.get("completed_at"),
-        "attempt_count": db_task.get("attempt_count", 0),
-        "commits_count": db_task.get("commits_count", 0),
-        "turns_used": db_task.get("turns_used", 0),
-        "has_plan": db_task.get("has_plan", False),
-        "project_id": db_task.get("project_id"),
-        "rejection_count": db_task.get("rejection_count", 0),
-        "pr_number": db_task.get("pr_number"),
-        "pr_url": db_task.get("pr_url"),
-        "checks": checks,
-        "check_results": check_results,
-        "staging_url": db_task.get("staging_url"),
-    }
-
-
 def parse_task_file(task_path: Path) -> dict[str, Any] | None:
     """Parse a task file and extract metadata.
 
@@ -502,6 +433,7 @@ def claim_task(
     role_filter: str | None = None,
     agent_name: str | None = None,
     from_queue: str = "incoming",
+    type_filter: str | None = None,
 ) -> dict[str, Any] | None:
     """Atomically claim a task from the API server.
 
@@ -515,6 +447,7 @@ def claim_task(
         role_filter: Only claim tasks with this role (e.g., 'implement', 'test', 'breakdown')
         agent_name: Name of claiming agent (for logging in task)
         from_queue: Queue to claim from (default 'incoming')
+        type_filter: Only claim tasks with this type (e.g., 'product', 'infrastructure')
 
     Returns:
         Task info dictionary (with 'content' from file) if claimed, None if no task
@@ -532,6 +465,7 @@ def claim_task(
         orchestrator_id=orchestrator_id,
         agent_name=agent_name or "unknown",
         role_filter=role_filter,
+        type_filter=type_filter,
         max_claimed=limits.get("max_claimed"),
     )
 
@@ -619,6 +553,51 @@ def complete_task(task_path: Path | str, result: str | None = None) -> Path:
         return task_path
 
 
+def _generate_execution_notes(
+    task_info: dict,
+    commits_count: int,
+    turns_used: int | None = None,
+) -> str:
+    """Generate execution notes summarizing what was done.
+
+    Args:
+        task_info: Parsed task information
+        commits_count: Number of commits made
+        turns_used: Number of Claude turns used
+
+    Returns:
+        Execution notes string (concise summary)
+    """
+    parts = []
+
+    # Commit summary
+    if commits_count > 0:
+        parts.append(f"Created {commits_count} commit{'s' if commits_count != 1 else ''}")
+    else:
+        parts.append("No commits made")
+
+    # Turn usage
+    if turns_used:
+        parts.append(f"{turns_used} turn{'s' if turns_used != 1 else ''} used")
+
+    # Try to get commit messages from git log (if in a repo)
+    try:
+        result = subprocess.run(
+            ["git", "log", "--oneline", "-n", str(min(commits_count, 5))],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            commit_summary = result.stdout.strip().replace("\n", "; ")
+            parts.append(f"Changes: {commit_summary}")
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+
+    return ". ".join(parts) + "."
+
+
 def submit_completion(
     task_path: Path | str,
     commits_count: int = 0,
@@ -667,11 +646,17 @@ def submit_completion(
                 accepted_by="submit_completion",
             )
 
+        # Generate execution notes
+        execution_notes = _generate_execution_notes(
+            task_info, commits_count, turns_used
+        )
+
         # Submit via API (moves to provisional queue)
         sdk.tasks.submit(
             task_id=task_id,
             commits_count=commits_count,
-            turns_used=turns_used or 0
+            turns_used=turns_used or 0,
+            execution_notes=execution_notes,
         )
 
         # Append submission metadata to local file for human readability
@@ -680,6 +665,7 @@ def submit_completion(
             f.write(f"COMMITS_COUNT: {commits_count}\n")
             if turns_used:
                 f.write(f"TURNS_USED: {turns_used}\n")
+            f.write(f"EXECUTION_NOTES: {execution_notes}\n")
 
         return task_path
 
@@ -1485,6 +1471,18 @@ CREATED_BY: {created_by}
     # Write local file
     task_path.write_text(content)
 
+    # Resolve hooks from config for this task
+    hooks_json = None
+    try:
+        from .hook_manager import HookManager
+        hm = HookManager(sdk=get_sdk())
+        hooks_list = hm.resolve_hooks_for_task(task_type=None)
+        if hooks_list:
+            import json as _json
+            hooks_json = _json.dumps(hooks_list)
+    except Exception as e:
+        print(f"Warning: Failed to resolve hooks: {e}")
+
     # Register task with API server
     try:
         sdk = get_sdk()
@@ -1498,6 +1496,7 @@ CREATED_BY: {created_by}
             acceptance_criteria="\n".join(criteria_lines),
             queue=queue,
             branch=branch,
+            hooks=hooks_json,
             metadata={
                 "created_by": created_by,
                 "blocked_by": blocked_by,
@@ -1636,9 +1635,8 @@ def get_queue_status() -> dict[str, Any]:
     Returns:
         Dictionary with queue counts and task lists
     """
-    queues = ["incoming", "claimed", "needs_continuation", "done", "failed", "rejected"]
-    if is_db_enabled():
-        queues.extend(["breakdown", "provisional", "escalated"])
+    queues = ["incoming", "claimed", "needs_continuation", "done", "failed", "rejected",
+              "breakdown", "provisional", "escalated"]
 
     result = {}
     for q in queues:
@@ -1650,17 +1648,13 @@ def get_queue_status() -> dict[str, Any]:
 
     result["limits"] = get_queue_limits()
     result["open_prs"] = count_open_prs()
-    result["db_enabled"] = is_db_enabled()
 
-    # Add project counts if DB enabled
-    if is_db_enabled():
-        from . import db
-        result["projects"] = {
-            "draft": len(db.list_projects("draft")),
-            "active": len(db.list_projects("active")),
-            "ready-for-pr": len(db.list_projects("ready-for-pr")),
-            "complete": len(db.list_projects("complete")),
-        }
+    result["projects"] = {
+        "draft": len(list_projects("draft")),
+        "active": len(list_projects("active")),
+        "ready-for-pr": len(list_projects("ready-for-pr")),
+        "complete": len(list_projects("complete")),
+    }
 
     return result
 
@@ -1838,12 +1832,7 @@ def activate_project(project_id: str, create_branch: bool = True) -> dict[str, A
     Returns:
         Updated project or None if not found
     """
-    if not is_db_enabled():
-        return None
-
-    from . import db
-
-    project = db.get_project(project_id)
+    project = get_project(project_id)
     if not project:
         return None
 
@@ -1863,7 +1852,7 @@ def activate_project(project_id: str, create_branch: bool = True) -> dict[str, A
             pass  # Branch may already exist
 
     # Update status
-    project = db.activate_project(project_id)
+    project["status"] = "active"
     _write_project_file(project)
 
     return project
@@ -1878,11 +1867,7 @@ def get_project_tasks(project_id: str) -> list[dict[str, Any]]:
     Returns:
         List of task dictionaries
     """
-    if not is_db_enabled():
-        return []
-
-    from . import db
-    return db.get_project_tasks(project_id)
+    return []
 
 
 def get_project_status(project_id: str) -> dict[str, Any] | None:
@@ -1894,16 +1879,11 @@ def get_project_status(project_id: str) -> dict[str, Any] | None:
     Returns:
         Status dictionary or None if project not found
     """
-    if not is_db_enabled():
-        return None
-
-    from . import db
-
-    project = db.get_project(project_id)
+    project = get_project(project_id)
     if not project:
         return None
 
-    tasks = db.get_project_tasks(project_id)
+    tasks = get_project_tasks(project_id)
 
     # Count tasks by queue
     queue_counts = {}
@@ -1944,11 +1924,6 @@ def send_to_breakdown(
     Returns:
         Dictionary with project_id or task_id and file paths
     """
-    if not is_db_enabled():
-        raise RuntimeError("Breakdown queue requires database mode to be enabled")
-
-    from . import db
-
     if as_project:
         # Create project
         project = create_project(
@@ -2005,7 +1980,7 @@ def get_breakdowns_dir() -> Path:
     """Get the breakdowns directory.
 
     Returns:
-        Path to .orchestrator/shared/breakdowns/
+        Path to .octopoid/shared/breakdowns/
     """
     breakdowns_dir = get_orchestrator_dir() / "shared" / "breakdowns"
     breakdowns_dir.mkdir(parents=True, exist_ok=True)
@@ -2141,17 +2116,6 @@ def approve_breakdown(identifier: str) -> dict[str, Any]:
             if dep_num in id_map:
                 depended_on.add(id_map[dep_num])
     leaf_ids = [tid for tid in created_ids if tid not in depended_on]
-
-    # Rewire external dependencies for re-breakdowns.
-    # When a task was recycled, external tasks remain blocked by the original
-    # (recycled) task ID. Now that we have real subtasks, rewire those
-    # external tasks to depend on the leaf subtasks — so they only unblock
-    # when the actual work is done.
-    if leaf_ids and is_db_enabled():
-        rebreakdown_match = re.search(r'Re-breakdown:\s*(\S+)', content)
-        if rebreakdown_match:
-            original_task_id = rebreakdown_match.group(1)
-            _rewire_dependencies(original_task_id, leaf_ids)
 
     # Update breakdown file status to approved
     updated_content = content.replace(
@@ -2469,26 +2433,22 @@ def recycle_to_breakdown(task_path, reason="too_large") -> dict | None:
         Dictionary with breakdown_task info, or None if recycling is not appropriate
         (e.g., depth cap exceeded)
     """
-    if not is_db_enabled():
-        raise RuntimeError("Task recycling requires database mode to be enabled")
-
-    from . import db
-
     task_path = Path(task_path)
 
-    # Look up task in DB by path
-    db_task = db.get_task_by_path(str(task_path))
-    if not db_task:
-        # Try to extract task ID from filename
-        match = re.match(r"TASK-(.+)\.md", task_path.name)
-        if match:
-            task_id = match.group(1)
-            db_task = db.get_task(task_id)
+    # Look up task via SDK
+    match = re.match(r"TASK-(.+)\.md", task_path.name)
+    if not match:
+        return None
+    task_id = match.group(1)
+
+    try:
+        sdk = get_sdk()
+        db_task = sdk.tasks.get(task_id)
+    except Exception:
+        db_task = None
 
     if not db_task:
         return None
-
-    task_id = db_task["id"]
 
     # Read the original task content, stripping agent metadata and error
     # sections to keep re-breakdown tasks lean (only human-written content)
@@ -2512,8 +2472,8 @@ def recycle_to_breakdown(task_path, reason="too_large") -> dict | None:
     project_context = ""
 
     if project_id:
-        project = db.get_project(project_id)
-        all_project_tasks = db.get_project_tasks(project_id)
+        project = get_project(project_id)
+        all_project_tasks = get_project_tasks(project_id)
         sibling_tasks = [t for t in all_project_tasks if t["id"] != task_id]
 
         if project:
@@ -2590,14 +2550,6 @@ def recycle_to_breakdown(task_path, reason="too_large") -> dict | None:
     if task_path.exists():
         task_path.rename(recycled_path)
 
-    db.update_task_queue(
-        task_id,
-        "recycled",
-        file_path=str(recycled_path),
-        history_event="recycled",
-        history_details=f"reason={reason}, breakdown_task={breakdown_task_id}",
-    )
-
     # NOTE: We intentionally do NOT rewire dependencies here.
     # External tasks stay blocked by the original (recycled) task ID.
     # When the breakdown is approved, approve_breakdown() rewires from
@@ -2613,56 +2565,6 @@ def recycle_to_breakdown(task_path, reason="too_large") -> dict | None:
     }
 
 
-def _move_task_file_to_done(task_id: str, stored_file_path: str) -> Path | None:
-    """Find and move a task's markdown file to the done/ directory.
-
-    Searches for the task file across queue directories because the DB's
-    stored file_path may be stale. Updates the DB file_path after moving.
-
-    Args:
-        task_id: Task identifier (used for filename matching and DB update)
-        stored_file_path: The file_path from the DB (may be stale)
-
-    Returns:
-        New path in done/ directory, or None if file not found
-    """
-    from . import db
-
-    done_dir = get_queue_subdir("done")
-    filename = f"TASK-{task_id}.md"
-
-    # Try the stored path first
-    source = Path(stored_file_path) if stored_file_path else None
-    if source and source.exists():
-        dest = done_dir / source.name
-        try:
-            with open(source, "a") as f:
-                f.write(f"\nACCEPTED_AT: {datetime.now().isoformat()}\n")
-                f.write("ACCEPTED_BY: human\n")
-            os.rename(source, dest)
-            db.update_task(task_id, file_path=str(dest))
-            cleanup_task_notes(task_id)
-            return dest
-        except OSError:
-            pass
-
-    # Stored path is stale — search queue directories for the file
-    for subdir in ["provisional", "claimed", "incoming"]:
-        candidate = get_queue_subdir(subdir) / filename
-        if candidate.exists():
-            dest = done_dir / filename
-            try:
-                with open(candidate, "a") as f:
-                    f.write(f"\nACCEPTED_AT: {datetime.now().isoformat()}\n")
-                    f.write("ACCEPTED_BY: human\n")
-                os.rename(candidate, dest)
-                db.update_task(task_id, file_path=str(dest))
-                cleanup_task_notes(task_id)
-                return dest
-            except OSError:
-                pass
-
-    return None
 
 
 def approve_and_merge(
@@ -2733,45 +2635,3 @@ def approve_and_merge(
     return result
 
 
-def _rewire_dependencies(old_task_id: str, new_task_ids: str | list[str]) -> None:
-    """Rewire tasks blocked by old_task_id to depend on new task(s) instead.
-
-    When a task is recycled/re-broken-down, tasks that depended on it need to
-    be rewired to depend on the replacement. If the replacement is multiple
-    leaf subtasks, the dependent task must wait for ALL of them.
-
-    Args:
-        old_task_id: The task ID being replaced
-        new_task_ids: Replacement task ID(s) — a single ID string,
-            a comma-separated string, or a list of IDs
-    """
-    from . import db
-
-    # Normalize to list
-    if isinstance(new_task_ids, str):
-        replacement_ids = [t.strip() for t in new_task_ids.split(",") if t.strip()]
-    else:
-        replacement_ids = list(new_task_ids)
-
-    with db.get_connection() as conn:
-        cursor = conn.execute(
-            "SELECT id, blocked_by FROM tasks WHERE blocked_by LIKE ?",
-            (f"%{old_task_id}%",),
-        )
-
-        for row in cursor.fetchall():
-            blocked_by = row["blocked_by"] or ""
-            blockers = [b.strip() for b in blocked_by.split(",") if b.strip()]
-            # Replace old_task_id with all replacement IDs
-            new_blockers = []
-            for b in blockers:
-                if b == old_task_id:
-                    new_blockers.extend(replacement_ids)
-                else:
-                    new_blockers.append(b)
-            new_blocked_by = ",".join(new_blockers) if new_blockers else None
-
-            conn.execute(
-                "UPDATE tasks SET blocked_by = ?, updated_at = ? WHERE id = ?",
-                (new_blocked_by, datetime.now().isoformat(), row["id"]),
-            )

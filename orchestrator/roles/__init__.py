@@ -5,7 +5,6 @@ from .curator import CuratorRole
 from .gatekeeper import GatekeeperRole
 from .gatekeeper_coordinator import GatekeeperCoordinatorRole
 from .github_issue_monitor import GitHubIssueMonitorRole
-from .implementer import ImplementerRole
 from .orchestrator_impl import OrchestratorImplRole
 from .pr_coordinator import PRCoordinatorRole
 from .product_manager import ProductManagerRole
@@ -29,8 +28,7 @@ __all__ = [
     "GatekeeperCoordinatorRole",
     # PR coordination
     "PRCoordinatorRole",
-    # Execution layer (both models)
-    "ImplementerRole",
+    # Execution layer
     "OrchestratorImplRole",
     "TesterRole",
     "ReviewerRole",

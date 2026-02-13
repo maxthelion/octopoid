@@ -12,7 +12,7 @@ Environment variables:
 import os
 import subprocess
 
-from ..config import get_orchestrator_dir, is_db_enabled
+from ..config import get_orchestrator_dir
 from .base import main_entry
 from .specialist import SpecialistRole
 
@@ -97,19 +97,14 @@ class GatekeeperRole(SpecialistRole):
             status: 'pass' or 'fail'
             summary: Brief description of the result
         """
-        if is_db_enabled():
-            from .. import db
-            db.record_check_result(self.review_task_id, self.check_name, status, summary)
-        else:
-            # Fallback to filesystem for non-DB setups
-            from ..review_utils import record_review_result
-            record_review_result(
-                self.review_task_id,
-                self.check_name,
-                status,
-                summary,
-                submitted_by=self.agent_name,
-            )
+        from ..review_utils import record_review_result
+        record_review_result(
+            self.review_task_id,
+            self.check_name,
+            status,
+            summary,
+            submitted_by=self.agent_name,
+        )
 
     def run(self) -> int:
         """Run gatekeeper check on a task's branch diff.
@@ -126,25 +121,14 @@ class GatekeeperRole(SpecialistRole):
         # Load task from DB to get branch info
         branch = ""
         base_branch = "main"
-        if is_db_enabled():
-            from .. import db
-            task = db.get_task(self.review_task_id)
-            if task:
-                branch = task.get("branch", "")
-                # base_branch defaults to "main"
-            else:
-                self.log(f"No task found in DB for {self.review_task_id}")
-                return 1
+        from ..review_utils import load_review_meta
+        meta = load_review_meta(self.review_task_id)
+        if meta:
+            branch = meta.get("branch", "")
+            base_branch = meta.get("base_branch", "main")
         else:
-            # Fallback to filesystem review metadata
-            from ..review_utils import load_review_meta
-            meta = load_review_meta(self.review_task_id)
-            if meta:
-                branch = meta.get("branch", "")
-                base_branch = meta.get("base_branch", "main")
-            else:
-                self.log(f"No review metadata found for task {self.review_task_id}")
-                return 1
+            self.log(f"No review metadata found for task {self.review_task_id}")
+            return 1
 
         if not branch:
             self.log("No branch found for task")
@@ -218,13 +202,13 @@ Visually verify this implementation using Playwright MCP against the staging dep
 
 **IMPORTANT: Save screenshots for visual evidence**
 1. Take screenshots during your review (initial state, bugs, key views)
-2. Save them to persistent storage using the instructions in `.orchestrator/prompts/record-check.md`
+2. Save them to persistent storage using the instructions in `.octopoid/prompts/record-check.md`
 3. Include screenshot paths when recording your check result
 
-Refer to `.orchestrator/prompts/record-check.md` for the complete workflow.
+Refer to `.octopoid/prompts/record-check.md` for the complete workflow.
 
 **Quick reference:**
-- Screenshots go in: `.orchestrator/agents/gk-qa/screenshots/TASK-{self.review_task_id}/`
+- Screenshots go in: `.octopoid/agents/gk-qa/screenshots/TASK-{self.review_task_id}/`
 - Use `db.record_check_result()` with `screenshots=[]` parameter
 - Paths must be relative to repo root
 

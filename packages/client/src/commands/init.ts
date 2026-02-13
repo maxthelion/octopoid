@@ -123,7 +123,6 @@ cache.db
   if (mode === 'remote') {
     console.log('  3. Start orchestrator: octopoid start')
   } else {
-    console.log('  3. Initialize database: octopoid db init')
-    console.log('  4. Start orchestrator: octopoid start')
+    console.log('  3. Start orchestrator: octopoid start')
   }
 }

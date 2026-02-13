@@ -15,7 +15,7 @@ This role is lightweight - it doesn't need a worktree or invoke Claude.
 
 from pathlib import Path
 
-from ..config import get_pre_check_config, is_db_enabled
+from ..config import get_pre_check_config
 from ..queue_utils import (
     accept_completion,
     escalate_to_planning,
@@ -36,10 +36,6 @@ class PreCheckRole(BaseRole):
         Returns:
             Exit code (0 for success)
         """
-        if not is_db_enabled():
-            self.log("Pre-check requires database mode to be enabled")
-            return 0
-
         pre_check_config = get_pre_check_config()
         require_commits = pre_check_config["require_commits"]
         max_attempts = pre_check_config["max_attempts_before_planning"]
@@ -182,30 +178,13 @@ class PreCheckRole(BaseRole):
         Args:
             timeout_minutes: How long a task can be claimed before reset
         """
-        from .. import db
-
-        reset_ids = db.reset_stuck_claimed(timeout_minutes)
-        if reset_ids:
-            self.log(f"Reset {len(reset_ids)} stuck claimed tasks: {reset_ids}")
+        # Handled by the API server in v2.0
+        pass
 
     def _check_unblocked_tasks(self) -> None:
         """Check if any tasks have been unblocked by completed dependencies."""
-        from .. import db
-
-        # Get tasks that might be blocked
-        tasks = db.list_tasks(queue="incoming", include_blocked=True)
-        unblocked_count = 0
-
-        for task in tasks:
-            if task.get("blocked_by"):
-                if db.check_dependencies_resolved(task["id"]):
-                    # Dependencies are resolved, clear the blocked_by field
-                    db.update_task(task["id"], blocked_by=None)
-                    unblocked_count += 1
-                    self.debug_log(f"Unblocked task {task['id']}")
-
-        if unblocked_count > 0:
-            self.log(f"Unblocked {unblocked_count} tasks")
+        # Handled by the API server in v2.0
+        pass
 
 
 def main():
