@@ -1,6 +1,5 @@
 /**
  * Draft types for Octopoid
- * Based on orchestrator/db.py schema
  */
 
 export type DraftStatus = 'idea' | 'draft' | 'review' | 'approved' | 'implemented' | 'archived'

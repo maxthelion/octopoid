@@ -1,7 +1,7 @@
 """Review tracking utilities for the gatekeeper review system.
 
 Manages review state in the filesystem at:
-    .orchestrator/shared/reviews/TASK-{id}/
+    .octopoid/shared/reviews/TASK-{id}/
         meta.json           - Review status and metadata
         checks/
             architecture.json
@@ -21,7 +21,7 @@ def get_reviews_dir() -> Path:
     """Get the reviews root directory.
 
     Returns:
-        Path to .orchestrator/shared/reviews/
+        Path to .octopoid/shared/reviews/
     """
     reviews_dir = get_orchestrator_dir() / "shared" / "reviews"
     reviews_dir.mkdir(parents=True, exist_ok=True)
@@ -35,7 +35,7 @@ def get_review_dir(task_id: str) -> Path:
         task_id: Task identifier
 
     Returns:
-        Path to .orchestrator/shared/reviews/TASK-{id}/
+        Path to .octopoid/shared/reviews/TASK-{id}/
     """
     review_dir = get_reviews_dir() / f"TASK-{task_id}"
     return review_dir

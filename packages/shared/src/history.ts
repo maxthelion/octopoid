@@ -1,6 +1,5 @@
 /**
  * Task history types for Octopoid
- * Based on orchestrator/db.py schema
  */
 
 export type TaskEvent =

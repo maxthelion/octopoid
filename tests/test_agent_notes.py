@@ -1,8 +1,6 @@
 """Tests for the agent notes system."""
 
-import os
 import pytest
-from pathlib import Path
 from unittest.mock import patch
 
 
@@ -101,31 +99,7 @@ class TestNotesCleanup:
             assert result is False
 
 
-class TestNotesIntegration:
-    """Integration tests for notes cleanup during task lifecycle."""
-
-    def test_accept_completion_cleans_notes(self, mock_config, sample_project_with_tasks):
-        """accept_completion deletes notes for the accepted task."""
-        db_path = sample_project_with_tasks["completed_tasks"][0]["path"].parent.parent.parent.parent / "state.db"
-        notes_dir = mock_config / "shared" / "notes"
-        notes_dir.mkdir(parents=True, exist_ok=True)
-
-        with patch('orchestrator.db.get_database_path', return_value=db_path):
-            with patch('orchestrator.queue_utils.is_db_enabled', return_value=True):
-                with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_config / "shared" / "queue"):
-                    with patch('orchestrator.config.get_notes_dir', return_value=notes_dir):
-                        from orchestrator.queue_utils import save_task_notes, get_task_notes, accept_completion
-
-                        # Get a completed task that's in provisional
-                        task = sample_project_with_tasks["completed_tasks"][0]
-                        task_id = task["id"]
-
-                        # Create notes for it
-                        save_task_notes(task_id, "impl-agent-1", "Some exploration notes", commits=1, turns=50)
-                        assert get_task_notes(task_id) is not None
-
-                        # Accept the task
-                        accept_completion(task["path"], accepted_by="test")
-
-                        # Notes should be cleaned up
-                        assert get_task_notes(task_id) is None
+    # TestNotesIntegration was removed during database cleanup.
+    # test_accept_completion_cleans_notes relied on orchestrator.db
+    # (get_database_path, is_db_enabled, sample_project_with_tasks).
+    # New integration tests should use the SDK/API instead.

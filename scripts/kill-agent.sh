@@ -6,7 +6,7 @@ set -e
 
 AGENT_NAME="$1"
 BOXEN_DIR="${BOXEN_DIR:-/Users/maxwilliams/dev/boxen}"
-AGENTS_DIR="$BOXEN_DIR/.orchestrator/agents"
+AGENTS_DIR="$BOXEN_DIR/.octopoid/runtime/agents"
 
 if [ -z "$AGENT_NAME" ]; then
     echo "Usage: $0 <agent-name>"

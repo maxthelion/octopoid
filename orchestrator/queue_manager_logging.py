@@ -32,7 +32,7 @@ class QueueManagerLogger:
         """Initialize logger.
 
         Args:
-            log_dir: Directory for log files (defaults to .orchestrator/logs/)
+            log_dir: Directory for log files (defaults to .octopoid/logs/)
         """
         if log_dir is None:
             log_dir = get_orchestrator_dir() / "logs"
@@ -92,7 +92,7 @@ class QueueManagerLogger:
         """Write a summary of actions to the notes directory.
 
         Args:
-            notes_dir: Directory for notes (defaults to .orchestrator/shared/notes/)
+            notes_dir: Directory for notes (defaults to .octopoid/shared/notes/)
 
         Returns:
             Path to the written notes file
@@ -141,7 +141,7 @@ def get_recent_fixes(hours: int = 24, log_dir: Path | None = None) -> list[dict]
 
     Args:
         hours: How many hours to look back
-        log_dir: Directory containing log files (defaults to .orchestrator/logs/)
+        log_dir: Directory containing log files (defaults to .octopoid/logs/)
 
     Returns:
         List of actions with timestamp, fix_type, and message

@@ -28,12 +28,12 @@ class TestSpawnAgentEnv:
     ):
         """spawn_agent should include AGENT_NAME in the subprocess env."""
         mock_parent.return_value = tmp_path
-        mock_orch_dir.return_value = tmp_path / ".orchestrator"
+        mock_orch_dir.return_value = tmp_path / ".octopoid"
         mock_worktree.return_value = tmp_path / "worktree"
-        mock_agents_dir.return_value = tmp_path / ".orchestrator" / "agents"
+        mock_agents_dir.return_value = tmp_path / ".octopoid" / "runtime" / "agents"
 
         # Create required directories
-        (tmp_path / ".orchestrator" / "agents" / "impl-agent-1").mkdir(parents=True)
+        (tmp_path / ".octopoid" / "runtime" / "agents" / "impl-agent-1").mkdir(parents=True)
 
         mock_process = MagicMock()
         mock_process.pid = 12345
@@ -67,11 +67,11 @@ class TestSpawnAgentEnv:
     ):
         """spawn_agent env should include AGENT_ID, AGENT_ROLE, and other vars."""
         mock_parent.return_value = tmp_path
-        mock_orch_dir.return_value = tmp_path / ".orchestrator"
+        mock_orch_dir.return_value = tmp_path / ".octopoid"
         mock_worktree.return_value = tmp_path / "worktree"
-        mock_agents_dir.return_value = tmp_path / ".orchestrator" / "agents"
+        mock_agents_dir.return_value = tmp_path / ".octopoid" / "runtime" / "agents"
 
-        (tmp_path / ".orchestrator" / "agents" / "test-agent").mkdir(parents=True)
+        (tmp_path / ".octopoid" / "runtime" / "agents" / "test-agent").mkdir(parents=True)
 
         mock_process = MagicMock()
         mock_process.pid = 99999

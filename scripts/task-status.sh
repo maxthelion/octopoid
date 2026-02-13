@@ -3,7 +3,7 @@
 # Usage: ./task-status.sh
 
 BOXEN_DIR="${BOXEN_DIR:-$(cd "$(dirname "$0")/../.." && pwd)}"
-QUEUE_DIR="$BOXEN_DIR/.orchestrator/shared/queue"
+QUEUE_DIR="$BOXEN_DIR/.octopoid/runtime/shared/queue"
 
 echo "=== TASK STATUS ==="
 echo ""
@@ -41,7 +41,7 @@ if [ "$claimed" -gt 0 ]; then
         # Try to get progress from agent status
         progress=""
         if [ -n "$agent" ]; then
-            status_file="$BOXEN_DIR/.orchestrator/agents/$agent/status.json"
+            status_file="$BOXEN_DIR/.octopoid/runtime/agents/$agent/status.json"
             if [ -f "$status_file" ]; then
                 progress=$(python3 -c "import json; d=json.load(open('$status_file')); print(f\"{d.get('progress_percent', '?')}%\")" 2>/dev/null)
             fi

@@ -13,6 +13,7 @@ import json
 import re
 import subprocess
 import sys
+from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -577,6 +578,236 @@ def print_task_detail(task_id: str) -> None:
         print(f"  total time:    {duration_str(created, completed)}")
 
 
+# -- Error Scanning --------------------------------------------------------
+
+# Known error patterns: (key, regex, severity, human description)
+# Severity: "critical" = system broken, "error" = task failing, "warn" = degraded
+KNOWN_ERRORS = [
+    ("credit_balance", r"Credit balance is too low", "critical",
+     "Claude CLI credit balance too low — agents cannot do any work"),
+    ("worktree_branch_exists", r"returned non-zero exit status 255", "error",
+     "Task worktree/branch creation failed (stale branch or worktree exists)"),
+    ("rate_limit", r"API rate limit", "warn",
+     "GitHub API rate limit exceeded — issue monitor cannot fetch new issues"),
+    ("sdk_connection", r"Failed to claim task.*Connection", "critical",
+     "Cannot connect to Octopoid API server — queue operations broken"),
+    ("sdk_timeout", r"Failed to claim task.*[Tt]imeout", "error",
+     "Octopoid API server timeout — queue operations intermittent"),
+]
+
+
+def _parse_log_timestamp(line: str) -> datetime | None:
+    """Extract timestamp from a log line like [2026-02-12T13:45:10.737362]."""
+    m = re.match(r"\[(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})", line)
+    if m:
+        try:
+            return datetime.fromisoformat(m.group(1))
+        except ValueError:
+            pass
+    return None
+
+
+def _read_log_tail(path: Path, max_bytes: int = 256_000) -> str:
+    """Read the tail of a log file efficiently."""
+    try:
+        size = path.stat().st_size
+        with open(path, "rb") as f:
+            f.seek(max(0, size - max_bytes))
+            return f.read().decode("utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def scan_agent_errors() -> list[dict]:
+    """Scan today's agent logs for critical errors and pathological patterns.
+
+    Returns a list of issue dicts:
+        {severity, agent, summary, detail, first_seen, last_seen, count}
+    """
+    issues: list[dict] = []
+    logs_dir = get_orchestrator_dir() / "logs"
+    today = datetime.now().strftime("%Y-%m-%d")
+    runtime_dir = get_agents_runtime_dir()
+
+    if not runtime_dir.exists():
+        return issues
+
+    for agent_dir in sorted(runtime_dir.iterdir()):
+        if not agent_dir.is_dir():
+            continue
+        name = agent_dir.name
+        log_path = logs_dir / f"{name}-{today}.log"
+        if not log_path.exists():
+            continue
+
+        content = _read_log_tail(log_path)
+        if not content:
+            continue
+        lines = content.strip().split("\n")
+
+        # --- Pattern matching for known errors ---
+        for key, pattern, severity, description in KNOWN_ERRORS:
+            matches = [ln for ln in lines if re.search(pattern, ln)]
+            if not matches:
+                continue
+
+            first_ts = _parse_log_timestamp(matches[0])
+            last_ts = _parse_log_timestamp(matches[-1])
+            issues.append({
+                "severity": severity,
+                "agent": name,
+                "key": key,
+                "summary": description,
+                "detail": matches[-1].strip()[:120],
+                "first_seen": first_ts,
+                "last_seen": last_ts,
+                "count": len(matches),
+            })
+
+        # --- Detect resume loops (same task resumed many times) ---
+        resume_counter: Counter = Counter()
+        resume_timestamps: dict[str, list[datetime]] = defaultdict(list)
+        for ln in lines:
+            m = re.search(r"Found task marker for (\S+) - resuming", ln)
+            if m:
+                tid = m.group(1)
+                resume_counter[tid] += 1
+                ts = _parse_log_timestamp(ln)
+                if ts:
+                    resume_timestamps[tid].append(ts)
+
+        for tid, count in resume_counter.items():
+            if count >= 3:  # 3+ resumes = likely a loop
+                tss = resume_timestamps.get(tid, [])
+                issues.append({
+                    "severity": "error",
+                    "agent": name,
+                    "key": "resume_loop",
+                    "summary": f"Resume loop: task {tid} resumed {count}x without progress",
+                    "detail": f"Agent kept finding task marker, resuming, failing, repeating every tick",
+                    "first_seen": tss[0] if tss else None,
+                    "last_seen": tss[-1] if tss else None,
+                    "count": count,
+                })
+
+        # --- Detect repeated claim-then-fail on same task ---
+        claim_counter: Counter = Counter()
+        claim_timestamps: dict[str, list[datetime]] = defaultdict(list)
+        for ln in lines:
+            m = re.search(r"Claimed task (\S+):", ln)
+            if m:
+                tid = m.group(1)
+                claim_counter[tid] += 1
+                ts = _parse_log_timestamp(ln)
+                if ts:
+                    claim_timestamps[tid].append(ts)
+
+        for tid, count in claim_counter.items():
+            if count >= 3:
+                tss = claim_timestamps.get(tid, [])
+                issues.append({
+                    "severity": "error",
+                    "agent": name,
+                    "key": "claim_loop",
+                    "summary": f"Claim loop: task {tid} claimed {count}x (failing and re-entering queue)",
+                    "detail": f"Task keeps getting claimed, failing, and returning to incoming",
+                    "first_seen": tss[0] if tss else None,
+                    "last_seen": tss[-1] if tss else None,
+                    "count": count,
+                })
+
+        # --- Detect "impl failed with empty stderr" (instant Claude death) ---
+        instant_fails = [
+            ln for ln in lines
+            if re.search(r"Implementation failed: \s*$", ln)
+        ]
+        if len(instant_fails) >= 2:
+            first_ts = _parse_log_timestamp(instant_fails[0])
+            last_ts = _parse_log_timestamp(instant_fails[-1])
+            issues.append({
+                "severity": "error",
+                "agent": name,
+                "key": "instant_fail",
+                "summary": f"Claude exiting instantly {len(instant_fails)}x (0 turns, empty error)",
+                "detail": "Claude process starts and dies immediately without doing work",
+                "first_seen": first_ts,
+                "last_seen": last_ts,
+                "count": len(instant_fails),
+            })
+
+    # Deduplicate: if the same key appears for multiple agents, consolidate
+    # (e.g., credit_balance affects all agents identically)
+    deduped: list[dict] = []
+    seen_keys: dict[str, dict] = {}
+    for issue in issues:
+        dedup_key = issue["key"]
+        # Per-agent keys stay separate; system-wide keys get merged
+        if dedup_key in ("credit_balance", "sdk_connection", "sdk_timeout"):
+            if dedup_key in seen_keys:
+                existing = seen_keys[dedup_key]
+                existing["count"] += issue["count"]
+                existing["agent"] += f", {issue['agent']}"
+                if issue["last_seen"] and (
+                    not existing["last_seen"]
+                    or issue["last_seen"] > existing["last_seen"]
+                ):
+                    existing["last_seen"] = issue["last_seen"]
+            else:
+                seen_keys[dedup_key] = issue
+                deduped.append(issue)
+        else:
+            deduped.append(issue)
+
+    # Sort: critical first, then error, then warn
+    severity_order = {"critical": 0, "error": 1, "warn": 2}
+    deduped.sort(key=lambda i: severity_order.get(i["severity"], 9))
+
+    return deduped
+
+
+def print_critical_issues() -> list[dict]:
+    """Scan logs and print critical issues section. Returns the issues found."""
+    issues = scan_agent_errors()
+
+    if not issues:
+        return issues
+
+    severity_labels = {
+        "critical": "CRITICAL",
+        "error": "ERROR",
+        "warn": "WARN",
+    }
+
+    header("ISSUES")
+
+    criticals = [i for i in issues if i["severity"] == "critical"]
+    errors = [i for i in issues if i["severity"] == "error"]
+    warns = [i for i in issues if i["severity"] == "warn"]
+
+    if criticals:
+        print(f"\n  !!! {len(criticals)} CRITICAL issue(s) — system cannot make progress !!!\n")
+    elif errors:
+        print(f"\n  {len(errors)} error(s) detected in today's logs\n")
+    else:
+        print(f"\n  {len(warns)} warning(s) detected in today's logs\n")
+
+    for issue in issues:
+        sev = severity_labels.get(issue["severity"], "?")
+        agent = issue["agent"]
+        ts_str = ""
+        if issue.get("last_seen"):
+            ts_str = f" (last: {ago(issue['last_seen'].isoformat())})"
+        count_str = f" x{issue['count']}" if issue["count"] > 1 else ""
+
+        print(f"  [{sev}] [{agent}]{count_str}{ts_str}")
+        print(f"    {issue['summary']}")
+        if VERBOSE and issue.get("detail"):
+            print(f"    > {issue['detail']}")
+        print()
+
+    return issues
+
+
 # -- Main ------------------------------------------------------------------
 
 
@@ -597,6 +828,9 @@ def main() -> int:
     )
     print("-" * 60)
 
+    # Issues go FIRST — if the system is broken, that's what you need to see
+    issues = print_critical_issues()
+
     print_scheduler_health()
     print_queue_status()
     print_agent_status()
@@ -606,7 +840,17 @@ def main() -> int:
     print_recent_logs()
 
     print(f"\n{'-' * 60}")
-    print("Done.\n")
+    if issues:
+        criticals = sum(1 for i in issues if i["severity"] == "critical")
+        errors = sum(1 for i in issues if i["severity"] == "error")
+        parts = []
+        if criticals:
+            parts.append(f"{criticals} critical")
+        if errors:
+            parts.append(f"{errors} errors")
+        print(f"Done. ({', '.join(parts)} — see ISSUES section above)\n")
+    else:
+        print("Done.\n")
     return 0
 
 

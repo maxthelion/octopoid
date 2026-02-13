@@ -23,8 +23,8 @@ class SpecialistRole(BaseRole):
         """Load the domain-specific prompt for this focus area.
 
         Looks for prompts in this order:
-        1. .orchestrator/prompts/{agent_name}.md (most specific)
-        2. .orchestrator/prompts/{focus}.md (focus-specific)
+        1. .octopoid/prompts/{agent_name}.md (most specific)
+        2. .octopoid/prompts/{focus}.md (focus-specific)
         3. orchestrator/templates/proposer-{focus}.md (defaults)
 
         Returns:

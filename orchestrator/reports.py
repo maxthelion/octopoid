@@ -169,21 +169,11 @@ def _gather_done_tasks(sdk: Optional["OctopoidSDK"] = None) -> list[dict[str, An
 
 
 def _get_accepted_by(task_id: str | None) -> str | None:
-    """Look up who accepted a task from task_history."""
-    if not task_id:
-        return None
-    try:
-        from .config import is_db_enabled
-        if not is_db_enabled():
-            return None
-        from . import db
-        history = db.get_task_history(task_id)
-        for event in reversed(history):
-            if event.get("event") == "accepted":
-                return event.get("agent")
-        return None
-    except Exception:
-        return None
+    """Look up who accepted a task from task_history.
+
+    Previously queried the local DB; now returns None (DB removed in v2.0).
+    """
+    return None
 
 
 def _format_task(task: dict[str, Any]) -> dict[str, Any]:
@@ -381,35 +371,8 @@ def _store_staging_url(pr_number: int, staging_url: str, *, branch_name: str | N
                         # TODO: Update staging_url via SDK
                         pass
         else:
-            # v1.x local mode
-            from .config import is_db_enabled
-            if not is_db_enabled():
-                return
-
-            from . import db
-            with db.get_connection() as conn:
-                # Primary: find task by pr_number
-                cursor = conn.execute(
-                    "SELECT id FROM tasks WHERE pr_number = ?",
-                    (pr_number,),
-                )
-                row = cursor.fetchone()
-
-                # Fallback: match by branch name pattern (e.g. agent/<task-id>-*)
-                if not row and branch_name:
-                    import re
-                    # Extract task ID from branch patterns like agent/<task-id>-*
-                    m = re.match(r"agent/([a-f0-9]{8})", branch_name)
-                    if m:
-                        task_id_prefix = m.group(1)
-                        cursor = conn.execute(
-                            "SELECT id FROM tasks WHERE id = ? ORDER BY updated_at DESC LIMIT 1",
-                            (task_id_prefix,),
-                        )
-                        row = cursor.fetchone()
-
-                if row:
-                    db.update_task(row["id"], staging_url=staging_url)
+            # v1.x local mode — DB removed in v2.0, nothing to do
+            pass
     except Exception:
         pass  # Best-effort — don't break PR gathering
 
@@ -544,29 +507,11 @@ def _load_agent_state(state_path: Path) -> dict[str, Any]:
 
 
 def _get_recent_tasks_for_agent(agent_name: str, limit: int = 5) -> list[dict[str, Any]]:
-    """Get recently completed tasks for an agent from the DB."""
-    try:
-        from .config import is_db_enabled
-        if not is_db_enabled():
-            return []
+    """Get recently completed tasks for an agent.
 
-        from . import db
-        tasks = db.list_tasks(claimed_by=agent_name)
-        # Sort by updated_at descending, take most recent
-        tasks.sort(key=lambda t: t.get("updated_at", ""), reverse=True)
-        return [
-            {
-                "id": t.get("id"),
-                "title": _extract_title_from_file(t.get("file_path")),
-                "queue": t.get("queue"),
-                "commits": t.get("commits_count", 0),
-                "turns": t.get("turns_used", 0),
-                "pr_number": t.get("pr_number"),
-            }
-            for t in tasks[:limit]
-        ]
-    except Exception:
-        return []
+    Previously queried the local DB; now returns [] (DB removed in v2.0).
+    """
+    return []
 
 
 def _extract_title_from_file(file_path: str | None) -> str:

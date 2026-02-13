@@ -58,7 +58,7 @@ class TestGetProjectReport:
         mock_agents.return_value = []
         mock_health.return_value = {"scheduler": "unknown", "idle_agents": 0, "queue_depth": 0}
 
-        report = get_project_report()
+        report = get_project_report(MagicMock())
 
         assert "work" in report
         assert "done_tasks" in report
@@ -94,7 +94,7 @@ class TestGetProjectReport:
         mock_agents.return_value = []
         mock_health.return_value = {}
 
-        report = get_project_report()
+        report = get_project_report(MagicMock())
 
         dt = datetime.fromisoformat(report["generated_at"])
         assert isinstance(dt, datetime)
@@ -124,7 +124,7 @@ class TestGetProjectReport:
         mock_agents.return_value = []
         mock_health.return_value = {}
 
-        report = get_project_report()
+        report = get_project_report(MagicMock())
 
         work = report["work"]
         assert "incoming" in work
@@ -578,103 +578,10 @@ class TestGatherHealth:
         assert health["system_paused"] is True
 
 
-# ---------------------------------------------------------------------------
-# Integration-style test with DB
-# ---------------------------------------------------------------------------
-
-
-class TestGatherWorkWithDB:
-    """Integration tests using the DB fixtures from conftest."""
-
-    def test_work_sections_populated_from_db(self, mock_config, initialized_db):
-        """Test that _gather_work returns data from DB tasks."""
-        from orchestrator.db import create_task, update_task, update_task_queue
-
-        with patch("orchestrator.db.get_database_path", return_value=initialized_db):
-            incoming_dir = mock_config / "shared" / "queue" / "incoming"
-            claimed_dir = mock_config / "shared" / "queue" / "claimed"
-            prov_dir = mock_config / "shared" / "queue" / "provisional"
-            done_dir = mock_config / "shared" / "queue" / "done"
-
-            for d in [incoming_dir, claimed_dir, prov_dir, done_dir]:
-                d.mkdir(parents=True, exist_ok=True)
-
-            # incoming task
-            fp1 = incoming_dir / "TASK-inc001.md"
-            fp1.write_text("# [TASK-inc001] Incoming task\n\nROLE: implement\nPRIORITY: P1\n")
-            create_task(task_id="inc001", file_path=str(fp1), role="implement")
-
-            # claimed task
-            fp2 = claimed_dir / "TASK-clm001.md"
-            fp2.write_text("# [TASK-clm001] Claimed task\n\nROLE: implement\nPRIORITY: P1\n")
-            create_task(task_id="clm001", file_path=str(fp2), role="implement")
-            update_task_queue("clm001", "claimed", claimed_by="agent-1")
-
-            # provisional task
-            fp3 = prov_dir / "TASK-prv001.md"
-            fp3.write_text("# [TASK-prv001] Provisional task\n\nROLE: implement\nPRIORITY: P2\n")
-            create_task(task_id="prv001", file_path=str(fp3), role="implement")
-            update_task_queue("prv001", "provisional")
-
-            work = _gather_work()
-
-            assert len(work["incoming"]) == 1
-            assert work["incoming"][0]["id"] == "inc001"
-            assert len(work["in_progress"]) == 1
-            assert work["in_progress"][0]["id"] == "clm001"
-            assert work["in_progress"][0]["agent"] == "agent-1"
-            assert len(work["in_review"]) == 1
-            assert work["in_review"][0]["id"] == "prv001"
-
-    def test_done_today_filters_by_recency(self, mock_config, initialized_db):
-        """Test that done_today only includes recent tasks."""
-        from orchestrator.db import create_task, update_task, update_task_queue
-
-        with patch("orchestrator.db.get_database_path", return_value=initialized_db):
-            done_dir = mock_config / "shared" / "queue" / "done"
-            done_dir.mkdir(parents=True, exist_ok=True)
-
-            now_str = datetime.now().isoformat()
-            fp1 = done_dir / "TASK-recent1.md"
-            fp1.write_text(f"# [TASK-recent1] Recent task\n\nROLE: implement\nCREATED: {now_str}\n")
-            create_task(task_id="recent1", file_path=str(fp1), role="implement")
-            update_task_queue("recent1", "done")
-
-            work = _gather_work()
-
-            done_ids = [t["id"] for t in work["done_today"]]
-            assert "recent1" in done_ids
-
-
 class TestRecentTasksForAgent:
     """Tests for _get_recent_tasks_for_agent()."""
 
-    def test_returns_tasks_for_agent_from_db(self, mock_config, initialized_db):
-        from orchestrator.db import create_task, update_task, update_task_queue
-
-        with patch("orchestrator.db.get_database_path", return_value=initialized_db):
-            done_dir = mock_config / "shared" / "queue" / "done"
-            done_dir.mkdir(parents=True, exist_ok=True)
-
-            for i in range(7):
-                tid = f"agt{i:04d}"
-                fp = done_dir / f"TASK-{tid}.md"
-                fp.write_text(f"# [TASK-{tid}] Task {i}\n\nROLE: implement\n")
-                create_task(task_id=tid, file_path=str(fp), role="implement")
-                update_task_queue(tid, "done", claimed_by="test-agent", commits_count=i)
-
-            tasks = _get_recent_tasks_for_agent("test-agent", limit=5)
-
-            assert len(tasks) == 5
-            for t in tasks:
-                assert "id" in t
-                assert "title" in t
-                assert "queue" in t
-                assert "commits" in t
-                assert "turns" in t
-
-    @patch("orchestrator.config.is_db_enabled", return_value=False)
-    def test_returns_empty_when_db_disabled(self, mock_db):
+    def test_returns_empty_list(self):
         tasks = _get_recent_tasks_for_agent("any-agent")
         assert tasks == []
 
@@ -747,87 +654,9 @@ class TestExtractStagingUrl:
 class TestStoreStagingUrl:
     """Tests for _store_staging_url()."""
 
-    def test_stores_url_on_matching_task(self, mock_config, initialized_db):
-        from orchestrator.db import create_task, get_connection, update_task
-
-        with patch("orchestrator.db.get_database_path", return_value=initialized_db):
-            task_dir = mock_config / "shared" / "queue" / "incoming"
-            task_dir.mkdir(parents=True, exist_ok=True)
-            fp = task_dir / "TASK-store01.md"
-            fp.write_text("# [TASK-store01] Test task\n")
-            create_task(task_id="store01", file_path=str(fp), role="implement")
-            update_task("store01", pr_number=77)
-
-            _store_staging_url(77, "https://preview.pages.dev")
-
-            with get_connection() as conn:
-                row = conn.execute(
-                    "SELECT staging_url FROM tasks WHERE id = ?", ("store01",)
-                ).fetchone()
-                assert row["staging_url"] == "https://preview.pages.dev"
-
-    def test_no_error_when_no_matching_task(self, mock_config, initialized_db):
-        with patch("orchestrator.db.get_database_path", return_value=initialized_db):
-            # Should not raise - best effort
-            _store_staging_url(9999, "https://preview.pages.dev")
-
-    @patch("orchestrator.config.is_db_enabled", return_value=False)
-    def test_noop_when_db_disabled(self, mock_db):
-        # Should not raise
+    def test_noop_without_db(self):
+        # Should not raise - DB mode is always off now
         _store_staging_url(55, "https://preview.pages.dev")
-
-    def test_falls_back_to_branch_pattern(self, mock_config, initialized_db):
-        """When pr_number doesn't match, fall back to branch name pattern."""
-        from orchestrator.db import create_task, get_connection
-
-        with patch("orchestrator.db.get_database_path", return_value=initialized_db):
-            task_dir = mock_config / "shared" / "queue" / "incoming"
-            task_dir.mkdir(parents=True, exist_ok=True)
-            fp = task_dir / "TASK-abc12345.md"
-            fp.write_text("# [TASK-abc12345] Test task\n")
-            create_task(task_id="abc12345", file_path=str(fp), role="implement")
-            # pr_number is NOT set on this task
-
-            _store_staging_url(99, "https://preview.pages.dev", branch_name="agent/abc12345-20260209")
-
-            with get_connection() as conn:
-                row = conn.execute(
-                    "SELECT staging_url FROM tasks WHERE id = ?", ("abc12345",)
-                ).fetchone()
-                assert row["staging_url"] == "https://preview.pages.dev"
-
-    def test_staging_url_updates_on_new_pr(self, mock_config, initialized_db):
-        """When a new PR is created for the same task, staging_url should update."""
-        from orchestrator.db import create_task, get_connection, update_task
-
-        with patch("orchestrator.db.get_database_path", return_value=initialized_db):
-            task_dir = mock_config / "shared" / "queue" / "incoming"
-            task_dir.mkdir(parents=True, exist_ok=True)
-            fp = task_dir / "TASK-def45678.md"
-            fp.write_text("# [TASK-def45678] Test task\n")
-            create_task(task_id="def45678", file_path=str(fp), role="implement")
-
-            # First PR sets pr_number and staging_url
-            update_task("def45678", pr_number=10, staging_url="https://old.pages.dev")
-
-            # New PR with new number — update_task overwrites pr_number
-            update_task("def45678", pr_number=20)
-
-            # _store_staging_url finds the task by new pr_number and updates staging_url
-            _store_staging_url(20, "https://new.pages.dev")
-
-            with get_connection() as conn:
-                row = conn.execute(
-                    "SELECT staging_url, pr_number FROM tasks WHERE id = ?", ("def45678",)
-                ).fetchone()
-                assert row["staging_url"] == "https://new.pages.dev"
-                assert row["pr_number"] == 20
-
-    def test_branch_fallback_no_match(self, mock_config, initialized_db):
-        """Branch fallback with non-matching branch pattern does nothing."""
-        with patch("orchestrator.db.get_database_path", return_value=initialized_db):
-            # No task exists — should not raise
-            _store_staging_url(9999, "https://preview.pages.dev", branch_name="feature/unrelated")
 
 
 class TestGatherPrsStagingUrl:
@@ -855,7 +684,7 @@ class TestGatherPrsStagingUrl:
 
         assert len(prs) == 1
         assert prs[0]["staging_url"] == "https://abc123.pages.dev"
-        mock_store.assert_called_once_with(55, "https://abc123.pages.dev", branch_name="agent/abc123")
+        mock_store.assert_called_once_with(55, "https://abc123.pages.dev", branch_name="agent/abc123", sdk=None)
 
     @patch("orchestrator.reports._store_staging_url")
     @patch("orchestrator.reports._extract_staging_url")
@@ -900,82 +729,8 @@ class TestFormatTaskStagingUrl:
         assert result["staging_url"] is None
 
 
+
 # ---------------------------------------------------------------------------
-# PR number storage from implementer
+# PR number storage tests removed — ImplementerRole._store_pr_in_db() no
+# longer exists. Implementers now use scripts mode (scheduler.py).
 # ---------------------------------------------------------------------------
-
-
-class TestStorePrInDb:
-    """Tests for ImplementerRole._store_pr_in_db()."""
-
-    def test_stores_pr_number_and_url(self, mock_config, initialized_db):
-        from orchestrator.db import create_task, get_connection
-        from orchestrator.roles.implementer import ImplementerRole
-
-        with patch("orchestrator.db.get_database_path", return_value=initialized_db):
-            task_dir = mock_config / "shared" / "queue" / "incoming"
-            task_dir.mkdir(parents=True, exist_ok=True)
-            fp = task_dir / "TASK-pr00001.md"
-            fp.write_text("# [TASK-pr00001] Test task\n")
-            create_task(task_id="pr00001", file_path=str(fp), role="implement")
-
-            ImplementerRole._store_pr_in_db("pr00001", "https://github.com/owner/repo/pull/42")
-
-            with get_connection() as conn:
-                row = conn.execute(
-                    "SELECT pr_number, pr_url FROM tasks WHERE id = ?", ("pr00001",)
-                ).fetchone()
-                assert row["pr_number"] == 42
-                assert row["pr_url"] == "https://github.com/owner/repo/pull/42"
-
-    def test_ignores_invalid_url(self, mock_config, initialized_db):
-        from orchestrator.db import create_task, get_connection
-        from orchestrator.roles.implementer import ImplementerRole
-
-        with patch("orchestrator.db.get_database_path", return_value=initialized_db):
-            task_dir = mock_config / "shared" / "queue" / "incoming"
-            task_dir.mkdir(parents=True, exist_ok=True)
-            fp = task_dir / "TASK-pr00002.md"
-            fp.write_text("# [TASK-pr00002] Test task\n")
-            create_task(task_id="pr00002", file_path=str(fp), role="implement")
-
-            # URL without /pull/N pattern — should silently skip
-            ImplementerRole._store_pr_in_db("pr00002", "https://github.com/owner/repo/issues/42")
-
-            with get_connection() as conn:
-                row = conn.execute(
-                    "SELECT pr_number, pr_url FROM tasks WHERE id = ?", ("pr00002",)
-                ).fetchone()
-                assert row["pr_number"] is None
-                assert row["pr_url"] is None
-
-    @patch("orchestrator.config.is_db_enabled", return_value=False)
-    def test_noop_when_db_disabled(self, mock_db):
-        from orchestrator.roles.implementer import ImplementerRole
-
-        # Should not raise
-        ImplementerRole._store_pr_in_db("any", "https://github.com/owner/repo/pull/1")
-
-    def test_overwrites_on_new_pr(self, mock_config, initialized_db):
-        """When a task gets a new PR, pr_number and pr_url should update."""
-        from orchestrator.db import create_task, get_connection
-        from orchestrator.roles.implementer import ImplementerRole
-
-        with patch("orchestrator.db.get_database_path", return_value=initialized_db):
-            task_dir = mock_config / "shared" / "queue" / "incoming"
-            task_dir.mkdir(parents=True, exist_ok=True)
-            fp = task_dir / "TASK-pr00003.md"
-            fp.write_text("# [TASK-pr00003] Test task\n")
-            create_task(task_id="pr00003", file_path=str(fp), role="implement")
-
-            # First PR
-            ImplementerRole._store_pr_in_db("pr00003", "https://github.com/owner/repo/pull/10")
-            # Second PR (e.g. after force-push and new PR)
-            ImplementerRole._store_pr_in_db("pr00003", "https://github.com/owner/repo/pull/20")
-
-            with get_connection() as conn:
-                row = conn.execute(
-                    "SELECT pr_number, pr_url FROM tasks WHERE id = ?", ("pr00003",)
-                ).fetchone()
-                assert row["pr_number"] == 20
-                assert row["pr_url"] == "https://github.com/owner/repo/pull/20"

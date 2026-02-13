@@ -30,6 +30,9 @@ class BaseRole(ABC):
         self.mcp_port = int(os.environ.get("AGENT_MCP_PORT", "41001"))
         self.pw_ws_port = int(os.environ.get("AGENT_PW_WS_PORT", "41002"))
 
+        # Model override from agent config (e.g., "sonnet", "opus")
+        self.model: str | None = os.environ.get("AGENT_MODEL")
+
         # Current task (set by subclasses when working on a task)
         self.current_task_id: str | None = None
 
@@ -41,7 +44,7 @@ class BaseRole(ABC):
 
     def _setup_debug_logging(self) -> None:
         """Set up debug logging to a file."""
-        logs_dir = self.orchestrator_dir / "logs"
+        logs_dir = self.orchestrator_dir / "runtime" / "logs"
         logs_dir.mkdir(parents=True, exist_ok=True)
 
         # Log file per agent per day
@@ -106,10 +109,20 @@ class BaseRole(ABC):
         variables are set. This makes AGENT_NAME (and related vars) available
         to Claude Code hooks, which run as shell commands spawned by Claude.
 
+        Auth mode:
+        - By default, ANTHROPIC_API_KEY is stripped so Claude uses session auth.
+        - Set OCTOPOID_USE_API_KEY=1 to keep the API key (e.g. on VMs without
+          interactive session). Don't set both — pick one auth method.
+
         Returns:
             Environment dict for subprocess calls
         """
         env = os.environ.copy()
+        # Strip API key unless explicitly opted in (VM / headless setups).
+        # Having both session auth and an API key causes Claude to prefer the
+        # key, which may have no credits.
+        if not os.environ.get("OCTOPOID_USE_API_KEY"):
+            env.pop("ANTHROPIC_API_KEY", None)
         env["AGENT_NAME"] = self.agent_name
         env["AGENT_ID"] = str(self.agent_id)
         env["AGENT_ROLE"] = self.agent_role
@@ -128,6 +141,7 @@ class BaseRole(ABC):
         max_turns: int | None = None,
         output_format: str = "text",
         stdout_log: Path | None = None,
+        model: str | None = None,
     ) -> tuple[int, str, str]:
         """Invoke Claude Code CLI with a prompt.
 
@@ -139,11 +153,15 @@ class BaseRole(ABC):
             stdout_log: If provided, stream stdout to this file in real-time.
                         The file captures output incrementally so it survives
                         timeouts and crashes.
+            model: Model to use (e.g., "sonnet", "opus"). If None, uses CLI default.
 
         Returns:
             Tuple of (exit_code, stdout, stderr)
         """
         cmd = ["claude", "-p", prompt]
+
+        if model:
+            cmd.extend(["--model", model])
 
         if allowed_tools:
             cmd.extend(["--allowedTools", ",".join(allowed_tools)])
@@ -255,7 +273,7 @@ class BaseRole(ABC):
         """Get path to the tool counter file for this agent.
 
         Returns:
-            Path to .orchestrator/agents/<name>/tool_counter
+            Path to .octopoid/agents/<name>/tool_counter
         """
         return self.orchestrator_dir / "agents" / self.agent_name / "tool_counter"
 
@@ -297,17 +315,6 @@ class BaseRole(ABC):
         if instructions_path.exists():
             return instructions_path.read_text()
         return ""
-
-    def get_queue_dir(self, subdir: str) -> Path:
-        """Get a queue subdirectory path.
-
-        Args:
-            subdir: One of 'incoming', 'claimed', 'done', 'failed'
-
-        Returns:
-            Path to the queue subdirectory
-        """
-        return self.shared_dir / "queue" / subdir
 
     @abstractmethod
     def run(self) -> int:

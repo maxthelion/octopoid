@@ -7,7 +7,7 @@ approve_orch.py — it lets a reviewer inspect what an agent did before
 running the approval flow.
 
 Usage:
-    .orchestrator/venv/bin/python orchestrator/scripts/review-orchestrator-task <task-id-prefix>
+    .octopoid/venv/bin/python orchestrator/scripts/review-orchestrator-task <task-id-prefix>
 """
 
 import subprocess
@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from .config import get_agents_runtime_dir, is_db_enabled
+from .config import get_agents_runtime_dir
 
 
 SUBMODULE_BRANCH = "main"
@@ -51,21 +51,25 @@ def resolve_task_id(prefix: str) -> dict[str, Any] | None:
     """Resolve a task ID prefix to a full task record.
 
     Returns the task dict or None (prints diagnostic).
+    Uses the API via OctopoidSDK.
     """
-    from .db import get_connection
+    from octopoid_sdk import OctopoidSDK
 
-    with get_connection() as conn:
-        rows = conn.execute(
-            "SELECT id, role, queue, claimed_by FROM tasks WHERE id LIKE ?",
-            (f"{prefix}%",),
-        ).fetchall()
+    sdk = OctopoidSDK()
+    try:
+        tasks = sdk.list_tasks()
+    except Exception as exc:
+        print(f"ERROR: Could not query API: {exc}")
+        return None
 
-    if len(rows) == 1:
-        return dict(rows[0])
-    elif len(rows) > 1:
-        print(f"ERROR: Ambiguous prefix '{prefix}' matches {len(rows)} tasks:")
-        for r in rows:
-            print(f"  {r['id']}")
+    matches = [t for t in tasks if t.get("id", "").startswith(prefix)]
+
+    if len(matches) == 1:
+        return matches[0]
+    elif len(matches) > 1:
+        print(f"ERROR: Ambiguous prefix '{prefix}' matches {len(matches)} tasks:")
+        for t in matches:
+            print(f"  {t['id']}")
         return None
     else:
         print(f"ERROR: No task found for prefix '{prefix}'")
@@ -80,25 +84,12 @@ def resolve_task_id(prefix: str) -> dict[str, Any] | None:
 def find_agent_submodule(task_info: dict[str, Any]) -> Path | None:
     """Find the orchestrator submodule inside the agent's worktree.
 
-    Looks up claimed_by (or falls back to task_history) to find the agent
-    name, then checks .orchestrator/agents/<name>/worktree/orchestrator/.
+    Looks up claimed_by to find the agent name, then checks
+    .octopoid/agents/<name>/worktree/orchestrator/.
 
     Returns the absolute path to the submodule directory, or None.
     """
     agent_name = task_info.get("claimed_by")
-
-    if not agent_name:
-        from .db import get_connection
-        task_id = task_info["id"]
-        with get_connection() as conn:
-            row = conn.execute(
-                "SELECT agent FROM task_history "
-                "WHERE task_id = ? AND event = 'claimed' "
-                "ORDER BY timestamp DESC LIMIT 1",
-                (task_id,),
-            ).fetchone()
-        if row:
-            agent_name = row["agent"]
 
     if not agent_name:
         print("ERROR: Cannot determine agent name (claimed_by is empty and no claim history)")
@@ -233,10 +224,6 @@ def get_diff(agent_sub: Path) -> str:
 
 def review_orchestrator_task(task_id_prefix: str) -> int:
     """Run the review flow. Returns 0 on success, non-zero on failure."""
-
-    if not is_db_enabled():
-        print("ERROR: Database mode required")
-        return 1
 
     # Strip TASK- prefix
     prefix = task_id_prefix

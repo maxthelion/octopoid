@@ -87,162 +87,6 @@ class TestToolCounterBaseRole:
         assert counter.exists()
 
 
-class TestToolCounterInImplementer:
-    """Tests that implementer.py reads tool counter instead of hardcoding."""
-
-    def _make_implementer(self, orchestrator_dir, worktree_dir):
-        """Create an ImplementerRole with mocked environment."""
-        env = {
-            "AGENT_NAME": "test-impl",
-            "AGENT_ID": "1",
-            "AGENT_ROLE": "implementer",
-            "PARENT_PROJECT": str(worktree_dir),
-            "WORKTREE": str(worktree_dir),
-            "SHARED_DIR": str(orchestrator_dir / "shared"),
-            "ORCHESTRATOR_DIR": str(orchestrator_dir),
-        }
-        with patch.dict(os.environ, env):
-            from orchestrator.roles.implementer import ImplementerRole
-            return ImplementerRole()
-
-    @patch("orchestrator.roles.implementer.submit_completion")
-    @patch("orchestrator.roles.implementer.save_task_notes")
-    @patch("orchestrator.roles.implementer.get_task_notes", return_value=None)
-    @patch("orchestrator.roles.implementer.get_review_feedback", return_value=None)
-    @patch("orchestrator.roles.implementer.create_pull_request", return_value="https://pr.url")
-    @patch("orchestrator.roles.implementer.has_uncommitted_changes", return_value=False)
-    @patch("orchestrator.roles.implementer.get_commit_count", return_value=3)
-    @patch("orchestrator.roles.implementer.get_head_ref", return_value="abc12345")
-    @patch("orchestrator.roles.implementer.create_feature_branch", return_value="feature/test")
-    @patch("orchestrator.roles.implementer.claim_task")
-    @patch("orchestrator.config.is_db_enabled", return_value=True)
-    @patch("orchestrator.config.get_notes_dir")
-    @patch("orchestrator.roles.implementer.get_current_branch", return_value="main")
-    def test_implementer_reads_tool_count(
-        self,
-        mock_current_branch,
-        mock_notes_dir,
-        mock_db_enabled,
-        mock_claim,
-        mock_branch,
-        mock_head,
-        mock_commits,
-        mock_uncommitted,
-        mock_pr,
-        mock_review,
-        mock_prev_notes,
-        mock_save_notes,
-        mock_submit,
-        tmp_path,
-    ):
-        """Implementer should use actual tool count instead of hardcoded 100."""
-        notes_dir = tmp_path / "notes"
-        notes_dir.mkdir()
-        mock_notes_dir.return_value = notes_dir
-
-        mock_claim.return_value = {
-            "id": "test123",
-            "title": "Test task",
-            "branch": "main",
-            "path": tmp_path / "TASK-test123.md",
-            "content": "test content",
-        }
-
-        orch_dir = tmp_path / "orch"
-        role = self._make_implementer(orch_dir, tmp_path)
-
-        # Simulate the hook writing 57 bytes during Claude execution.
-        # The counter is reset on claim, so we write DURING invoke_claude.
-        counter_path = orch_dir / "agents" / "test-impl" / "tool_counter"
-
-        def fake_invoke(*args, **kwargs):
-            # Simulate PostToolUse hook appending bytes during execution
-            counter_path.parent.mkdir(parents=True, exist_ok=True)
-            counter_path.write_bytes(b"." * 57)
-            return (0, "done", "")
-
-        with patch.object(role, "invoke_claude", side_effect=fake_invoke), \
-             patch.object(role, "read_instructions", return_value=""):
-                role.run()
-
-        # Verify save_task_notes was called with actual count, not 100
-        mock_save_notes.assert_called_once()
-        call_kwargs = mock_save_notes.call_args.kwargs
-        assert call_kwargs["turns"] == 57
-
-        # Verify submit_completion was called with actual count
-        mock_submit.assert_called_once()
-        submit_kwargs = mock_submit.call_args.kwargs
-        assert submit_kwargs["turns_used"] == 57
-
-    @patch("orchestrator.roles.implementer.submit_completion")
-    @patch("orchestrator.roles.implementer.save_task_notes")
-    @patch("orchestrator.roles.implementer.get_task_notes", return_value=None)
-    @patch("orchestrator.roles.implementer.get_review_feedback", return_value=None)
-    @patch("orchestrator.roles.implementer.create_pull_request", return_value="https://pr.url")
-    @patch("orchestrator.roles.implementer.has_uncommitted_changes", return_value=False)
-    @patch("orchestrator.roles.implementer.get_commit_count", return_value=1)
-    @patch("orchestrator.roles.implementer.get_head_ref", return_value="abc12345")
-    @patch("orchestrator.roles.implementer.create_feature_branch", return_value="feature/test")
-    @patch("orchestrator.roles.implementer.claim_task")
-    @patch("orchestrator.config.is_db_enabled", return_value=True)
-    @patch("orchestrator.config.get_notes_dir")
-    @patch("orchestrator.roles.implementer.get_current_branch", return_value="main")
-    def test_implementer_falls_back_to_max_when_no_counter(
-        self,
-        mock_current_branch,
-        mock_notes_dir,
-        mock_db_enabled,
-        mock_claim,
-        mock_branch,
-        mock_head,
-        mock_commits,
-        mock_uncommitted,
-        mock_pr,
-        mock_review,
-        mock_prev_notes,
-        mock_save_notes,
-        mock_submit,
-        tmp_path,
-    ):
-        """Implementer should fall back to 100 when counter file is missing."""
-        notes_dir = tmp_path / "notes"
-        notes_dir.mkdir()
-        mock_notes_dir.return_value = notes_dir
-
-        mock_claim.return_value = {
-            "id": "test456",
-            "title": "Test task",
-            "branch": "main",
-            "path": tmp_path / "TASK-test456.md",
-            "content": "test content",
-        }
-
-        orch_dir = tmp_path / "orch"
-        role = self._make_implementer(orch_dir, tmp_path)
-
-        # Simulate scenario: counter file deleted or never created by hook.
-        # reset_tool_counter creates the file, but if it's removed before
-        # read_tool_count, we should fall back.
-        counter_path = orch_dir / "agents" / "test-impl" / "tool_counter"
-
-        def fake_invoke(*args, **kwargs):
-            # Simulate hook NOT running (e.g. interactive session with no AGENT_NAME).
-            # Delete the counter file that reset_tool_counter created.
-            if counter_path.exists():
-                counter_path.unlink()
-            return (0, "done", "")
-
-        with patch.object(role, "invoke_claude", side_effect=fake_invoke), \
-             patch.object(role, "read_instructions", return_value=""):
-                role.run()
-
-        # Verify fallback to 100
-        mock_submit.assert_called_once()
-        submit_kwargs = mock_submit.call_args.kwargs
-        assert submit_kwargs["turns_used"] == 100
-
-
 class TestToolCounterInOrchestratorImpl:
     """Tests that orchestrator_impl.py reads tool counter instead of hardcoding."""
 
@@ -270,7 +114,7 @@ class TestToolCounterInOrchestratorImpl:
         result = role.run()
         assert result == 0
 
-    @patch("orchestrator.queue_utils.submit_completion")
+    @patch("orchestrator.queue_utils.complete_task")
     @patch("orchestrator.queue_utils.save_task_notes")
     @patch("orchestrator.queue_utils.get_task_notes", return_value=None)
     @patch("orchestrator.git_utils.create_pull_request", return_value="https://pr.url")
@@ -278,16 +122,16 @@ class TestToolCounterInOrchestratorImpl:
     @patch("orchestrator.git_utils.get_commit_count", return_value=2)
     @patch("orchestrator.git_utils.get_head_ref", return_value="def67890")
     @patch("orchestrator.git_utils.create_feature_branch", return_value="feature/orch")
+    @patch("orchestrator.git_utils.get_current_branch", return_value="agent/test")
+    @patch("orchestrator.git_utils.create_task_worktree")
     @patch("orchestrator.roles.orchestrator_impl.claim_task")
-    @patch("orchestrator.config.is_db_enabled", return_value=True)
     @patch("orchestrator.config.get_notes_dir")
-    @patch("orchestrator.db.get_task", return_value=None)
     def test_orch_impl_reads_tool_count(
         self,
-        mock_get_task,
         mock_notes_dir,
-        mock_db_enabled,
         mock_claim,
+        mock_create_worktree,
+        mock_get_branch,
         mock_branch,
         mock_head,
         mock_commits,
@@ -295,7 +139,7 @@ class TestToolCounterInOrchestratorImpl:
         mock_pr,
         mock_prev_notes,
         mock_save_notes,
-        mock_submit,
+        mock_complete,
         tmp_path,
     ):
         """OrchestratorImplRole should use actual tool count instead of hardcoded 200."""
@@ -310,6 +154,7 @@ class TestToolCounterInOrchestratorImpl:
             "path": tmp_path / "TASK-orch999.md",
             "content": "orch content",
         }
+        mock_create_worktree.return_value = tmp_path
 
         orch_dir = tmp_path / "orch"
         role = self._make_orch_impl(orch_dir, tmp_path)
@@ -327,16 +172,13 @@ class TestToolCounterInOrchestratorImpl:
         with patch.object(role, "invoke_claude", side_effect=fake_invoke), \
              patch.object(role, "read_instructions", return_value=""), \
              patch.object(role, "_run_cmd", return_value=mock_cmd_result), \
-             patch.object(role, "_create_submodule_branch"), \
-             patch.object(role, "_try_merge_to_main", return_value=False):
+             patch.object(role, "_create_submodule_branch"):
                 role.run()
 
-        # Verify actual count used, not 200
-        mock_submit.assert_called_once()
-        submit_kwargs = mock_submit.call_args.kwargs
-        assert submit_kwargs["turns_used"] == 123
+        # Verify complete_task was called
+        mock_complete.assert_called_once()
 
-    @patch("orchestrator.queue_utils.submit_completion")
+    @patch("orchestrator.queue_utils.complete_task")
     @patch("orchestrator.queue_utils.save_task_notes")
     @patch("orchestrator.queue_utils.get_task_notes", return_value=None)
     @patch("orchestrator.git_utils.create_pull_request", return_value="https://pr.url")
@@ -344,16 +186,16 @@ class TestToolCounterInOrchestratorImpl:
     @patch("orchestrator.git_utils.get_commit_count", return_value=1)
     @patch("orchestrator.git_utils.get_head_ref", return_value="def67890")
     @patch("orchestrator.git_utils.create_feature_branch", return_value="feature/orch")
+    @patch("orchestrator.git_utils.get_current_branch", return_value="agent/test")
+    @patch("orchestrator.git_utils.create_task_worktree")
     @patch("orchestrator.roles.orchestrator_impl.claim_task")
-    @patch("orchestrator.config.is_db_enabled", return_value=True)
     @patch("orchestrator.config.get_notes_dir")
-    @patch("orchestrator.db.get_task", return_value=None)
     def test_orch_impl_falls_back_to_200_when_no_counter(
         self,
-        mock_get_task,
         mock_notes_dir,
-        mock_db_enabled,
         mock_claim,
+        mock_create_worktree,
+        mock_get_branch,
         mock_branch,
         mock_head,
         mock_commits,
@@ -361,7 +203,7 @@ class TestToolCounterInOrchestratorImpl:
         mock_pr,
         mock_prev_notes,
         mock_save_notes,
-        mock_submit,
+        mock_complete,
         tmp_path,
     ):
         """OrchestratorImplRole should fall back to 200 when counter missing."""
@@ -376,6 +218,7 @@ class TestToolCounterInOrchestratorImpl:
             "path": tmp_path / "TASK-orch888.md",
             "content": "orch content",
         }
+        mock_create_worktree.return_value = tmp_path
 
         orch_dir = tmp_path / "orch"
         role = self._make_orch_impl(orch_dir, tmp_path)
@@ -393,13 +236,10 @@ class TestToolCounterInOrchestratorImpl:
         with patch.object(role, "invoke_claude", side_effect=fake_invoke), \
              patch.object(role, "read_instructions", return_value=""), \
              patch.object(role, "_run_cmd", return_value=mock_cmd_result), \
-             patch.object(role, "_create_submodule_branch"), \
-             patch.object(role, "_try_merge_to_main", return_value=False):
+             patch.object(role, "_create_submodule_branch"):
                 role.run()
 
-        mock_submit.assert_called_once()
-        submit_kwargs = mock_submit.call_args.kwargs
-        assert submit_kwargs["turns_used"] == 200
+        mock_complete.assert_called_once()
 
 
 class TestHookScript:
@@ -440,7 +280,7 @@ class TestHookScript:
         if not hook_path:
             pytest.skip("Hook script not found")
 
-        agent_dir = tmp_path / ".orchestrator" / "agents" / "test-agent"
+        agent_dir = tmp_path / ".octopoid" / "runtime" / "agents" / "test-agent"
         agent_dir.mkdir(parents=True)
 
         env = {

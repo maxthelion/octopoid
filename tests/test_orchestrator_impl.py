@@ -1,7 +1,6 @@
 """Tests for orchestrator_impl role — submodule commit location."""
 
 import subprocess
-import tempfile
 from pathlib import Path
 from unittest.mock import patch, MagicMock, call
 
@@ -70,8 +69,8 @@ class TestOrchestratorImplSubmodulePath:
             'AGENT_ROLE': 'orchestrator_impl',
             'PARENT_PROJECT': '/fake/project',
             'WORKTREE': '/fake/agents/test-orch/worktree',
-            'SHARED_DIR': '/fake/.orchestrator/shared',
-            'ORCHESTRATOR_DIR': '/fake/.orchestrator',
+            'SHARED_DIR': '/fake/.octopoid/runtime/shared',
+            'ORCHESTRATOR_DIR': '/fake/.octopoid',
         }):
             role = OrchestratorImplRole()
             sub_path = role._get_submodule_path()
@@ -94,8 +93,8 @@ class TestOrchestratorImplSubmodulePath:
                 'AGENT_ROLE': 'orchestrator_impl',
                 'PARENT_PROJECT': '/p',
                 'WORKTREE': worktree,
-                'SHARED_DIR': '/p/.orchestrator/shared',
-                'ORCHESTRATOR_DIR': '/p/.orchestrator',
+                'SHARED_DIR': '/p/.octopoid/runtime/shared',
+                'ORCHESTRATOR_DIR': '/p/.octopoid',
             }):
                 role = OrchestratorImplRole()
                 sub_path = role._get_submodule_path()
@@ -129,8 +128,8 @@ class TestOrchestratorImplPrompt:
             'AGENT_ROLE': 'orchestrator_impl',
             'PARENT_PROJECT': '/fake/project',
             'WORKTREE': '/fake/agents/test-orch/worktree',
-            'SHARED_DIR': '/fake/.orchestrator/shared',
-            'ORCHESTRATOR_DIR': '/fake/.orchestrator',
+            'SHARED_DIR': '/fake/.octopoid/runtime/shared',
+            'ORCHESTRATOR_DIR': '/fake/.octopoid',
         }):
             role, task = _make_role_and_task()
 
@@ -148,15 +147,15 @@ class TestOrchestratorImplPrompt:
                  patch.object(role, '_run_cmd', return_value=_make_completed_result(0)), \
                  patch.object(role, '_create_submodule_branch'), \
                  patch.object(role, '_try_merge_to_main', return_value=False), \
+                 patch('orchestrator.git_utils.create_task_worktree', return_value=Path('/fake/agents/test-orch/worktree')), \
+                 patch('orchestrator.git_utils.get_current_branch', return_value='agent/test'), \
                  patch('orchestrator.git_utils.create_feature_branch', return_value='agent/test'), \
                  patch('orchestrator.git_utils.get_head_ref', return_value='abc123'), \
                  patch('orchestrator.git_utils.get_commit_count', return_value=1), \
                  patch('orchestrator.queue_utils.submit_completion'), \
                  patch('orchestrator.queue_utils.save_task_notes'), \
                  patch('orchestrator.queue_utils.get_task_notes', return_value=None), \
-                 patch('orchestrator.config.get_notes_dir', return_value=Path('/fake/notes')), \
-                 patch('orchestrator.config.is_db_enabled', return_value=True), \
-                 patch('orchestrator.db.get_task', return_value=None):
+                 patch('orchestrator.config.get_notes_dir', return_value=Path('/fake/notes')):
                 role._run_with_task(task)
 
             assert captured_prompt is not None
@@ -173,8 +172,8 @@ class TestOrchestratorImplPrompt:
             'AGENT_ROLE': 'orchestrator_impl',
             'PARENT_PROJECT': '/fake/project',
             'WORKTREE': '/fake/agents/test-orch/worktree',
-            'SHARED_DIR': '/fake/.orchestrator/shared',
-            'ORCHESTRATOR_DIR': '/fake/.orchestrator',
+            'SHARED_DIR': '/fake/.octopoid/runtime/shared',
+            'ORCHESTRATOR_DIR': '/fake/.octopoid',
         }):
             role, task = _make_role_and_task()
 
@@ -192,15 +191,15 @@ class TestOrchestratorImplPrompt:
                  patch.object(role, '_run_cmd', return_value=_make_completed_result(0)), \
                  patch.object(role, '_create_submodule_branch'), \
                  patch.object(role, '_try_merge_to_main', return_value=False), \
+                 patch('orchestrator.git_utils.create_task_worktree', return_value=Path('/fake/agents/test-orch/worktree')), \
+                 patch('orchestrator.git_utils.get_current_branch', return_value='agent/test'), \
                  patch('orchestrator.git_utils.create_feature_branch', return_value='agent/test'), \
                  patch('orchestrator.git_utils.get_head_ref', return_value='abc123'), \
                  patch('orchestrator.git_utils.get_commit_count', return_value=1), \
                  patch('orchestrator.queue_utils.submit_completion'), \
                  patch('orchestrator.queue_utils.save_task_notes'), \
                  patch('orchestrator.queue_utils.get_task_notes', return_value=None), \
-                 patch('orchestrator.config.get_notes_dir', return_value=Path('/fake/notes')), \
-                 patch('orchestrator.config.is_db_enabled', return_value=True), \
-                 patch('orchestrator.db.get_task', return_value=None):
+                 patch('orchestrator.config.get_notes_dir', return_value=Path('/fake/notes')):
                 role._run_with_task(task)
 
             assert captured_prompt is not None
@@ -219,8 +218,8 @@ class TestOrchestratorImplCommitCounting:
             'AGENT_ROLE': 'orchestrator_impl',
             'PARENT_PROJECT': '/fake/project',
             'WORKTREE': '/fake/agents/test-orch/worktree',
-            'SHARED_DIR': '/fake/.orchestrator/shared',
-            'ORCHESTRATOR_DIR': '/fake/.orchestrator',
+            'SHARED_DIR': '/fake/.octopoid/runtime/shared',
+            'ORCHESTRATOR_DIR': '/fake/.octopoid',
         }):
             role, task = _make_role_and_task()
 
@@ -233,15 +232,15 @@ class TestOrchestratorImplCommitCounting:
                  patch.object(role, '_run_cmd', return_value=_make_completed_result(0)), \
                  patch.object(role, '_create_submodule_branch'), \
                  patch.object(role, '_try_merge_to_main', return_value=False), \
+                 patch('orchestrator.git_utils.create_task_worktree', return_value=Path('/fake/agents/test-orch/worktree')), \
+                 patch('orchestrator.git_utils.get_current_branch', return_value='agent/test'), \
                  patch('orchestrator.git_utils.create_feature_branch', return_value='agent/test'), \
                  patch('orchestrator.git_utils.get_head_ref', return_value='abc123'), \
                  patch('orchestrator.git_utils.get_commit_count', mock_commit_count), \
                  patch('orchestrator.queue_utils.submit_completion'), \
                  patch('orchestrator.queue_utils.save_task_notes'), \
                  patch('orchestrator.queue_utils.get_task_notes', return_value=None), \
-                 patch('orchestrator.config.get_notes_dir', return_value=Path('/fake/notes')), \
-                 patch('orchestrator.config.is_db_enabled', return_value=True), \
-                 patch('orchestrator.db.get_task', return_value=None):
+                 patch('orchestrator.config.get_notes_dir', return_value=Path('/fake/notes')):
                 role._run_with_task(task)
 
             # get_commit_count must be called twice: once for submodule, once for main repo
@@ -263,8 +262,8 @@ class TestOrchestratorImplCommitCounting:
             'AGENT_ROLE': 'orchestrator_impl',
             'PARENT_PROJECT': '/fake/project',
             'WORKTREE': '/fake/agents/test-orch/worktree',
-            'SHARED_DIR': '/fake/.orchestrator/shared',
-            'ORCHESTRATOR_DIR': '/fake/.orchestrator',
+            'SHARED_DIR': '/fake/.octopoid/runtime/shared',
+            'ORCHESTRATOR_DIR': '/fake/.octopoid',
         }):
             role, task = _make_role_and_task()
 
@@ -277,15 +276,15 @@ class TestOrchestratorImplCommitCounting:
                  patch.object(role, '_run_cmd', return_value=_make_completed_result(0)), \
                  patch.object(role, '_create_submodule_branch'), \
                  patch.object(role, '_try_merge_to_main', return_value=False), \
+                 patch('orchestrator.git_utils.create_task_worktree', return_value=Path('/fake/agents/test-orch/worktree')), \
+                 patch('orchestrator.git_utils.get_current_branch', return_value='agent/test'), \
                  patch('orchestrator.git_utils.create_feature_branch', return_value='agent/test'), \
                  patch('orchestrator.git_utils.get_head_ref', mock_head_ref), \
                  patch('orchestrator.git_utils.get_commit_count', return_value=1), \
                  patch('orchestrator.queue_utils.submit_completion'), \
                  patch('orchestrator.queue_utils.save_task_notes'), \
                  patch('orchestrator.queue_utils.get_task_notes', return_value=None), \
-                 patch('orchestrator.config.get_notes_dir', return_value=Path('/fake/notes')), \
-                 patch('orchestrator.config.is_db_enabled', return_value=True), \
-                 patch('orchestrator.db.get_task', return_value=None):
+                 patch('orchestrator.config.get_notes_dir', return_value=Path('/fake/notes')):
                 role._run_with_task(task)
 
             # get_head_ref must be called twice: main repo first, then submodule
@@ -307,8 +306,8 @@ class TestOrchestratorImplNoPR:
             'AGENT_ROLE': 'orchestrator_impl',
             'PARENT_PROJECT': '/fake/project',
             'WORKTREE': '/fake/agents/test-orch/worktree',
-            'SHARED_DIR': '/fake/.orchestrator/shared',
-            'ORCHESTRATOR_DIR': '/fake/.orchestrator',
+            'SHARED_DIR': '/fake/.octopoid/runtime/shared',
+            'ORCHESTRATOR_DIR': '/fake/.octopoid',
         }):
             role, task = _make_role_and_task()
 
@@ -321,6 +320,8 @@ class TestOrchestratorImplNoPR:
                  patch.object(role, '_run_cmd', return_value=_make_completed_result(0)), \
                  patch.object(role, '_create_submodule_branch'), \
                  patch.object(role, '_try_merge_to_main', return_value=False), \
+                 patch('orchestrator.git_utils.create_task_worktree', return_value=Path('/fake/agents/test-orch/worktree')), \
+                 patch('orchestrator.git_utils.get_current_branch', return_value='agent/test'), \
                  patch('orchestrator.git_utils.create_feature_branch', return_value='agent/test'), \
                  patch('orchestrator.git_utils.get_head_ref', return_value='abc123'), \
                  patch('orchestrator.git_utils.get_commit_count', return_value=1), \
@@ -328,8 +329,6 @@ class TestOrchestratorImplNoPR:
                  patch('orchestrator.queue_utils.save_task_notes'), \
                  patch('orchestrator.queue_utils.get_task_notes', return_value=None), \
                  patch('orchestrator.config.get_notes_dir', return_value=Path('/fake/notes')), \
-                 patch('orchestrator.config.is_db_enabled', return_value=True), \
-                 patch('orchestrator.db.get_task', return_value=None), \
                  patch('orchestrator.git_utils.create_pull_request', mock_create_pr):
                 role._run_with_task(task)
 
@@ -347,8 +346,8 @@ _ENV = {
     'AGENT_ROLE': 'orchestrator_impl',
     'PARENT_PROJECT': '/fake/project',
     'WORKTREE': '/fake/agents/test-orch/worktree',
-    'SHARED_DIR': '/fake/.orchestrator/shared',
-    'ORCHESTRATOR_DIR': '/fake/.orchestrator',
+    'SHARED_DIR': '/fake/.octopoid/runtime/shared',
+    'ORCHESTRATOR_DIR': '/fake/.octopoid',
 }
 
 
@@ -371,7 +370,7 @@ class TestTryMergeSubmodule:
         with patch.dict('os.environ', _ENV):
             role = self._make_role()
             sub_path = Path('/fake/agents/test-orch/worktree/orchestrator')
-            venv_python = Path('/fake/project/.orchestrator/venv/bin/python')
+            venv_python = Path('/fake/project/.octopoid/venv/bin/python')
 
             calls = []
 
@@ -859,88 +858,6 @@ class TestPushFeatureBranches:
             mock_run.assert_not_called()
 
 
-class TestPushBeforeSubmitCompletion:
-    """Tests that _push_feature_branches is called before submit_completion when merge fails."""
-
-    def _standard_patches(self, role, mock_merge_result, sub_commits=2, main_commits=0):
-        """Return a context manager stack for the standard _run_with_task mocks."""
-        from contextlib import ExitStack
-
-        commit_values = [sub_commits, main_commits]
-        commit_iter = iter(commit_values)
-
-        stack = ExitStack()
-        stack.enter_context(patch.object(role, 'invoke_claude', return_value=(0, 'ok', '')))
-        stack.enter_context(patch.object(role, 'read_instructions', return_value=''))
-        stack.enter_context(patch.object(role, 'reset_tool_counter'))
-        stack.enter_context(patch.object(role, 'read_tool_count', return_value=5))
-        stack.enter_context(patch.object(role, '_run_cmd', return_value=_make_completed_result(0)))
-        stack.enter_context(patch.object(role, '_create_submodule_branch'))
-        stack.enter_context(patch.object(role, '_try_merge_to_main', return_value=mock_merge_result))
-        stack.enter_context(patch('orchestrator.git_utils.create_feature_branch', return_value='agent/test'))
-        stack.enter_context(patch('orchestrator.git_utils.get_head_ref', return_value='abc123'))
-        stack.enter_context(patch('orchestrator.git_utils.get_commit_count', side_effect=lambda *a, **kw: next(commit_iter)))
-        stack.enter_context(patch('orchestrator.queue_utils.save_task_notes'))
-        stack.enter_context(patch('orchestrator.queue_utils.get_task_notes', return_value=None))
-        stack.enter_context(patch('orchestrator.config.get_notes_dir', return_value=Path('/fake/notes')))
-        stack.enter_context(patch('orchestrator.config.is_db_enabled', return_value=True))
-        stack.enter_context(patch('orchestrator.db.get_task', return_value=None))
-        return stack
-
-    def test_merge_failure_pushes_branches(self):
-        """When _try_merge_to_main returns False, _push_feature_branches is called."""
-        with patch.dict('os.environ', _ENV):
-            role, task = _make_role_and_task()
-            mock_push = MagicMock()
-
-            with self._standard_patches(role, mock_merge_result=False, sub_commits=2, main_commits=1), \
-                 patch.object(role, '_push_feature_branches', mock_push), \
-                 patch('orchestrator.queue_utils.submit_completion'), \
-                 patch('orchestrator.queue_utils.accept_completion'):
-                role._run_with_task(task)
-
-            # Should call _push_feature_branches with correct args
-            mock_push.assert_called_once()
-            call_args = mock_push.call_args
-            assert 'test123' in str(call_args)  # task_id
-            assert call_args.kwargs.get('has_sub_commits') is True
-            assert call_args.kwargs.get('has_main_commits') is True
-
-    def test_merge_success_skips_push(self):
-        """When _try_merge_to_main returns True, _push_feature_branches is NOT called."""
-        with patch.dict('os.environ', _ENV):
-            role, task = _make_role_and_task()
-            mock_push = MagicMock()
-
-            with self._standard_patches(role, mock_merge_result=True, sub_commits=2), \
-                 patch.object(role, '_push_feature_branches', mock_push), \
-                 patch('orchestrator.queue_utils.accept_completion'):
-                role._run_with_task(task)
-
-            # Should NOT call _push_feature_branches (branches already merged)
-            mock_push.assert_not_called()
-
-    def test_push_happens_before_submit(self):
-        """_push_feature_branches must be called BEFORE submit_completion."""
-        with patch.dict('os.environ', _ENV):
-            role, task = _make_role_and_task()
-            call_order = []
-
-            def mock_push(*args, **kwargs):
-                call_order.append('push')
-
-            def mock_submit(*args, **kwargs):
-                call_order.append('submit')
-
-            with self._standard_patches(role, mock_merge_result=False, sub_commits=2), \
-                 patch.object(role, '_push_feature_branches', side_effect=mock_push), \
-                 patch('orchestrator.queue_utils.submit_completion', side_effect=mock_submit):
-                role._run_with_task(task)
-
-            # Push must happen before submit
-            assert call_order == ['push', 'submit']
-
-
 class TestTryMergeToMain:
     """Tests for the top-level _try_merge_to_main orchestrator."""
 
@@ -1077,115 +994,6 @@ class TestTryMergeToMain:
             assert ['git', 'push', 'origin', 'main'] in cmds
 
 
-class TestSelfMergeIntegration:
-    """Tests that _run_with_task calls self-merge on success and falls back on failure."""
-
-    def _standard_patches(self, role, mock_merge_result, sub_commits=2, main_commits=0):
-        """Return a context manager stack for the standard _run_with_task mocks."""
-        from contextlib import ExitStack
-
-        # get_commit_count returns different values per call
-        commit_values = [sub_commits, main_commits]
-        commit_iter = iter(commit_values)
-
-        stack = ExitStack()
-        stack.enter_context(patch.object(role, 'invoke_claude', return_value=(0, 'ok', '')))
-        stack.enter_context(patch.object(role, 'read_instructions', return_value=''))
-        stack.enter_context(patch.object(role, 'reset_tool_counter'))
-        stack.enter_context(patch.object(role, 'read_tool_count', return_value=5))
-        stack.enter_context(patch.object(role, '_run_cmd', return_value=_make_completed_result(0)))
-        stack.enter_context(patch.object(role, '_create_submodule_branch'))
-        stack.enter_context(patch.object(role, '_try_merge_to_main', return_value=mock_merge_result))
-        stack.enter_context(patch('orchestrator.git_utils.create_feature_branch', return_value='agent/test'))
-        stack.enter_context(patch('orchestrator.git_utils.get_head_ref', return_value='abc123'))
-        stack.enter_context(patch('orchestrator.git_utils.get_commit_count', side_effect=lambda *a, **kw: next(commit_iter)))
-        stack.enter_context(patch('orchestrator.queue_utils.save_task_notes'))
-        stack.enter_context(patch('orchestrator.queue_utils.get_task_notes', return_value=None))
-        stack.enter_context(patch('orchestrator.config.get_notes_dir', return_value=Path('/fake/notes')))
-        stack.enter_context(patch('orchestrator.config.is_db_enabled', return_value=True))
-        stack.enter_context(patch('orchestrator.db.get_task', return_value=None))
-        return stack
-
-    def test_successful_merge_calls_accept(self):
-        """When _try_merge_to_main returns True, accept_completion is called."""
-        with patch.dict('os.environ', _ENV):
-            role, task = _make_role_and_task()
-            mock_accept = MagicMock()
-            mock_submit = MagicMock()
-
-            with self._standard_patches(role, mock_merge_result=True, sub_commits=2), \
-                 patch('orchestrator.queue_utils.accept_completion', mock_accept), \
-                 patch('orchestrator.queue_utils.submit_completion', mock_submit):
-                role._run_with_task(task)
-
-            mock_accept.assert_called_once()
-            assert mock_accept.call_args.kwargs.get('accepted_by') == 'self-merge'
-            mock_submit.assert_not_called()
-
-    def test_failed_merge_calls_submit(self):
-        """When _try_merge_to_main returns False, submit_completion is called."""
-        with patch.dict('os.environ', _ENV):
-            role, task = _make_role_and_task()
-            mock_accept = MagicMock()
-            mock_submit = MagicMock()
-
-            with self._standard_patches(role, mock_merge_result=False, sub_commits=2), \
-                 patch('orchestrator.queue_utils.accept_completion', mock_accept), \
-                 patch('orchestrator.queue_utils.submit_completion', mock_submit):
-                role._run_with_task(task)
-
-            mock_submit.assert_called_once()
-            mock_accept.assert_not_called()
-
-    def test_zero_commits_skips_merge(self):
-        """When total commits is 0, _try_merge_to_main is NOT called."""
-        with patch.dict('os.environ', _ENV):
-            role, task = _make_role_and_task()
-            mock_merge = MagicMock()
-            mock_submit = MagicMock()
-
-            with patch.object(role, 'invoke_claude', return_value=(0, 'ok', '')), \
-                 patch.object(role, 'read_instructions', return_value=''), \
-                 patch.object(role, 'reset_tool_counter'), \
-                 patch.object(role, 'read_tool_count', return_value=5), \
-                 patch.object(role, '_run_cmd', return_value=_make_completed_result(0)), \
-                 patch.object(role, '_create_submodule_branch'), \
-                 patch.object(role, '_try_merge_to_main', mock_merge), \
-                 patch('orchestrator.git_utils.create_feature_branch', return_value='agent/test'), \
-                 patch('orchestrator.git_utils.get_head_ref', return_value='abc123'), \
-                 patch('orchestrator.git_utils.get_commit_count', return_value=0), \
-                 patch('orchestrator.queue_utils.submit_completion', mock_submit), \
-                 patch('orchestrator.queue_utils.accept_completion'), \
-                 patch('orchestrator.queue_utils.save_task_notes'), \
-                 patch('orchestrator.queue_utils.get_task_notes', return_value=None), \
-                 patch('orchestrator.config.get_notes_dir', return_value=Path('/fake/notes')), \
-                 patch('orchestrator.config.is_db_enabled', return_value=True), \
-                 patch('orchestrator.db.get_task', return_value=None):
-                role._run_with_task(task)
-
-            mock_merge.assert_not_called()
-            mock_submit.assert_called_once()
-
-    def test_main_repo_only_commits_trigger_merge(self):
-        """When only main repo has commits, merge is still triggered."""
-        with patch.dict('os.environ', _ENV):
-            role, task = _make_role_and_task()
-            mock_merge = MagicMock(return_value=True)
-            mock_accept = MagicMock()
-
-            with self._standard_patches(role, mock_merge_result=True, sub_commits=0, main_commits=3), \
-                 patch.object(role, '_try_merge_to_main', mock_merge), \
-                 patch('orchestrator.queue_utils.accept_completion', mock_accept):
-                role._run_with_task(task)
-
-            mock_merge.assert_called_once()
-            # Verify has_sub_commits=False, has_main_commits=True
-            call_kwargs = mock_merge.call_args
-            assert call_kwargs.kwargs.get('has_sub_commits') is False
-            assert call_kwargs.kwargs.get('has_main_commits') is True
-            mock_accept.assert_called_once()
-
-
 class TestCreateToolingBranch:
     """Tests for _create_tooling_branch."""
 
@@ -1245,15 +1053,15 @@ class TestPromptIncludesToolingBranch:
                  patch.object(role, '_run_cmd', return_value=_make_completed_result(0)), \
                  patch.object(role, '_create_submodule_branch'), \
                  patch.object(role, '_try_merge_to_main', return_value=False), \
+                 patch('orchestrator.git_utils.create_task_worktree', return_value=Path('/fake/agents/test-orch/worktree')), \
+                 patch('orchestrator.git_utils.get_current_branch', return_value='agent/test'), \
                  patch('orchestrator.git_utils.create_feature_branch', return_value='agent/test'), \
                  patch('orchestrator.git_utils.get_head_ref', return_value='abc123'), \
                  patch('orchestrator.git_utils.get_commit_count', return_value=1), \
                  patch('orchestrator.queue_utils.submit_completion'), \
                  patch('orchestrator.queue_utils.save_task_notes'), \
                  patch('orchestrator.queue_utils.get_task_notes', return_value=None), \
-                 patch('orchestrator.config.get_notes_dir', return_value=Path('/fake/notes')), \
-                 patch('orchestrator.config.is_db_enabled', return_value=True), \
-                 patch('orchestrator.db.get_task', return_value=None):
+                 patch('orchestrator.config.get_notes_dir', return_value=Path('/fake/notes')):
                 role._run_with_task(task)
 
             assert captured_prompt is not None
@@ -1539,197 +1347,3 @@ class TestProjectTaskSkipsSubmoduleRef:
             mock_main.assert_called_once_with('abc12345', target_branch='proj/feature-x')
 
 
-class TestRunWithTaskProjectBranch:
-    """Tests that _run_with_task looks up project_id and determines target branch."""
-
-    def _standard_patches(self, role, mock_merge_result, sub_commits=2, main_commits=0):
-        """Return a context manager stack for the standard _run_with_task mocks."""
-        from contextlib import ExitStack
-
-        commit_values = [sub_commits, main_commits]
-        commit_iter = iter(commit_values)
-
-        stack = ExitStack()
-        stack.enter_context(patch.object(role, 'invoke_claude', return_value=(0, 'ok', '')))
-        stack.enter_context(patch.object(role, 'read_instructions', return_value=''))
-        stack.enter_context(patch.object(role, 'reset_tool_counter'))
-        stack.enter_context(patch.object(role, 'read_tool_count', return_value=5))
-        stack.enter_context(patch.object(role, '_run_cmd', return_value=_make_completed_result(0)))
-        stack.enter_context(patch.object(role, '_create_submodule_branch'))
-        stack.enter_context(patch.object(role, '_try_merge_to_main', return_value=mock_merge_result))
-        stack.enter_context(patch('orchestrator.git_utils.create_feature_branch', return_value='agent/test'))
-        stack.enter_context(patch('orchestrator.git_utils.get_head_ref', return_value='abc123'))
-        stack.enter_context(patch('orchestrator.git_utils.get_commit_count', side_effect=lambda *a, **kw: next(commit_iter)))
-        stack.enter_context(patch('orchestrator.queue_utils.save_task_notes'))
-        stack.enter_context(patch('orchestrator.queue_utils.get_task_notes', return_value=None))
-        stack.enter_context(patch('orchestrator.config.get_notes_dir', return_value=Path('/fake/notes')))
-        stack.enter_context(patch('orchestrator.config.is_db_enabled', return_value=True))
-        stack.enter_context(patch('orchestrator.db.get_task', return_value=None))
-        return stack
-
-    def test_project_task_uses_project_branch(self):
-        """When task has project_id, merge targets the project branch."""
-        with patch.dict('os.environ', _ENV):
-            from orchestrator.roles.orchestrator_impl import OrchestratorImplRole
-            role = OrchestratorImplRole()
-            task = {
-                'id': 'proj-task1',
-                'title': 'Project task',
-                'branch': 'main',
-                'path': '/fake/path',
-                'content': 'Test content',
-            }
-
-            mock_merge = MagicMock(return_value=True)
-
-            # Mock db.get_task to return a task with project_id
-            mock_get_task = MagicMock(return_value={
-                'id': 'proj-task1',
-                'project_id': 'PROJ-abc',
-                'checks': [],
-                'check_results': {},
-            })
-            # Mock db.get_project to return project with branch
-            mock_get_project = MagicMock(return_value={
-                'id': 'PROJ-abc',
-                'branch': 'proj/feature-x',
-                'base_branch': 'main',
-            })
-
-            with self._standard_patches(role, mock_merge_result=True), \
-                 patch.object(role, '_try_merge_to_main', mock_merge), \
-                 patch('orchestrator.queue_utils.accept_completion'), \
-                 patch('orchestrator.db.get_task', mock_get_task), \
-                 patch('orchestrator.db.get_project', mock_get_project):
-                role._run_with_task(task)
-
-            mock_merge.assert_called_once()
-            call_kwargs = mock_merge.call_args
-            assert call_kwargs.kwargs.get('target_branch') == 'proj/feature-x'
-
-    def test_non_project_task_uses_main(self):
-        """When task has no project_id, merge targets main."""
-        with patch.dict('os.environ', _ENV):
-            from orchestrator.roles.orchestrator_impl import OrchestratorImplRole
-            role = OrchestratorImplRole()
-            task = {
-                'id': 'solo-task1',
-                'title': 'Solo task',
-                'branch': 'main',
-                'path': '/fake/path',
-                'content': 'Test content',
-            }
-
-            mock_merge = MagicMock(return_value=True)
-
-            # Mock db.get_task to return a task WITHOUT project_id
-            mock_get_task = MagicMock(return_value={
-                'id': 'solo-task1',
-                'project_id': None,
-                'checks': [],
-                'check_results': {},
-            })
-
-            with self._standard_patches(role, mock_merge_result=True), \
-                 patch.object(role, '_try_merge_to_main', mock_merge), \
-                 patch('orchestrator.queue_utils.accept_completion'), \
-                 patch('orchestrator.db.get_task', mock_get_task):
-                role._run_with_task(task)
-
-            mock_merge.assert_called_once()
-            call_kwargs = mock_merge.call_args
-            assert call_kwargs.kwargs.get('target_branch') == 'main'
-
-
-class TestMergeProjectToMain:
-    """Tests for the module-level merge_project_to_main function."""
-
-    def test_merges_project_branch_to_main(self):
-        """merge_project_to_main merges the project branch and updates submodule ref."""
-        from orchestrator.roles.orchestrator_impl import merge_project_to_main
-
-        mock_project = {
-            'id': 'PROJ-abc',
-            'branch': 'proj/feature-x',
-            'base_branch': 'main',
-        }
-
-        calls = []
-
-        def mock_run(cmd, capture_output=True, text=True, cwd=None, timeout=120):
-            calls.append((cmd, str(cwd) if cwd else None))
-            # Simulate that ff-only merge succeeds
-            return _make_completed_result(0)
-
-        with patch('orchestrator.roles.orchestrator_impl.subprocess.run', side_effect=mock_run), \
-             patch('orchestrator.config.is_db_enabled', return_value=True), \
-             patch('orchestrator.db.get_project', return_value=mock_project), \
-             patch('orchestrator.db.update_project') as mock_update:
-            result = merge_project_to_main('PROJ-abc', parent_project=Path('/fake/project'))
-
-        assert result is True
-        # Should have checked out main in submodule
-        cmds = [c[0] for c in calls]
-        assert ['git', 'checkout', 'main'] in cmds
-        # Should merge project branch
-        assert ['git', 'merge', '--ff-only', 'origin/proj/feature-x'] in cmds
-        # Should update project to complete
-        mock_update.assert_called_once_with('PROJ-abc', status='complete')
-
-    def test_no_branch_is_noop(self):
-        """If project has no branch (or branch is 'main'), returns True immediately."""
-        from orchestrator.roles.orchestrator_impl import merge_project_to_main
-
-        mock_project = {
-            'id': 'PROJ-abc',
-            'branch': 'main',
-            'base_branch': 'main',
-        }
-
-        with patch('orchestrator.config.is_db_enabled', return_value=True), \
-             patch('orchestrator.db.get_project', return_value=mock_project), \
-             patch('orchestrator.db.update_project') as mock_update:
-            result = merge_project_to_main('PROJ-abc', parent_project=Path('/fake/project'))
-
-        assert result is True
-        mock_update.assert_not_called()
-
-    def test_project_not_found_returns_false(self):
-        """If project doesn't exist, returns False."""
-        from orchestrator.roles.orchestrator_impl import merge_project_to_main
-
-        with patch('orchestrator.config.is_db_enabled', return_value=True), \
-             patch('orchestrator.db.get_project', return_value=None):
-            result = merge_project_to_main('PROJ-missing', parent_project=Path('/fake/project'))
-
-        assert result is False
-
-    def test_merge_failure_falls_back_to_regular_merge(self):
-        """If ff-only merge fails, tries regular merge."""
-        from orchestrator.roles.orchestrator_impl import merge_project_to_main
-
-        mock_project = {
-            'id': 'PROJ-abc',
-            'branch': 'proj/feature-x',
-            'base_branch': 'main',
-        }
-
-        merge_count = [0]
-
-        def mock_run(cmd, capture_output=True, text=True, cwd=None, timeout=120):
-            if 'merge' in cmd and '--ff-only' in cmd:
-                merge_count[0] += 1
-                return _make_completed_result(1, stderr='not a fast-forward')
-            if 'merge' in cmd and '--ff-only' not in cmd:
-                merge_count[0] += 1
-                return _make_completed_result(0)
-            return _make_completed_result(0)
-
-        with patch('orchestrator.roles.orchestrator_impl.subprocess.run', side_effect=mock_run), \
-             patch('orchestrator.config.is_db_enabled', return_value=True), \
-             patch('orchestrator.db.get_project', return_value=mock_project), \
-             patch('orchestrator.db.update_project'):
-            result = merge_project_to_main('PROJ-abc', parent_project=Path('/fake/project'))
-
-        assert result is True
-        assert merge_count[0] == 2  # ff-only + regular merge

@@ -1,9 +1,20 @@
 /**
  * Task types for Octopoid
- * Based on orchestrator/db.py schema
  */
 
-export type TaskQueue = 'incoming' | 'claimed' | 'provisional' | 'done' | 'backlog' | 'blocked' | 'needs_continuation'
+export type TaskQueue =
+  | 'incoming'
+  | 'claimed'
+  | 'provisional'
+  | 'done'
+  | 'failed'
+  | 'rejected'
+  | 'escalated'
+  | 'recycled'
+  | 'breakdown'
+  | 'needs_continuation'
+  | 'backlog'
+  | 'blocked'
 
 export type TaskPriority = 'P0' | 'P1' | 'P2' | 'P3'
 
@@ -113,6 +124,7 @@ export interface SubmitTaskRequest {
   commits_count: number
   turns_used: number
   check_results?: string
+  execution_notes?: string
 }
 
 export interface AcceptTaskRequest {

@@ -5,7 +5,7 @@ Shows what an agent committed to the orchestrator submodule's main
 branch that hasn't been pushed to origin yet.
 
 Usage:
-    .orchestrator/venv/bin/python orchestrator/scripts/review-orchestrator-task <task-id>
+    orchestrator/venv/bin/python orchestrator/scripts/review-orchestrator-task <task-id>
 
 Examples:
     review-orchestrator-task f2da3c14

@@ -64,7 +64,7 @@ class TestInitWelcomeMessage:
                 )
 
         output = capsys.readouterr().out
-        assert "file-driven orchestrator" in output
+        assert "API-driven orchestrator" in output
 
 
 class TestInitDirectoryCreation:
@@ -83,7 +83,7 @@ class TestInitDirectoryCreation:
                 )
 
         output = capsys.readouterr().out
-        assert "Created .orchestrator/ directory structure" in output
+        assert "Created .octopoid/ directory structure" in output
         assert "directories" in output
 
     def test_second_init_reports_existing(self, mock_project, capsys):
@@ -123,14 +123,14 @@ class TestInitDirectoryCreation:
                 )
 
         output = capsys.readouterr().out
-        assert "Created .orchestrator/agents.yaml" in output
+        assert "Created .octopoid/agents.yaml" in output
 
     def test_existing_agents_yaml_preserved(self, mock_project, capsys):
         """Existing agents.yaml is not overwritten."""
         project_dir, submodule = mock_project
 
         # Pre-create agents.yaml
-        orchestrator_dir = project_dir / ".orchestrator"
+        orchestrator_dir = project_dir / ".octopoid"
         orchestrator_dir.mkdir(parents=True, exist_ok=True)
         agents_yaml = orchestrator_dir / "agents.yaml"
         agents_yaml.write_text("# custom config")
@@ -144,7 +144,7 @@ class TestInitDirectoryCreation:
                 )
 
         output = capsys.readouterr().out
-        assert "Using existing .orchestrator/agents.yaml" in output
+        assert "Using existing .octopoid/agents.yaml" in output
         assert agents_yaml.read_text() == "# custom config"
 
 
@@ -349,27 +349,7 @@ class TestInitGitignore:
 
 
 class TestInitModeSelection:
-    """Tests for --local/--server mode selection CLI flags."""
-
-    def test_server_flag_exits_with_error(self, capsys):
-        """Using --server exits with an informative error message."""
-        with patch("sys.argv", ["init.py", "--server", "https://example.com"]):
-            with pytest.raises(SystemExit) as exc_info:
-                main()
-            assert exc_info.value.code == 1
-
-        output = capsys.readouterr().out
-        assert "Remote mode is not yet available" in output
-        assert "--local" in output
-
-    def test_server_flag_suggests_local_mode(self, capsys):
-        """--server error message suggests using local mode instead."""
-        with patch("sys.argv", ["init.py", "--server", "https://example.com"]):
-            with pytest.raises(SystemExit):
-                main()
-
-        output = capsys.readouterr().out
-        assert "local mode" in output.lower()
+    """Tests for mode display in output."""
 
     def test_default_mode_shown_in_output(self, mock_project, capsys):
         """Running init without mode flag shows 'local' mode."""
@@ -401,14 +381,3 @@ class TestInitModeSelection:
 
         output = capsys.readouterr().out
         assert "Mode:    local" in output
-
-    def test_help_text_describes_modes(self, capsys):
-        """--help includes mode documentation."""
-        with patch("sys.argv", ["init.py", "--help"]):
-            with pytest.raises(SystemExit) as exc_info:
-                main()
-
-        assert exc_info.value.code == 0
-        output = capsys.readouterr().out
-        assert "Local mode" in output
-        assert "Remote mode" in output
