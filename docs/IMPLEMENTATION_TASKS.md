@@ -188,12 +188,15 @@ export async function createBranch(
 ### Task #12: Port Core Agent Roles to TypeScript
 
 **Files to port:**
-- `orchestrator/roles/implementer.py` (~500 lines)
 - `orchestrator/roles/breakdown.py` (~400 lines)
 - `orchestrator/roles/gatekeeper.py` (~450 lines)
 - `orchestrator/roles/tester.py` (~350 lines)
 - `orchestrator/roles/reviewer.py` (~300 lines)
 - `orchestrator/roles/base_agent.py` (~200 lines)
+
+> **Note:** `implementer.py` / `ImplementerRole` has been removed. The implementer now uses
+> scripts mode only (`prepare_task_directory()` + `invoke_claude()` in `scheduler.py`).
+> `OrchestratorImplRole` inherits from `BaseRole` directly.
 
 **What needs to be implemented:**
 
@@ -204,12 +207,9 @@ export async function createBranch(
    - Git worktree management
    - Completion submission
 
-2. **Implementer agent** (`packages/client/src/roles/implementer.ts`):
-   - Claim tasks with role='implement'
-   - Create git worktree
-   - Use Anthropic API to generate code
-   - Commit changes
-   - Submit for review
+2. **Implementer (scripts mode):**
+   - Handled by `prepare_task_directory()` + `invoke_claude()` in scheduler
+   - No separate agent class needed; scheduler sets up worktree and spawns Claude directly
 
 3. **Breakdown agent** (`packages/client/src/roles/breakdown.ts`):
    - Claim tasks with role='breakdown'
@@ -240,18 +240,6 @@ export abstract class BaseAgent {
   protected async claimTask(): Promise<Task | null>
   protected async submitCompletion(task: Task): Promise<void>
   protected async callAnthropic(prompt: string): Promise<string>
-}
-
-export class Implementer extends BaseAgent {
-  async run(): Promise<void> {
-    const task = await this.claimTask()
-    if (!task) return
-
-    // Create worktree
-    // Generate code with AI
-    // Commit and push
-    // Submit completion
-  }
 }
 ```
 

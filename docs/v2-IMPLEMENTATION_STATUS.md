@@ -35,7 +35,7 @@ This document tracks the implementation progress of the Octopoid v2.0 rewrite fr
 ### Critical Path (Python → TypeScript Porting)
 - ⏳ **Task #10:** Port queue utilities (file operations, task parsing)
 - ⏳ **Task #11:** Port git utilities (worktrees, commits, branches)
-- ⏳ **Task #12:** Port core agent roles (implementer, breakdown, gatekeeper, etc.)
+- ⏳ **Task #12:** Port core agent roles (breakdown, gatekeeper, etc. — implementer uses scripts mode)
 - ⏳ **Task #9:** Port scheduler (main orchestration loop)
 
 ### Extensions & SDKs
@@ -376,7 +376,7 @@ These are the critical porting tasks to make the system fully functional:
 
 3. **Task #12: Agent Roles** (3-4 weeks)
    - Port orchestrator/roles/*.py (~2,200 lines)
-   - Base agent, implementer, breakdown, gatekeeper, etc.
+   - Base agent, breakdown, gatekeeper, etc. (implementer uses scripts mode via scheduler.py)
    - Core functionality for task execution
 
 4. **Task #9: Scheduler** (2-3 weeks)
@@ -533,7 +533,7 @@ octopoid list --queue incoming
 - **Documentation:** 100% ✅ (5 comprehensive guides)
 - **Deployment:** 100% ✅ (CI/CD, deployment guide)
 - **Extensions:** 0% ⏳ (SDKs, offline mode)
-- **Tests:** 0% ⏳ (test suites)
+- **Tests:** 40% 🚧 (81 unit + 50 integration tests)
 
 ### When 100% Complete
 

@@ -8,30 +8,34 @@
 
     <key>ProgramArguments</key>
     <array>
-        <!-- Point this at the venv's python or the installed entry-point -->
-        <string>/path/to/your/project/.orchestrator/venv/bin/orchestrator-scheduler</string>
+        <string>/opt/homebrew/bin/python3</string>
+        <string>-m</string>
+        <string>orchestrator.scheduler</string>
+        <string>--once</string>
         <string>--debug</string>
     </array>
 
     <key>WorkingDirectory</key>
-    <string>/path/to/your/project</string>
+    <string>/Users/maxwilliams/dev/octopoid</string>
 
     <key>StartInterval</key>
     <integer>60</integer>
 
     <key>EnvironmentVariables</key>
     <dict>
-        <key>ANTHROPIC_API_KEY</key>
-        <string>sk-ant-REPLACE_ME</string>
         <key>PATH</key>
-        <string>/usr/local/bin:/usr/bin:/bin:/path/to/your/project/.orchestrator/venv/bin</string>
+        <string>/Users/maxwilliams/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>PYTHONPATH</key>
+        <string>/Users/maxwilliams/dev/octopoid</string>
+        <key>HOME</key>
+        <string>/Users/maxwilliams</string>
     </dict>
 
     <key>StandardOutPath</key>
-    <string>/path/to/your/project/.orchestrator/logs/launchd-stdout.log</string>
+    <string>/Users/maxwilliams/dev/octopoid/.octopoid/runtime/logs/launchd-stdout.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/path/to/your/project/.orchestrator/logs/launchd-stderr.log</string>
+    <string>/Users/maxwilliams/dev/octopoid/.octopoid/runtime/logs/launchd-stderr.log</string>
 
     <key>KeepAlive</key>
     <false/>

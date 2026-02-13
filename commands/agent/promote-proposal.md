@@ -57,9 +57,9 @@ TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 ### Step 2: Create the task file
 
 ```bash
-mkdir -p .orchestrator/shared/queue/incoming
+mkdir -p .octopoid/runtime/shared/queue/incoming
 
-cat > ".orchestrator/shared/queue/incoming/${TASK_ID}.md" << 'EOF'
+cat > ".octopoid/runtime/shared/queue/incoming/${TASK_ID}.md" << 'EOF'
 # [TASK-abc12345] Add retry logic to API client
 
 ROLE: implement
@@ -90,12 +90,12 @@ EOF
 ### Step 3: Move proposal to promoted
 
 ```bash
-mkdir -p .orchestrator/shared/proposals/promoted
-mv ".orchestrator/shared/proposals/active/${PROP_ID}.md" \
-   ".orchestrator/shared/proposals/promoted/${PROP_ID}.md"
+mkdir -p .octopoid/runtime/shared/proposals/promoted
+mv ".octopoid/runtime/shared/proposals/active/${PROP_ID}.md" \
+   ".octopoid/runtime/shared/proposals/promoted/${PROP_ID}.md"
 
 # Append promotion info
-cat >> ".orchestrator/shared/proposals/promoted/${PROP_ID}.md" << EOF
+cat >> ".octopoid/runtime/shared/proposals/promoted/${PROP_ID}.md" << EOF
 
 ---
 **Promoted:** ${TIMESTAMP}

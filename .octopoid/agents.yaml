@@ -1,15 +1,19 @@
-# Octopoid Agents Configuration
-# Agents read server config from config.yaml
+paused: false
+
+queue_limits:
+  max_claimed: 1
+  max_incoming: 20
+  max_open_prs: 10
 
 agents:
-  # Implementer agents - work on tasks from API server
+  # Implementer agents - work on tasks in the queue
   - id: 1
     name: implementer-1
     role: implementer
     enabled: true
     interval_seconds: 60
     max_concurrent: 1
-    max_turns: 50
+    max_turns: 200
     model: sonnet
 
   - id: 2
@@ -18,14 +22,14 @@ agents:
     enabled: true
     interval_seconds: 60
     max_concurrent: 1
-    max_turns: 50
+    max_turns: 200
     model: sonnet
 
-  # GitHub issue monitor - creates tasks from GitHub issues
+  # GitHub issue monitor - lightweight agent (no worktree needed)
   - id: 101
     name: github-issue-monitor
     role: github_issue_monitor
     enabled: true
-    interval_seconds: 300
+    interval_seconds: 900
     max_concurrent: 1
-    lightweight: true
+    lightweight: true  # Runs in parent project, no worktree

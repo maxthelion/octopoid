@@ -6,7 +6,6 @@ This guide provides step-by-step instructions for migrating from the Python-base
 
 **v1.x (Python):**
 - Git submodule for orchestrator code
-- Direct SQLite database access
 - Single-machine operation
 - Python virtual environment
 
@@ -27,19 +26,10 @@ This guide provides step-by-step instructions for migrating from the Python-base
 
 ### Step 1: Backup Current State
 
-**Export database:**
-```bash
-# Create backup of SQLite database
-cp .orchestrator/state.db .orchestrator/state.db.backup
-
-# Export to JSON (script to be created)
-python orchestrator/scripts/export_state.py --output backup-$(date +%Y%m%d).json
-```
-
 **Backup custom scripts:**
 ```bash
 # If you have custom scripts
-cp -r .orchestrator/scripts .orchestrator/scripts.backup
+cp -r .octopoid/scripts .octopoid/scripts.backup
 ```
 
 ### Step 2: Deploy Server
@@ -76,19 +66,10 @@ pnpm deploy
 
 See [self-hosting.md](./self-hosting.md) for Docker deployment instructions.
 
-### Step 3: Import State to Server
+### Step 3: Import Tasks (Manual)
 
-```bash
-# Import backup to server
-curl -X POST https://octopoid-server.your-username.workers.dev/api/admin/import \
-  -H "Authorization: Bearer $ADMIN_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d @backup-20260211.json
-
-# Verify import
-curl https://octopoid-server.your-username.workers.dev/api/v1/tasks | jq length
-# Should show your task count
-```
+There is no automated import endpoint. To migrate tasks from v1:
+1. Create tasks in v2 using the API: `POST /api/v1/tasks` with each task's data
 
 ### Step 4: Install New Client
 
@@ -127,7 +108,7 @@ Run both v1.x and v2.0 side-by-side to verify:
 # Terminal 1: v1.x orchestrator (if running)
 cd /path/to/original/project
 # Check it's working
-.orchestrator/scripts/status.py
+.octopoid/scripts/status.py
 
 # Terminal 2: v2.0 client status
 cd /path/to/test-octopoid-v2
@@ -224,7 +205,7 @@ octopoid status
 
 ### Step 11: Migrate Custom Scripts
 
-If you have custom scripts in `.orchestrator/scripts/`:
+If you have custom scripts in `.octopoid/scripts/`:
 
 **Option A: Rewrite using Python SDK**
 ```python
@@ -280,9 +261,7 @@ curl -s "${SERVER}/api/v1/tasks?queue=incoming" \
 **Cleanup old files:**
 ```bash
 # After 1 week of successful operation
-rm -rf .orchestrator/
-rm -rf .orchestrator.backup/
-rm backup-*.json
+rm -rf .octopoid.backup/
 ```
 
 ## Rollback Procedure
@@ -297,11 +276,8 @@ npm uninstall -g octopoid
 git checkout orchestrator
 git submodule update --init --recursive
 
-# Restore database
-cp .orchestrator/state.db.backup .orchestrator/state.db
-
 # Restore scripts
-cp -r .orchestrator/scripts.backup .orchestrator/scripts
+cp -r .octopoid/scripts.backup .octopoid/scripts
 
 # Restart v1.x orchestrator
 cd orchestrator

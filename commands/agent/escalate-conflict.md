@@ -72,10 +72,10 @@ PROP2="PROP-def67890"
 TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 # Defer proposal 1
-mkdir -p .orchestrator/shared/proposals/deferred
-mv ".orchestrator/shared/proposals/active/${PROP1}.md" \
-   ".orchestrator/shared/proposals/deferred/${PROP1}.md"
-cat >> ".orchestrator/shared/proposals/deferred/${PROP1}.md" << EOF
+mkdir -p .octopoid/runtime/shared/proposals/deferred
+mv ".octopoid/runtime/shared/proposals/active/${PROP1}.md" \
+   ".octopoid/runtime/shared/proposals/deferred/${PROP1}.md"
+cat >> ".octopoid/runtime/shared/proposals/deferred/${PROP1}.md" << EOF
 
 ---
 ## Deferral
@@ -88,9 +88,9 @@ Deferred pending conflict resolution with ${PROP2}.
 EOF
 
 # Defer proposal 2
-mv ".orchestrator/shared/proposals/active/${PROP2}.md" \
-   ".orchestrator/shared/proposals/deferred/${PROP2}.md"
-cat >> ".orchestrator/shared/proposals/deferred/${PROP2}.md" << EOF
+mv ".octopoid/runtime/shared/proposals/active/${PROP2}.md" \
+   ".octopoid/runtime/shared/proposals/deferred/${PROP2}.md"
+cat >> ".octopoid/runtime/shared/proposals/deferred/${PROP2}.md" << EOF
 
 ---
 ## Deferral
@@ -106,9 +106,9 @@ EOF
 ### Step 2: Create escalation message
 
 ```bash
-mkdir -p .orchestrator/messages
+mkdir -p .octopoid/runtime/messages
 
-cat > ".orchestrator/messages/warning-$(date +%Y%m%d-%H%M%S)-conflict.md" << 'EOF'
+cat > ".octopoid/runtime/messages/warning-$(date +%Y%m%d-%H%M%S)-conflict.md" << 'EOF'
 # ⚠️ Conflict: PROP-abc12345 vs PROP-def67890
 
 **Type:** warning
@@ -144,6 +144,6 @@ EOF
 ## After Escalation
 
 - Both proposals are in `proposals/deferred/`
-- A message is in `.orchestrator/messages/`
+- A message is in `.octopoid/runtime/messages/`
 - The user's Claude session will show the message
 - Once resolved, the owner should reactivate the chosen proposal(s)

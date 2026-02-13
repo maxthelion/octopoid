@@ -94,9 +94,9 @@ echo "Creating ${TASK_ID}"
 ### Step 2: Write the task file
 
 ```bash
-mkdir -p .orchestrator/shared/queue/incoming
+mkdir -p .octopoid/runtime/shared/queue/incoming
 
-cat > ".orchestrator/shared/queue/incoming/${TASK_ID}.md" << EOF
+cat > ".octopoid/runtime/shared/queue/incoming/${TASK_ID}.md" << EOF
 # [${TASK_ID}] Add input validation to user registration
 
 ROLE: implement
@@ -123,7 +123,7 @@ EOF
 ## After Creation
 
 The task will be:
-1. Placed in `.orchestrator/shared/queue/incoming/`
+1. Placed in `.octopoid/runtime/shared/queue/incoming/`
 2. Available for claiming by agents with matching roles
 3. Moved to `claimed/` when an agent picks it up
 4. Moved to `done/` or `failed/` when complete

@@ -2,13 +2,13 @@
 
 ## Summary
 
-Add a notes system so implementer agents preserve learnings across attempts. Notes are stored in `.orchestrator/shared/notes/TASK-{id}.md` and cleaned up when the task is accepted to done.
+Add a notes system so implementer agents preserve learnings across attempts. Notes are stored in `.octopoid/runtime/shared/notes/TASK-{id}.md` and cleaned up when the task is accepted to done.
 
 ## Changes
 
 ### 1. `orchestrator/config.py` — Add notes dir helper
 
-Add `get_notes_dir()` returning `.orchestrator/shared/notes/`, creating it if needed:
+Add `get_notes_dir()` returning `.octopoid/runtime/shared/notes/`, creating it if needed:
 
 ```python
 def get_notes_dir() -> Path:

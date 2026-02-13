@@ -31,7 +31,7 @@ The GitHub Issue Monitor is a custom agent that automatically polls GitHub issue
 
 ## Configuration
 
-Add the agent to your `.orchestrator/agents.yaml`:
+Add the agent to your `.octopoid/agents.yaml`:
 
 ```yaml
 agents:
@@ -59,7 +59,7 @@ agents:
 
 1. **Polling**: Every `interval_seconds`, the agent fetches all open GitHub issues using `gh issue list`
 
-2. **State tracking**: The agent maintains a state file at `.orchestrator/runtime/github_issues_state.json` with the list of processed issue numbers
+2. **State tracking**: The agent maintains a state file at `.octopoid/runtime/github_issues_state.json` with the list of processed issue numbers
 
 3. **New issue detection**: Compares current issues against processed issues to find new ones
 
@@ -113,7 +113,7 @@ elif any(label in ["enhancement", "feature"] for label in labels):
 
 ## State File
 
-The agent maintains state at `.orchestrator/runtime/github_issues_state.json`:
+The agent maintains state at `.octopoid/runtime/github_issues_state.json`:
 
 ```json
 {
@@ -141,7 +141,7 @@ The agent maintains state at `.orchestrator/runtime/github_issues_state.json`:
    [github-issue-monitor] Created task for issue #23: task-dark-mode-123.md
    ```
 
-3. **Task created** in `.orchestrator/queue/incoming/`:
+3. **Task created** in `.octopoid/runtime/shared/queue/incoming/`:
    ```markdown
    ---
    id: task-dark-mode-123
@@ -196,12 +196,12 @@ The agent maintains state at `.orchestrator/runtime/github_issues_state.json`:
 
 2. **Check agent logs**:
    ```bash
-   tail -f .orchestrator/logs/github-issue-monitor-*.log
+   tail -f .octopoid/runtime/logs/github-issue-monitor-*.log
    ```
 
 3. **Check state file**:
    ```bash
-   cat .orchestrator/runtime/github_issues_state.json
+   cat .octopoid/runtime/github_issues_state.json
    ```
 
 ### Tasks created for old issues
@@ -211,7 +211,7 @@ If you want to only create tasks for new issues going forward:
 1. **Prepopulate state file** with existing issue numbers:
    ```bash
    gh issue list --state open --json number --jq '[.[] | .number]' > temp.json
-   echo "{\"processed_issues\": $(cat temp.json)}" > .orchestrator/runtime/github_issues_state.json
+   echo "{\"processed_issues\": $(cat temp.json)}" > .octopoid/runtime/github_issues_state.json
    rm temp.json
    ```
 

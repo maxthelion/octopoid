@@ -20,18 +20,13 @@ Your check name is in the `REVIEW_CHECK_NAME` or `AGENT_FOCUS` environment varia
 
 ### Step 2: Write the check result
 
-Use the DB module to record your result with metadata for debugging:
+Use the SDK to record your result with metadata for debugging:
 
 ```python
 import os
-import sys
-from pathlib import Path
+from octopoid_sdk import OctopoidSDK
 
-# Add orchestrator to path
-project_root = Path(os.environ.get("PARENT_PROJECT", "."))
-sys.path.insert(0, str(project_root / "orchestrator"))
-
-from orchestrator.db import record_check_result
+sdk = OctopoidSDK(server_url=os.environ.get("OCTOPOID_SERVER_URL"))
 
 task_id = os.environ.get("REVIEW_TASK_ID")
 check_name = os.environ.get("REVIEW_CHECK_NAME", os.environ.get("AGENT_FOCUS"))
@@ -41,7 +36,7 @@ agent_focus = os.environ.get("AGENT_FOCUS")
 # Track tools used during the review (helps debug if wrong tools were available)
 tools_used = []  # e.g., ["Read", "Grep", "mcp__playwright__*"]
 
-record_check_result(
+sdk.tasks.record_check_result(
     task_id=task_id,
     check_name=check_name,
     status="pass",  # or "fail"
@@ -76,6 +71,6 @@ record_check_result(
 ## After Recording
 
 The check result will be:
-1. Stored in the DB's `check_results` JSON field on the task
+1. Stored in the task's `check_results` JSON field via the API
 2. Processed by the scheduler's `process_gatekeeper_reviews()`
 3. Used to determine if the task passes review or gets rejected back to the implementer
