@@ -144,14 +144,14 @@ def find_parent_project() -> Path:
 
 
 def get_orchestrator_dir() -> Path:
-    """Get the .orchestrator directory in the parent project.
+    """Get the .octopoid directory in the parent project.
 
     Can be overridden via ORCHESTRATOR_DIR environment variable (used by tests).
     """
     env_override = os.environ.get("ORCHESTRATOR_DIR")
     if env_override:
         return Path(env_override)
-    return find_parent_project() / ".orchestrator"
+    return find_parent_project() / ".octopoid"
 
 
 def get_agents_config_path() -> Path:
@@ -193,17 +193,17 @@ def get_tasks_file_dir() -> Path:
 
 def get_queue_dir() -> Path:
     """Get the shared queue directory."""
-    return get_orchestrator_dir() / "shared" / "queue"
+    return get_shared_dir() / "queue"
 
 
 def get_proposals_dir() -> Path:
     """Get the shared proposals directory."""
-    return get_orchestrator_dir() / "shared" / "proposals"
+    return get_shared_dir() / "proposals"
 
 
 def get_prs_dir() -> Path:
     """Get the shared PRs directory for gatekeeper checks."""
-    return get_orchestrator_dir() / "shared" / "prs"
+    return get_shared_dir() / "prs"
 
 
 def get_prompts_dir() -> Path:
@@ -213,23 +213,42 @@ def get_prompts_dir() -> Path:
 
 def get_notes_dir() -> Path:
     """Get the shared notes directory for agent learning persistence."""
-    notes_dir = get_orchestrator_dir() / "shared" / "notes"
+    notes_dir = get_shared_dir() / "notes"
     notes_dir.mkdir(parents=True, exist_ok=True)
     return notes_dir
 
 
+def get_runtime_dir() -> Path:
+    """Get the runtime directory for ephemeral state.
+
+    Returns:
+        Path to .octopoid/runtime/ (gitignored)
+    """
+    return get_orchestrator_dir() / "runtime"
+
+
 def get_agents_runtime_dir() -> Path:
     """Get the agents runtime directory."""
-    return get_orchestrator_dir() / "agents"
+    return get_runtime_dir() / "agents"
 
 
 def get_tasks_dir() -> Path:
-    """Get the tasks directory for ephemeral worktrees.
+    """Get the tasks directory for ephemeral task worktrees.
 
     Returns:
-        Path to .orchestrator/tasks/ where ephemeral task worktrees are created
+        Path to .octopoid/runtime/tasks/ where ephemeral task worktrees are created
     """
-    return get_orchestrator_dir() / "tasks"
+    return get_runtime_dir() / "tasks"
+
+
+def get_logs_dir() -> Path:
+    """Get the logs directory."""
+    return get_runtime_dir() / "logs"
+
+
+def get_shared_dir() -> Path:
+    """Get the shared directory for notes, reviews, proposals."""
+    return get_runtime_dir() / "shared"
 
 
 def load_agents_config() -> dict[str, Any]:
@@ -358,9 +377,12 @@ def get_agents() -> list[dict[str, Any]]:
 def is_system_paused() -> bool:
     """Check if the entire orchestrator system is paused.
 
-    Returns:
-        True if the system-level 'paused' flag is set in agents.yaml
+    Checks for a PAUSE file in .octopoid/ first (touch .octopoid/PAUSE to pause,
+    rm .octopoid/PAUSE to resume). Falls back to the 'paused' flag in agents.yaml.
     """
+    pause_file = get_orchestrator_dir() / "PAUSE"
+    if pause_file.exists():
+        return True
     try:
         config = load_agents_config()
         return config.get("paused", False)
@@ -431,39 +453,12 @@ def get_gatekeeper_coordinators() -> list[dict[str, Any]]:
     return [a for a in agents if a.get("role") == "gatekeeper_coordinator"]
 
 
-# =============================================================================
-# Database Configuration
-# =============================================================================
-
-# Default database settings
-DEFAULT_DATABASE_CONFIG = {
-    "enabled": False,
-    "path": "state.db",  # Relative to .orchestrator/
-}
-
 # Default pre-check settings (scheduler-level submission filtering)
 DEFAULT_PRE_CHECK_CONFIG = {
     "require_commits": True,
     "max_attempts_before_planning": 3,
     "claim_timeout_minutes": 60,
 }
-
-
-def get_database_config() -> dict[str, Any]:
-    """Get database configuration.
-
-    Returns:
-        Dictionary with enabled, path settings
-    """
-    try:
-        config = load_agents_config()
-        db_config = config.get("database", {})
-        return {
-            "enabled": db_config.get("enabled", DEFAULT_DATABASE_CONFIG["enabled"]),
-            "path": db_config.get("path", DEFAULT_DATABASE_CONFIG["path"]),
-        }
-    except FileNotFoundError:
-        return DEFAULT_DATABASE_CONFIG.copy()
 
 
 def get_pre_check_config() -> dict[str, Any]:
@@ -491,15 +486,6 @@ def get_pre_check_config() -> dict[str, Any]:
         }
     except FileNotFoundError:
         return DEFAULT_PRE_CHECK_CONFIG.copy()
-
-
-def is_db_enabled() -> bool:
-    """Check if SQLite database mode is enabled.
-
-    Returns:
-        True if database mode is enabled in configuration
-    """
-    return get_database_config()["enabled"]
 
 
 def get_pre_checkers() -> list[dict[str, Any]]:
