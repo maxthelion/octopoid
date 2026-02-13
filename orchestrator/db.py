@@ -18,7 +18,7 @@ from .config import get_orchestrator_dir
 _SENTINEL = object()
 
 # Schema version for migrations
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 # Module-level flag to avoid checking schema version on every connection.
 # Reset to False if tests need to re-trigger migration.
@@ -140,6 +140,7 @@ def init_schema() -> None:
                 claimed_at DATETIME,
                 commits_count INTEGER DEFAULT 0,
                 turns_used INTEGER,
+                execution_notes TEXT,
                 attempt_count INTEGER DEFAULT 0,
                 has_plan BOOLEAN DEFAULT FALSE,
                 plan_id TEXT,
@@ -436,6 +437,13 @@ def migrate_schema() -> bool:
         if current < 12:
             try:
                 conn.execute("ALTER TABLE projects ADD COLUMN file_path TEXT")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+
+        # Migration from v12 to v13: Add execution_notes column to tasks
+        if current < 13:
+            try:
+                conn.execute("ALTER TABLE tasks ADD COLUMN execution_notes TEXT")
             except sqlite3.OperationalError:
                 pass  # Column already exists
 
@@ -747,6 +755,7 @@ def update_task_queue(
     claimed_at: str | None = _SENTINEL,
     commits_count: int | None = None,
     turns_used: int | None = None,
+    execution_notes: str | None = None,
     attempt_count_increment: bool = False,
     rejection_count_increment: bool = False,
     has_plan: bool | None = None,
@@ -773,6 +782,7 @@ def update_task_queue(
         claimed_at: New claimed_at value (_SENTINEL = don't change, None = clear)
         commits_count: Set commits_count if provided
         turns_used: Set turns_used if provided
+        execution_notes: Set execution_notes if provided
         attempt_count_increment: If True, increment attempt_count by 1
         rejection_count_increment: If True, increment rejection_count by 1
         has_plan: Set has_plan if provided
@@ -813,6 +823,10 @@ def update_task_queue(
     if turns_used is not None:
         set_parts.append("turns_used = ?")
         params.append(turns_used)
+
+    if execution_notes is not None:
+        set_parts.append("execution_notes = ?")
+        params.append(execution_notes)
 
     if attempt_count_increment:
         set_parts.append("attempt_count = attempt_count + 1")
@@ -1049,6 +1063,7 @@ def submit_completion(
     task_id: str,
     commits_count: int = 0,
     turns_used: int | None = None,
+    execution_notes: str | None = None,
 ) -> dict[str, Any] | None:
     """Submit a task for pre-check (move to provisional queue).
 
@@ -1059,6 +1074,7 @@ def submit_completion(
         task_id: Task identifier
         commits_count: Number of commits made
         turns_used: Number of Claude turns used
+        execution_notes: Summary of what the agent did (optional)
 
     Returns:
         Updated task or None if not found
@@ -1069,6 +1085,7 @@ def submit_completion(
         "provisional",
         commits_count=commits_count,
         turns_used=turns_used,
+        execution_notes=execution_notes,
         submitted_at=now,
         history_event="submitted",
         history_details=f"commits={commits_count}, turns={turns_used}",

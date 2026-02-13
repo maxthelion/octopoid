@@ -695,17 +695,31 @@ class OrchestratorImplRole(ImplementerRole):
                             has_sub_commits=sub_commits > 0,
                             has_main_commits=main_commits > 0,
                         )
+                        execution_notes = self._generate_execution_notes(
+                            commits_made=total_commits,
+                            turns_used=turns_used,
+                            pr_url=None,  # orchestrator_impl doesn't create PRs
+                            stdout=stdout,
+                        )
                         submit_completion(
                             task_path,
                             commits_count=total_commits,
                             turns_used=turns_used,
+                            execution_notes=execution_notes,
                         )
                         self.log(f"Self-merge failed, submitted for review ({total_commits} commits)")
                 else:
+                    execution_notes = self._generate_execution_notes(
+                        commits_made=0,
+                        turns_used=turns_used,
+                        pr_url=None,
+                        stdout=stdout,
+                    )
                     submit_completion(
                         task_path,
                         commits_count=0,
                         turns_used=turns_used,
+                        execution_notes=execution_notes,
                     )
                     self.log("No commits, submitted for pre-check")
             else:

@@ -505,6 +505,7 @@ def submit_completion(
     task_path: Path | str,
     commits_count: int = 0,
     turns_used: int | None = None,
+    execution_notes: str | None = None,
 ) -> Path | None:
     """Submit a task for pre-check (move to provisional queue).
 
@@ -520,6 +521,7 @@ def submit_completion(
         task_path: Path to the claimed task file
         commits_count: Number of commits made during implementation
         turns_used: Number of Claude turns used
+        execution_notes: Summary of what the agent did (optional)
 
     Returns:
         New path in provisional queue (or incoming if auto-rejected),
@@ -554,7 +556,7 @@ def submit_completion(
         )
 
     # Update DB to provisional
-    db.submit_completion(task_id, commits_count=commits_count, turns_used=turns_used)
+    db.submit_completion(task_id, commits_count=commits_count, turns_used=turns_used, execution_notes=execution_notes)
 
     # Move file to provisional directory
     provisional_dir = get_queue_subdir("provisional")
@@ -566,6 +568,8 @@ def submit_completion(
         f.write(f"COMMITS_COUNT: {commits_count}\n")
         if turns_used:
             f.write(f"TURNS_USED: {turns_used}\n")
+        if execution_notes:
+            f.write(f"EXECUTION_NOTES: {execution_notes}\n")
 
     os.rename(task_path, dest)
 

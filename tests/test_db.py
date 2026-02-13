@@ -276,6 +276,22 @@ class TestTaskLifecycle:
             assert result["commits_count"] == 3
             assert result["turns_used"] == 25
 
+    def test_submit_completion_with_execution_notes(self, initialized_db):
+        """Test submitting a task with execution notes."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, claim_task, submit_completion, get_task
+
+            create_task(task_id="submit_notes", file_path="/submit_notes.md")
+            claim_task(agent_name="agent")
+
+            notes = "Created 3 commits. Used 25 turns. PR created."
+            result = submit_completion("submit_notes", commits_count=3, turns_used=25, execution_notes=notes)
+
+            assert result["queue"] == "provisional"
+            assert result["commits_count"] == 3
+            assert result["turns_used"] == 25
+            assert result["execution_notes"] == notes
+
     def test_accept_completion(self, initialized_db):
         """Test accepting a provisional task."""
         with patch('orchestrator.db.get_database_path', return_value=initialized_db):
