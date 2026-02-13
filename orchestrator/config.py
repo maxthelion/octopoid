@@ -81,7 +81,7 @@ PORT_STRIDE = 10
 # Queue limits (defaults, can be overridden in agents.yaml)
 DEFAULT_QUEUE_LIMITS = {
     "max_incoming": 20,
-    "max_claimed": 5,
+    "max_claimed": 1,
     "max_open_prs": 10,
 }
 
