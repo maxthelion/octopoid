@@ -1568,3 +1568,96 @@ class TestEnsureSchemaCurrentAutoMigration:
             result = db_mod.accept_completion("mig_test1", accepted_by="test")
             assert result is not None
             assert result["queue"] == "done"
+
+
+class TestExecutionNotes:
+    """Tests for execution_notes field functionality."""
+
+    def test_submit_completion_with_execution_notes(self, initialized_db):
+        """Test that submit_completion accepts and stores execution_notes."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, claim_task, submit_completion, get_task
+
+            create_task(task_id="exec1", file_path="/exec1.md")
+            claim_task(agent_name="agent")
+
+            notes = "Created 3 commits. Fixed validation logic in auth.ts. Tests passing."
+            result = submit_completion(
+                "exec1",
+                commits_count=3,
+                turns_used=25,
+                execution_notes=notes,
+            )
+
+            assert result["queue"] == "provisional"
+            assert result["commits_count"] == 3
+            assert result["execution_notes"] == notes
+
+            # Verify it persists when re-fetching
+            task = get_task("exec1")
+            assert task["execution_notes"] == notes
+
+    def test_submit_completion_without_execution_notes(self, initialized_db):
+        """Test that submit_completion works without execution_notes (backward compat)."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, claim_task, submit_completion, get_task
+
+            create_task(task_id="exec2", file_path="/exec2.md")
+            claim_task(agent_name="agent")
+
+            result = submit_completion("exec2", commits_count=2, turns_used=15)
+
+            assert result["queue"] == "provisional"
+            assert result["execution_notes"] is None
+
+    def test_execution_notes_null_on_create(self, initialized_db):
+        """Test that execution_notes is NULL when task is first created."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import create_task, get_task
+
+            task = create_task(task_id="exec3", file_path="/exec3.md")
+
+            assert task["execution_notes"] is None
+
+    def test_migration_adds_execution_notes_column(self, mock_config, db_path):
+        """Test that migration v13 adds execution_notes column."""
+        with patch('orchestrator.db.get_database_path', return_value=db_path):
+            import orchestrator.db as db_mod
+            import sqlite3
+
+            # Create DB at v12 (without execution_notes)
+            db_mod.init_schema()
+
+            # Manually downgrade to v12
+            conn = sqlite3.connect(str(db_path))
+            conn.execute(
+                "INSERT OR REPLACE INTO schema_info (key, value) VALUES (?, ?)",
+                ("version", "12"),
+            )
+            # Remove the execution_notes column if it exists
+            try:
+                conn.execute("ALTER TABLE tasks DROP COLUMN execution_notes")
+            except sqlite3.OperationalError:
+                pass  # Column doesn't exist, which is what we want
+            conn.commit()
+            conn.close()
+
+            # Reset flag to force migration
+            db_mod._schema_checked = False
+
+            # Trigger migration by accessing DB
+            db_mod.create_task(task_id="mig_exec1", file_path="/mig_exec1.md")
+
+            # Verify column exists and works
+            task = db_mod.get_task("mig_exec1")
+            assert "execution_notes" in task
+            assert task["execution_notes"] is None
+
+            # Verify we can update it
+            db_mod.submit_completion(
+                "mig_exec1",
+                commits_count=1,
+                execution_notes="Migration test completed.",
+            )
+            task = db_mod.get_task("mig_exec1")
+            assert task["execution_notes"] == "Migration test completed."

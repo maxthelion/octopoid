@@ -18,7 +18,7 @@ from .config import get_orchestrator_dir
 _SENTINEL = object()
 
 # Schema version for migrations
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 # Module-level flag to avoid checking schema version on every connection.
 # Reset to False if tests need to re-trigger migration.
@@ -155,6 +155,7 @@ def init_schema() -> None:
                 staging_url TEXT,
                 submitted_at TEXT,
                 completed_at TEXT,
+                execution_notes TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (project_id) REFERENCES projects(id)
@@ -436,6 +437,13 @@ def migrate_schema() -> bool:
         if current < 12:
             try:
                 conn.execute("ALTER TABLE projects ADD COLUMN file_path TEXT")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+
+        # Migration from v12 to v13: Add execution_notes column to tasks
+        if current < 13:
+            try:
+                conn.execute("ALTER TABLE tasks ADD COLUMN execution_notes TEXT")
             except sqlite3.OperationalError:
                 pass  # Column already exists
 
@@ -1049,6 +1057,7 @@ def submit_completion(
     task_id: str,
     commits_count: int = 0,
     turns_used: int | None = None,
+    execution_notes: str | None = None,
 ) -> dict[str, Any] | None:
     """Submit a task for pre-check (move to provisional queue).
 
@@ -1059,11 +1068,17 @@ def submit_completion(
         task_id: Task identifier
         commits_count: Number of commits made
         turns_used: Number of Claude turns used
+        execution_notes: Optional summary of what the agent did (high-level, not full logs)
 
     Returns:
         Updated task or None if not found
     """
     now = datetime.now().isoformat()
+
+    # If execution_notes provided, update the task field
+    if execution_notes:
+        update_task(task_id, execution_notes=execution_notes)
+
     return update_task_queue(
         task_id,
         "provisional",
