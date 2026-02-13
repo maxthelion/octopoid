@@ -24,16 +24,19 @@ from .config import (
     get_gatekeeper_config,
     get_gatekeepers,
     get_global_instructions_path,
+    get_logs_dir,
     get_main_branch,
     get_orchestrator_dir,
+    get_tasks_dir,
     get_templates_dir,
-    is_db_enabled,
     is_gatekeeper_enabled,
     is_system_paused,
 )
 from .git_utils import ensure_worktree, get_worktree_path
+from .hook_manager import HookManager
 from .lock_utils import locked_or_skip
 from .port_utils import get_port_env_vars
+from .prompt_renderer import render_prompt
 from . import queue_utils
 from .state_utils import (
     AgentState,
@@ -53,7 +56,7 @@ _log_file: Path | None = None
 def setup_scheduler_debug() -> None:
     """Set up debug logging for the scheduler."""
     global _log_file
-    logs_dir = get_orchestrator_dir() / "logs"
+    logs_dir = get_logs_dir()
     logs_dir.mkdir(parents=True, exist_ok=True)
     date_str = datetime.now().strftime("%Y-%m-%d")
     _log_file = logs_dir / f"scheduler-{date_str}.log"
@@ -256,7 +259,7 @@ def check_continuation_for_agent(agent_name: str) -> dict | None:
     return None
 
 
-def claim_and_prepare_task(agent_name: str, role: str) -> dict | None:
+def claim_and_prepare_task(agent_name: str, role: str, type_filter: str | None = None) -> dict | None:
     """Claim a task and write it to the agent's runtime dir.
 
     Checks for continuation work first, then tries to claim a fresh task.
@@ -266,6 +269,7 @@ def claim_and_prepare_task(agent_name: str, role: str) -> dict | None:
     Args:
         agent_name: Name of the agent
         role: Agent role (e.g. 'implement')
+        type_filter: Only claim tasks with this type (from agent config)
 
     Returns:
         Task dict if work is available, None otherwise
@@ -275,7 +279,7 @@ def claim_and_prepare_task(agent_name: str, role: str) -> dict | None:
 
     # 2. If no continuation, claim a fresh task
     if task is None:
-        task = queue_utils.claim_task(role_filter=role, agent_name=agent_name)
+        task = queue_utils.claim_task(role_filter=role, agent_name=agent_name, type_filter=type_filter)
 
     if task is None:
         return None
@@ -292,7 +296,8 @@ def claim_and_prepare_task(agent_name: str, role: str) -> dict | None:
 
 def get_scheduler_lock_path() -> Path:
     """Get path to the global scheduler lock file."""
-    return get_orchestrator_dir() / "scheduler.lock"
+    from .config import get_runtime_dir
+    return get_runtime_dir() / "scheduler.lock"
 
 
 def get_agent_lock_path(agent_name: str) -> Path:
@@ -542,9 +547,10 @@ def write_agent_env(agent_name: str, agent_id: int, role: str, agent_config: dic
     env_path = get_agent_env_path(agent_name)
     env_path.parent.mkdir(parents=True, exist_ok=True)
 
+    from .config import get_shared_dir
     parent_project = find_parent_project()
     worktree_path = get_worktree_path(agent_name)
-    shared_dir = get_orchestrator_dir() / "shared"
+    shared_dir = get_shared_dir()
 
     port_vars = get_port_env_vars(agent_id)
 
@@ -606,7 +612,8 @@ def spawn_agent(agent_name: str, agent_id: int, role: str, agent_config: dict) -
     env["AGENT_ROLE"] = role
     env["PARENT_PROJECT"] = str(find_parent_project())
     env["WORKTREE"] = str(worktree_path)
-    env["SHARED_DIR"] = str(get_orchestrator_dir() / "shared")
+    from .config import get_shared_dir
+    env["SHARED_DIR"] = str(get_shared_dir())
     env["ORCHESTRATOR_DIR"] = str(get_orchestrator_dir())
 
     # Set PYTHONPATH to include the orchestrator submodule
@@ -697,6 +704,284 @@ def read_agent_exit_code(agent_name: str) -> int | None:
         return None
 
 
+def _get_server_url_from_config() -> str:
+    """Read server URL from .octopoid/config.yaml."""
+    try:
+        import yaml
+        config_path = get_orchestrator_dir() / "config.yaml"
+        if config_path.exists():
+            with open(config_path) as f:
+                config = yaml.safe_load(f)
+            return config.get("server", {}).get("url", "")
+    except Exception:
+        pass
+    return ""
+
+
+def prepare_task_directory(
+    task: dict,
+    agent_name: str,
+    agent_config: dict,
+) -> Path:
+    """Prepare a self-contained task directory for script-based agents.
+
+    Creates:
+        {task_dir}/worktree/     - git worktree (agent's cwd)
+        {task_dir}/task.json     - task metadata
+        {task_dir}/prompt.md     - rendered prompt
+        {task_dir}/env.sh        - environment for scripts
+        {task_dir}/scripts/      - executable agent scripts
+        {task_dir}/result.json   - (written by scripts, read by scheduler)
+        {task_dir}/notes.md      - progress notes
+    """
+    from .git_utils import create_task_worktree
+
+    task_id = task["id"]
+    task_dir = get_tasks_dir() / task_id
+    task_dir.mkdir(parents=True, exist_ok=True)
+
+    # Create worktree
+    base_branch = task.get("branch", get_main_branch())
+    worktree_path = create_task_worktree(task)
+
+    # Write task.json
+    import json
+    (task_dir / "task.json").write_text(json.dumps(task, indent=2))
+
+    # Copy and template scripts
+    scripts_src = Path(__file__).parent / "agent_scripts"
+    scripts_dest = task_dir / "scripts"
+    scripts_dest.mkdir(exist_ok=True)
+
+    venv_python = sys.executable  # Use the scheduler's Python
+
+    for script in scripts_src.iterdir():
+        if script.name.startswith("."):
+            continue
+        dest = scripts_dest / script.name
+        content = script.read_text()
+        # Replace shebang with explicit venv python
+        if content.startswith("#!/usr/bin/env python3"):
+            content = f"#!{venv_python}\n" + content.split("\n", 1)[1]
+        dest.write_text(content)
+        dest.chmod(0o755)
+
+    # Write env.sh
+    orchestrator_submodule = find_parent_project() / "orchestrator"
+    env_lines = [
+        "#!/bin/bash",
+        f"export TASK_ID='{task_id}'",
+        f"export TASK_TITLE='{task.get('title', '')}'",
+        f"export BASE_BRANCH='{base_branch}'",
+        f"export OCTOPOID_SERVER_URL='{os.environ.get('OCTOPOID_SERVER_URL') or _get_server_url_from_config()}'",
+        f"export AGENT_NAME='{agent_name}'",
+        f"export WORKTREE='{worktree_path}'",
+        f"export ORCHESTRATOR_PYTHONPATH='{orchestrator_submodule}'",
+        f"export RESULT_FILE='{task_dir / 'result.json'}'",
+        f"export NOTES_FILE='{task_dir / 'notes.md'}'",
+    ]
+    (task_dir / "env.sh").write_text("\n".join(env_lines) + "\n")
+
+    # Render prompt
+    global_instructions = ""
+    gi_path = get_global_instructions_path()
+    if gi_path.exists():
+        global_instructions = gi_path.read_text()
+
+    # Get agent hooks from task
+    hooks = task.get("hooks")
+    agent_hooks = None
+    if hooks:
+        if isinstance(hooks, str):
+            agent_hooks = [
+                h for h in json.loads(hooks)
+                if h.get("type") == "agent"
+            ]
+        elif isinstance(hooks, list):
+            agent_hooks = [h for h in hooks if h.get("type") == "agent"]
+
+    prompt = render_prompt(
+        role="implementer",
+        task=task,
+        global_instructions=global_instructions,
+        scripts_dir="../scripts",
+        agent_hooks=agent_hooks,
+    )
+    (task_dir / "prompt.md").write_text(prompt)
+
+    # Setup commands
+    setup_agent_commands(agent_name, "implementer")
+
+    debug_log(f"Prepared task directory: {task_dir}")
+    return task_dir
+
+
+def invoke_claude(task_dir: Path, agent_config: dict) -> int:
+    """Invoke claude -p directly for a script-based agent.
+
+    Args:
+        task_dir: Path to the prepared task directory
+        agent_config: Agent configuration dict
+
+    Returns:
+        PID of the spawned claude process
+    """
+    import json
+
+    worktree_path = task_dir / "worktree"
+    if not worktree_path.exists():
+        # Worktree may be at a different location - check task.json
+        task_data = json.loads((task_dir / "task.json").read_text())
+        task_id = task_data.get("id", "")
+        worktree_path = get_tasks_dir() / task_id / "worktree"
+
+    prompt_path = task_dir / "prompt.md"
+    prompt = prompt_path.read_text()
+
+    model = agent_config.get("model", "sonnet")
+    max_turns = agent_config.get("max_turns", 50)
+
+    cmd = [
+        "claude",
+        "-p", prompt,
+        "--allowedTools", "Read,Write,Edit,Glob,Grep,Bash,Skill",
+        "--max-turns", str(max_turns),
+        "--model", model,
+    ]
+
+    env = os.environ.copy()
+    env.pop("CLAUDECODE", None)
+    # Source env.sh values using shlex to handle quoted values correctly
+    env_sh = task_dir / "env.sh"
+    if env_sh.exists():
+        import shlex
+        for line in env_sh.read_text().splitlines():
+            if line.startswith("export "):
+                assignment = line[7:]  # strip "export "
+                eq_pos = assignment.find("=")
+                if eq_pos < 1:
+                    continue
+                key = assignment[:eq_pos]
+                raw_val = assignment[eq_pos + 1:]
+                try:
+                    val = shlex.split(raw_val)[0] if raw_val else ""
+                except ValueError:
+                    val = raw_val.strip("'\"")
+                env[key] = val
+
+    # Set up log files
+    stdout_log = task_dir / "stdout.log"
+    stderr_log = task_dir / "stderr.log"
+    stdout_file = open(stdout_log, "w")
+    stderr_file = open(stderr_log, "w")
+
+    process = subprocess.Popen(
+        cmd,
+        cwd=worktree_path,
+        env=env,
+        stdout=stdout_file,
+        stderr=stderr_file,
+        start_new_session=True,
+    )
+
+    debug_log(f"Invoked claude for task dir {task_dir} with PID {process.pid}")
+    return process.pid
+
+
+def handle_agent_result(task_id: str, agent_name: str, task_dir: Path) -> None:
+    """Handle the result of a script-based agent run.
+
+    Reads result.json and transitions the task accordingly.
+
+    Args:
+        task_id: Task identifier
+        agent_name: Name of the agent
+        task_dir: Path to the task directory
+    """
+    import json
+
+    result_path = task_dir / "result.json"
+
+    if result_path.exists():
+        try:
+            result = json.loads(result_path.read_text())
+        except json.JSONDecodeError:
+            result = {"outcome": "error", "reason": "Invalid result.json"}
+    else:
+        # No result.json — check for progress
+        notes_path = task_dir / "notes.md"
+        has_notes = notes_path.exists() and notes_path.read_text().strip()
+
+        if has_notes:
+            result = {"outcome": "needs_continuation"}
+        else:
+            result = {"outcome": "error", "reason": "No result.json produced"}
+
+    outcome = result.get("outcome", "error")
+    debug_log(f"Task {task_id} result: {outcome}")
+
+    try:
+        sdk = queue_utils.get_sdk()
+
+        if outcome == "submitted":
+            # Count commits
+            worktree = task_dir / "worktree"
+            commits = 0
+            if worktree.exists():
+                try:
+                    base = result.get("base_branch", get_main_branch())
+                    count_result = subprocess.run(
+                        ["git", "rev-list", "--count", f"origin/{base}..HEAD"],
+                        cwd=worktree, capture_output=True, text=True, check=False,
+                    )
+                    if count_result.returncode == 0:
+                        commits = int(count_result.stdout.strip())
+                except (ValueError, subprocess.SubprocessError):
+                    pass
+
+            sdk.tasks.submit(
+                task_id=task_id,
+                commits_count=commits,
+                turns_used=0,
+            )
+
+            # Update PR info if available
+            pr_url = result.get("pr_url")
+            pr_number = result.get("pr_number")
+            if pr_url or pr_number:
+                update_kwargs = {}
+                if pr_url:
+                    update_kwargs["pr_url"] = pr_url
+                if pr_number:
+                    update_kwargs["pr_number"] = pr_number
+                if update_kwargs:
+                    sdk.tasks.update(task_id, **update_kwargs)
+
+        elif outcome == "done":
+            sdk.tasks.submit(
+                task_id=task_id,
+                commits_count=0,
+                turns_used=0,
+            )
+
+        elif outcome == "failed":
+            reason = result.get("reason", "Agent reported failure")
+            queue_utils.fail_task(task_id, reason=reason)
+
+        elif outcome == "needs_continuation":
+            queue_utils.mark_needs_continuation(task_id, agent_name=agent_name)
+
+        else:
+            queue_utils.fail_task(task_id, reason=f"Unknown outcome: {outcome}")
+
+    except Exception as e:
+        debug_log(f"Error handling result for {task_id}: {e}")
+        try:
+            queue_utils.fail_task(task_id, reason=f"Result handling error: {e}")
+        except Exception:
+            pass
+
+
 def assign_qa_checks() -> None:
     """Auto-assign gk-qa check to provisional app tasks that have a staging_url.
 
@@ -708,52 +993,57 @@ def assign_qa_checks() -> None:
     Tasks without a staging_url are silently skipped — they'll be picked up
     on a future tick once the staging URL is populated by _store_staging_url().
     """
-    if not is_db_enabled():
-        return
+    return
 
+
+
+
+def process_orchestrator_hooks() -> None:
+    """Run orchestrator-side hooks on provisional tasks.
+
+    For each provisional task that has pending orchestrator hooks (e.g. merge_pr):
+    1. Get pending orchestrator hooks
+    2. Run each one via HookManager
+    3. Record evidence
+    4. If all hooks pass, accept the task
+    """
     try:
-        from . import db
+        sdk = queue_utils.get_sdk()
+        hook_manager = HookManager(sdk)
 
-        provisional_tasks = db.list_tasks(queue="provisional")
+        # List provisional tasks
+        provisional = sdk.tasks.list(queue="provisional")
+        if not provisional:
+            return
 
-        for task in provisional_tasks:
-            task_id = task["id"]
-            staging_url = task.get("staging_url")
-            role = task.get("role", "")
-            checks = task.get("checks", [])
-
-            # Skip orchestrator_impl tasks (they use gk-testing-octopoid)
-            if role == "orchestrator_impl":
+        for task in provisional:
+            task_id = task.get("id", "")
+            pending = hook_manager.get_pending_hooks(task, hook_type="orchestrator")
+            if not pending:
                 continue
 
-            # Skip tasks without a staging_url (deployment not ready yet)
-            if not staging_url:
-                continue
+            debug_log(f"Task {task_id}: {len(pending)} pending orchestrator hooks")
 
-            # Skip if gk-qa already assigned
-            if "gk-qa" in checks:
-                continue
+            for hook in pending:
+                evidence = hook_manager.run_orchestrator_hook(task, hook)
+                hook_manager.record_evidence(task_id, hook["name"], evidence)
+                debug_log(f"  Hook {hook['name']}: {evidence.status} - {evidence.message}")
 
-            # Add gk-qa check
-            new_checks = checks + ["gk-qa"]
+                if evidence.status == "failed":
+                    debug_log(f"  Orchestrator hook {hook['name']} failed for {task_id}")
+                    break
 
-            # Validate that the check name is valid before adding
-            from .queue_utils import _validate_check_names
-            try:
-                _validate_check_names(["gk-qa"])
-            except ValueError as e:
-                debug_log(f"Cannot add gk-qa check to task {task_id}: {e}")
-                continue
-
-            checks_str = ",".join(new_checks)
-            db.update_task(task_id, checks=checks_str)
-
-            debug_log(f"Auto-assigned gk-qa check to task {task_id} (staging_url={staging_url})")
-            print(f"[{datetime.now().isoformat()}] Auto-assigned gk-qa check to task {task_id}")
+            # Re-fetch task to get updated hooks
+            updated_task = sdk.tasks.get(task_id)
+            if updated_task:
+                can_accept, still_pending = hook_manager.can_transition(updated_task, "before_merge")
+                if can_accept:
+                    debug_log(f"All orchestrator hooks passed for {task_id}, accepting")
+                    sdk.tasks.accept(task_id=task_id, accepted_by="scheduler-hooks")
+                    print(f"[{datetime.now().isoformat()}] Accepted task {task_id} (all hooks passed)")
 
     except Exception as e:
-        debug_log(f"Error assigning QA checks: {e}")
-
+        debug_log(f"Error processing orchestrator hooks: {e}")
 
 def process_auto_accept_tasks() -> None:
     """Process provisional tasks that have auto_accept enabled.
@@ -761,35 +1051,7 @@ def process_auto_accept_tasks() -> None:
     Moves tasks from provisional to done if auto_accept is true
     (either on the task itself or its parent project).
     """
-    if not is_db_enabled():
-        return
-
-    try:
-        from . import db
-
-        # Get all provisional tasks
-        provisional_tasks = db.list_tasks(queue="provisional")
-
-        for task in provisional_tasks:
-            task_id = task["id"]
-            auto_accept = task.get("auto_accept", False)
-
-            # Check project-level auto_accept if task doesn't have it
-            if not auto_accept and task.get("project_id"):
-                project = db.get_project(task["project_id"])
-                if project:
-                    auto_accept = project.get("auto_accept", False)
-
-            if auto_accept:
-                debug_log(f"Auto-accepting task {task_id}")
-                merge_result = queue_utils.approve_and_merge(task_id)
-                if merge_result.get("error"):
-                    debug_log(f"Auto-accept failed for {task_id}: {merge_result['error']}")
-                    continue
-                print(f"[{datetime.now().isoformat()}] Auto-accepted task {task_id}")
-
-    except Exception as e:
-        debug_log(f"Error processing auto-accept tasks: {e}")
+    return
 
 
 def process_gatekeeper_reviews() -> None:
@@ -802,82 +1064,7 @@ def process_gatekeeper_reviews() -> None:
     Tasks with all checks passed are left in provisional for human review —
     they are NOT auto-accepted here.
     """
-    if not is_db_enabled():
-        return
-
-    try:
-        from . import db
-        from .queue_utils import review_reject_task
-
-        gk_config = get_gatekeeper_config()
-        max_rejections = gk_config.get("max_rejections", 3)
-
-        provisional_tasks = db.list_tasks(queue="provisional")
-
-        for task in provisional_tasks:
-            task_id = task["id"]
-            checks = task.get("checks", [])
-            check_results = task.get("check_results", {})
-            commits = task.get("commits_count", 0)
-            auto_accept = task.get("auto_accept", False)
-
-            # Skip auto-accept tasks (handled by process_auto_accept_tasks)
-            if auto_accept:
-                continue
-
-            # Skip tasks without commits (pre-check handles these)
-            if commits == 0:
-                continue
-
-            # Skip tasks with no checks defined — they go straight to human review
-            if not checks:
-                continue
-
-            # Check if all checks have been run
-            all_run = all(
-                c in check_results and check_results[c].get("status") in ("pass", "fail")
-                for c in checks
-            )
-
-            if not all_run:
-                # Checks still pending — gatekeeper agents will handle them
-                continue
-
-            # All checks have been run — check results
-            all_passed, failed_checks = db.all_checks_passed(task_id)
-
-            if all_passed:
-                # All checks passed — leave in provisional for human review.
-                # reports.py will show this task in "in_review" section.
-                debug_log(f"All checks passed for task {task_id} — awaiting human review")
-            else:
-                # Safety net: reject tasks with failed checks that gatekeeper
-                # agents may have missed (e.g. if a gatekeeper crashed
-                # between recording a result and rejecting the task).
-                feedback = db.get_check_feedback(task_id)
-                debug_log(f"Checks failed for task {task_id}: {failed_checks}")
-
-                task_file_path = task.get("file_path") or task.get("path", "")
-                if task_file_path:
-                    review_reject_task(
-                        str(task_file_path),
-                        feedback,
-                        rejected_by="gatekeeper",
-                        max_rejections=max_rejections,
-                    )
-                else:
-                    db.review_reject_completion(
-                        task_id,
-                        reason=f"Failed checks: {', '.join(failed_checks)}",
-                        reviewer="gatekeeper",
-                    )
-
-                print(f"[{datetime.now().isoformat()}] Gatekeeper rejected task {task_id}: {failed_checks}")
-
-    except Exception as e:
-        debug_log(f"Error processing gatekeeper reviews: {e}")
-        import traceback
-        debug_log(traceback.format_exc())
+    return
 
 
 def dispatch_gatekeeper_agents() -> None:
@@ -890,154 +1077,7 @@ def dispatch_gatekeeper_agents() -> None:
     The next check will be dispatched on the following scheduler tick after the
     first one completes.
     """
-    if not is_db_enabled():
-        return
-
-    try:
-        from . import db
-
-        # Get configured gatekeeper agents
-        gk_agents = get_gatekeepers()
-        if not gk_agents:
-            debug_log("No gatekeeper agents configured, skipping dispatch")
-            return
-
-        # Get currently running agents to avoid double-dispatch
-        running_agents = db.list_agents(running_only=True)
-        # Build a set of (task_id, check_name) pairs that are already being reviewed
-        active_reviews: set[tuple[str, str]] = set()
-        for agent in running_agents:
-            if agent.get("role") == "gatekeeper" and agent.get("current_task_id"):
-                # We track which task the gatekeeper is reviewing via current_task_id.
-                # We can't easily track the check_name from DB alone, but since
-                # we only dispatch one check at a time per task, knowing the task_id
-                # is sufficient to avoid duplicate dispatch.
-                active_reviews.add((agent["current_task_id"], ""))
-
-        provisional_tasks = db.list_tasks(queue="provisional")
-
-        for task in provisional_tasks:
-            task_id = task["id"]
-            checks = task.get("checks", [])
-            check_results = task.get("check_results", {})
-            commits = task.get("commits_count", 0)
-
-            # Skip tasks without commits
-            if commits == 0:
-                continue
-
-            # Skip tasks with no checks
-            if not checks:
-                continue
-
-            # Skip if a gatekeeper is already reviewing this task
-            if any(tid == task_id for tid, _ in active_reviews):
-                debug_log(f"Gatekeeper already active for task {task_id}, skipping")
-                continue
-
-            # Find the first pending check
-            pending_gk_check = None
-            for check_name in checks:
-                if check_name in check_results and check_results[check_name].get("status") in ("pass", "fail"):
-                    # Already completed
-                    continue
-                pending_gk_check = check_name
-                break  # Sequential: only dispatch the first pending one
-
-            if not pending_gk_check:
-                continue
-
-            debug_log(f"Need gatekeeper for task {task_id}, check: {pending_gk_check}")
-
-            # Find an available gatekeeper agent to dispatch
-            dispatched = False
-            for gk_config in gk_agents:
-                gk_name = gk_config.get("name")
-                if not gk_name:
-                    continue
-
-                # Check if agent focus matches the check
-                gk_focus = gk_config.get("focus", "")
-                # Match if focus appears in check name (e.g., "testing" matches "gk-testing-octopoid")
-                # Check names like "gk-testing-octopoid", "gk-qa", "architecture-review" should match
-                # focus "testing", "qa", "architecture" respectively.
-                if gk_focus and gk_focus not in pending_gk_check:
-                    debug_log(f"Gatekeeper {gk_name} (focus={gk_focus}) does not match check {pending_gk_check}, skipping")
-                    continue
-
-                # Check if this gatekeeper is currently running
-                gk_state_path = get_agent_state_path(gk_name)
-                gk_state = load_state(gk_state_path)
-                if gk_state.running and gk_state.pid and is_process_running(gk_state.pid):
-                    debug_log(f"Gatekeeper {gk_name} is busy, trying next")
-                    continue
-
-                # If was running but process died, mark finished
-                if gk_state.running:
-                    gk_state = mark_finished(gk_state, 1)
-                    save_state(gk_state, gk_state_path)
-
-                # Check interval
-                interval = gk_config.get("interval_seconds", 300)
-                if not is_overdue(gk_state, interval):
-                    debug_log(f"Gatekeeper {gk_name} not due yet, trying next")
-                    continue
-
-                # Check if paused
-                if gk_config.get("paused", False):
-                    debug_log(f"Gatekeeper {gk_name} is paused, trying next")
-                    continue
-
-                # Spawn the gatekeeper with review context
-                debug_log(f"Dispatching {gk_name} for task {task_id} check {pending_gk_check}")
-
-                # Build config with review context for spawn_agent
-                dispatch_config = dict(gk_config)
-                dispatch_config["review_task_id"] = task_id
-                dispatch_config["review_check_name"] = pending_gk_check
-
-                # Set up worktree
-                is_lightweight = dispatch_config.get("lightweight", False)
-                if not is_lightweight:
-                    main_branch = get_main_branch()
-                    base_branch = dispatch_config.get("base_branch", main_branch)
-                    task_branch = task.get("branch")
-                    if task_branch and task_branch != main_branch:
-                        base_branch = task_branch
-                    ensure_worktree(gk_name, base_branch)
-                    setup_agent_commands(gk_name, "gatekeeper")
-                    generate_agent_instructions(gk_name, "gatekeeper", dispatch_config)
-
-                # Find agent_id from config
-                all_agents = get_agents()
-                agent_id = next(
-                    (i for i, a in enumerate(all_agents) if a.get("name") == gk_name),
-                    0,
-                )
-
-                write_agent_env(gk_name, agent_id, "gatekeeper", dispatch_config)
-                pid = spawn_agent(gk_name, agent_id, "gatekeeper", dispatch_config)
-
-                # Update state
-                new_state = mark_started(gk_state, pid)
-                save_state(new_state, gk_state_path)
-
-                # Update DB
-                db.upsert_agent(gk_name, role="gatekeeper", running=True, pid=pid, current_task_id=task_id)
-                db.mark_agent_started(gk_name, pid, task_id=task_id)
-
-                print(f"[{datetime.now().isoformat()}] Dispatched gatekeeper {gk_name} for task {task_id} check {pending_gk_check}")
-
-                dispatched = True
-                break  # One gatekeeper per task
-
-            if not dispatched:
-                debug_log(f"No available gatekeeper for task {task_id} check {pending_gk_check}")
-
-    except Exception as e:
-        debug_log(f"Error dispatching gatekeeper agents: {e}")
-        import traceback
-        debug_log(traceback.format_exc())
+    return
 
 
 def check_and_update_finished_agents() -> None:
@@ -1068,37 +1108,14 @@ def check_and_update_finished_agents() -> None:
                 new_state = mark_finished(state, exit_code)
                 save_state(new_state, state_path)
 
-                # Also update DB if enabled
-                if is_db_enabled():
-                    try:
-                        from . import db
-                        db.mark_agent_finished(agent_name)
-
-                        # Sync DB queue column with actual file location
-                        # When agent finishes, it may have moved task to needs_continuation/, provisional/, etc.
-                        # but DB queue column may still say "claimed"
-                        if state.current_task:
-                            from .queue_utils import find_task_file, ALL_QUEUE_DIRS
-                            task_file = find_task_file(state.current_task)
-                            if task_file:
-                                # Determine queue from file location
-                                actual_queue = task_file.parent.name
-                                if actual_queue in ALL_QUEUE_DIRS:
-                                    task = db.get_task(state.current_task)
-                                    if task and task.get("queue") != actual_queue:
-                                        debug_log(f"Task {state.current_task} file is in {actual_queue}/ but DB says {task.get('queue')} — syncing")
-                                        # Use update_task_queue to properly move the task
-                                        # Clear claimed_by/claimed_at when leaving claimed/
-                                        claimed_by = None if actual_queue != "claimed" else task.get("claimed_by")
-                                        claimed_at = None if actual_queue != "claimed" else task.get("claimed_at")
-                                        db.update_task_queue(
-                                            state.current_task,
-                                            actual_queue,
-                                            claimed_by=claimed_by,
-                                            claimed_at=claimed_at,
-                                        )
-                    except Exception as e:
-                        debug_log(f"Failed to update agent {agent_name} in DB: {e}")
+                # Handle script-mode agent results
+                if state.extra.get("agent_mode") == "scripts" and state.extra.get("task_dir"):
+                    task_dir_str = state.extra["task_dir"]
+                    current_task = state.extra.get("current_task_id", "")
+                    if current_task:
+                        handle_agent_result(
+                            current_task, agent_name, Path(task_dir_str)
+                        )
 
                 print(f"[{datetime.now().isoformat()}] Agent {agent_name} finished (exit code: {exit_code})")
 
@@ -1114,119 +1131,7 @@ def detect_queue_health_issues() -> dict[str, list[dict]]:
         Dictionary with keys 'file_db_mismatches', 'orphan_files', 'zombie_claims'
         Each value is a list of issue dictionaries with details.
     """
-    if not is_db_enabled():
-        return {'file_db_mismatches': [], 'orphan_files': [], 'zombie_claims': []}
-
-    from . import db
-    from .config import get_queue_dir
-    from .queue_utils import ALL_QUEUE_DIRS
-    import time
-
-    issues = {
-        'file_db_mismatches': [],
-        'orphan_files': [],
-        'zombie_claims': []
-    }
-
-    # Get all tasks from DB
-    all_tasks = db.list_tasks()
-    task_ids_in_db = {task['id'] for task in all_tasks}
-
-    # Scan all queue directories for files
-    queue_dir = get_queue_dir()
-    current_time = time.time()
-    MIN_FILE_AGE_SECONDS = 300  # 5 minutes
-
-    for queue_name in ALL_QUEUE_DIRS:
-        queue_path = queue_dir / queue_name
-        if not queue_path.exists():
-            continue
-
-        for task_file in queue_path.glob("TASK-*.md"):
-            # Extract task ID from filename
-            task_id = task_file.stem.replace("TASK-", "")
-            file_mtime = task_file.stat().st_mtime
-            file_age = current_time - file_mtime
-
-            # Skip recently created files to avoid race conditions
-            if file_age < MIN_FILE_AGE_SECONDS:
-                continue
-
-            # Check for orphan files
-            if task_id not in task_ids_in_db:
-                issues['orphan_files'].append({
-                    'task_id': task_id,
-                    'file_path': str(task_file.relative_to(find_parent_project())),
-                    'queue': queue_name,
-                    'mtime': datetime.fromtimestamp(file_mtime).isoformat(),
-                    'age_seconds': int(file_age)
-                })
-                continue
-
-            # Check for file-DB mismatch
-            task_in_db = next((t for t in all_tasks if t['id'] == task_id), None)
-            if task_in_db and task_in_db['queue'] != queue_name:
-                issues['file_db_mismatches'].append({
-                    'task_id': task_id,
-                    'db_queue': task_in_db['queue'],
-                    'file_queue': queue_name,
-                    'file_path': str(task_file.relative_to(find_parent_project())),
-                    'mtime': datetime.fromtimestamp(file_mtime).isoformat(),
-                    'age_seconds': int(file_age)
-                })
-
-    # Check for zombie claims
-    ZOMBIE_CLAIM_HOURS = 2
-    AGENT_INACTIVE_HOURS = 1
-    zombie_threshold = datetime.now().timestamp() - (ZOMBIE_CLAIM_HOURS * 3600)
-
-    for task in all_tasks:
-        if task['queue'] != 'claimed' or not task.get('claimed_by'):
-            continue
-
-        claimed_at_str = task.get('claimed_at')
-        if not claimed_at_str:
-            continue
-
-        try:
-            claimed_at = datetime.fromisoformat(claimed_at_str).timestamp()
-        except (ValueError, TypeError):
-            continue
-
-        if claimed_at > zombie_threshold:
-            continue  # Not old enough
-
-        # Check agent activity
-        agent_name = task['claimed_by']
-        state_path = get_agent_state_path(agent_name)
-        agent_inactive = False
-        agent_last_active = None
-
-        if not state_path.exists():
-            agent_inactive = True
-        else:
-            state = load_state(state_path)
-            if state.last_finished:
-                try:
-                    last_active = datetime.fromisoformat(state.last_finished).timestamp()
-                    agent_last_active = state.last_finished
-                    inactive_threshold = datetime.now().timestamp() - (AGENT_INACTIVE_HOURS * 3600)
-                    if last_active < inactive_threshold:
-                        agent_inactive = True
-                except (ValueError, TypeError):
-                    agent_inactive = True
-
-        if agent_inactive:
-            claim_duration = int(datetime.now().timestamp() - claimed_at)
-            issues['zombie_claims'].append({
-                'task_id': task['id'],
-                'claimed_by': agent_name,
-                'claimed_at': claimed_at_str,
-                'claim_duration_seconds': claim_duration,
-                'agent_last_active': agent_last_active or 'no state file'
-            })
-
-    return issues
+    return {'file_db_mismatches': [], 'orphan_files': [], 'zombie_claims': []}
 
 
 def should_trigger_queue_manager() -> tuple[bool, str]:
@@ -1262,14 +1167,14 @@ def should_trigger_queue_manager() -> tuple[bool, str]:
 def ensure_rebaser_worktree() -> Path | None:
     """Ensure the dedicated rebaser worktree exists.
 
-    Creates .orchestrator/agents/rebaser-worktree/ on first use,
+    Creates .octopoid/runtime/agents/rebaser-worktree/ on first use,
     detached at HEAD. Runs npm install if node_modules is missing.
 
     Returns:
         Path to the rebaser worktree, or None on failure
     """
     parent_project = find_parent_project()
-    worktree_path = get_orchestrator_dir() / "agents" / "rebaser-worktree"
+    worktree_path = get_agents_runtime_dir() / "rebaser-worktree"
 
     if worktree_path.exists() and (worktree_path / ".git").exists():
         return worktree_path
@@ -1317,60 +1222,7 @@ def check_branch_freshness() -> None:
     - Skips orchestrator_impl tasks (self-merge handles those)
     - Calls rebase_stale_branch() directly for stale branches
     """
-    if not is_db_enabled():
-        return
-
-    try:
-        from . import db
-
-        parent_project = find_parent_project()
-
-        # Fetch latest main
-        subprocess.run(
-            ['git', 'fetch', 'origin', 'main'],
-            cwd=parent_project,
-            capture_output=True,
-            timeout=60,
-        )
-
-        # Check tasks in provisional queue
-        tasks = db.list_tasks(queue='provisional')
-
-        for task in tasks:
-            task_id = task['id']
-
-            # Skip orchestrator_impl tasks (self-merge handles these)
-            if task.get('role') == 'orchestrator_impl':
-                continue
-
-            # Skip tasks on main or without a branch
-            branch = task.get('branch', 'main')
-            if branch == 'main' or not branch:
-                continue
-
-            # Skip tasks without a PR
-            if not task.get('pr_url'):
-                continue
-
-            # Throttle: skip if rebased recently
-            if db.is_rebase_throttled(task_id, cooldown_minutes=10):
-                debug_log(f'Task {task_id} rebase throttled (recent attempt)')
-                continue
-
-            # Check freshness using merge-base --is-ancestor
-            is_fresh = _is_branch_fresh(parent_project, branch)
-            if is_fresh is None:
-                continue  # Branch not found or error
-            if is_fresh:
-                continue  # Branch is up to date
-
-            debug_log(f'Task {task_id} branch {branch} is stale (main is not ancestor)')
-            print(f'[{datetime.now().isoformat()}] Task {task_id} branch {branch} is stale, rebasing')
-
-            rebase_stale_branch(task_id, branch)
-
-    except Exception as e:
-        debug_log(f'Error checking branch freshness: {e}')
+    return
 
 
 def _is_branch_fresh(parent_project: Path, branch: str) -> bool | None:
@@ -1429,176 +1281,7 @@ def rebase_stale_branch(task_id: str, branch: str) -> bool:
     Returns:
         True if rebase succeeded and was pushed
     """
-    if not is_db_enabled():
-        return False
-
-    from . import db
-    from .queue_utils import review_reject_task
-
-    # Record the attempt for throttling
-    db.record_rebase_attempt(task_id)
-
-    # Ensure the rebaser worktree exists
-    worktree = ensure_rebaser_worktree()
-    if not worktree:
-        debug_log(f'Cannot rebase task {task_id}: rebaser worktree not available')
-        return False
-
-    try:
-        # Step 1: Fetch latest
-        subprocess.run(
-            ['git', 'fetch', 'origin'],
-            cwd=worktree,
-            capture_output=True,
-            text=True,
-            timeout=60,
-            check=True,
-        )
-
-        # Step 2: Checkout the task branch
-        subprocess.run(
-            ['git', 'checkout', '-B', branch, f'origin/{branch}'],
-            cwd=worktree,
-            capture_output=True,
-            text=True,
-            timeout=60,
-            check=True,
-        )
-
-        # Step 3: Attempt rebase onto origin/main
-        rebase_result = subprocess.run(
-            ['git', 'rebase', 'origin/main'],
-            cwd=worktree,
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-
-        if rebase_result.returncode != 0:
-            # Rebase failed — get conflict details
-            error_output = rebase_result.stderr + '\n' + rebase_result.stdout
-
-            # Try to get list of conflicted files
-            status_result = subprocess.run(
-                ['git', 'diff', '--name-only', '--diff-filter=U'],
-                cwd=worktree,
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            conflicted = status_result.stdout.strip() if status_result.returncode == 0 else ''
-
-            # Abort the rebase
-            subprocess.run(
-                ['git', 'rebase', '--abort'],
-                cwd=worktree,
-                capture_output=True,
-                timeout=30,
-            )
-
-            # Build feedback for the agent
-            feedback = (
-                f'## Rebase Conflict\n\n'
-                f'Branch `{branch}` has conflicts when rebased onto `main`.\n\n'
-            )
-            if conflicted:
-                feedback += f'**Conflicted files:**\n```\n{conflicted}\n```\n\n'
-            feedback += f'**Git output:**\n```\n{error_output[:500]}\n```\n\n'
-            feedback += 'Please resolve the conflicts and push an updated branch.'
-
-            debug_log(f'Rebase conflict for task {task_id}: {conflicted}')
-
-            # Reject task back to agent
-            task = db.get_task(task_id)
-            if task and task.get('file_path'):
-                review_reject_task(
-                    task['file_path'],
-                    feedback,
-                    rejected_by='rebaser',
-                )
-
-            print(f'[{datetime.now().isoformat()}] Rebase conflict for task {task_id}, rejected back to agent')
-            return False
-
-        # Step 4: Run tests
-        # Check if node_modules exists; if not, install
-        if not (worktree / 'node_modules').exists():
-            subprocess.run(
-                ['npm', 'install'],
-                cwd=worktree,
-                capture_output=True,
-                timeout=120,
-            )
-
-        test_result = subprocess.run(
-            ['npx', 'vitest', 'run'],
-            cwd=worktree,
-            capture_output=True,
-            text=True,
-            timeout=300,  # 5 minute timeout
-        )
-
-        if test_result.returncode != 0:
-            test_output = test_result.stdout + '\n' + test_result.stderr
-
-            feedback = (
-                f'## Post-Rebase Test Failure\n\n'
-                f'Branch `{branch}` was rebased onto `main` successfully, '
-                f'but tests failed after rebase.\n\n'
-                f'**Test output (tail):**\n```\n{test_output[-1000:]}\n```\n\n'
-                f'The rebase may have introduced incompatibilities. '
-                f'Please fix the tests and push an updated branch.'
-            )
-
-            debug_log(f'Tests failed after rebase for task {task_id}')
-
-            # Reject task back to agent
-            task = db.get_task(task_id)
-            if task and task.get('file_path'):
-                review_reject_task(
-                    task['file_path'],
-                    feedback,
-                    rejected_by='rebaser',
-                )
-
-            print(f'[{datetime.now().isoformat()}] Tests failed after rebase for task {task_id}, rejected back to agent')
-            return False
-
-        # Step 5: Force-push the rebased branch
-        push_result = subprocess.run(
-            ['git', 'push', '--force-with-lease', 'origin', branch],
-            cwd=worktree,
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-
-        if push_result.returncode != 0:
-            debug_log(f'Force-push failed for task {task_id}: {push_result.stderr}')
-            return False
-
-        # Success — clear the needs_rebase flag if it was set
-        if db.get_task(task_id).get('needs_rebase'):
-            db.clear_rebase_flag(task_id)
-
-        print(f'[{datetime.now().isoformat()}] Successfully rebased task {task_id} branch {branch}')
-        return True
-
-    except subprocess.CalledProcessError as e:
-        debug_log(f'Git command failed for task {task_id}: {e}')
-        return False
-    except subprocess.TimeoutExpired:
-        debug_log(f'Timeout during rebase for task {task_id}')
-        # Abort any in-progress rebase
-        subprocess.run(
-            ['git', 'rebase', '--abort'],
-            cwd=worktree,
-            capture_output=True,
-        )
-        return False
-    except Exception as e:
-        debug_log(f'Unexpected error rebasing task {task_id}: {e}')
-        return False
+    return False
 
 
 def check_stale_branches(commits_behind_threshold: int = 5) -> None:
@@ -1616,61 +1299,7 @@ def check_stale_branches(commits_behind_threshold: int = 5) -> None:
         commits_behind_threshold: Number of commits behind main before
             marking for rebase (default 5)
     """
-    if not is_db_enabled():
-        return
-
-    try:
-        from . import db
-        from .config import find_parent_project
-
-        parent_project = find_parent_project()
-
-        # Fetch latest main
-        subprocess.run(
-            ['git', 'fetch', 'origin', 'main'],
-            cwd=parent_project,
-            capture_output=True,
-            timeout=60,
-        )
-
-        # Check tasks in provisional queue (review/pending tasks)
-        for queue in ('provisional', 'incoming'):
-            tasks = db.list_tasks(queue=queue)
-
-            for task in tasks:
-                task_id = task['id']
-
-                # Skip if already marked
-                if task.get('needs_rebase'):
-                    continue
-
-                # Skip orchestrator_impl tasks (v1)
-                if task.get('role') == 'orchestrator_impl':
-                    continue
-
-                # Skip tasks on main or without a branch
-                branch = task.get('branch', 'main')
-                if branch == 'main' or not branch:
-                    continue
-
-                # Check how far behind the branch is
-                commits_behind = _count_commits_behind(parent_project, branch)
-                if commits_behind is None:
-                    continue  # Branch not found remotely
-
-                if commits_behind >= commits_behind_threshold:
-                    debug_log(
-                        f'Task {task_id} branch {branch} is {commits_behind} '
-                        f'commits behind main (threshold: {commits_behind_threshold})'
-                    )
-                    db.mark_for_rebase(task_id, reason=f'stale ({commits_behind} commits behind)')
-                    print(
-                        f'[{datetime.now().isoformat()}] Marked task {task_id} '
-                        f'for rebase ({commits_behind} commits behind main)'
-                    )
-
-    except Exception as e:
-        debug_log(f'Error checking stale branches: {e}')
+    return
 
 
 def _count_commits_behind(parent_project: Path, branch: str) -> int | None:
@@ -1745,7 +1374,7 @@ def check_queue_health() -> None:
     """
     # Path to diagnostic script
     parent_project = find_parent_project()
-    script_path = parent_project / ".orchestrator" / "scripts" / "diagnose_queue_health.py"
+    script_path = parent_project / ".octopoid" / "scripts" / "diagnose_queue_health.py"
 
     if not script_path.exists():
         debug_log("Queue health diagnostic script not found, skipping")
@@ -1812,7 +1441,8 @@ def check_queue_health() -> None:
         debug_log(f"Triggering {agent_name} with {total_issues} issues")
 
         # Write diagnostic data to a temp file for the agent to read
-        notes_dir = get_orchestrator_dir() / "shared" / "notes"
+        from .config import get_notes_dir as _get_notes_dir
+        notes_dir = _get_notes_dir()
         notes_dir.mkdir(parents=True, exist_ok=True)
         diagnostic_file = notes_dir / f"queue-health-diagnostic-{datetime.now().strftime('%Y%m%d-%H%M%S')}.json"
         diagnostic_file.write_text(json.dumps(diagnostic_data, indent=2))
@@ -1870,6 +1500,9 @@ def run_scheduler() -> None:
 
     # Check queue health (runs every 30 minutes)
     _check_queue_health_throttled()
+
+    # Run orchestrator-side hooks on provisional tasks (e.g. merge_pr)
+    process_orchestrator_hooks()
 
     # Process auto-accept tasks in provisional queue
     process_auto_accept_tasks()
@@ -1988,7 +1621,12 @@ def run_scheduler() -> None:
             claimed_task = None
             if role in CLAIMABLE_AGENT_ROLES:
                 task_role = AGENT_TASK_ROLE[role]
-                claimed_task = claim_and_prepare_task(agent_name, task_role)
+                # Read allowed task types from agent config (None = any type)
+                allowed_types = agent_config.get("allowed_task_types")
+                type_filter = allowed_types[0] if isinstance(allowed_types, list) and len(allowed_types) == 1 else (
+                    ",".join(allowed_types) if isinstance(allowed_types, list) else allowed_types
+                )
+                claimed_task = claim_and_prepare_task(agent_name, task_role, type_filter=type_filter)
                 if claimed_task is None:
                     debug_log(f"No task available for {agent_name}")
                     continue
@@ -1996,6 +1634,20 @@ def run_scheduler() -> None:
 
             print(f"[{datetime.now().isoformat()}] Starting agent {agent_name} (role: {role})")
             debug_log(f"Starting agent {agent_name} (role: {role})")
+
+            # Implementers use scripts mode: prepare task dir and invoke claude directly
+            if role == "implementer" and claimed_task:
+                task_dir = prepare_task_directory(claimed_task, agent_name, agent_config)
+                pid = invoke_claude(task_dir, agent_config)
+
+                new_state = mark_started(state, pid)
+                new_state.extra["agent_mode"] = "scripts"
+                new_state.extra["task_dir"] = str(task_dir)
+                new_state.extra["current_task_id"] = claimed_task["id"]
+                save_state(new_state, state_path)
+
+                print(f"Agent {agent_name} started with PID {pid}")
+                continue
 
             # Check if this is a lightweight agent (no worktree needed)
             is_lightweight = agent_config.get("lightweight", False)
@@ -2083,15 +1735,6 @@ def run_scheduler() -> None:
             new_state = mark_started(state, pid)
             save_state(new_state, state_path)
 
-            # Also update DB if enabled
-            if is_db_enabled():
-                try:
-                    from . import db
-                    db.upsert_agent(agent_name, role=role, running=True, pid=pid)
-                    db.mark_agent_started(agent_name, pid)
-                except Exception as e:
-                    debug_log(f"Failed to update agent {agent_name} in DB: {e}")
-
             print(f"Agent {agent_name} started with PID {pid}")
 
     print(f"[{datetime.now().isoformat()}] Scheduler tick complete")
@@ -2111,7 +1754,7 @@ def _check_venv_integrity() -> None:
     if "agents/" in scheduler_file and "worktree" in scheduler_file:
         print(
             f"FATAL: orchestrator module loaded from agent worktree: {scheduler_file}\n"
-            f"Fix: cd orchestrator && ../.orchestrator/venv/bin/pip install -e .",
+            f"Fix: cd orchestrator && pip install -e .",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -2127,7 +1770,7 @@ def main() -> None:
     parser.add_argument(
         "--debug",
         action="store_true",
-        help="Enable debug logging to .orchestrator/logs/",
+        help="Enable debug logging to .octopoid/runtime/logs/",
     )
     parser.add_argument(
         "--once",
@@ -2140,7 +1783,7 @@ def main() -> None:
     if DEBUG:
         setup_scheduler_debug()
         debug_log("Scheduler starting with debug mode enabled")
-        print("Debug mode enabled - logs in .orchestrator/logs/")
+        print("Debug mode enabled - logs in .octopoid/runtime/logs/")
 
     scheduler_lock_path = get_scheduler_lock_path()
 
