@@ -89,12 +89,12 @@ TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 REJECTED_BY="${AGENT_NAME}"
 
 # Move to rejected directory
-mkdir -p .orchestrator/shared/proposals/rejected
-mv ".orchestrator/shared/proposals/active/${PROP_ID}.md" \
-   ".orchestrator/shared/proposals/rejected/${PROP_ID}.md"
+mkdir -p .octopoid/runtime/shared/proposals/rejected
+mv ".octopoid/runtime/shared/proposals/active/${PROP_ID}.md" \
+   ".octopoid/runtime/shared/proposals/rejected/${PROP_ID}.md"
 
 # Append rejection info
-cat >> ".orchestrator/shared/proposals/rejected/${PROP_ID}.md" << EOF
+cat >> ".octopoid/runtime/shared/proposals/rejected/${PROP_ID}.md" << EOF
 
 ---
 ## Rejection

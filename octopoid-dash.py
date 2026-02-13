@@ -2,8 +2,12 @@
 """
 Octopoid Dashboard - Tabbed project management TUI for v2.0 API.
 
+Reads server URL from .octopoid/config.yaml automatically. No flags needed
+if config.yaml has server.enabled: true and server.url set.
+
 Usage:
-    python octopoid-dash.py --server https://...                 # Connect to API server
+    python octopoid-dash.py                                      # Auto-connect via config.yaml
+    python octopoid-dash.py --server https://...                 # Override server URL
     python octopoid-dash.py --server https://... --api-key KEY   # With authentication
     python octopoid-dash.py --demo                               # Demo mode with sample data
     python octopoid-dash.py [--refresh N]                        # Custom refresh interval

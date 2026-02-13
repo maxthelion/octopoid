@@ -370,6 +370,55 @@ octopoid status
 | **Language** | Python 3.11+ | Node.js 18+ |
 | **Type Safety** | Type hints (runtime) | TypeScript (compile-time) |
 
+
+## Hook System
+
+### Overview
+
+Hooks are declarative lifecycle actions that run during task processing. They ensure
+quality gates (tests, rebasing) are applied consistently.
+
+### Hook Types
+
+**Agent Hooks** (run by Claude inside the task worktree):
+- `rebase_on_main`: Fetch and rebase on base branch before submitting
+- `run_tests`: Detect and execute the project test suite
+- `create_pr`: Push branch and create a pull request
+
+**Orchestrator Hooks** (run by the scheduler on the server side):
+- `merge_pr`: Merge the task's pull request after approval
+
+### Hook Lifecycle
+
+1. **Resolution**: When a task is created, `HookManager.resolve_hooks_for_task()` determines
+   which hooks apply based on: task type config > project config > defaults.
+2. **Storage**: Hooks are stored as a JSON array on the task via the server API.
+3. **Execution**: Agent hooks are completed by scripts in the task directory. Orchestrator
+   hooks are run by `process_orchestrator_hooks()` in the scheduler.
+4. **Evidence**: Each hook records evidence (passed/failed + data) via the server API.
+5. **Transition**: `HookManager.can_transition()` checks if all hooks for a point are satisfied
+   before allowing state transitions (e.g., provisional -> done).
+
+### Configuration
+
+```yaml
+# .octopoid/config.yaml
+hooks:
+  before_submit:
+    - rebase_on_main
+    - run_tests
+    - create_pr
+  before_merge:
+    - merge_pr
+
+# Per-type overrides
+task_types:
+  hotfix:
+    hooks:
+      before_submit:
+        - create_pr  # Skip rebase and tests for hotfixes
+```
+
 ## Future Enhancements
 
 ### Phase 2: Distributed Mode

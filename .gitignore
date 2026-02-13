@@ -36,6 +36,10 @@ env/
 .coverage
 htmlcov/
 
+# Environment
+.env
+.env.*
+
 # OS
 .DS_Store
 
@@ -58,8 +62,10 @@ dist/
 
 # Octopoid runtime
 # Octopoid runtime files (but commit config files)
+.orchestrator/
 .octopoid/runtime/
 .octopoid/logs/
+.octopoid/tasks/
 .octopoid/worktrees/
 .octopoid/*.db
 .octopoid/*.db-shm
@@ -67,3 +73,7 @@ dist/
 .octopoid-test/
 *.pid
 *.lock
+
+# Octopoid
+# Octopoid runtime files
+.agent-instructions.md

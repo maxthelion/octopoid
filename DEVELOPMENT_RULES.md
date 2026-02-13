@@ -11,7 +11,6 @@ Guidelines for maintaining the Octopoid codebase.
 v2.0 is a client-server architecture:
 - **Server**: Cloudflare Workers with D1 database (single source of truth)
 - **Clients**: Use SDK to communicate with server
-- **No local database**: SQLite/database mode is removed
 - **No file-based queues**: Queue state is not managed via files
 
 **What uses API:**
@@ -28,12 +27,8 @@ v2.0 is a client-server architecture:
 
 **Bad (v1.x patterns):**
 ```python
-if is_db_enabled():
-    from . import db
-    return db.claim_task(...)
-else:
-    # Move file from incoming/ to claimed/
-    task_file.rename(claimed_dir / task_file.name)
+# Move file from incoming/ to claimed/
+task_file.rename(claimed_dir / task_file.name)
 ```
 
 **Good (v2.0 pattern):**
@@ -44,14 +39,12 @@ task = sdk.tasks.claim(orchestrator_id=..., agent_name=...)
 ```
 
 **Migration checklist:**
-- [ ] Remove all `is_db_enabled()` checks
-- [ ] Remove all `from . import db` imports
 - [ ] Remove file-based queue operations (moving files between queue dirs)
 - [ ] Replace with SDK calls
 - [ ] Keep only local file reading (parse_task_file) and worktree markers
 
 **Rationale:**
-- Single source of truth (server database)
+- Single source of truth (server)
 - Enables distributed orchestrators
 - Consistent state across all clients
 - No file/database sync issues
@@ -61,16 +54,15 @@ task = sdk.tasks.claim(orchestrator_id=..., agent_name=...)
 
 ### Rule: Use Separate Test Instance
 
-**Never test against production data or the main development database.**
+**Never test against production data or the main development server.**
 
 When testing new features or debugging:
 1. Use `--demo` mode for the dashboard
-2. Use a separate local database instance
-3. Use separate Cloudflare D1 database for server testing
+2. Use a separate test server instance
 
 **Bad:**
 ```bash
-# Testing directly against main dev database
+# Testing directly against main dev server
 python3 test-script.py --server http://localhost:8787
 ```
 
@@ -84,38 +76,20 @@ wrangler dev --port 8788  # Different port
 python3 test-script.py --server http://localhost:8788
 ```
 
-## Database Operations
+## API Operations
 
-### Rule: API First, SQL Last Resort
+### Rule: Use API Endpoints and Scripts
 
-**Always prefer creating endpoints and scripts over direct SQL manipulation.**
+**Always prefer creating endpoints and scripts over direct data manipulation.**
 
 When you need to modify tasks or other data:
 
 1. **First choice:** Create/use an API endpoint
 2. **Second choice:** Create a script that uses the SDK/API
-3. **Last resort:** Direct SQL (only if absolutely necessary)
 
 **Rationale:**
 - API endpoints are versioned and documented
 - Scripts can be reused and tested
-- Direct SQL bypasses validation and can corrupt data
-- SQL ties you to specific database schema
-
-**Bad:**
-```bash
-# Direct SQL manipulation
-sqlite3 database.db "DELETE FROM tasks WHERE id LIKE 'test-%'"
-```
-
-**Good:**
-```bash
-# Use the cleanup script
-python scripts/cleanup-test-data.py --server http://localhost:8787
-
-# Or create a new endpoint if needed
-curl -X DELETE http://localhost:8787/api/v1/tasks/test-123
-```
 
 ### Creating New Endpoints
 
@@ -202,8 +176,6 @@ Files to exclude:
 - `.octopoid/logs/` - log files
 - `.octopoid/runtime/` - PIDs, state files
 - `.octopoid/worktrees/` - git worktrees
-- `.octopoid/*.db` - database files
-- `.orchestrator/` - legacy v1.x data
 - `*.backup` - backup files
 
 These are already in `.gitignore`, but be careful when staging files.
@@ -252,7 +224,7 @@ if __name__ == '__main__':
 ## Summary
 
 1. ✅ Use separate test instances
-2. ✅ Create endpoints and scripts, not SQL
+2. ✅ Create endpoints and scripts for data operations
 3. ✅ Update CHANGELOG.md for all changes
 4. ✅ Write clear commit messages
 5. ✅ Don't commit runtime data or test artifacts

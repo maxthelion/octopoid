@@ -4,28 +4,25 @@
 # Server configuration (v2.0 API mode)
 server:
   enabled: true
-  url: http://localhost:8787
-  cluster: dev
+  url: https://octopoid-server.maxthelion.workers.dev
+  cluster: prod
   machine_id: Maxs-MacBook-Air.local
 
 # Repository settings
 repo:
   path: /Users/maxwilliams/dev/octopoid
-  main_branch: main
+  main_branch: feature/client-server-architecture
 
 # Agent configuration
 agents:
   max_concurrent: 3
 
-# Database configuration (not used in v2.0 API mode)
-database:
-  enabled: false
-  path: state.db
-
 # Hooks — lifecycle actions run during task processing
 # Default: before_submit: [create_pr]
 hooks:
   before_submit:
+    - rebase_on_main
+    - run_tests
     - create_pr
   before_merge:
     - merge_pr

@@ -84,19 +84,19 @@ To review your rejected proposals, list the files in the rejected directory:
 ```bash
 # List rejected proposals for your proposer type
 PROPOSER="${AGENT_NAME}"
-ls -la .orchestrator/shared/proposals/rejected/ 2>/dev/null | grep "${PROPOSER}" || echo "No rejections found"
+ls -la .octopoid/runtime/shared/proposals/rejected/ 2>/dev/null | grep "${PROPOSER}" || echo "No rejections found"
 
 # Or list all rejected proposals
-ls -la .orchestrator/shared/proposals/rejected/
+ls -la .octopoid/runtime/shared/proposals/rejected/
 
 # Read a specific rejection
-cat ".orchestrator/shared/proposals/rejected/PROP-abc12345.md"
+cat ".octopoid/runtime/shared/proposals/rejected/PROP-abc12345.md"
 ```
 
 To find rejections mentioning your proposer name:
 
 ```bash
-grep -l "Proposer.*${AGENT_NAME}" .orchestrator/shared/proposals/rejected/*.md 2>/dev/null
+grep -l "Proposer.*${AGENT_NAME}" .octopoid/runtime/shared/proposals/rejected/*.md 2>/dev/null
 ```
 
 ## Best Practices

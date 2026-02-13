@@ -1,3 +1,10 @@
+# HISTORICAL - v1.x Architecture
+
+> **Note:** This document describes the pre-v2.0 architecture (Python, SQLite, file-based queues).
+> For the current architecture, see [architecture-v2.md](./architecture-v2.md).
+
+---
+
 # Octopoid Architecture Reference
 
 **Status:** Living Document
@@ -17,28 +24,25 @@ Octopoid comprises the following runtime components:
 |-----------|-------------|----------|
 | **Scheduler** | Single-process loop that evaluates and spawns agents on a cron-like tick | `orchestrator/orchestrator/scheduler.py` |
 | **Agent subprocesses** | Claude Code CLI sessions (or lightweight Python scripts) spawned by the scheduler | `orchestrator/orchestrator/roles/*.py` |
-| **SQLite database** | Source of truth for task queue state, agent records, and history | `.orchestrator/state.db` (WAL mode, schema v9, auto-migrating) |
-| **Queue directory tree** | Markdown task files mirroring DB state for human readability | `.orchestrator/shared/queue/{incoming,claimed,provisional,done,...}/` |
-| **Git worktrees** | Per-agent git worktrees for isolated code changes | `.orchestrator/agents/{name}/worktree/` |
-| **Review worktree** | Permanent shared worktree for human review and automated checks | `.orchestrator/agents/review-worktree/` |
-| **Agent state files** | JSON state files tracking agent running/finished status | `.orchestrator/agents/{name}/state.json` |
+| **Queue directory tree** | Markdown task files for human readability | `.octopoid/runtime/shared/queue/{incoming,claimed,provisional,done,...}/` |
+| **Git worktrees** | Per-agent git worktrees for isolated code changes | `.octopoid/runtime/agents/{name}/worktree/` |
+| **Review worktree** | Permanent shared worktree for human review and automated checks | `.octopoid/runtime/agents/review-worktree/` |
+| **Agent state files** | JSON state files tracking agent running/finished status | `.octopoid/runtime/agents/{name}/state.json` |
 
 ### The Submodule Relationship
 
-The orchestrator's *code* lives in the `orchestrator/` git submodule (a separate git repository). The *runtime configuration* lives in `.orchestrator/` in the main Boxen repo.
+The orchestrator's *code* lives in the `orchestrator/` git submodule (a separate git repository). The *runtime configuration* lives in `.octopoid/` in the main Boxen repo.
 
 ```
 boxen/                          (main repo)
 ├── orchestrator/               (git submodule — orchestrator Python code)
 │   ├── orchestrator/
 │   │   ├── scheduler.py
-│   │   ├── db.py
 │   │   ├── queue_utils.py
 │   │   ├── config.py
 │   │   ├── backpressure.py
 │   │   ├── roles/
 │   │   │   ├── base.py
-│   │   │   ├── implementer.py
 │   │   │   ├── orchestrator_impl.py
 │   │   │   ├── breakdown.py
 │   │   │   ├── recycler.py
@@ -51,25 +55,28 @@ boxen/                          (main repo)
 │   │   └── ...
 │   ├── tests/
 │   └── venv/
-├── .orchestrator/              (runtime config, not in submodule)
+├── .octopoid/                  (config + runtime, not in submodule)
 │   ├── agents.yaml             (agent definitions)
-│   ├── state.db                (SQLite database)
-│   ├── venv/                   (Python virtualenv)
-│   ├── agents/                 (per-agent runtime dirs)
-│   │   ├── impl-agent-1/
-│   │   │   ├── worktree/       (git worktree)
-│   │   │   ├── state.json
-│   │   │   ├── stdout.log
-│   │   │   └── stderr.log
-│   │   ├── review-worktree/    (shared review worktree)
-│   │   └── ...
-│   ├── shared/
-│   │   ├── queue/              (task markdown files)
-│   │   ├── breakdowns/         (breakdown output files)
-│   │   ├── notes/              (agent learning notes per task)
-│   │   └── projects/           (project YAML files)
+│   ├── config.yaml             (orchestrator config)
+│   ├── global-instructions.md  (shared agent instructions)
+│   ├── runtime/                (ephemeral runtime state)
+│   │   ├── agents/             (per-agent runtime dirs)
+│   │   │   ├── impl-agent-1/
+│   │   │   │   ├── worktree/   (git worktree)
+│   │   │   │   ├── state.json
+│   │   │   │   ├── stdout.log
+│   │   │   │   └── stderr.log
+│   │   │   ├── review-worktree/ (shared review worktree)
+│   │   │   └── ...
+│   │   ├── tasks/              (task markdown files)
+│   │   ├── shared/
+│   │   │   ├── queue/          (queue directories)
+│   │   │   ├── breakdowns/     (breakdown output files)
+│   │   │   ├── notes/          (agent learning notes per task)
+│   │   │   └── projects/       (project YAML files)
+│   │   ├── logs/               (scheduler and agent debug logs)
+│   │   └── messages/           (inter-agent messages)
 │   ├── prompts/                (domain-specific prompts)
-│   ├── logs/                   (scheduler and agent debug logs)
 │   └── scripts/                (operational scripts)
 ```
 
@@ -137,54 +144,9 @@ Agents are spawned as `python -m orchestrator.roles.{role}` subprocesses. They r
 
 Each stage has specific rejection/recycling paths described below.
 
-### DB Schema (tasks table)
-
-```sql
-CREATE TABLE tasks (
-    id TEXT PRIMARY KEY,
-    file_path TEXT NOT NULL UNIQUE,
-    queue TEXT NOT NULL DEFAULT 'incoming',
-    priority TEXT DEFAULT 'P2',         -- P0, P1, P2
-    complexity TEXT,
-    role TEXT,                          -- implement, orchestrator_impl, breakdown, test, etc.
-    branch TEXT DEFAULT 'main',
-    blocked_by TEXT,                    -- comma-separated task IDs
-    claimed_by TEXT,                    -- agent name
-    claimed_at DATETIME,
-    commits_count INTEGER DEFAULT 0,
-    turns_used INTEGER,
-    attempt_count INTEGER DEFAULT 0,    -- pre-check rejections
-    has_plan BOOLEAN DEFAULT FALSE,
-    plan_id TEXT,
-    project_id TEXT,                    -- FK to projects
-    auto_accept BOOLEAN DEFAULT FALSE,
-    rejection_count INTEGER DEFAULT 0,  -- gatekeeper/review rejections
-    pr_number INTEGER,
-    pr_url TEXT,
-    checks TEXT,                        -- comma-separated check names
-    check_results TEXT,                 -- JSON: {check_name: {status, summary, timestamp}}
-    needs_rebase BOOLEAN DEFAULT FALSE,
-    last_rebase_attempt_at DATETIME,
-    staging_url TEXT,
-    created_at DATETIME,
-    updated_at DATETIME
-);
-```
-
-### Auto-Migration
-
-The database auto-migrates on first access each process. `get_connection()` calls `ensure_schema_current()` which:
-
-1. Reads the current schema version from `schema_info` (using a raw connection to avoid recursion)
-2. Compares against the code's `SCHEMA_VERSION` constant
-3. If stale, runs `migrate_schema()` to apply incremental ALTER TABLE migrations
-4. Sets a module-level flag to skip subsequent checks within the same process
-
-This means `accept_completion()` and other DB functions work even when the running schema is behind the code — the first call auto-upgrades.
-
 ### Queue States
 
-The `queue` column holds one of these values:
+The `queue` field holds one of these values:
 
 | Queue | Description |
 |-------|-------------|
@@ -205,7 +167,7 @@ The `queue` column holds one of these values:
 incoming → claimed → provisional → done
 ```
 
-1. **incoming**: Task created via `create_task()`. File written to `queue/incoming/TASK-{id}.md`, DB row inserted.
+1. **incoming**: Task created via `create_task()`. File written to `queue/incoming/TASK-{id}.md`.
 2. **claimed**: Agent calls `claim_task(role_filter=..., agent_name=...)`. Atomically moves queue to `claimed`, sets `claimed_by` and `claimed_at`. Blocked tasks (non-null `blocked_by`) are skipped. Previously-rejected tasks are prioritized.
 3. **provisional**: Agent calls `submit_completion(task_path, commits_count, turns_used)`. File moves to `queue/provisional/`.
 4. **done**: Pre-check/recycler/auto-accept/gatekeeper/human calls `accept_completion()`. Moves to `queue/done/`, clears `claimed_by`, calls `_unblock_dependent_tasks()`.
@@ -241,11 +203,11 @@ After `max_rejections` (default 3) gatekeeper rejections, or `max_attempts_befor
 All queue transitions go through `update_task_queue()` which guarantees:
 - Moving to `done` always calls `_unblock_dependent_tasks()` to remove the completed task from other tasks' `blocked_by` lists
 - Moving to `done` always clears `claimed_by`
-- A `task_history` row is inserted for every transition
+- A task history entry is recorded for every transition
 
 ### Task Dependencies
 
-Dependencies are stored as comma-separated task IDs in `blocked_by`. When a task moves to `done`, `_unblock_dependent_tasks()` scans all tasks and removes the completed ID from their `blocked_by`. When all blockers are removed, the task becomes claimable.
+Dependencies are stored as comma-separated task IDs in `blocked_by`. When a task moves to `done`, `_unblock_dependent_tasks()` removes the completed ID from other tasks' `blocked_by`. When all blockers are removed, the task becomes claimable.
 
 The recycler also runs `reconcile_stale_blockers()` on each tick to catch any dependency that was missed.
 
@@ -255,20 +217,19 @@ The recycler also runs `reconcile_stale_blockers()` on each tick to catch any de
 
 ### Active Roles
 
-#### `implementer` (class: `ImplementerRole`)
-- **File:** `orchestrator/orchestrator/roles/implementer.py`
+#### `implementer` (scripts mode)
+- **Execution:** `prepare_task_directory()` + `invoke_claude()` in `scheduler.py`
 - **Claims from:** `incoming` queue, `role_filter='implement'`
 - **Worktree:** Yes (full git worktree with `node_modules`)
 - **Claude invocation:** Yes, `max_turns=100` (fresh), `max_turns=50` (continuation)
 - **Flow:**
-  1. Check for continuation work (task markers, `needs_continuation` queue, WIP branches)
-  2. If no continuation: `claim_task(role_filter='implement')`
-  3. Create feature branch `agent/{task_id}` from base branch
-  4. Invoke Claude with Read/Write/Edit/Glob/Grep/Bash/Skill tools
-  5. Claude implements, commits, tests
-  6. Count commits via `get_commit_count(worktree, since_ref=head_before)`
-  7. Create PR via `gh pr create`
-  8. `submit_completion()` to provisional queue
+  1. Scheduler claims task via `claim_task(role_filter='implement')`
+  2. `prepare_task_directory()` sets up worktree and feature branch `agent/{task_id}`
+  3. `invoke_claude()` spawns Claude with Read/Write/Edit/Glob/Grep/Bash/Skill tools
+  4. Claude implements, commits, tests
+  5. Count commits via `get_commit_count(worktree, since_ref=head_before)`
+  6. Create PR via `gh pr create`
+  7. `submit_completion()` to provisional queue
 - **Agents:** `impl-agent-1` (active), `impl-agent-2` (paused)
 
 #### `orchestrator_impl` (class: `OrchestratorImplRole`)
@@ -312,7 +273,7 @@ The recycler also runs `reconcile_stale_blockers()` on each tick to catch any de
   1. `claim_task(role_filter='breakdown', from_queue='breakdown')`
   2. Explore codebase to understand patterns, testing, files, integration points
   3. Generate structured JSON subtasks with dependencies
-  4. Write breakdown file to `.orchestrator/shared/breakdowns/`
+  4. Write breakdown file to `.octopoid/runtime/shared/breakdowns/`
   5. Human reviews and approves via `/approve-breakdown`
   6. `approve_breakdown()` creates individual tasks with dependency wiring
 - **Agent:** `breakdown-agent` (active)
@@ -346,12 +307,12 @@ The recycler also runs `reconcile_stale_blockers()` on each tick to catch any de
 - **Claims from:** N/A (processes tasks with `needs_rebase=TRUE`)
 - **Lightweight:** Yes (no Claude invocation; uses review worktree for git operations)
 - **Flow:**
-  1. `db.get_tasks_needing_rebase()`
+  1. Get tasks needing rebase
   2. Skip `orchestrator_impl` tasks (v1 limitation)
   3. Find task branch via `git branch -r --list origin/*{task_id}*`
   4. In review worktree: checkout branch, rebase onto `origin/main`
   5. Run `npm run test:run`
-  6. If pass: `git push --force-with-lease`, `db.clear_rebase_flag()`
+  6. If pass: `git push --force-with-lease`, clear rebase flag
   7. If fail: add note to task, leave `needs_rebase` set for human
 - **Trigger:** Scheduler's `check_stale_branches()` marks tasks with `needs_rebase=TRUE` when their branch is 5+ commits behind `origin/main`
 
@@ -365,7 +326,7 @@ The recycler also runs `reconcile_stale_blockers()` on each tick to catch any de
   2. Set up review worktree submodule with clean `origin/main`
   3. Cherry-pick agent commits onto current main (with conflict detection)
   4. Run `pytest tests/ -v --tb=short`
-  5. `db.record_check_result(task_id, check_name, 'pass'|'fail', summary)`
+  5. Record check result (task_id, check_name, 'pass'|'fail', summary)
   6. On all checks complete: reject tasks with any failed check via `review_reject_task()`
 - **Agent:** `gk-testing-octopoid` (active), others (paused)
 
@@ -436,18 +397,18 @@ create_task(role='orchestrator_impl', branch='main')
 - Boxen worktree is on `main`; all work in `worktree/orchestrator/` submodule
 - Submodule feature branch: `orch/{task_id}`
 - Main repo tooling branch: `tooling/{task_id}` (push-to-origin, never touches human checkout)
-- Tests: `pytest tests/ -v` (in submodule, using `.orchestrator/venv/`)
+- Tests: `pytest tests/ -v` (in submodule, using `.octopoid/venv/`)
 - No PR in main repo
 - Self-merge on success; `approve_orchestrator_task.py` for manual approval
 - Default check: `gk-testing-octopoid` (auto-added by `create_task()` for `orchestrator_impl` role)
 - **Project-aware:** tasks with `project_id` merge to project branch, not main
 
-**Fallback approval script:** `.orchestrator/scripts/approve_orchestrator_task.py <task-id>`
+**Fallback approval script:** `.octopoid/scripts/approve_orchestrator_task.py <task-id>`
 - Auto-detects agent branch
 - Rebases onto origin/main
 - **Baseline test comparison:** runs pytest on origin/main first, then on the rebased branch. Only NEW failures (not present in the baseline) block approval. Pre-existing failures are reported but tolerated.
 - Pushes submodule to origin/main via refspec
-- Calls `accept_in_db()` which uses `accept_completion()` with exception handling — all error paths use `update_task_queue()` so raw SQL is never needed
+- Calls `accept_completion()` with exception handling — all error paths use `update_task_queue()`
 
 ---
 
@@ -496,7 +457,7 @@ Tasks can have a `checks` column (comma-separated list of check names). The chec
 - `pytest-submodule`: cherry-pick agent commits, run pytest
 - `gk-testing-octopoid`: rebase + pytest with divergence detection
 
-Results stored in `check_results` JSON column: `{check_name: {status: 'pass'|'fail', summary: str, timestamp: str}}`.
+Results stored in `check_results` JSON field: `{check_name: {status: 'pass'|'fail', summary: str, timestamp: str}}`.
 
 ### QA Gatekeeper (gk-qa)
 
@@ -541,11 +502,11 @@ If any step fails, falls back to `submit_completion()` for manual review.
 When `accept_completion()` detects that all tasks in a project are done
 (via `check_project_completion()`), it calls `merge_project_to_main()`:
 
-1. Look up project branch from DB
+1. Look up project branch
 2. In the main checkout submodule: fetch, checkout project branch, merge to main (ff-only, fallback to regular merge)
 3. Push submodule main to origin
 4. Update submodule ref in main repo, commit, push
-5. Set project status to `"complete"` in DB
+5. Set project status to `"complete"`
 
 This ensures the submodule ref on `main` is only updated once — when the entire
 project is finished — rather than after each individual task.
@@ -611,9 +572,9 @@ There are **three distinct rejection counters** on each task:
 
 ### Dashboard Column Mapping
 
-The TUI dashboard (`octopoid-dash.py`) maps DB state to columns:
+The TUI dashboard (`octopoid-dash.py`) maps task state to columns:
 
-| Column | DB state |
+| Column | Task state |
 |--------|----------|
 | QUEUED | `incoming` (unblocked) |
 | IN PROGRESS | `claimed` |
@@ -645,8 +606,8 @@ Each git worktree gets its OWN submodule object store under `.git/worktrees/{nam
 
 | Worktree | Location | Purpose |
 |----------|----------|---------|
-| Per-agent | `.orchestrator/agents/{name}/worktree/` | Isolated working copy for agent code changes |
-| Review | `.orchestrator/agents/review-worktree/` | Shared worktree for human review and automated checks (has own `node_modules`) |
+| Per-agent | `.octopoid/runtime/agents/{name}/worktree/` | Isolated working copy for agent code changes |
+| Review | `.octopoid/runtime/agents/review-worktree/` | Shared worktree for human review and automated checks (has own `node_modules`) |
 
 Worktrees are created/updated by `ensure_worktree()` in `git_utils.py`. Both new and existing worktrees are always based on `origin/{base_branch}` (after a fetch), not the local branch. This prevents stale state when the human's local main is behind origin. Similarly, `create_feature_branch()` detaches to `origin/{base_branch}` before creating the agent branch. The scheduler peeks at the next task's branch via `peek_task_branch()` to create the worktree on the right base branch, saving the agent from wasting turns on `git checkout`.
 
@@ -662,7 +623,7 @@ Worktrees are created/updated by `ensure_worktree()` in `git_utils.py`. Both new
 
 When reviewing orchestrator_impl work, commits can exist in three places with separate object stores:
 
-1. **Agent worktree submodule:** `.orchestrator/agents/{agent}/worktree/orchestrator/` (branch `orch/{task-id}`)
+1. **Agent worktree submodule:** `.octopoid/runtime/agents/{agent}/worktree/orchestrator/` (branch `orch/{task-id}`)
 2. **Main checkout submodule:** `orchestrator/` (branch `main`)
 3. **Remote:** `origin/main` or `origin/orch/{task-id}` in the submodule
 
@@ -674,13 +635,10 @@ A commit visible in one location is invisible from the others via `git log` or `
 
 ### agents.yaml
 
-Located at `.orchestrator/agents.yaml`. Top-level keys:
+Located at `.octopoid/agents.yaml`. Top-level keys:
 
 ```yaml
 agents:              # List of agent definitions
-database:
-  enabled: true      # SQLite mode (required for most features)
-  path: state.db     # Relative to .orchestrator/
 model: proposal      # Orchestrator model type (task or proposal)
 queue_limits:
   max_incoming: 20   # Max tasks in incoming queue
@@ -760,7 +718,7 @@ DEFAULT_PRE_CHECK_CONFIG = {
 | Stage | Failure | Response | Function |
 |-------|---------|----------|----------|
 | **Claiming** | No tasks available | Agent exits cleanly (exit 0) | `claim_task()` returns `None` |
-| **Claiming** | Task blocked by dependencies | Skipped, next task tried | `blocked_by IS NOT NULL` check in `claim_task()` |
+| **Claiming** | Task blocked by dependencies | Skipped, next task tried | `blocked_by` check in `claim_task()` |
 | **Implementation** | Claude exits non-zero | Task failed or marked for continuation | `fail_task()` or `mark_needs_continuation()` |
 | **Implementation** | No changes made | Task failed | `fail_task(task_path, 'Claude completed without making any changes')` |
 | **Implementation** | PR creation fails | Mark for continuation | `mark_needs_continuation(reason='pr_creation_failed')` |
@@ -782,11 +740,11 @@ DEFAULT_PRE_CHECK_CONFIG = {
 - **`recycled` queue:** Burned-out tasks. New breakdown task created automatically.
 - **`escalated` queue:** Max rejections or max attempts exceeded. Requires human attention.
 - **Human inbox:** Messages sent via `message_utils.warning()` for critical escalations.
-- **Task notes:** Rebaser and other agents add notes to `.orchestrator/shared/notes/TASK-{id}.md` when they encounter issues.
+- **Task notes:** Rebaser and other agents add notes to `.octopoid/runtime/shared/notes/TASK-{id}.md` when they encounter issues.
 
 ### Monitoring
 
-The status script (`.orchestrator/venv/bin/python .orchestrator/scripts/status.py`) provides a single-page overview of:
+The status script (`.octopoid/venv/bin/python .octopoid/scripts/status.py`) provides a single-page overview of:
 - Scheduler health (last run, process status)
 - Queue state (counts per queue)
 - Agent status (running, paused, blocked, last exit)

@@ -76,12 +76,12 @@ PROP_ID="PROP-abc12345"
 TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 # Move to deferred directory
-mkdir -p .orchestrator/shared/proposals/deferred
-mv ".orchestrator/shared/proposals/active/${PROP_ID}.md" \
-   ".orchestrator/shared/proposals/deferred/${PROP_ID}.md"
+mkdir -p .octopoid/runtime/shared/proposals/deferred
+mv ".octopoid/runtime/shared/proposals/active/${PROP_ID}.md" \
+   ".octopoid/runtime/shared/proposals/deferred/${PROP_ID}.md"
 
 # Append deferral info
-cat >> ".orchestrator/shared/proposals/deferred/${PROP_ID}.md" << EOF
+cat >> ".octopoid/runtime/shared/proposals/deferred/${PROP_ID}.md" << EOF
 
 ---
 ## Deferral
@@ -107,8 +107,8 @@ To move a deferred proposal back to active:
 ```bash
 PROP_ID="PROP-abc12345"
 
-mv ".orchestrator/shared/proposals/deferred/${PROP_ID}.md" \
-   ".orchestrator/shared/proposals/active/${PROP_ID}.md"
+mv ".octopoid/runtime/shared/proposals/deferred/${PROP_ID}.md" \
+   ".octopoid/runtime/shared/proposals/active/${PROP_ID}.md"
 ```
 
 This moves it back to `proposals/active/` for re-evaluation.
