@@ -86,7 +86,7 @@ def check_claimed_tasks(max_claimed: int = None) -> Tuple[bool, str]:
     """
     if max_claimed is None:
         limits = get_queue_limits()
-        max_claimed = limits.get("max_claimed", 5)
+        max_claimed = limits.get("max_claimed", 1)
 
     count = queue_utils.count_queue("claimed")
 
