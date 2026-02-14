@@ -17,6 +17,18 @@ You are working on **Octopoid**, a distributed AI orchestration system for softw
 
 3. **Comment on the GitHub issue** — If this task originated from a GitHub issue (look for `github_issue` in the task frontmatter, or a `[GH-<number>]` prefix in the title), comment on the issue when you're done. Use `gh issue comment <number> --body "..."` and describe what you changed and why. Keep it brief but specific — this is how the issue reporter knows what happened.
 
+## MANDATORY: Use the Provided Scripts
+
+Never run `gh pr create`, `gh pr merge`, `git push`, or equivalent commands directly. Always use the scripts in `../scripts/`:
+
+- **`../scripts/submit-pr`** — Push and create a PR (handles base branch targeting, evidence recording, result tracking)
+- **`../scripts/run-tests`** — Run the test suite and record results
+- **`../scripts/finish`** — Mark the task as complete
+- **`../scripts/fail <reason>`** — Mark the task as failed
+- **`../scripts/record-progress <note>`** — Save progress context
+
+These scripts read environment variables (like `BASE_BRANCH`) that ensure PRs target the correct branch. Bypassing them causes PRs to target the wrong branch and skips evidence recording.
+
 ## Code Conventions
 
 - **Python:** Use type hints on all function signatures. Follow existing patterns in the file you're editing.
