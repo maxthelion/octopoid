@@ -888,10 +888,170 @@ def invoke_claude(task_dir: Path, agent_config: dict) -> int:
     return process.pid
 
 
+def _count_commits(task_dir: Path, result: dict) -> int:
+    """Count commits in the worktree relative to base branch.
+
+    Args:
+        task_dir: Path to the task directory
+        result: Result dictionary (may contain base_branch)
+
+    Returns:
+        Number of commits, or 0 if unable to count
+    """
+    worktree = task_dir / "worktree"
+    if not worktree.exists():
+        return 0
+
+    try:
+        base = result.get("base_branch", get_main_branch())
+        count_result = subprocess.run(
+            ["git", "rev-list", "--count", f"origin/{base}..HEAD"],
+            cwd=worktree, capture_output=True, text=True, check=False,
+        )
+        if count_result.returncode == 0:
+            return int(count_result.stdout.strip())
+    except (ValueError, subprocess.SubprocessError):
+        pass
+
+    return 0
+
+
+def _update_pr_metadata(sdk, task_id: str, result: dict) -> None:
+    """Update PR metadata (URL and number) if present in result.
+
+    Args:
+        sdk: Octopoid SDK instance
+        task_id: Task identifier
+        result: Result dictionary (may contain pr_url, pr_number)
+    """
+    pr_url = result.get("pr_url")
+    pr_number = result.get("pr_number")
+
+    if pr_url or pr_number:
+        update_kwargs = {}
+        if pr_url:
+            update_kwargs["pr_url"] = pr_url
+        if pr_number:
+            update_kwargs["pr_number"] = pr_number
+        if update_kwargs:
+            sdk.tasks.update(task_id, **update_kwargs)
+
+
+def _handle_submit_outcome(sdk, task_id: str, task_dir: Path, result: dict, current_queue: str) -> None:
+    """Handle submitted/done outcome based on current task state.
+
+    Args:
+        sdk: Octopoid SDK instance
+        task_id: Task identifier
+        task_dir: Path to the task directory
+        result: Result dictionary
+        current_queue: Current task queue
+    """
+    if current_queue == "claimed":
+        # Normal case — submit to move to provisional
+        commits = _count_commits(task_dir, result)
+        try:
+            sdk.tasks.submit(
+                task_id=task_id,
+                commits_count=commits,
+                turns_used=0,
+            )
+            _update_pr_metadata(sdk, task_id, result)
+            debug_log(f"Task {task_id}: submitted (claimed → provisional)")
+        except Exception as e:
+            # Fallback: if submit fails, manually move to provisional
+            debug_log(f"Task {task_id}: submit failed ({e}), falling back to provisional update")
+            sdk.tasks.update(task_id, queue="provisional")
+            _update_pr_metadata(sdk, task_id, result)
+
+    elif current_queue == "provisional":
+        # Already submitted (submit-pr race) — just update PR metadata
+        debug_log(f"Task {task_id}: already provisional, updating PR metadata only")
+        _update_pr_metadata(sdk, task_id, result)
+
+    elif current_queue == "incoming":
+        # Lease monitor requeued — save PR metadata, log
+        debug_log(f"Task {task_id}: requeued by lease monitor, saving PR metadata")
+        _update_pr_metadata(sdk, task_id, result)
+
+    elif current_queue in ("done", "failed"):
+        # Terminal state — skip
+        debug_log(f"Task {task_id}: already in terminal state {current_queue}, skipping")
+
+    else:
+        # Unknown queue
+        debug_log(f"Task {task_id}: unexpected queue {current_queue} for submit outcome")
+
+
+def _handle_fail_outcome(sdk, task_id: str, reason: str, current_queue: str) -> None:
+    """Handle failed outcome based on current task state.
+
+    Args:
+        sdk: Octopoid SDK instance
+        task_id: Task identifier
+        reason: Failure reason
+        current_queue: Current task queue
+    """
+    if current_queue == "claimed":
+        # Normal case — update to failed
+        sdk.tasks.update(task_id, queue="failed")
+        debug_log(f"Task {task_id}: failed (claimed → failed): {reason}")
+
+    elif current_queue == "provisional":
+        # Submit took precedence — keep provisional
+        debug_log(f"Task {task_id}: already provisional, ignoring fail outcome")
+
+    elif current_queue == "incoming":
+        # Lease monitor requeued — already being retried
+        debug_log(f"Task {task_id}: requeued by lease monitor, ignoring fail outcome")
+
+    elif current_queue in ("done", "failed"):
+        # Terminal state — skip
+        debug_log(f"Task {task_id}: already in terminal state {current_queue}, skipping")
+
+    else:
+        # Unknown queue
+        debug_log(f"Task {task_id}: unexpected queue {current_queue} for fail outcome")
+
+
+def _handle_continuation_outcome(sdk, task_id: str, agent_name: str, current_queue: str) -> None:
+    """Handle needs_continuation outcome based on current task state.
+
+    Args:
+        sdk: Octopoid SDK instance
+        task_id: Task identifier
+        agent_name: Name of the agent
+        current_queue: Current task queue
+    """
+    if current_queue == "claimed":
+        # Normal case — update to needs_continuation
+        sdk.tasks.update(task_id, queue="needs_continuation")
+        debug_log(f"Task {task_id}: needs continuation (claimed → needs_continuation) by {agent_name}")
+
+    elif current_queue == "provisional":
+        # Submit took precedence — skip continuation
+        debug_log(f"Task {task_id}: already provisional, ignoring continuation outcome")
+
+    elif current_queue == "incoming":
+        # Lease monitor requeued — already being retried
+        debug_log(f"Task {task_id}: requeued by lease monitor, ignoring continuation outcome")
+
+    elif current_queue in ("done", "failed"):
+        # Terminal state — skip
+        debug_log(f"Task {task_id}: already in terminal state {current_queue}, skipping")
+
+    else:
+        # Unknown queue
+        debug_log(f"Task {task_id}: unexpected queue {current_queue} for continuation outcome")
+
+
 def handle_agent_result(task_id: str, agent_name: str, task_dir: Path) -> None:
     """Handle the result of a script-based agent run.
 
-    Reads result.json and transitions the task accordingly.
+    Reads result.json and transitions the task accordingly using a state-first pattern:
+    1. Read result.json
+    2. Fetch current task state from server
+    3. Switch on current_queue × outcome to handle idempotently
 
     Args:
         task_id: Task identifier
@@ -923,63 +1083,34 @@ def handle_agent_result(task_id: str, agent_name: str, task_dir: Path) -> None:
     try:
         sdk = queue_utils.get_sdk()
 
-        if outcome == "submitted":
-            # Count commits
-            worktree = task_dir / "worktree"
-            commits = 0
-            if worktree.exists():
-                try:
-                    base = result.get("base_branch", get_main_branch())
-                    count_result = subprocess.run(
-                        ["git", "rev-list", "--count", f"origin/{base}..HEAD"],
-                        cwd=worktree, capture_output=True, text=True, check=False,
-                    )
-                    if count_result.returncode == 0:
-                        commits = int(count_result.stdout.strip())
-                except (ValueError, subprocess.SubprocessError):
-                    pass
+        # Fetch current task state from server (state-first pattern)
+        task = sdk.tasks.get(task_id)
+        if not task:
+            debug_log(f"Task {task_id}: not found on server, skipping result handling")
+            return
 
-            sdk.tasks.submit(
-                task_id=task_id,
-                commits_count=commits,
-                turns_used=0,
-            )
+        current_queue = task.get("queue", "unknown")
+        debug_log(f"Task {task_id}: current queue = {current_queue}, outcome = {outcome}")
 
-            # Update PR info if available
-            pr_url = result.get("pr_url")
-            pr_number = result.get("pr_number")
-            if pr_url or pr_number:
-                update_kwargs = {}
-                if pr_url:
-                    update_kwargs["pr_url"] = pr_url
-                if pr_number:
-                    update_kwargs["pr_number"] = pr_number
-                if update_kwargs:
-                    sdk.tasks.update(task_id, **update_kwargs)
+        # Switch on outcome and handle based on current state
+        if outcome in ("submitted", "done"):
+            _handle_submit_outcome(sdk, task_id, task_dir, result, current_queue)
 
-        elif outcome == "done":
-            sdk.tasks.submit(
-                task_id=task_id,
-                commits_count=0,
-                turns_used=0,
-            )
-
-        elif outcome == "failed":
+        elif outcome == "failed" or outcome == "error":
             reason = result.get("reason", "Agent reported failure")
-            queue_utils.fail_task(task_id, reason=reason)
+            _handle_fail_outcome(sdk, task_id, reason, current_queue)
 
         elif outcome == "needs_continuation":
-            queue_utils.mark_needs_continuation(task_id, agent_name=agent_name)
+            _handle_continuation_outcome(sdk, task_id, agent_name, current_queue)
 
         else:
-            queue_utils.fail_task(task_id, reason=f"Unknown outcome: {outcome}")
+            # Unknown outcome
+            debug_log(f"Task {task_id}: unknown outcome {outcome}, treating as failure")
+            _handle_fail_outcome(sdk, task_id, f"Unknown outcome: {outcome}", current_queue)
 
     except Exception as e:
         debug_log(f"Error handling result for {task_id}: {e}")
-        try:
-            queue_utils.fail_task(task_id, reason=f"Result handling error: {e}")
-        except Exception:
-            pass
+        # Don't try to fail the task here — let lease monitor handle recovery
 
 
 def assign_qa_checks() -> None:
