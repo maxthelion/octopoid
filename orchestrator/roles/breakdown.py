@@ -43,6 +43,21 @@ class BreakdownRole(BaseRole):
         self.current_task_id = task_id
         self.log(f"Claimed breakdown task {task_id}: {task_title}")
 
+        # Check breakdown depth to prevent infinite re-breakdown loops
+        breakdown_depth = task.get("breakdown_depth", 0)
+        max_breakdown_depth = self.config.get("agents", {}).get("max_breakdown_depth", 1)
+
+        self.log(f"Breakdown depth: {breakdown_depth}/{max_breakdown_depth}")
+
+        if breakdown_depth >= max_breakdown_depth:
+            self.log(f"Task at max breakdown depth ({breakdown_depth}), rejecting for human review")
+            fail_task(
+                task_path,
+                f"Max breakdown depth ({max_breakdown_depth}) reached. "
+                f"This task requires human decomposition to avoid infinite re-breakdown loops."
+            )
+            return 0
+
         # Get project info if this is part of a project
         project = None
         if project_id:
@@ -233,6 +248,7 @@ Output ONLY the JSON array:
                 task_title=task_title,
                 branch=task.get("branch"),
                 exploration_findings=exploration_output,
+                parent_breakdown_depth=task.get("breakdown_depth", 0),
             )
 
             # Complete the breakdown task
@@ -320,6 +336,7 @@ Output ONLY the JSON array:
         task_title: str,
         branch: str | None,
         exploration_findings: str = "",
+        parent_breakdown_depth: int = 0,
     ) -> Path:
         """Write breakdown to a markdown file for human review.
 
@@ -330,6 +347,7 @@ Output ONLY the JSON array:
             task_title: Original breakdown task title
             branch: Branch to use for tasks
             exploration_findings: Output from exploration phase
+            parent_breakdown_depth: Breakdown depth of the parent task
 
         Returns:
             Path to the created breakdown file
@@ -363,6 +381,7 @@ Output ONLY the JSON array:
             lines.append(f"**Branch:** {branch}")
         lines.append(f"**Created:** {datetime.now().isoformat()}")
         lines.append(f"**Status:** pending_review")
+        lines.append(f"**Parent Breakdown Depth:** {parent_breakdown_depth}")
         lines.append("")
 
         # Exploration findings (collapsible)

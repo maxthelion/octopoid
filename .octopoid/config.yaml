@@ -16,6 +16,7 @@ repo:
 # Agent configuration
 agents:
   max_concurrent: 3
+  max_breakdown_depth: 1  # Maximum levels of task re-breakdown
 
 # Hooks — lifecycle actions run during task processing
 # Default: before_submit: [create_pr]

@@ -358,6 +358,7 @@ def parse_task_file(task_path: Path) -> dict[str, Any] | None:
     created_by_match = re.search(r"^CREATED_BY:\s*(.+)$", content, re.MULTILINE)
     blocked_by_match = re.search(r"^BLOCKED_BY:\s*(.+)$", content, re.MULTILINE)
     checks_match = re.search(r"^CHECKS:\s*(.+)$", content, re.MULTILINE)
+    breakdown_depth_match = re.search(r"^BREAKDOWN_DEPTH:\s*(\d+)$", content, re.MULTILINE)
 
     # Parse checks into a list
     checks: list[str] = []
@@ -391,6 +392,7 @@ def parse_task_file(task_path: Path) -> dict[str, Any] | None:
         "created_by": created_by_match.group(1).strip() if created_by_match else None,
         "blocked_by": blocked_by_match.group(1).strip() if blocked_by_match else None,
         "checks": checks,
+        "breakdown_depth": int(breakdown_depth_match.group(1)) if breakdown_depth_match else 0,
         "skip_pr": parse_bool(skip_pr_match),
         "expedite": parse_bool(expedite_match),
         "wip_branch": wip_branch_match.group(1).strip() if wip_branch_match else None,
@@ -1401,6 +1403,7 @@ def create_task(
     project_id: str | None = None,
     queue: str = "incoming",
     checks: list[str] | None = None,
+    breakdown_depth: int = 0,
 ) -> Path:
     """Create a new task file in the specified queue.
 
@@ -1419,6 +1422,7 @@ def create_task(
         queue: Queue to create in (default: incoming, can be 'breakdown')
         checks: Optional list of check names that must pass before human review
             (e.g. ['gk-testing-octopoid'])
+        breakdown_depth: Number of breakdown levels deep (0 = original task)
 
     Returns:
         Path to created task file
@@ -1449,6 +1453,7 @@ def create_task(
     blocked_by_line = f"BLOCKED_BY: {blocked_by}\n" if blocked_by else ""
     project_line = f"PROJECT: {project_id}\n" if project_id else ""
     checks_line = f"CHECKS: {','.join(checks)}\n" if checks else ""
+    breakdown_depth_line = f"BREAKDOWN_DEPTH: {breakdown_depth}\n" if breakdown_depth > 0 else ""
 
     # All task files go in one directory — API owns the queue state
     task_path = get_tasks_file_dir() / filename
@@ -1460,7 +1465,7 @@ PRIORITY: {priority}
 BRANCH: {branch}
 CREATED: {datetime.now().isoformat()}
 CREATED_BY: {created_by}
-{project_line}{blocked_by_line}{checks_line}
+{project_line}{blocked_by_line}{checks_line}{breakdown_depth_line}
 ## Context
 {context}
 
@@ -1502,6 +1507,7 @@ CREATED_BY: {created_by}
                 "blocked_by": blocked_by,
                 "project_id": project_id,
                 "checks": checks,
+                "breakdown_depth": breakdown_depth,
             }
         )
     except Exception as e:
@@ -2049,10 +2055,12 @@ def approve_breakdown(identifier: str) -> dict[str, Any]:
     project_match = re.search(r'\*\*Project:\*\*\s*(\S+)', content)
     branch_match = re.search(r'\*\*Branch:\*\*\s*(\S+)', content)
     status_match = re.search(r'\*\*Status:\*\*\s*(\S+)', content)
+    parent_depth_match = re.search(r'\*\*Parent Breakdown Depth:\*\*\s*(\d+)', content)
 
     project_id = project_match.group(1) if project_match else None
     branch = branch_match.group(1) if branch_match else "main"
     status = status_match.group(1) if status_match else "unknown"
+    parent_breakdown_depth = int(parent_depth_match.group(1)) if parent_depth_match else 0
 
     if status != "pending_review":
         raise ValueError(f"Breakdown is not pending review (status: {status})")
@@ -2101,6 +2109,7 @@ def approve_breakdown(identifier: str) -> dict[str, Any]:
             blocked_by=blocked_by,
             project_id=project_id,
             queue="incoming",
+            breakdown_depth=parent_breakdown_depth + 1,
         )
 
         # Extract task ID from path
