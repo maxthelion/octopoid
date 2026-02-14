@@ -27,6 +27,7 @@ from .config import (
 )
 from .git_utils import cleanup_task_worktree
 from .lock_utils import locked
+from .task_logger import get_task_logger
 
 # Global SDK instance (lazy-initialized)
 _sdk: Optional[Any] = None
@@ -484,6 +485,17 @@ def claim_task(
         if parsed:
             task["content"] = parsed["content"]
 
+    # Log the claim
+    task_id = task.get("id")
+    if task_id:
+        logger = get_task_logger(task_id)
+        attempt = task.get("attempt_count", 0)
+        logger.log_claimed(
+            claimed_by=orchestrator_id,
+            agent=agent_name or "unknown",
+            attempt=attempt,
+        )
+
     return task
 
 
@@ -661,6 +673,13 @@ def submit_completion(
             execution_notes=execution_notes,
         )
 
+        # Log the submission
+        logger = get_task_logger(task_id)
+        logger.log_submitted(
+            commits=commits_count,
+            turns=turns_used or 0,
+        )
+
         # Append submission metadata to local file for human readability
         with open(task_path, "a") as f:
             f.write(f"\nSUBMITTED_AT: {datetime.now().isoformat()}\n")
@@ -706,6 +725,10 @@ def accept_completion(
         # Accept via API (moves to done queue)
         sdk = get_sdk()
         sdk.tasks.accept(task_id=task_id, accepted_by=accepted_by)
+
+        # Log the acceptance
+        logger = get_task_logger(task_id)
+        logger.log_accepted(accepted_by=accepted_by or "unknown")
 
         # Append acceptance metadata to local file
         if task_path.exists():
@@ -765,6 +788,13 @@ def reject_completion(
         )
 
         attempt_count = updated_task.get("attempt_count", 0)
+
+        # Log the rejection
+        logger = get_task_logger(task_id)
+        logger.log_rejected(
+            reason=reason,
+            rejected_by=accepted_by or "unknown",
+        )
 
         # Append rejection metadata to local file
         with open(task_path, "a") as f:
@@ -907,6 +937,20 @@ def review_reject_task(
                     reason=feedback[:500],
                     rejected_by=rejected_by,
                 )
+
+            # Log the review rejection
+            logger = get_task_logger(task_id)
+            if escalated:
+                logger.log_requeued(
+                    from_queue="provisional",
+                    to_queue="escalated",
+                    reason=f"Escalated after {rejection_count} rejections",
+                )
+            else:
+                logger.log_rejected(
+                    reason=feedback[:200] + ("..." if len(feedback) > 200 else ""),
+                    rejected_by=rejected_by or "reviewer",
+                )
         except Exception as e:
             print(f"Warning: Failed to update task {task_id} via API: {e}")
 
@@ -1030,11 +1074,16 @@ def fail_task(task_path: Path | str, error: str) -> Path:
         sdk = get_sdk()
         sdk.tasks.update(task_id, queue="failed")
 
+        # Log the failure
+        logger = get_task_logger(task_id)
+        error_summary = error[:200] + ("..." if len(error) > 200 else "")
+        logger.log_failed(error=error_summary)
+
         # Append error info to local file (truncated)
-        error_summary = error[:500] + ("..." if len(error) > 500 else "")
+        error_summary_long = error[:500] + ("..." if len(error) > 500 else "")
         with open(task_path, "a") as f:
             f.write(f"\nFAILED_AT: {datetime.now().isoformat()}\n")
-            f.write(f"\n## Error\n```\n{error_summary}\n```\n")
+            f.write(f"\n## Error\n```\n{error_summary_long}\n```\n")
 
         # Clean up ephemeral task worktree
         cleanup_task_worktree(task_id, push_commits=False)
@@ -1514,6 +1563,15 @@ CREATED_BY: {created_by}
         print(f"Warning: Failed to register task with API: {e}")
         # Still return task_path since local file was created
         # This allows offline task creation
+
+    # Log the task creation
+    logger = get_task_logger(task_id)
+    logger.log_created(
+        created_by=created_by,
+        priority=priority,
+        role=role,
+        queue=queue,
+    )
 
     return task_path
 

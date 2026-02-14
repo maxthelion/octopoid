@@ -11,6 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `submit-pr` script now calls server submit endpoint directly, ensuring tasks transition from `claimed` to `provisional` even if agents don't exit immediately
 
 ### Added
+- Per-task log files for lifecycle tracking (GH-3)
+  - New `TaskLogger` class that creates persistent `.octopoid/logs/tasks/TASK-{id}.log` files
+  - Logs all state transitions: CREATED, CLAIMED, SUBMITTED, ACCEPTED, REJECTED, FAILED, REQUEUED
+  - Survives task completion for audit trail and debugging
+  - Status script (`octopoid-status.py`) enhanced to show claim count and task log path (visible with `--verbose`)
+  - Task detail view (`--task <id>`) shows full event history from task log
+  - Comprehensive test coverage (17 tests in `tests/test_task_logger.py`)
 - Breakdown depth tracking to prevent infinite re-breakdown loops (GH-10)
   - New `breakdown_depth` field on tasks (defaults to 0)
   - Configurable `max_breakdown_depth` in agents config (defaults to 1)
