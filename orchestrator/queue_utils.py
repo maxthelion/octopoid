@@ -464,12 +464,15 @@ def claim_task(
 
     # Claim via API (atomic operation with lease)
     # Server enforces max_claimed to prevent races between agents
+    # Use 1-hour lease — agents typically take 5-30 minutes and there's
+    # no lease renewal mechanism yet. The server default (5 min) is too short.
     task = sdk.tasks.claim(
         orchestrator_id=orchestrator_id,
         agent_name=agent_name or "unknown",
         role_filter=role_filter,
         type_filter=type_filter,
         max_claimed=limits.get("max_claimed"),
+        lease_duration_seconds=3600,
     )
 
     if task is None:
