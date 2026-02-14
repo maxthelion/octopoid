@@ -29,6 +29,7 @@ from orchestrator.config import (
     is_system_paused,
 )
 from orchestrator.queue_utils import count_open_prs, get_sdk
+from orchestrator.task_logger import get_task_logger
 
 VERBOSE = "--verbose" in sys.argv or "-v" in sys.argv
 
@@ -283,6 +284,21 @@ def print_queue_status() -> None:
             if health:
                 line += f"  {' '.join(health)}"
             print(line)
+
+            # Show claim count and task log path for claimed/provisional tasks
+            if VERBOSE and queue_name in ("claimed", "provisional"):
+                logger = get_task_logger(tid)
+                claim_count = logger.get_claim_count()
+                if claim_count > 0:
+                    log_rel = logger.log_path.relative_to(get_orchestrator_dir())
+                    print(f"      Claims: {claim_count} | Log: {log_rel}")
+                    if claim_count > 1:
+                        # Show claim history
+                        events = logger.get_events("CLAIMED")
+                        if events:
+                            first = events[0].get("timestamp", "?")
+                            last = events[-1].get("timestamp", "?")
+                            print(f"      First claim: {ago(first)} | Last claim: {ago(last)}")
 
 
 def print_agent_status() -> None:
@@ -576,6 +592,29 @@ def print_task_detail(task_id: str) -> None:
         print(f"  in review for: {duration_str(submitted)}")
     if created and completed:
         print(f"  total time:    {duration_str(created, completed)}")
+
+    # Task log and claim history
+    subheader("Task Log")
+    logger = get_task_logger(task_id)
+    if logger.log_path.exists():
+        log_rel = logger.log_path.relative_to(get_orchestrator_dir())
+        print(f"  Log file:      {log_rel}")
+
+        # Show all events
+        events = logger.get_events()
+        if events:
+            print(f"  Total events:  {len(events)}")
+            print(f"\n  Event History:")
+            for event in events:
+                ts = event.get("timestamp", "?")
+                event_type = event.get("event", "?")
+                fields = {k: v for k, v in event.items() if k not in ("timestamp", "event")}
+                fields_str = " ".join(f"{k}={v}" for k, v in fields.items())
+                print(f"    [{ago(ts)}] {event_type:<12} {fields_str}")
+        else:
+            print(f"  No events logged yet")
+    else:
+        print(f"  Log file does not exist yet")
 
 
 # -- Error Scanning --------------------------------------------------------
