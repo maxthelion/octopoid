@@ -13,11 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Command whitelist for IDE permission systems (GH-7)
   - New `commands:` section in config.yaml to declare git, npm, and file operations upfront
-  - `octopoid permissions` CLI command to export whitelists in IDE-specific formats
-  - Support for Claude Code, Cursor, and Windsurf formats
+  - `octopoid permissions` CLI command to export whitelists in Claude Code format
   - Default command manifest covering typical development operations
   - `--list` flag to show configured permissions summary
-  - Documentation in README on configuring and exporting permissions
+  - Comprehensive unit tests for permissions module (19 tests)
 - Breakdown depth tracking to prevent infinite re-breakdown loops (GH-10)
   - New `breakdown_depth` field on tasks (defaults to 0)
   - Configurable `max_breakdown_depth` in agents config (defaults to 1)

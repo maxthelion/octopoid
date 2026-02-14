@@ -12,7 +12,7 @@ import yaml
 
 from orchestrator.config import find_parent_project
 
-PermissionFormat = Literal["claude-code", "cursor", "windsurf"]
+PermissionFormat = Literal["claude-code"]
 
 
 def load_commands_config() -> dict[str, Any]:
@@ -158,39 +158,13 @@ def export_claude_code(commands: dict[str, Any]) -> dict[str, Any]:
     return {"allowedCommands": allowed_commands}
 
 
-def export_cursor(commands: dict[str, Any]) -> dict[str, Any]:
-    """Export commands in Cursor format.
-
-    Args:
-        commands: Command whitelist configuration
-
-    Returns:
-        Dictionary suitable for Cursor configuration
-    """
-    # Cursor uses similar format to Claude Code for now
-    # This can be customized if Cursor has different requirements
-    return export_claude_code(commands)
-
-
-def export_windsurf(commands: dict[str, Any]) -> dict[str, Any]:
-    """Export commands in Windsurf format.
-
-    Args:
-        commands: Command whitelist configuration
-
-    Returns:
-        Dictionary suitable for Windsurf configuration
-    """
-    # Windsurf uses similar format to Claude Code for now
-    # This can be customized if Windsurf has different requirements
-    return export_claude_code(commands)
 
 
 def export_permissions(format: PermissionFormat = "claude-code") -> str:
     """Export command whitelist in the specified IDE format.
 
     Args:
-        format: Target IDE format (claude-code, cursor, windsurf)
+        format: Target IDE format (currently only claude-code is supported)
 
     Returns:
         JSON string with permissions configuration
@@ -199,10 +173,6 @@ def export_permissions(format: PermissionFormat = "claude-code") -> str:
 
     if format == "claude-code":
         result = export_claude_code(commands)
-    elif format == "cursor":
-        result = export_cursor(commands)
-    elif format == "windsurf":
-        result = export_windsurf(commands)
     else:
         raise ValueError(f"Unknown format: {format}")
 

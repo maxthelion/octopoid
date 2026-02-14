@@ -184,7 +184,7 @@ def cmd_permissions(args: argparse.Namespace) -> None:
             for line in summary:
                 print(f"  • {line}")
         print("\nTo export for your IDE, use:")
-        print("  octopoid permissions export --format <ide>")
+        print("  octopoid permissions --format <ide>")
         return
 
     # Export permissions in the specified format
@@ -245,7 +245,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_perms = sub.add_parser("permissions", help="Export command whitelist for IDE permission systems")
     p_perms.add_argument(
         "--format",
-        choices=["claude-code", "cursor", "windsurf"],
+        choices=["claude-code"],
         default="claude-code",
         help="Target IDE format (default: claude-code)"
     )
