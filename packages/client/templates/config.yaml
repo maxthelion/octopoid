@@ -15,6 +15,7 @@ server:
 # Agent configuration
 agents:
   max_concurrent: 3
+  # max_breakdown_depth: 1  # Maximum levels of task re-breakdown (default: 1)
   # models:
   #   implement: sonnet
   #   breakdown: sonnet

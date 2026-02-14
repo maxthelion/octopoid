@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `submit-pr` script now calls server submit endpoint directly, ensuring tasks transition from `claimed` to `provisional` even if agents don't exit immediately
 
 ### Added
+- Breakdown depth tracking to prevent infinite re-breakdown loops (GH-10)
+  - New `breakdown_depth` field on tasks (defaults to 0)
+  - Configurable `max_breakdown_depth` in agents config (defaults to 1)
+  - Breakdown agent now increments depth on subtasks and rejects at max depth
+  - Task files now include `BREAKDOWN_DEPTH` metadata field
 - Hooks system for task lifecycle (`orchestrator/hooks.py`)
   - Declarative `before_submit` hooks: `rebase_on_main`, `create_pr`, `run_tests`
   - Per-task-type hook configuration via `task_types:` in config.yaml

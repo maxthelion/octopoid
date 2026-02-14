@@ -30,6 +30,7 @@ export interface OctopoidConfig {
   agents?: {
     max_concurrent: number
     models?: Record<string, string>
+    max_breakdown_depth?: number
   }
 
   // Repository

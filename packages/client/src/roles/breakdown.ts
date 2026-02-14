@@ -42,6 +42,19 @@ export class Breakdown extends BaseAgent {
         return
       }
 
+      // Check breakdown depth limit
+      const currentDepth = task.breakdown_depth || 0
+      const maxDepth = this.config.agents?.max_breakdown_depth ?? 1
+
+      if (currentDepth >= maxDepth) {
+        this.log(`Task at max breakdown depth (${currentDepth}/${maxDepth}), escalating to human`)
+        await this.rejectTask(
+          task.id,
+          `Max breakdown depth reached (${maxDepth}). Human decomposition required.`
+        )
+        return
+      }
+
       // Build breakdown prompt
       this.writeStatus(task.id, 'Breaking down into subtasks', 40)
       const prompt = this.buildBreakdownPrompt(taskContent)
@@ -66,6 +79,8 @@ export class Breakdown extends BaseAgent {
 
       // Create subtasks
       const createdTasks: string[] = []
+      const nextDepth = (task.breakdown_depth || 0) + 1
+
       for (let i = 0; i < subtasks.length; i++) {
         const subtask = subtasks[i]
         const subtaskId = generateTaskId()
@@ -80,6 +95,7 @@ export class Breakdown extends BaseAgent {
           description: subtask.description,
           created_by: this.config.name,
           blocked_by: i > 0 ? createdTasks[i - 1] : undefined, // Chain dependencies
+          breakdown_depth: nextDepth,
           project_id: task.project_id || undefined,
         })
 
@@ -92,11 +108,12 @@ export class Breakdown extends BaseAgent {
           priority: task.priority,
           branch: task.branch,
           blocked_by: i > 0 ? createdTasks[i - 1] : undefined,
+          breakdown_depth: nextDepth,
           project_id: task.project_id || undefined,
         })
 
         createdTasks.push(subtaskId)
-        this.log(`Created subtask ${i + 1}/${subtasks.length}: ${subtaskId}`)
+        this.log(`Created subtask ${i + 1}/${subtasks.length}: ${subtaskId} (depth: ${nextDepth})`)
       }
 
       // Mark original task as completed (breakdown done)
