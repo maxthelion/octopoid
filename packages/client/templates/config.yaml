@@ -52,3 +52,48 @@ repo:
 #       before_submit:
 #         - run_tests
 #         - create_pr
+
+# Command whitelist for IDE permission systems (e.g., Claude Code)
+# Declare commands that Octopoid agents need to run
+# commands:
+#   git:
+#     - status
+#     - fetch
+#     - checkout
+#     - branch
+#     - commit
+#     - push
+#     - rebase
+#     - merge
+#     - diff
+#     - log
+#     - rev-list
+#     - ls-remote
+#     - worktree
+#     - submodule
+#
+#   npm:
+#     - run test
+#     - run build
+#     - run dev
+#     - install
+#
+#   npx:
+#     - vitest run
+#     - tsc --noEmit
+#
+#   file_operations:
+#     read:
+#       - ".octopoid/**"
+#       - "src/**"
+#       - "tests/**"
+#       - "package.json"
+#       - "tsconfig.json"
+#       - "*.config.*"
+#       - "README.md"
+#       - "docs/**"
+#     write:
+#       - ".octopoid/**"
+#       - "src/**"
+#       - "tests/**"
+#       - "docs/**"

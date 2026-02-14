@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 from .config import get_tasks_dir
+from .permissions import export_permissions, get_permissions_summary
 from .queue_utils import get_sdk
 
 
@@ -171,6 +172,33 @@ def cmd_worktrees_clean(args: argparse.Namespace) -> None:
         print(f"\n{cleaned} worktree(s) removed.")
 
 
+def cmd_permissions(args: argparse.Namespace) -> None:
+    """Export command whitelist for IDE permission systems."""
+    if args.list:
+        # Show summary of configured permissions
+        summary = get_permissions_summary()
+        if not summary:
+            print("No permissions configured (using defaults)")
+        else:
+            print("Configured permissions:")
+            for line in summary:
+                print(f"  • {line}")
+        print("\nTo export for your IDE, use:")
+        print("  octopoid permissions export --format <ide>")
+        return
+
+    # Export permissions in the specified format
+    try:
+        output = export_permissions(args.format)
+        print(output)
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"Failed to export permissions: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
 # ---------------------------------------------------------------------------
 # Argument parser
 # ---------------------------------------------------------------------------
@@ -212,6 +240,21 @@ def build_parser() -> argparse.ArgumentParser:
     p_wtc = sub.add_parser("worktrees-clean", help="Prune stale task worktrees")
     p_wtc.add_argument("--dry-run", action="store_true", help="Show what would be removed")
     p_wtc.set_defaults(func=cmd_worktrees_clean)
+
+    # permissions
+    p_perms = sub.add_parser("permissions", help="Export command whitelist for IDE permission systems")
+    p_perms.add_argument(
+        "--format",
+        choices=["claude-code", "cursor", "windsurf"],
+        default="claude-code",
+        help="Target IDE format (default: claude-code)"
+    )
+    p_perms.add_argument(
+        "--list", "-l",
+        action="store_true",
+        help="Show summary of configured permissions instead of exporting"
+    )
+    p_perms.set_defaults(func=cmd_permissions)
 
     return parser
 

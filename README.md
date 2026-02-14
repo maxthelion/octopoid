@@ -161,6 +161,34 @@ hooks:
 #   hotfix:
 #     hooks:
 #       before_submit: [run_tests, create_pr]
+
+# Command whitelist for IDE permission systems (e.g., Claude Code)
+# Declare commands upfront to avoid per-command permission prompts
+commands:
+  git:
+    - status
+    - fetch
+    - checkout
+    - branch
+    - commit
+    - push
+    - rebase
+    - merge
+    - diff
+    - log
+  npm:
+    - run test
+    - run build
+    - install
+  file_operations:
+    read:
+      - ".octopoid/**"
+      - "src/**"
+      - "tests/**"
+    write:
+      - ".octopoid/**"
+      - "src/**"
+      - "tests/**"
 ```
 
 #### `.octopoid/agents.yaml`
@@ -327,6 +355,7 @@ Running agents are not killed when you pause — they finish their current task.
 | `octopoid cancel <id>` | Delete a task | `--force` / `-f` skip confirmation |
 | `octopoid worktrees` | List task worktrees | |
 | `octopoid worktrees-clean` | Prune stale task worktrees | `--dry-run` preview only |
+| `octopoid permissions` | Export command whitelist for IDEs | `--format` IDE format, `--list` / `-l` show summary |
 
 ```bash
 # Create a task
@@ -349,6 +378,12 @@ octopoid cancel fae4ad46
 
 # Clean up orphaned worktrees
 octopoid worktrees-clean --dry-run
+
+# Export permissions for Claude Code
+octopoid permissions --format claude-code > .claude/octopoid-permissions.json
+
+# Show configured permissions summary
+octopoid permissions --list
 ```
 
 ### Dashboard
@@ -417,6 +452,81 @@ octopoid project update user-dashboard-redesign --status completed
    - **Accept**: Task moves to `done` queue, PR can be merged
    - **Reject**: Task returns to `incoming` queue with feedback (up to 3 rounds)
 8. **Cleanup**: Worktree removed after task completion
+
+## IDE Permission Systems
+
+When Octopoid agents run in IDEs with permission systems (like Claude Code), you can declare required commands upfront to avoid hundreds of per-command permission prompts.
+
+### Configuring Commands
+
+Add a `commands` section to `.octopoid/config.yaml`:
+
+```yaml
+commands:
+  git:
+    - status
+    - fetch
+    - checkout
+    - branch
+    - commit
+    - push
+    - rebase
+    - merge
+    - diff
+    - log
+    - rev-list
+    - ls-remote
+    - worktree
+
+  npm:
+    - run test
+    - run build
+    - install
+
+  npx:
+    - vitest run
+    - tsc --noEmit
+
+  file_operations:
+    read:
+      - ".octopoid/**"
+      - "src/**"
+      - "tests/**"
+      - "package.json"
+      - "tsconfig.json"
+      - "README.md"
+    write:
+      - ".octopoid/**"
+      - "src/**"
+      - "tests/**"
+```
+
+### Exporting for Your IDE
+
+Export permissions in IDE-specific formats:
+
+```bash
+# Claude Code
+octopoid permissions --format claude-code > .claude/octopoid-permissions.json
+
+# Then add to .claude/settings.json:
+# {
+#   "allowedCommands": { "include": [".claude/octopoid-permissions.json"] }
+# }
+
+# Cursor
+octopoid permissions --format cursor > .cursor/octopoid-permissions.json
+
+# Windsurf
+octopoid permissions --format windsurf > .windsurf/octopoid-permissions.json
+
+# Show summary of configured permissions
+octopoid permissions --list
+```
+
+### Default Commands
+
+If you don't configure `commands:` in your config, Octopoid uses sensible defaults covering typical git, npm, and file operations. Run `octopoid permissions --list` to see what's configured.
 
 ## Multi-Machine Setup
 
