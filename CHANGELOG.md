@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Configurable `max_breakdown_depth` in agents config (defaults to 1)
   - Breakdown agent now increments depth on subtasks and rejects at max depth
   - Task files now include `BREAKDOWN_DEPTH` metadata field
+- `execution_notes` field for agent execution summaries (GH-13)
+  - Auto-generated summaries include commit count, turn usage, and recent commit messages
+  - Stored in database and returned via API
+  - Full test coverage (13 tests) for generation, persistence, and API integration
 - Hooks system for task lifecycle (`orchestrator/hooks.py`)
   - Declarative `before_submit` hooks: `rebase_on_main`, `create_pr`, `run_tests`
   - Per-task-type hook configuration via `task_types:` in config.yaml
