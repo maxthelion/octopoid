@@ -217,6 +217,34 @@ class TestIsRecent:
         cutoff = datetime(2026, 2, 7, 9, 0, 0)
         assert _is_recent(task, cutoff) is True
 
+    def test_prefers_completed_at_over_created(self):
+        """Test that completed_at is used instead of created for recent check."""
+        # Task created 10 days ago but completed today
+        task = {
+            "created": (datetime.now() - timedelta(days=10)).isoformat(),
+            "completed_at": datetime.now().isoformat()
+        }
+        cutoff = datetime.now() - timedelta(days=7)
+        assert _is_recent(task, cutoff) is True
+
+    def test_uses_updated_at_when_completed_at_missing(self):
+        """Test that updated_at is used when completed_at is not available."""
+        task = {
+            "created": (datetime.now() - timedelta(days=10)).isoformat(),
+            "updated_at": datetime.now().isoformat()
+        }
+        cutoff = datetime.now() - timedelta(days=7)
+        assert _is_recent(task, cutoff) is True
+
+    def test_old_task_with_old_completion_returns_false(self):
+        """Test that old completed_at correctly identifies old tasks."""
+        task = {
+            "created": (datetime.now() - timedelta(days=10)).isoformat(),
+            "completed_at": (datetime.now() - timedelta(days=8)).isoformat()
+        }
+        cutoff = datetime.now() - timedelta(days=7)
+        assert _is_recent(task, cutoff) is False
+
 
 # ---------------------------------------------------------------------------
 # PRs

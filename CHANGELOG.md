@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Dashboard Done tab now correctly shows tasks completed in the last 7 days (fixes bug where tasks created >7 days ago but completed recently were hidden)
+  - `_is_recent()` now uses `completed_at` or `updated_at` instead of `created` timestamp
+  - `_gather_done_tasks()` now correctly assigns completion time from server fields
 - `submit-pr` script now calls server submit endpoint directly, ensuring tasks transition from `claimed` to `provisional` even if agents don't exit immediately
 - `handle_agent_result()` now uses state-first pattern to handle race conditions gracefully (expired leases, submit-pr races) and avoid incorrect function calls
 

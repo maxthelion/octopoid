@@ -145,21 +145,21 @@ def _gather_done_tasks(sdk: Optional["OctopoidSDK"] = None) -> list[dict[str, An
     for t in done_recent:
         item = _format_task(t)
         item["final_queue"] = "done"
-        item["completed_at"] = t.get("created")  # updated_at not in file format; use created as fallback
+        item["completed_at"] = t.get("completed_at") or t.get("updated_at") or t.get("created")
         item["accepted_by"] = _get_accepted_by(t.get("id"))
         result.append(item)
 
     for t in failed_recent:
         item = _format_task(t)
         item["final_queue"] = "failed"
-        item["completed_at"] = t.get("created")
+        item["completed_at"] = t.get("completed_at") or t.get("updated_at") or t.get("created")
         item["accepted_by"] = None
         result.append(item)
 
     for t in recycled_recent:
         item = _format_task(t)
         item["final_queue"] = "recycled"
-        item["completed_at"] = t.get("created")
+        item["completed_at"] = t.get("completed_at") or t.get("updated_at") or t.get("created")
         item["accepted_by"] = None
         result.append(item)
 
@@ -208,8 +208,13 @@ def _format_task(task: dict[str, Any]) -> dict[str, Any]:
 
 
 def _is_recent(task: dict[str, Any], cutoff: datetime) -> bool:
-    """Check if a task's created/updated timestamp is after cutoff."""
-    ts_str = task.get("created")
+    """Check if a task's completion/update timestamp is after cutoff.
+
+    Uses completed_at if available (for done/failed tasks), otherwise
+    falls back to updated_at, then created as last resort.
+    """
+    # Prefer completed_at for finished tasks, then updated_at, then created
+    ts_str = task.get("completed_at") or task.get("updated_at") or task.get("created")
     if not ts_str:
         return False
     try:
