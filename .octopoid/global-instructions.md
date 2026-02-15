@@ -9,13 +9,26 @@ You are working on **Octopoid**, a distributed AI orchestration system for softw
 - **SDK:** `octopoid-sdk` Python package — client for the server API
 - **Config:** `.octopoid/config.yaml` — single source of truth for all components
 
+## When to STOP and FAIL
+
+If any of the following are true, do NOT improvise. Call `../scripts/fail` with a clear explanation:
+
+- **Files don't exist:** The task tells you to edit a specific file or function, but it doesn't exist on this branch. Do not search for similar code elsewhere and edit that instead.
+- **Contradictory instructions:** The task description contradicts itself (e.g. "add X" but also "do not modify the file where X would go").
+- **Missing dependencies:** The task assumes code, APIs, or infrastructure that isn't present.
+- **Scope mismatch:** The task describes changes to 5+ files but says "only modify one file", or vice versa.
+
+Failing with a clear reason is far more useful than delivering the wrong change. The task will be re-examined and rewritten.
+
 ## After Every Change
 
-1. **CHANGELOG.md** — Add an entry under `## [Unreleased]` in the appropriate category (Added, Changed, Fixed, etc.). Keep it concise and user-focused.
+1. **CHANGELOG.md** — Add an entry under `## [Unreleased]` in the appropriate category — UNLESS the task description explicitly says not to.
 
-2. **README.md** — Update if your change affects user-facing behaviour: setup steps, configuration options, CLI commands, architecture, or supported features.
+2. **README.md** — Update if your change affects user-facing behaviour — UNLESS the task description explicitly says not to.
 
 3. **Comment on the GitHub issue** — If this task originated from a GitHub issue (look for `github_issue` in the task frontmatter, or a `[GH-<number>]` prefix in the title), comment on the issue when you're done. Use `gh issue comment <number> --body "..."` and describe what you changed and why. Keep it brief but specific — this is how the issue reporter knows what happened.
+
+**Note:** Task-level instructions always override these global defaults. If a task says "do NOT update CHANGELOG", obey the task.
 
 ## MANDATORY: Use the Provided Scripts
 
