@@ -778,6 +778,15 @@ class TestUpdateTaskQueue:
             task = get_task("waitall")
             assert task["blocked_by"] is None
 
+    def test_update_nonexistent_task_returns_none(self, initialized_db):
+        """update_task_queue returns None when task does not exist."""
+        with patch('orchestrator.db.get_database_path', return_value=initialized_db):
+            from orchestrator.db import update_task_queue
+
+            # Try to update a task that doesn't exist
+            result = update_task_queue("nonexistent", "done")
+            assert result is None
+
 
 class TestChecksField:
     """Tests for the per-task checks field."""

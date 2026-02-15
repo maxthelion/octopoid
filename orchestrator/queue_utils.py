@@ -823,7 +823,7 @@ def review_reject_task(
     # Now update the DB — the file is already at its final path with full content
     if task_id and is_db_enabled():
         if rejection_count >= max_rejections:
-            db.update_task_queue(
+            result = db.update_task_queue(
                 task_id,
                 "escalated",
                 claimed_by=None,
@@ -833,6 +833,8 @@ def review_reject_task(
                 history_agent=rejected_by,
                 history_details=f"rejection_count={rejection_count}, max={max_rejections}",
             )
+            if result is None:
+                raise ValueError(f"Failed to escalate task {task_id} to escalated queue")
             db.update_task(task_id, rejection_count=rejection_count)
         else:
             db.review_reject_completion(
@@ -1040,13 +1042,15 @@ def retry_task(task_path: Path | str) -> Path:
         from . import db
         db_task = db.get_task_by_path(str(task_path))
         if db_task:
-            db.update_task_queue(
+            result = db.update_task_queue(
                 db_task["id"],
                 "incoming",
                 claimed_by=None,
                 claimed_at=None,
                 history_event="retried",
             )
+            if result is None:
+                raise ValueError(f"Failed to retry task {db_task['id']} to incoming queue")
 
     incoming_dir = get_queue_subdir("incoming")
     dest = incoming_dir / task_path.name
@@ -1095,7 +1099,7 @@ def reset_task(task_id: str) -> dict[str, Any]:
         if not db_task:
             raise LookupError(f"Task {task_id} not found in database")
 
-        db.update_task_queue(
+        result = db.update_task_queue(
             task_id,
             "incoming",
             claimed_by=None,
@@ -1104,6 +1108,8 @@ def reset_task(task_id: str) -> dict[str, Any]:
             history_event="reset",
             history_details="manual reset via reset_task()",
         )
+        if result is None:
+            raise ValueError(f"Failed to reset task {task_id} to incoming queue")
         # Clear checks, check_results, rejection_count
         db.update_task(
             task_id,
@@ -1156,7 +1162,7 @@ def hold_task(task_id: str) -> dict[str, Any]:
         if not db_task:
             raise LookupError(f"Task {task_id} not found in database")
 
-        db.update_task_queue(
+        result = db.update_task_queue(
             task_id,
             "escalated",
             claimed_by=None,
@@ -1165,6 +1171,8 @@ def hold_task(task_id: str) -> dict[str, Any]:
             history_event="held",
             history_details="manual hold via hold_task()",
         )
+        if result is None:
+            raise ValueError(f"Failed to hold task {task_id} to escalated queue")
         # Clear checks and check_results
         db.update_task(
             task_id,
@@ -1389,7 +1397,9 @@ CREATED_BY: {created_by}
         )
         # Set queue status if not incoming
         if queue != "incoming":
-            db.update_task_queue(task_id, queue, history_event="created_in_queue", history_details=f"queue={queue}")
+            result = db.update_task_queue(task_id, queue, history_event="created_in_queue", history_details=f"queue={queue}")
+            if result is None:
+                raise ValueError(f"Failed to set queue to {queue} for newly created task {task_id}")
 
     return task_path
 
@@ -2418,13 +2428,15 @@ def recycle_to_breakdown(task_path, reason="too_large") -> dict | None:
     if task_path.exists():
         task_path.rename(recycled_path)
 
-    db.update_task_queue(
+    result = db.update_task_queue(
         task_id,
         "recycled",
         file_path=str(recycled_path),
         history_event="recycled",
         history_details=f"reason={reason}, breakdown_task={breakdown_task_id}",
     )
+    if result is None:
+        raise ValueError(f"Failed to recycle task {task_id} to recycled queue")
 
     # NOTE: We intentionally do NOT rewire dependencies here.
     # External tasks stay blocked by the original (recycled) task ID.

@@ -1007,12 +1007,14 @@ def check_and_update_finished_agents() -> None:
                                         # Clear claimed_by/claimed_at when leaving claimed/
                                         claimed_by = None if actual_queue != "claimed" else task.get("claimed_by")
                                         claimed_at = None if actual_queue != "claimed" else task.get("claimed_at")
-                                        db.update_task_queue(
+                                        result = db.update_task_queue(
                                             state.current_task,
                                             actual_queue,
                                             claimed_by=claimed_by,
                                             claimed_at=claimed_at,
                                         )
+                                        if result is None:
+                                            debug_log(f"Failed to sync task {state.current_task} to {actual_queue} queue")
                     except Exception as e:
                         debug_log(f"Failed to update agent {agent_name} in DB: {e}")
 
