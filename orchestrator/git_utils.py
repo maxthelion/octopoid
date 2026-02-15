@@ -5,7 +5,7 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
-from .config import find_parent_project, get_agents_runtime_dir, get_tasks_dir
+from .config import find_parent_project, get_agents_runtime_dir, get_main_branch, get_tasks_dir
 
 
 def run_git(args: list[str], cwd: Path | str | None = None, check: bool = True) -> subprocess.CompletedProcess:
