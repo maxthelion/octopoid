@@ -2,24 +2,84 @@
 
 Create a new task in the orchestrator queue.
 
-## How to Create Tasks
+## Implementation
 
-Use the CLI — do NOT curl the server API directly:
-```bash
-npx tsx packages/client/src/cli.ts enqueue "<description>" --role <role> --priority <priority>
+Use the Python SDK to create tasks on the server. Always write the task file to `.octopoid/tasks/` — the scheduler expects files there.
+
+```python
+from orchestrator.queue_utils import get_sdk
+import uuid
+
+sdk = get_sdk()
+
+# Generate task ID and file path
+task_id = f"TASK-{uuid.uuid4().hex[:8]}"
+file_path = f".octopoid/tasks/{task_id}.md"
+
+# Write the task markdown file FIRST
+task_content = f"""# [{task_id}] {title}
+
+ROLE: {role}
+PRIORITY: {priority}
+BRANCH: {branch}
+CREATED: {datetime.now(timezone.utc).isoformat()}
+CREATED_BY: human
+
+## Context
+{context}
+
+## Acceptance Criteria
+{acceptance_criteria}
+"""
+
+# Write to .octopoid/tasks/
+import os
+os.makedirs('.octopoid/tasks', exist_ok=True)
+with open(file_path, 'w') as f:
+    f.write(task_content)
+
+# THEN create on the server — file_path is relative to project root
+result = sdk.tasks.create(
+    id=task_id,
+    file_path=file_path,
+    title=title,
+    role=role,
+    priority=priority,
+    queue='incoming',
+    branch=branch,
+)
 ```
 
-## Usage
+### With an existing task file
 
-Run `/enqueue` to interactively create a task, or provide details:
+If the user provides a path to an existing task file, copy it to `.octopoid/tasks/` first:
 
+```python
+import shutil
+shutil.copy(source_path, f'.octopoid/tasks/{task_id}.md')
 ```
-/enqueue "Add rate limiting to API"
+
+### For project tasks
+
+If creating a task for a project, include `project_id`:
+
+```python
+result = sdk.tasks.create(
+    id=task_id,
+    file_path=file_path,
+    title=title,
+    role=role,
+    priority=priority,
+    project_id=project_id,
+    blocked_by=blocked_by,  # previous task in chain
+    queue='incoming',
+    branch=branch,
+)
 ```
 
 ## Interactive Mode
 
-When run without arguments, I'll ask for:
+When run without arguments, ask for:
 
 1. **Title** - Brief, descriptive title
 2. **Role** - Who should handle this:
@@ -31,75 +91,15 @@ When run without arguments, I'll ask for:
    - `P1` - High (important features)
    - `P2` - Normal (default)
    - `P3` - Low (nice-to-have)
-4. **Branch** - Base branch (usually `main`)
+4. **Branch** - Base branch (default: current working branch)
 5. **Context** - Background and motivation
 6. **Acceptance Criteria** - Specific requirements
 
-### Optional Fields (I'll infer these or ask if needed)
+## Rules
 
-7. **Expedite** - Should this task jump the queue?
-   - Use for urgent tasks that need immediate attention
-   - Expedited tasks are processed before all non-expedited tasks
-   - Best guess: Set `true` if title contains "urgent", "fix", "broken", "critical"
-
-8. **Skip PR** - Should this skip PR creation and merge directly?
-   - Use for: docs/plans, submodule updates, low-risk changes
-   - Best guess: Set `true` if task modifies only docs/plans/configs
-
-## Task File Location
-
-Tasks are created in:
-```
-.octopoid/runtime/shared/queue/incoming/TASK-{uuid}.md
-```
-
-## Example
-
-```markdown
-# [TASK-f8e7d6c5] Add rate limiting to API
-
-ROLE: implement
-PRIORITY: P1
-BRANCH: main
-CREATED: 2024-01-15T14:30:00Z
-CREATED_BY: human
-EXPEDITE: false
-SKIP_PR: false
-
-## Context
-Our API endpoints have no rate limiting, making them vulnerable
-to abuse and DoS attacks. We need to add rate limiting to protect
-the service.
-
-## Acceptance Criteria
-- [ ] Rate limiting middleware added to all API routes
-- [ ] Default limit: 100 requests per minute per IP
-- [ ] Returns 429 Too Many Requests when exceeded
-- [ ] Rate limit headers included in responses
-- [ ] Configuration via environment variables
-```
-
-### Example: Expedited Task (jumps queue)
-
-```markdown
-# [TASK-abc123] Fix broken login flow
-
-ROLE: implement
-PRIORITY: P1
-EXPEDITE: true
-...
-```
-
-### Example: Skip PR (merge directly)
-
-```markdown
-# [TASK-def456] Update architecture diagram
-
-ROLE: implement
-PRIORITY: P3
-SKIP_PR: true
-...
-```
+- **Always write task files to `.octopoid/tasks/`** — never point at files elsewhere
+- Use the Python SDK, not the CLI (the CLI has a silent fallback bug)
+- The `file_path` field in the API should be relative to the project root (e.g. `.octopoid/tasks/TASK-abc123.md`)
 
 ## After Creation
 
