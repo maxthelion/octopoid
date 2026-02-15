@@ -3,7 +3,7 @@
 import tempfile
 import shutil
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 import pytest
 
@@ -127,3 +127,36 @@ Second task that depends on first.
 """)
 
     yield {"task1": task1_path, "task2": task2_path}
+
+
+@pytest.fixture(autouse=True)
+def mock_sdk_for_unit_tests(request):
+    """Auto-mock get_sdk() for all unit tests to prevent production side effects.
+
+    This fixture prevents unit tests from making real HTTP calls to the production
+    server. Integration tests in tests/integration/ are excluded - they set
+    OCTOPOID_SERVER_URL and test against a real local server.
+
+    The mock SDK returns a MagicMock that simulates SDK responses without making
+    HTTP requests.
+    """
+    # Skip this fixture for integration tests
+    if "integration" in request.node.nodeid:
+        yield
+        return
+
+    # Create a mock SDK
+    mock_sdk = MagicMock()
+
+    # Configure common SDK method return values to prevent attribute errors
+    mock_sdk.tasks.list.return_value = []
+    mock_sdk.tasks.get.return_value = None
+    mock_sdk.tasks.create.return_value = {"id": "test-task-id", "queue": "incoming"}
+    mock_sdk.tasks.claim.return_value = None
+    mock_sdk.tasks.update.return_value = {"id": "test-task-id"}
+    mock_sdk.tasks.submit.return_value = {"id": "test-task-id", "queue": "done"}
+    mock_sdk.tasks.accept.return_value = {"id": "test-task-id", "queue": "done"}
+
+    # Apply the mock for the duration of the test
+    with patch('orchestrator.queue_utils.get_sdk', return_value=mock_sdk):
+        yield mock_sdk

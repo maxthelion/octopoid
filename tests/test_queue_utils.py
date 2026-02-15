@@ -249,7 +249,7 @@ class TestSubmitCompletion:
 class TestCreateTask:
     """Tests for create_task function."""
 
-    def test_create_task_file_based(self, mock_orchestrator_dir):
+    def test_create_task_file_based(self, mock_orchestrator_dir, mock_sdk_for_unit_tests):
         """Test creating a task in file-based mode."""
         with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "runtime" / "shared" / "queue"):
             from orchestrator.queue_utils import create_task
@@ -271,6 +271,9 @@ class TestCreateTask:
             assert "ROLE: implement" in content
             assert "PRIORITY: P1" in content
             assert "- [ ] Feature works" in content
+
+            # Verify SDK was called (mocked) to create the task
+            mock_sdk_for_unit_tests.tasks.create.assert_called_once()
 
     def test_create_task_with_dependencies(self, mock_orchestrator_dir):
         """Test creating a task with dependencies."""
