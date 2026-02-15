@@ -43,28 +43,34 @@ When run without arguments, I'll ask for:
 
 Tasks are created in:
 ```
-.octopoid/runtime/shared/queue/incoming/TASK-{uuid}.md
+.octopoid/tasks/TASK-{id}.md
 ```
+
+And registered with the server API for agent claiming.
 
 ## Example
 
 ```markdown
-# [TASK-f8e7d6c5] Add rate limiting to API
+---
+id: TASK-f8e7d6c5
+title: "Add rate limiting to API"
+priority: P1
+role: implement
+queue: incoming
+created_by: human
+created_at: 2024-01-15T14:30:00Z
+---
 
-ROLE: implement
-PRIORITY: P1
-BRANCH: main
-CREATED: 2024-01-15T14:30:00Z
-CREATED_BY: human
-EXPEDITE: false
-SKIP_PR: false
+# Add rate limiting to API
 
 ## Context
+
 Our API endpoints have no rate limiting, making them vulnerable
 to abuse and DoS attacks. We need to add rate limiting to protect
 the service.
 
 ## Acceptance Criteria
+
 - [ ] Rate limiting middleware added to all API routes
 - [ ] Default limit: 100 requests per minute per IP
 - [ ] Returns 429 Too Many Requests when exceeded
@@ -72,33 +78,17 @@ the service.
 - [ ] Configuration via environment variables
 ```
 
-### Example: Expedited Task (jumps queue)
+## How It Works
 
-```markdown
-# [TASK-abc123] Fix broken login flow
+When you run `/enqueue`, the system:
+1. Generates a unique task ID
+2. Registers the task with the server API (so agents can claim it)
+3. Creates a local markdown file in `.octopoid/tasks/` (the full task description)
+4. Places the task in the `incoming` queue
 
-ROLE: implement
-PRIORITY: P1
-EXPEDITE: true
-...
-```
-
-### Example: Skip PR (merge directly)
-
-```markdown
-# [TASK-def456] Update architecture diagram
-
-ROLE: implement
-PRIORITY: P3
-SKIP_PR: true
-...
-```
-
-## After Creation
-
-The task will be:
+The task will then be:
 1. Picked up by the scheduler on next tick
 2. Claimed by an agent with matching role
-3. Worked on and moved to done/failed
+3. Worked on and moved to provisional/done/failed
 
 Check status with `/queue-status`.

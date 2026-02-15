@@ -5,6 +5,7 @@
 
 import { randomBytes } from 'node:crypto'
 import { join } from 'node:path'
+import { writeFileSync, mkdirSync } from 'node:fs'
 import chalk from 'chalk'
 import type { TaskRole, TaskPriority } from '@octopoid/shared'
 import { createTask } from '../db-interface'
@@ -29,7 +30,7 @@ export async function enqueueCommand(
 
     // Determine file path
     const repoPath = config.repo?.path || process.cwd()
-    const filePath = join(repoPath, 'tasks', `${taskId}.md`)
+    const filePath = join(repoPath, '.octopoid', 'tasks', `TASK-${taskId}.md`)
 
     // Validate role
     const validRoles = ['implement', 'breakdown', 'test', 'review', 'fix', 'research']
@@ -55,7 +56,7 @@ export async function enqueueCommand(
     console.log(`  Role: ${role || 'not specified'}`)
     console.log(`  Priority: ${priority}`)
 
-    // Create task
+    // Create task in database/API
     const task = await createTask({
       id: taskId,
       file_path: filePath,
@@ -66,16 +67,29 @@ export async function enqueueCommand(
       complexity: options.complexity as any,
     })
 
+    // Create task markdown file
+    const tasksDir = join(repoPath, '.octopoid', 'tasks')
+    mkdirSync(tasksDir, { recursive: true })
+
+    const taskContent = createTaskMarkdown({
+      id: taskId,
+      title: description,
+      role,
+      priority,
+      project_id: options.project,
+      complexity: options.complexity,
+    })
+
+    writeFileSync(filePath, taskContent, 'utf-8')
+
     console.log('')
     console.log(chalk.green('✅ Task created successfully!'))
     console.log(`  ID: ${task.id}`)
+    console.log(`  File: ${filePath}`)
     console.log(`  Queue: ${task.queue}`)
     console.log(`  Priority: ${task.priority}`)
     console.log('')
-    console.log('Next steps:')
-    console.log(`  1. Create task file: ${filePath}`)
-    console.log(`  2. Add task description and requirements`)
-    console.log(`  3. The orchestrator will claim and work on it automatically`)
+    console.log('The orchestrator will claim and work on it automatically.')
   } catch (error) {
     console.error(chalk.red('❌ Error creating task:'))
     console.error(error instanceof Error ? error.message : error)
@@ -87,4 +101,59 @@ function generateTaskId(): string {
   const timestamp = Date.now().toString(36)
   const random = randomBytes(4).toString('hex')
   return `task-${timestamp}-${random}`
+}
+
+interface TaskMarkdownOptions {
+  id: string
+  title: string
+  role?: string
+  priority: string
+  project_id?: string
+  complexity?: string
+}
+
+function createTaskMarkdown(options: TaskMarkdownOptions): string {
+  const { id, title, role, priority, project_id, complexity } = options
+  const now = new Date().toISOString()
+
+  const frontmatter: string[] = [
+    '---',
+    `id: TASK-${id}`,
+    `title: "${title}"`,
+    `priority: ${priority}`,
+  ]
+
+  if (role) {
+    frontmatter.push(`role: ${role}`)
+  }
+
+  frontmatter.push('queue: incoming')
+  frontmatter.push('created_by: human')
+  frontmatter.push(`created_at: ${now}`)
+
+  if (project_id) {
+    frontmatter.push(`project_id: ${project_id}`)
+  }
+
+  if (complexity) {
+    frontmatter.push(`complexity: ${complexity}`)
+  }
+
+  frontmatter.push('---')
+
+  const body = [
+    '',
+    `# ${title}`,
+    '',
+    '## Context',
+    '',
+    'TODO: Add context and background for this task.',
+    '',
+    '## Acceptance Criteria',
+    '',
+    '- [ ] TODO: Add acceptance criteria',
+    '',
+  ]
+
+  return frontmatter.join('\n') + '\n' + body.join('\n')
 }
