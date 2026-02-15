@@ -66,6 +66,162 @@ class AgentContext:
     claimed_task: dict | None = None
 
 
+def _resolve_type_filter(allowed_types):
+    """Resolve agent's allowed_task_types into a type filter string.
+
+    Args:
+        allowed_types: Value from agent config's "allowed_task_types" field
+
+    Returns:
+        str or None: Type filter to pass to claim_and_prepare_task
+    """
+    if isinstance(allowed_types, list) and len(allowed_types) == 1:
+        return allowed_types[0]
+    if isinstance(allowed_types, list):
+        return ",".join(allowed_types)
+    return allowed_types
+
+
+def guard_enabled(ctx: AgentContext) -> tuple[bool, str]:
+    """Check if agent is paused.
+
+    Args:
+        ctx: AgentContext containing agent configuration
+
+    Returns:
+        (should_proceed, reason_if_blocked)
+    """
+    if ctx.agent_config.get("paused", False):
+        return (False, "paused")
+    return (True, "")
+
+
+def guard_not_running(ctx: AgentContext) -> tuple[bool, str]:
+    """Check if agent process is still running; clean up crashed agents.
+
+    Args:
+        ctx: AgentContext containing agent state
+
+    Returns:
+        (should_proceed, reason_if_blocked)
+    """
+    # If agent is marked running and process exists, block
+    if ctx.state.running and ctx.state.pid and is_process_running(ctx.state.pid):
+        return (False, f"still running (PID {ctx.state.pid})")
+
+    # If marked running but process is dead, mark as crashed and proceed
+    if ctx.state.running:
+        ctx.state = mark_finished(ctx.state, 1)
+        save_state(ctx.state, ctx.state_path)
+
+    return (True, "")
+
+
+def guard_interval(ctx: AgentContext) -> tuple[bool, str]:
+    """Check if agent is due to run.
+
+    Args:
+        ctx: AgentContext containing agent state and interval
+
+    Returns:
+        (should_proceed, reason_if_blocked)
+    """
+    if not is_overdue(ctx.state, ctx.interval):
+        return (False, "not due yet")
+    return (True, "")
+
+
+def guard_backpressure(ctx: AgentContext) -> tuple[bool, str]:
+    """Check role-based backpressure.
+
+    Args:
+        ctx: AgentContext containing agent role and state
+
+    Returns:
+        (should_proceed, reason_if_blocked)
+    """
+    can_proceed, reason = check_backpressure_for_role(ctx.role)
+    if not can_proceed:
+        # Update state to track blocked status
+        ctx.state.extra["blocked_reason"] = reason
+        ctx.state.extra["blocked_at"] = datetime.now().isoformat()
+        save_state(ctx.state, ctx.state_path)
+        return (False, f"backpressure: {reason}")
+
+    # Clear any previous blocked status
+    ctx.state.extra.pop("blocked_reason", None)
+    ctx.state.extra.pop("blocked_at", None)
+    return (True, "")
+
+
+def guard_pre_check(ctx: AgentContext) -> tuple[bool, str]:
+    """Run pre-check for work availability.
+
+    Args:
+        ctx: AgentContext containing agent name and config
+
+    Returns:
+        (should_proceed, reason_if_blocked)
+    """
+    if not run_pre_check(ctx.agent_name, ctx.agent_config):
+        return (False, "pre-check: no work")
+    return (True, "")
+
+
+def guard_claim_task(ctx: AgentContext) -> tuple[bool, str]:
+    """For claimable roles, claim a task.
+
+    Args:
+        ctx: AgentContext containing agent role and config
+
+    Returns:
+        (should_proceed, reason_if_blocked)
+    """
+    # Non-claimable agents skip this guard
+    if ctx.role not in CLAIMABLE_AGENT_ROLES:
+        return (True, "")
+
+    # Get task role and type filter
+    task_role = AGENT_TASK_ROLE[ctx.role]
+    allowed_types = ctx.agent_config.get("allowed_task_types")
+    type_filter = _resolve_type_filter(allowed_types)
+
+    # Try to claim a task
+    ctx.claimed_task = claim_and_prepare_task(ctx.agent_name, task_role, type_filter=type_filter)
+    if ctx.claimed_task is None:
+        return (False, "no task available")
+
+    return (True, "")
+
+
+# Guard chain: cheapest checks first, expensive checks (pre_check, claim_task) last
+AGENT_GUARDS = [
+    guard_enabled,
+    guard_not_running,
+    guard_interval,
+    guard_backpressure,
+    guard_pre_check,
+    guard_claim_task,
+]
+
+
+def evaluate_agent(ctx: AgentContext) -> bool:
+    """Run the guard chain. Returns True if agent should be spawned.
+
+    Args:
+        ctx: AgentContext containing all agent evaluation state
+
+    Returns:
+        bool: True if all guards pass and agent should spawn, False otherwise
+    """
+    for guard in AGENT_GUARDS:
+        proceed, reason = guard(ctx)
+        if not proceed:
+            debug_log(f"Agent {ctx.agent_name}: blocked by {guard.__name__}: {reason}")
+            return False
+    return True
+
+
 def setup_scheduler_debug() -> None:
     """Set up debug logging for the scheduler."""
     global _log_file
