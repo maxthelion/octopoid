@@ -403,33 +403,34 @@ def parse_task_file(task_path: Path) -> dict[str, Any] | None:
     }
 
 
-def resolve_task_file(filename: str) -> Path:
+def resolve_task_file(filename: str) -> Path | None:
     """Resolve a task filename to its absolute path.
 
-    The API stores just the filename. Task files all live in one directory.
-    Legacy paths (relative or absolute) are also handled for backward
-    compatibility — the basename is extracted and looked up in the tasks dir.
+    Checks multiple locations:
+    1. The file_path relative to the project root (for paths like 'project-management/tasks/foo.md')
+    2. The basename in the tasks directory (for legacy 'gh-8-2a4ad137.md' style)
 
     Args:
-        filename: Filename from the API (e.g., 'gh-8-2a4ad137.md')
+        filename: Filename from the API (e.g., 'project-management/tasks/foo.md' or 'gh-8-2a4ad137.md')
 
     Returns:
-        Absolute path to the task file
-
-    Raises:
-        FileNotFoundError: If the file doesn't exist in the tasks directory
+        Absolute path to the task file, or None if not found
     """
-    # Extract basename in case API has a legacy full/relative path
+    from .config import find_parent_project
+
+    # 1. Try as a path relative to project root
+    project_root = find_parent_project()
+    relative_path = project_root / filename
+    if relative_path.exists():
+        return relative_path
+
+    # 2. Try basename in the tasks directory
     basename = Path(filename).name
     fp = get_tasks_file_dir() / basename
-    if not fp.exists():
-        raise FileNotFoundError(
-            f"Task file not found: {fp} (API file_path={filename!r}). "
-            f"The API is the source of truth for file_path — if the file "
-            f"is missing, the task was created with a bad filename or the "
-            f"file was deleted."
-        )
-    return fp
+    if fp.exists():
+        return fp
+
+    return None
 
 
 def claim_task(
@@ -479,14 +480,16 @@ def claim_task(
         return None
 
     # Resolve filename → absolute path and read content.
-    # The API stores the filename; all task files live in .octopoid/tasks/.
+    # The task file is supplementary — the API has the essential data.
+    # If the file is missing, we continue without content.
     file_path_str = task.get("file_path")
     if file_path_str:
         fp = resolve_task_file(file_path_str)
-        task["file_path"] = str(fp)  # Absolute path for downstream code
-        parsed = parse_task_file(fp)
-        if parsed:
-            task["content"] = parsed["content"]
+        if fp:
+            task["file_path"] = str(fp)
+            parsed = parse_task_file(fp)
+            if parsed:
+                task["content"] = parsed["content"]
 
     # Log the claim
     task_id = task.get("id")
