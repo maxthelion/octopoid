@@ -239,24 +239,51 @@ def create_task_worktree(task: dict) -> Path:
     if local_check.returncode == 0:
         run_git(["branch", "-D", branch], cwd=parent_repo, check=False)
 
+    # Determine the correct base branch for this task
+    base_branch = task.get("branch") or get_main_branch()
+    start_point = f"origin/{base_branch}"
+    verify = run_git(
+        ["rev-parse", "--verify", start_point],
+        cwd=parent_repo,
+        check=False,
+    )
+    if verify.returncode != 0:
+        start_point = "origin/main"
+
     if branch_exists_on_origin:
-        # Pull existing branch from origin
-        run_git(
-            ["worktree", "add", "-b", branch, str(worktree_path), f"origin/{branch}"],
-            cwd=parent_repo,
-        )
-    else:
-        # Create new branch from the task's base branch (falls back to main)
-        base_branch = task.get("branch") or get_main_branch()
-        start_point = f"origin/{base_branch}"
-        # Verify the start point exists, fall back to origin/main
-        verify = run_git(
-            ["rev-parse", "--verify", start_point],
+        # Remote branch exists — check it's based on the correct parent.
+        # If it's not an ancestor of start_point, the branch is stale
+        # (e.g. based on main when it should be based on a feature branch).
+        remote_ref = f"origin/{branch}"
+        merge_base = run_git(
+            ["merge-base", remote_ref, start_point],
             cwd=parent_repo,
             check=False,
         )
-        if verify.returncode != 0:
-            start_point = "origin/main"
+        is_ancestor = run_git(
+            ["merge-base", "--is-ancestor", start_point, remote_ref],
+            cwd=parent_repo,
+            check=False,
+        )
+        if is_ancestor.returncode != 0:
+            # Remote branch is not based on our start_point — delete and recreate
+            run_git(
+                ["push", "origin", "--delete", branch],
+                cwd=parent_repo,
+                check=False,
+            )
+            run_git(
+                ["worktree", "add", "-b", branch, str(worktree_path), start_point],
+                cwd=parent_repo,
+            )
+        else:
+            # Remote branch is correctly based — reuse it
+            run_git(
+                ["worktree", "add", "-b", branch, str(worktree_path), remote_ref],
+                cwd=parent_repo,
+            )
+    else:
+        # New branch — create from the task's base branch
         run_git(
             ["worktree", "add", "-b", branch, str(worktree_path), start_point],
             cwd=parent_repo,
