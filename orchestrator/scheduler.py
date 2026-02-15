@@ -702,8 +702,12 @@ def process_auto_accept_tasks() -> None:
 
             if auto_accept:
                 debug_log(f"Auto-accepting task {task_id}")
-                db.accept_completion(task_id, accepted_by="scheduler")
-                print(f"[{datetime.now().isoformat()}] Auto-accepted task {task_id}")
+                result = db.accept_completion(task_id, accepted_by="scheduler")
+                if result is None:
+                    debug_log(f"FAILED to auto-accept task {task_id}: Task not found in database")
+                    print(f"[{datetime.now().isoformat()}] ERROR: Failed to auto-accept task {task_id}")
+                else:
+                    print(f"[{datetime.now().isoformat()}] Auto-accepted task {task_id}")
 
     except Exception as e:
         debug_log(f"Error processing auto-accept tasks: {e}")
@@ -783,11 +787,15 @@ def process_gatekeeper_reviews() -> None:
                         max_rejections=max_rejections,
                     )
                 else:
-                    db.review_reject_completion(
+                    result = db.review_reject_completion(
                         task_id,
                         reason=f"Failed checks: {', '.join(failed_checks)}",
                         reviewer="gatekeeper",
                     )
+                    if result is None:
+                        debug_log(f"FAILED to reject task {task_id}: Task not found in database")
+                        print(f"[{datetime.now().isoformat()}] ERROR: Failed to reject task {task_id}")
+                        continue
 
                 print(f"[{datetime.now().isoformat()}] Gatekeeper rejected task {task_id}: {failed_checks}")
 

@@ -477,7 +477,12 @@ def complete_task(task_path: Path | str, result: str | None = None) -> Path:
         db_task = db.get_task_by_path(str(task_path))
         if db_task:
             task_id = db_task["id"]
-            db.accept_completion(task_id)
+            result = db.accept_completion(task_id)
+            if result is None:
+                raise RuntimeError(
+                    f"Failed to transition task {task_id} to done queue: "
+                    f"Task not found in database or update failed"
+                )
 
     done_dir = get_queue_subdir("done")
     dest = done_dir / task_path.name
@@ -554,7 +559,12 @@ def submit_completion(
         )
 
     # Update DB to provisional
-    db.submit_completion(task_id, commits_count=commits_count, turns_used=turns_used)
+    result = db.submit_completion(task_id, commits_count=commits_count, turns_used=turns_used)
+    if result is None:
+        raise RuntimeError(
+            f"Failed to transition task {task_id} to provisional queue: "
+            f"Task not found in database or update failed"
+        )
 
     # Move file to provisional directory
     provisional_dir = get_queue_subdir("provisional")
@@ -605,7 +615,12 @@ def accept_completion(
                 db_task = db.get_task(match.group(1))
         if db_task:
             task_id = db_task["id"]
-            db.accept_completion(task_id, accepted_by=accepted_by)
+            result = db.accept_completion(task_id, accepted_by=accepted_by)
+            if result is None:
+                raise RuntimeError(
+                    f"Failed to transition task {task_id} to done queue: "
+                    f"Task not found in database or update failed"
+                )
             project_id = db_task.get("project_id")
 
     done_dir = get_queue_subdir("done")
@@ -837,11 +852,16 @@ def review_reject_task(
                 raise ValueError(f"Failed to escalate task {task_id} to escalated queue")
             db.update_task(task_id, rejection_count=rejection_count)
         else:
-            db.review_reject_completion(
+            result = db.review_reject_completion(
                 task_id,
                 reason=feedback[:500],
                 reviewer=rejected_by,
             )
+            if result is None:
+                raise RuntimeError(
+                    f"Failed to transition task {task_id} to incoming queue: "
+                    f"Task not found in database or update failed"
+                )
             db.update_task(task_id, file_path=str(dest))
 
     if rejection_count >= max_rejections:
@@ -2560,7 +2580,12 @@ def approve_and_merge(
     # Always use db.accept_completion(task_id) directly — the stored file_path
     # can be stale (e.g. still pointing to incoming/ when the file has moved
     # to provisional/), causing path-based lookup to silently fail.
-    db.accept_completion(task_id, accepted_by="human")
+    accept_result = db.accept_completion(task_id, accepted_by="human")
+    if accept_result is None:
+        raise RuntimeError(
+            f"Failed to transition task {task_id} to done queue: "
+            f"Task not found in database or update failed"
+        )
 
     # Move the task file to done/ if we can find it
     task_file_path = task.get("file_path", "")
