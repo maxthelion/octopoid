@@ -34,6 +34,25 @@ class TasksAPI:
                 return None
             raise
 
+    def events(self, task_id: str) -> List[Dict[str, Any]]:
+        """Get task event history (audit log)
+
+        Args:
+            task_id: Task ID
+
+        Returns:
+            List of task events with details
+        """
+        try:
+            response = self.client._request('GET', f'/api/v1/tasks/{task_id}/events')
+            if isinstance(response, dict) and 'events' in response:
+                return response['events']
+            return []
+        except requests.HTTPError as e:
+            if e.response.status_code == 404:
+                return []
+            raise
+
     def create(
         self,
         id: str,

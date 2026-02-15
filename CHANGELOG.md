@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `handle_agent_result()` now uses state-first pattern to handle race conditions gracefully (expired leases, submit-pr races) and avoid incorrect function calls
 
 ### Added
+- Server-side task event audit log (GH-3)
+  - Database migration `0007_rename_task_history_to_events.sql` renames `task_history` to `task_events` and adds `details` column for structured event data
+  - All state transitions now record events with contextual details (agent, orchestrator_id, commits_count, turns_used, reason, etc.)
+  - New API endpoint `GET /api/v1/tasks/:id/events` returns full task lifecycle history
+  - Python SDK method `sdk.tasks.events(task_id)` for fetching event history
+  - Events recorded for: created, claimed, submitted, accepted, rejected, requeued, blocked, unblocked, burnout_detected
 - Per-task log files for lifecycle tracking (GH-3)
   - New `TaskLogger` class that creates persistent `.octopoid/logs/tasks/TASK-{id}.log` files
   - Logs all state transitions: CREATED, CLAIMED, SUBMITTED, ACCEPTED, REJECTED, FAILED, REQUEUED
