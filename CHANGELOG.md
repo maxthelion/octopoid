@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `handle_agent_result()` now uses state-first pattern to handle race conditions gracefully (expired leases, submit-pr races) and avoid incorrect function calls
 
 ### Added
+- Command whitelist for IDE permission systems (GH-7)
+  - Agents declare shell commands they need (git, gh, npm, python) so IDEs can bulk-approve at init
+  - Configurable via `commands:` section in `agents.yaml`
+  - Export with `orchestrator-permissions --format claude-code`
+  - 30 unit tests covering config merging, pattern generation, and CLI
 - Per-task log files for lifecycle tracking (GH-3)
   - New `TaskLogger` class that creates persistent `.octopoid/logs/tasks/TASK-{id}.log` files
   - Logs all state transitions: CREATED, CLAIMED, SUBMITTED, ACCEPTED, REJECTED, FAILED, REQUEUED

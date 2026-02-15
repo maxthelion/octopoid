@@ -193,8 +193,19 @@ def init_orchestrator(
             if line and not line.startswith("#"):
                 print(f"      {line}")
 
-    # Print success and next steps
+    # Display permission summary
     print()
+    print("Octopoid agents will need permission to run:")
+    from .permissions import format_summary
+    print(format_summary())
+    print()
+    print("Your IDE may prompt you to approve these commands.")
+    print("To generate an IDE-specific permission config, run:")
+    print()
+    print("  orchestrator-permissions --format claude-code")
+    print()
+
+    # Print instructions
     print("=" * 60)
     print("  Setup complete!")
     print("=" * 60)
@@ -238,6 +249,17 @@ queue_limits:
   max_incoming: 20   # Max tasks in incoming + claimed
   max_claimed: 1     # Max tasks being worked on simultaneously
   max_open_prs: 10   # Max open pull requests
+
+# Command whitelist for IDE permission systems (extends defaults)
+# Declare additional commands agents need beyond the built-in defaults.
+# Run 'orchestrator-permissions --list' to see the full list.
+# Run 'orchestrator-permissions --format claude-code' to generate IDE config.
+# commands:
+#   npm:
+#     - run lint
+#   cargo:
+#     - build
+#     - test
 
 # Agent definitions
 agents:

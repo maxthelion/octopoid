@@ -116,6 +116,74 @@ DEFAULT_GATEKEEPER_CONFIG = {
     "optional_checks": ["style", "architecture"],
 }
 
+# Default command whitelist for IDE permission systems.
+# These are the shell commands that Octopoid agents need to run.
+# Users can override or extend these in agents.yaml under 'commands:'.
+DEFAULT_COMMANDS: dict[str, list[str]] = {
+    "git": [
+        "status",
+        "fetch",
+        "checkout",
+        "branch",
+        "commit",
+        "push",
+        "rebase",
+        "merge",
+        "diff",
+        "log",
+        "rev-list",
+        "ls-remote",
+        "worktree",
+        "submodule",
+        "add",
+        "reset",
+        "clean",
+        "rev-parse",
+        "show",
+        "stash",
+    ],
+    "gh": [
+        "pr",
+        "issue",
+        "api",
+    ],
+    "python": [
+        "-m pytest",
+    ],
+    "npm": [
+        "run test",
+        "run build",
+        "install",
+    ],
+}
+
+# Default file operation patterns for IDE permission systems.
+DEFAULT_FILE_PATTERNS: dict[str, list[str]] = {
+    "read": [
+        ".orchestrator/**/*",
+        "src/**/*",
+        "tests/**/*",
+        "*.md",
+        "*.py",
+        "*.json",
+        "*.yaml",
+        "*.yml",
+        "*.toml",
+        "*.cfg",
+        "*.txt",
+        "*.js",
+        "*.ts",
+        "*.tsx",
+        "*.jsx",
+    ],
+    "write": [
+        ".orchestrator/**/*",
+        "src/**/*",
+        "tests/**/*",
+        "docs/**/*",
+    ],
+}
+
 ModelType = Literal["task", "proposal"]
 
 
@@ -569,3 +637,63 @@ def get_hooks_for_type(task_type: str) -> dict[str, list[str]] | None:
     if hooks and isinstance(hooks, dict):
         return hooks
     return None
+
+
+# =============================================================================
+# Command Whitelist for IDE Permission Systems
+# =============================================================================
+
+def get_commands_config() -> dict[str, list[str]]:
+    """Get the command whitelist for IDE permission systems.
+
+    Merges user overrides from agents.yaml 'commands:' section with defaults.
+    User entries are additive — they extend the defaults, not replace them.
+
+    Returns:
+        Dictionary mapping command group (e.g. "git") to list of subcommands
+    """
+    result = {k: list(v) for k, v in DEFAULT_COMMANDS.items()}
+    try:
+        config = load_agents_config()
+        user_commands = config.get("commands", {})
+        for group, subcommands in user_commands.items():
+            if not isinstance(subcommands, list):
+                continue
+            if group in result:
+                # Add new subcommands, avoid duplicates
+                existing = set(result[group])
+                for cmd in subcommands:
+                    if cmd not in existing:
+                        result[group].append(cmd)
+            else:
+                result[group] = list(subcommands)
+    except FileNotFoundError:
+        pass
+    return result
+
+
+def get_file_patterns() -> dict[str, list[str]]:
+    """Get file operation patterns for IDE permission systems.
+
+    Merges user overrides from agents.yaml 'file_operations:' section with defaults.
+
+    Returns:
+        Dictionary with 'read' and 'write' keys mapping to glob pattern lists
+    """
+    result = {k: list(v) for k, v in DEFAULT_FILE_PATTERNS.items()}
+    try:
+        config = load_agents_config()
+        user_patterns = config.get("file_operations", {})
+        for op, patterns in user_patterns.items():
+            if not isinstance(patterns, list):
+                continue
+            if op in result:
+                existing = set(result[op])
+                for pat in patterns:
+                    if pat not in existing:
+                        result[op].append(pat)
+            else:
+                result[op] = list(patterns)
+    except FileNotFoundError:
+        pass
+    return result

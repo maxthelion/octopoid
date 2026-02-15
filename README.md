@@ -133,8 +133,257 @@ octopoid init --server https://octopoid-server.your-username.workers.dev --clust
 #### `.octopoid/config.yaml`
 
 ```yaml
-# Server connection (remote mode)
-server:
+# Queue limits for backpressure control
+queue_limits:
+  max_incoming: 20
+  max_claimed: 5
+  max_open_prs: 10
+
+# Agent definitions
+agents:
+  - name: pm-agent
+    role: product_manager
+    interval_seconds: 600
+
+  - name: impl-agent-1
+    role: implementer
+    interval_seconds: 180
+
+  - name: test-agent
+    role: tester
+    interval_seconds: 120
+
+  - name: review-agent
+    role: reviewer
+    interval_seconds: 300
+```
+
+### global-instructions.md (Optional)
+
+If you need agent-specific instructions beyond your `claude.md`, you can add them to `.orchestrator/global-instructions.md`. Most projects won't need this.
+
+### IDE Permissions
+
+When running agents in IDEs with permission systems (like Claude Code), agents need approval to run shell commands. Octopoid declares a command whitelist so you can bulk-approve these upfront instead of being prompted per-command.
+
+**View required commands:**
+
+```bash
+orchestrator-permissions --list
+```
+
+**Generate IDE permission config:**
+
+```bash
+# For Claude Code
+orchestrator-permissions --format claude-code > .claude/octopoid-permissions.json
+```
+
+**Extend the defaults** by adding a `commands:` section to `agents.yaml`:
+
+```yaml
+commands:
+  npm:
+    - run lint
+  cargo:
+    - build
+    - test
+```
+
+User entries are additive — they extend the built-in defaults (git, gh, python, npm) rather than replacing them.
+
+## Proposal Model (v2)
+
+The proposal model separates concerns into three layers:
+
+### 1. Proposal Layer - Specialists Propose Work
+
+Proposers are specialized agents with a specific focus area:
+
+| Proposer | Focus | Typical Proposals |
+|----------|-------|-------------------|
+| test-checker | Test quality | Fix flaky tests, add coverage |
+| architect | Code structure | Refactoring, simplification |
+| app-designer | Features | New functionality, UX |
+| plan-reader | Project plans | Tasks from documented plans |
+
+Configure proposers in `agents.yaml`:
+
+```yaml
+- name: test-checker
+  role: proposer
+  focus: test_quality
+  interval_seconds: 86400  # Daily
+```
+
+Each proposer has independent backpressure:
+
+```yaml
+proposal_limits:
+  test-checker:
+    max_active: 5
+    max_per_run: 2
+```
+
+### 2. Curation Layer - PM Evaluates Proposals
+
+The curator (PM) does NOT explore the codebase directly. Instead:
+
+- **Scores** proposals based on configurable weights
+- **Promotes** good proposals to the task queue
+- **Rejects** proposals with feedback (so proposers can learn)
+- **Defers** proposals that aren't right for now
+- **Escalates** conflicts to the project owner
+
+Voice weights control proposer trust levels:
+
+```yaml
+voice_weights:
+  plan-reader: 1.5    # Executing plans is priority
+  architect: 1.2      # Simplification multiplies velocity
+  test-checker: 1.0   # Important but often not urgent
+  app-designer: 0.8   # Features after stability
+```
+
+### 3. Execution Layer - Same as Task Model
+
+Implementers, testers, and reviewers work the same way in both models.
+
+### Proposal Lifecycle
+
+```
+┌─────────┐     ┌─────────┐     ┌─────────┐
+│ active  │────▶│promoted │────▶│  task   │
+└─────────┘     └─────────┘     └─────────┘
+     │
+     ├─────────▶ deferred (revisit later)
+     │
+     └─────────▶ rejected (with feedback)
+```
+
+### Rejection Feedback Loop
+
+When the curator rejects a proposal:
+1. Rejection includes written feedback
+2. Before proposing again, proposers review their rejections
+3. This prevents spamming the same bad ideas
+
+### Conflict Handling
+
+When proposals conflict:
+1. Curator does NOT resolve autonomously
+2. Both proposals are deferred
+3. A message is sent to the project owner with trade-offs
+4. Human decides which approach to take
+
+### Proposal Format
+
+```markdown
+# Proposal: {Title}
+
+**ID:** PROP-{uuid8}
+**Proposer:** test-checker
+**Category:** test | refactor | feature | debt | plan-task
+**Complexity:** S | M | L | XL
+**Created:** {ISO8601}
+
+## Summary
+One-line description.
+
+## Rationale
+Why this matters.
+
+## Acceptance Criteria
+- [ ] Criterion 1
+- [ ] Criterion 2
+
+## Relevant Files
+- path/to/file.ts
+```
+
+### Enabling the Proposal Model
+
+Set `model: proposal` in `agents.yaml`:
+
+```yaml
+model: proposal
+
+proposal_limits:
+  test-checker:
+    max_active: 5
+    max_per_run: 2
+
+voice_weights:
+  plan-reader: 1.5
+  architect: 1.2
+
+agents:
+  - name: test-checker
+    role: proposer
+    focus: test_quality
+    interval_seconds: 86400
+
+  - name: curator
+    role: curator
+    interval_seconds: 600
+
+  - name: impl-agent-1
+    role: implementer
+    interval_seconds: 180
+```
+
+### Proposer Prompts
+
+Create domain-specific prompts in `.orchestrator/prompts/`:
+
+```
+.orchestrator/prompts/
+├── test-checker.md    # What test-checker should look for
+├── architect.md       # What architect should look for
+└── curator.md         # How curator should evaluate
+```
+
+Example templates are in `orchestrator/templates/`.
+
+## Gatekeeper System (Optional)
+
+Gatekeepers are an **optional** add-on that automatically review PRs before they're ready for human review. You can run the orchestrator without gatekeepers - they're useful if you want automated quality checks on PRs created by agents.
+
+**When to use gatekeepers:**
+- You want automated lint/test/style checks on agent PRs
+- You want to catch issues before human review
+- You have specific quality standards to enforce
+
+**When to skip gatekeepers:**
+- You prefer to review all PRs manually
+- Your CI/CD already handles these checks
+- You're just getting started (add them later)
+
+### Overview
+
+```
+PR opened → Coordinator detects → Gatekeepers review → Pass/Fail
+                                        ↓
+                              Failed: Create fix task with feedback
+                              Passed: Mark ready for human review
+```
+
+### Gatekeeper Roles
+
+| Role | Focus | What It Checks |
+|------|-------|----------------|
+| `lint` | Code quality | Lint errors, type issues, formatting |
+| `tests` | Test coverage | Test pass/fail, coverage, test quality |
+| `style` | Conventions | Naming, organization, documentation |
+| `architecture` | Structure | Boundaries, patterns, dependencies |
+| `security` | Vulnerabilities | OWASP Top 10, secrets, auth |
+
+### Configuration
+
+Gatekeepers are **disabled by default**. To enable them, add to `agents.yaml`:
+
+```yaml
+gatekeeper:
   enabled: true
   url: https://octopoid-server.your-username.workers.dev
   cluster: prod
