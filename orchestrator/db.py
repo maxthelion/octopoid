@@ -1991,12 +1991,56 @@ def check_project_completion(project_id: str) -> bool:
 
     If all tasks are done, updates project status to 'ready-for-pr'.
 
+    Uses the API via SDK instead of local database operations when server mode is enabled.
+    Falls back to local database operations for backwards compatibility.
+
     Args:
         project_id: Project identifier
 
     Returns:
         True if project is complete (all tasks done)
     """
+    from . import queue_utils
+    import os
+    import yaml
+    from .config import get_orchestrator_dir
+
+    # Check if server mode is enabled
+    try:
+        orchestrator_dir = get_orchestrator_dir()
+        config_path = orchestrator_dir.parent / ".octopoid" / "config.yaml"
+
+        if config_path.exists():
+            with open(config_path) as f:
+                config = yaml.safe_load(f)
+                server_config = config.get("server", {})
+                server_enabled = server_config.get("enabled", False)
+        else:
+            server_enabled = False
+
+        # Use API if server is enabled
+        if server_enabled:
+            sdk = queue_utils.get_sdk()
+
+            # Fetch project tasks via API
+            project_tasks = sdk._request("GET", f"/api/v1/projects/{project_id}/tasks")
+
+            if not project_tasks:
+                return False
+
+            all_done = all(t.get("queue") == "done" for t in project_tasks)
+
+            if all_done:
+                # Update project status via API
+                sdk._request("PATCH", f"/api/v1/projects/{project_id}", json={"status": "ready-for-pr"})
+
+            return all_done
+
+    except Exception:
+        # Fall back to local database if API is not available
+        pass
+
+    # Fallback: Use local database operations
     tasks = get_project_tasks(project_id)
     if not tasks:
         return False
