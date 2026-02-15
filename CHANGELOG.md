@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Added `AgentContext` dataclass to scheduler for structured per-agent state management (scheduler refactor phase 2, step 1/12)
+- Extracted guard functions from scheduler agent loop into standalone, testable functions (scheduler refactor phase 2, step 2/12):
+  - `guard_enabled`, `guard_not_running`, `guard_interval`, `guard_backpressure`, `guard_pre_check`, `guard_claim_task`
+  - `AGENT_GUARDS` list and `evaluate_agent()` function for running the guard chain
+  - Guards return `(should_proceed: bool, reason: str)` for composability
 
 ### Fixed
 - Unit tests now automatically mock `get_sdk()` to prevent production side effects when running `pytest tests/`
