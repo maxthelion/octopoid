@@ -1,7 +1,7 @@
 paused: false
 
 queue_limits:
-  max_claimed: 1
+  max_claimed: 3
   max_incoming: 20
   max_open_prs: 10
 

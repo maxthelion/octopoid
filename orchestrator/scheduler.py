@@ -1768,8 +1768,19 @@ def run_scheduler() -> None:
 
             # Implementers use scripts mode: prepare task dir and invoke claude directly
             if role == "implementer" and claimed_task:
-                task_dir = prepare_task_directory(claimed_task, agent_name, agent_config)
-                pid = invoke_claude(task_dir, agent_config)
+                try:
+                    task_dir = prepare_task_directory(claimed_task, agent_name, agent_config)
+                    pid = invoke_claude(task_dir, agent_config)
+                except Exception as e:
+                    print(f"[{datetime.now().isoformat()}] Failed to spawn agent for {claimed_task['id']}: {e}")
+                    debug_log(f"Spawn failed for {claimed_task['id']}, requeuing: {e}")
+                    try:
+                        from .queue_utils import get_sdk
+                        sdk = get_sdk()
+                        sdk.tasks.update(claimed_task["id"], queue="incoming", claimed_by=None)
+                    except Exception:
+                        pass
+                    continue
 
                 new_state = mark_started(state, pid)
                 new_state.extra["agent_mode"] = "scripts"
