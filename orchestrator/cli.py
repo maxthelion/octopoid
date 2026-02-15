@@ -184,7 +184,7 @@ def cmd_permissions(args: argparse.Namespace) -> None:
             for line in summary:
                 print(f"  • {line}")
         print("\nTo export for your IDE, use:")
-        print("  octopoid permissions --format <ide>")
+        print("  octopoid permissions --format claude-code")
         return
 
     # Export permissions in the specified format

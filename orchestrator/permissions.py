@@ -1,7 +1,7 @@
 """Command whitelist management for IDE permission systems.
 
 This module provides functionality to export command whitelists in formats
-suitable for IDE permission systems like Claude Code, Cursor, and Windsurf.
+suitable for IDE permission systems like Claude Code.
 """
 
 import json

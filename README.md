@@ -514,12 +514,6 @@ octopoid permissions --format claude-code > .claude/octopoid-permissions.json
 #   "allowedCommands": { "include": [".claude/octopoid-permissions.json"] }
 # }
 
-# Cursor
-octopoid permissions --format cursor > .cursor/octopoid-permissions.json
-
-# Windsurf
-octopoid permissions --format windsurf > .windsurf/octopoid-permissions.json
-
 # Show summary of configured permissions
 octopoid permissions --list
 ```
