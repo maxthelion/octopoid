@@ -398,6 +398,54 @@ octopoid project show user-dashboard-redesign
 octopoid project update user-dashboard-redesign --status completed
 ```
 
+### Project Branch Sequencing
+
+Projects group sequential tasks that build on each other's work. When you set `--branch` and `--auto-accept` on a project, Octopoid manages a shared feature branch that accumulates all task commits.
+
+**How it works:**
+
+1. **Lazy Branch Creation**: When the first task in a project is claimed, the scheduler automatically creates the project branch from the base branch and pushes it to origin.
+
+2. **Branch Inheritance**: All tasks created with a `project_id` automatically inherit the project's branch. You don't need to specify the branch for each task.
+
+3. **Sequential Accumulation**: Each task's worktree is created from the latest state of the project branch, so task 2 sees task 1's commits, task 3 sees 1+2, and so on.
+
+4. **Direct Merge (No Per-Task PRs)**: When `auto_accept: true` is set on a project, tasks merge their commits directly to the project branch instead of creating individual PRs. Each task auto-accepts after submission.
+
+5. **Final PR**: When all tasks in the project are complete, the scheduler creates a single PR from the project branch to the base branch, showing the full accumulated diff.
+
+**Example workflow:**
+
+```bash
+# Create a project with branch sequencing
+octopoid project create "Feature Refactor" \
+  --branch feature/refactor \
+  --base feature/client-server \
+  --auto-accept
+
+# Create tasks (they inherit the project branch automatically)
+octopoid enqueue "Refactor module A" --project feature-refactor
+octopoid enqueue "Refactor module B" --project feature-refactor
+octopoid enqueue "Refactor module C" --project feature-refactor
+
+# Octopoid will:
+# 1. Create feature/refactor branch (lazily, on first task claim)
+# 2. Task 1: work on feature/refactor, merge commits, auto-accept
+# 3. Task 2: start from feature/refactor with Task 1's work, merge commits, auto-accept
+# 4. Task 3: start from feature/refactor with Task 1+2's work, merge commits, auto-accept
+# 5. Create final PR: feature/refactor → feature/client-server
+
+# View project status
+octopoid project show feature-refactor
+```
+
+**When to use project branches:**
+
+- ✅ Sequential refactors where later tasks need earlier changes
+- ✅ Multi-phase feature implementations with dependencies
+- ✅ Breaking a large change into smaller, ordered tasks
+- ❌ Independent tasks that can work in parallel (use separate tasks without a project)
+
 ## How It Works
 
 1. **Task Creation**: Create tasks via `octopoid enqueue` or manually edit `.md` files

@@ -718,6 +718,51 @@ def _get_server_url_from_config() -> str:
     return ""
 
 
+def ensure_project_branch(task: dict) -> None:
+    """Create the project branch if it doesn't exist yet.
+
+    When the scheduler claims the first task for a project, check if the project
+    branch exists. If not, create it from the base branch and push to origin.
+
+    Args:
+        task: Task dictionary with project_id
+    """
+    project_id = task.get("project_id")
+    if not project_id:
+        return
+
+    try:
+        project = queue_utils.get_project(project_id)
+        if not project or not project.get("branch"):
+            return
+
+        branch = project["branch"]
+        base = project.get("base_branch", "main")
+        parent = find_parent_project()
+
+        # Check if branch exists remotely
+        result = subprocess.run(
+            ["git", "ls-remote", "--heads", "origin", branch],
+            cwd=parent, capture_output=True, text=True, timeout=30
+        )
+        if branch in (result.stdout or ""):
+            debug_log(f"Project branch {branch} already exists")
+            return  # Already exists
+
+        # Create and push
+        debug_log(f"Creating project branch {branch} from {base}")
+        subprocess.run(["git", "fetch", "origin", base], cwd=parent, capture_output=True, timeout=60)
+        subprocess.run(
+            ["git", "push", "origin", f"origin/{base}:refs/heads/{branch}"],
+            cwd=parent, capture_output=True, text=True, timeout=60, check=True
+        )
+        debug_log(f"Created project branch {branch} from {base}")
+        print(f"[{datetime.now().isoformat()}] Created project branch {branch} from {base}")
+    except Exception as e:
+        debug_log(f"Error creating project branch: {e}")
+        # Non-fatal - worktree creation will handle it
+
+
 def prepare_task_directory(
     task: dict,
     agent_name: str,
@@ -735,6 +780,9 @@ def prepare_task_directory(
         {task_dir}/notes.md      - progress notes
     """
     from .git_utils import create_task_worktree
+
+    # Ensure project branch exists (lazy creation)
+    ensure_project_branch(task)
 
     task_id = task["id"]
     task_dir = get_tasks_dir() / task_id
@@ -1182,7 +1230,30 @@ def process_auto_accept_tasks() -> None:
     Moves tasks from provisional to done if auto_accept is true
     (either on the task itself or its parent project).
     """
-    return
+    try:
+        sdk = queue_utils.get_sdk()
+        provisional = sdk.tasks.list(queue="provisional")
+        if not provisional:
+            return
+
+        for task in provisional:
+            task_id = task.get("id", "")
+
+            # Check task-level auto_accept
+            if task.get("auto_accept"):
+                sdk.tasks.accept(task_id=task_id, accepted_by="auto-accept")
+                print(f"[{datetime.now().isoformat()}] Auto-accepted task {task_id}")
+                continue
+
+            # Check project-level auto_accept
+            project_id = task.get("project_id")
+            if project_id:
+                project = queue_utils.get_project(project_id)
+                if project and project.get("auto_accept"):
+                    sdk.tasks.accept(task_id=task_id, accepted_by="project-auto-accept")
+                    print(f"[{datetime.now().isoformat()}] Auto-accepted task {task_id} (project)")
+    except Exception as e:
+        debug_log(f"Error in process_auto_accept_tasks: {e}")
 
 
 def process_gatekeeper_reviews() -> None:
@@ -1413,6 +1484,79 @@ def rebase_stale_branch(task_id: str, branch: str) -> bool:
         True if rebase succeeded and was pushed
     """
     return False
+
+
+def check_project_completion() -> None:
+    """Check if all tasks in active projects are done and create final PR.
+
+    For each active project:
+    1. Get all tasks for the project
+    2. If all tasks are done, create final PR from project.branch to project.base_branch
+    3. Update project status to "review"
+    """
+    try:
+        projects = queue_utils.list_projects(status="active")
+        if not projects:
+            return
+
+        parent = find_parent_project()
+
+        for project in projects:
+            project_id = project.get("id")
+            branch = project.get("branch")
+            base = project.get("base_branch", "main")
+
+            if not project_id or not branch:
+                continue
+
+            # Get all tasks for this project
+            try:
+                sdk = queue_utils.get_sdk()
+                all_tasks = sdk.tasks.list()
+                project_tasks = [t for t in all_tasks if t.get("project_id") == project_id]
+
+                if not project_tasks:
+                    continue
+
+                # Check if all tasks are done
+                all_done = all(t.get("queue") == "done" for t in project_tasks)
+                if not all_done:
+                    continue
+
+                debug_log(f"All tasks done for project {project_id}, creating final PR")
+
+                # Create final PR from project branch to base branch
+                result = subprocess.run(
+                    ["gh", "pr", "create",
+                     "--base", base,
+                     "--head", branch,
+                     "--title", f"[Project] {project.get('title', project_id)}",
+                     "--body", f"All {len(project_tasks)} tasks completed.\n\n"
+                               f"**Tasks:**\n" +
+                               "\n".join(f"- {t.get('id')}: {t.get('title', 'Untitled')}"
+                                       for t in project_tasks)],
+                    cwd=parent, capture_output=True, text=True, timeout=60, check=False
+                )
+
+                if result.returncode == 0:
+                    # Update project status to review
+                    project["status"] = "review"
+                    queue_utils._write_project_file(project)
+                    print(f"[{datetime.now().isoformat()}] Project {project_id} complete, PR created")
+                    debug_log(f"Created final PR for project {project_id}")
+                else:
+                    # PR might already exist
+                    if "already exists" in result.stderr.lower():
+                        debug_log(f"PR already exists for project {project_id}")
+                    else:
+                        debug_log(f"Failed to create PR for project {project_id}: {result.stderr}")
+
+            except Exception as e:
+                debug_log(f"Error checking project {project_id}: {e}")
+                continue
+
+    except Exception as e:
+        debug_log(f"Error in check_project_completion: {e}")
 
 
 def check_stale_branches(commits_behind_threshold: int = 5) -> None:
@@ -1652,6 +1796,9 @@ def run_scheduler() -> None:
 
     # Check branch freshness and auto-rebase stale provisional branches
     check_branch_freshness()
+
+    # Check for project completion and create final PRs
+    check_project_completion()
 
     # Check queue health and trigger queue-manager if issues detected
     should_trigger, trigger_reason = should_trigger_queue_manager()

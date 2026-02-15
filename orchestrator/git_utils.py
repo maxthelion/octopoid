@@ -209,8 +209,8 @@ def create_task_worktree(task: dict) -> Path:
     # Create parent directory
     worktree_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Fetch latest from origin
-    run_git(["fetch", "origin"], cwd=parent_repo, check=False)
+    # Fetch latest from origin (including the task's branch so task 2 sees task 1's commits)
+    run_git(["fetch", "origin", branch], cwd=parent_repo, check=False)
 
     # Check if branch exists on origin
     result = run_git(

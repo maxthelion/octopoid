@@ -13,6 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `handle_agent_result()` now uses state-first pattern to handle race conditions gracefully (expired leases, submit-pr races) and avoid incorrect function calls
 
 ### Added
+- **Project branch sequencing** for multi-task workflows
+  - Projects now support `branch` and `base_branch` fields to group sequential tasks on a shared feature branch
+  - Lazy branch creation: project branches are created automatically when the first task is claimed
+  - Task branch inheritance: tasks with `project_id` automatically inherit the project's branch
+  - Auto-accept support: projects with `auto_accept: true` skip per-task PRs and merge directly to project branch
+  - Sequential accumulation: each task's worktree includes all prior tasks' commits (task 2 sees task 1's work)
+  - Project completion detection: creates final PR when all tasks are done
+  - Documented in README with example workflow
 - Per-task log files for lifecycle tracking (GH-3)
   - New `TaskLogger` class that creates persistent `.octopoid/logs/tasks/TASK-{id}.log` files
   - Logs all state transitions: CREATED, CLAIMED, SUBMITTED, ACCEPTED, REJECTED, FAILED, REQUEUED
