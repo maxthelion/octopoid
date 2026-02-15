@@ -1,12 +1,14 @@
 """Tests for ephemeral task-scoped worktrees."""
 
 from pathlib import Path
+from unittest.mock import patch, MagicMock
 
 # Note: These imports will work when run from the orchestrator/ directory
 # with the proper PYTHONPATH setup
 try:
     from orchestrator.git_utils import (
         cleanup_task_worktree,
+        create_task_worktree,
         get_task_worktree_path,
         get_task_branch,
     )
@@ -16,6 +18,7 @@ except ImportError:
     sys.path.insert(0, str(Path(__file__).parent.parent))
     from orchestrator.git_utils import (
         cleanup_task_worktree,
+        create_task_worktree,
         get_task_worktree_path,
         get_task_branch,
     )
@@ -108,6 +111,142 @@ class TestPrepareTaskDirectoryCleansStaleFiles:
             )
 
         assert not (task_dir / "notes.md").exists()
+
+
+class TestCreateTaskWorktree:
+    """Tests for create_task_worktree() base branch selection."""
+
+    def _make_mock_run_git(self, *, ls_remote_stdout="", verify_rc=0, is_ancestor_rc=0,
+                           local_branch_rc=1):
+        """Build a side_effect for run_git that handles branching logic.
+
+        Args:
+            ls_remote_stdout: stdout for ls-remote (empty = branch not on origin)
+            verify_rc: returncode for rev-parse --verify of start_point
+            is_ancestor_rc: returncode for merge-base --is-ancestor check
+            local_branch_rc: returncode for rev-parse --verify of local branch
+        """
+        calls = []
+
+        def mock_run_git(args, cwd=None, check=True):
+            calls.append(args)
+            result = MagicMock()
+            result.returncode = 0
+            result.stdout = ""
+
+            if args[:2] == ["ls-remote", "--heads"]:
+                result.stdout = ls_remote_stdout
+            elif args[:2] == ["rev-parse", "--verify"]:
+                ref = args[2]
+                if ref.startswith("origin/"):
+                    result.returncode = verify_rc
+                else:
+                    # Local branch check
+                    result.returncode = local_branch_rc
+            elif args[:2] == ["merge-base", "--is-ancestor"]:
+                result.returncode = is_ancestor_rc
+            elif args[:1] == ["merge-base"] and "--is-ancestor" not in args:
+                result.stdout = "abc123\n"
+
+            return result
+
+        return mock_run_git, calls
+
+    def _run(self, task, temp_dir, **kwargs):
+        """Run create_task_worktree with standard mocks."""
+        worktree_path = temp_dir / "worktree"
+        mock_run_git, calls = self._make_mock_run_git(**kwargs)
+
+        with patch('orchestrator.git_utils.find_parent_project', return_value=temp_dir), \
+             patch('orchestrator.git_utils.get_task_worktree_path', return_value=worktree_path), \
+             patch('orchestrator.git_utils.get_main_branch', return_value="main"), \
+             patch('orchestrator.git_utils.run_git', side_effect=mock_run_git):
+            result = create_task_worktree(task)
+
+        return result, calls, worktree_path
+
+    def _find_worktree_add(self, calls):
+        """Find the 'git worktree add' call and return its args."""
+        add_calls = [c for c in calls if c[:2] == ["worktree", "add"]]
+        assert len(add_calls) == 1, f"Expected 1 worktree add call, got {len(add_calls)}: {add_calls}"
+        return add_calls[0]
+
+    def test_task_with_custom_branch_uses_origin_branch(self, temp_dir):
+        """Task with branch field creates worktree from origin/<branch>."""
+        task = {"id": "TASK-abc123", "role": "implement", "branch": "feature/xyz"}
+
+        result, calls, worktree_path = self._run(task, temp_dir)
+
+        add_args = self._find_worktree_add(calls)
+        assert add_args[-1] == "origin/feature/xyz"
+        assert result == worktree_path
+
+    def test_task_without_branch_uses_main(self, temp_dir):
+        """Task without branch field falls back to origin/main."""
+        task = {"id": "TASK-abc123", "role": "implement"}
+
+        _, calls, _ = self._run(task, temp_dir)
+
+        add_args = self._find_worktree_add(calls)
+        assert add_args[-1] == "origin/main"
+
+    def test_task_branch_fallback_when_origin_missing(self, temp_dir):
+        """Falls back to origin/main when task branch doesn't exist on origin."""
+        task = {"id": "TASK-abc123", "role": "implement", "branch": "feature/gone"}
+
+        _, calls, _ = self._run(task, temp_dir, verify_rc=1)
+
+        add_args = self._find_worktree_add(calls)
+        # Should fall back to origin/main, not use origin/feature/gone
+        assert add_args[-1] == "origin/main"
+
+    def test_existing_remote_branch_reused_when_correctly_based(self, temp_dir):
+        """Remote branch based on correct start_point is reused."""
+        task = {"id": "TASK-abc123", "role": "implement", "branch": "feature/xyz"}
+
+        _, calls, _ = self._run(
+            task, temp_dir,
+            ls_remote_stdout="abc123\trefs/heads/agent/TASK-abc123",
+            is_ancestor_rc=0,  # start_point IS ancestor of remote branch
+        )
+
+        add_args = self._find_worktree_add(calls)
+        # Should reuse the remote branch
+        assert add_args[-1] == "origin/agent/TASK-abc123"
+
+    def test_existing_remote_branch_recreated_when_stale(self, temp_dir):
+        """Remote branch NOT based on correct start_point is deleted and recreated."""
+        task = {"id": "TASK-abc123", "role": "implement", "branch": "feature/xyz"}
+
+        _, calls, _ = self._run(
+            task, temp_dir,
+            ls_remote_stdout="abc123\trefs/heads/agent/TASK-abc123",
+            is_ancestor_rc=1,  # start_point is NOT ancestor → stale
+        )
+
+        # Should have deleted the remote branch
+        delete_calls = [c for c in calls if c[:3] == ["push", "origin", "--delete"]]
+        assert len(delete_calls) == 1
+        assert delete_calls[0][3] == "agent/TASK-abc123"
+
+        # Should create worktree from the correct start_point, not the stale remote
+        add_args = self._find_worktree_add(calls)
+        assert add_args[-1] == "origin/feature/xyz"
+
+    def test_existing_worktree_is_reused(self, temp_dir):
+        """Existing worktree with .git is returned immediately."""
+        task = {"id": "TASK-abc123", "role": "implement", "branch": "feature/xyz"}
+        worktree_path = temp_dir / "worktree"
+        worktree_path.mkdir(parents=True)
+        (worktree_path / ".git").write_text("gitdir: ...")
+
+        with patch('orchestrator.git_utils.find_parent_project', return_value=temp_dir), \
+             patch('orchestrator.git_utils.get_task_worktree_path', return_value=worktree_path), \
+             patch('orchestrator.git_utils.run_git') as mock_run:
+            result = create_task_worktree(task)
+
+        assert result == worktree_path
+        mock_run.assert_not_called()
 
 
 class TestCleanupTaskWorktree:
