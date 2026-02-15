@@ -961,8 +961,11 @@ def _handle_submit_outcome(sdk, task_id: str, task_dir: Path, result: dict, curr
         except Exception as e:
             # Fallback: if submit fails, manually move to provisional
             debug_log(f"Task {task_id}: submit failed ({e}), falling back to provisional update")
-            sdk.tasks.update(task_id, queue="provisional")
-            _update_pr_metadata(sdk, task_id, result)
+            try:
+                sdk.tasks.update(task_id, queue="provisional")
+                _update_pr_metadata(sdk, task_id, result)
+            except Exception as e2:
+                debug_log(f"Task {task_id}: TRANSITION FAILED claimed → provisional: {e2}")
 
     elif current_queue == "provisional":
         # Already submitted (submit-pr race) — just update PR metadata
@@ -994,8 +997,11 @@ def _handle_fail_outcome(sdk, task_id: str, reason: str, current_queue: str) -> 
     """
     if current_queue == "claimed":
         # Normal case — update to failed
-        sdk.tasks.update(task_id, queue="failed")
-        debug_log(f"Task {task_id}: failed (claimed → failed): {reason}")
+        try:
+            sdk.tasks.update(task_id, queue="failed")
+            debug_log(f"Task {task_id}: failed (claimed → failed): {reason}")
+        except Exception as e:
+            debug_log(f"Task {task_id}: TRANSITION FAILED claimed → failed: {e}")
 
     elif current_queue == "provisional":
         # Submit took precedence — keep provisional
@@ -1025,8 +1031,11 @@ def _handle_continuation_outcome(sdk, task_id: str, agent_name: str, current_que
     """
     if current_queue == "claimed":
         # Normal case — update to needs_continuation
-        sdk.tasks.update(task_id, queue="needs_continuation")
-        debug_log(f"Task {task_id}: needs continuation (claimed → needs_continuation) by {agent_name}")
+        try:
+            sdk.tasks.update(task_id, queue="needs_continuation")
+            debug_log(f"Task {task_id}: needs continuation (claimed → needs_continuation) by {agent_name}")
+        except Exception as e:
+            debug_log(f"Task {task_id}: TRANSITION FAILED claimed → needs_continuation: {e}")
 
     elif current_queue == "provisional":
         # Submit took precedence — skip continuation
