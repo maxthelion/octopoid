@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import sys
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from string import Template
@@ -51,6 +52,18 @@ from .state_utils import (
 # Global debug flag
 DEBUG = False
 _log_file: Path | None = None
+
+
+@dataclass
+class AgentContext:
+    """Everything the filter chain needs to evaluate and spawn an agent."""
+    agent_config: dict
+    agent_name: str
+    role: str
+    interval: int
+    state: AgentState
+    state_path: Path
+    claimed_task: dict | None = None
 
 
 def setup_scheduler_debug() -> None:
