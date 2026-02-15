@@ -2,6 +2,13 @@
 
 Create a new task in the orchestrator queue.
 
+## How to Create Tasks
+
+Use the CLI — do NOT curl the server API directly:
+```bash
+npx tsx packages/client/src/cli.ts enqueue "<description>" --role <role> --priority <priority>
+```
+
 ## Usage
 
 Run `/enqueue` to interactively create a task, or provide details:
