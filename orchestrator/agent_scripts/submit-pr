@@ -12,6 +12,7 @@ BASE_BRANCH = os.environ.get("BASE_BRANCH", "main")
 AGENT_NAME = os.environ.get("AGENT_NAME", "unknown")
 SERVER_URL = os.environ.get("OCTOPOID_SERVER_URL", "")
 RESULT_FILE = os.environ.get("RESULT_FILE", "../result.json")
+NOTES_FILE = os.environ.get("NOTES_FILE", "../notes.md")
 
 # Add orchestrator to path
 ORCHESTRATOR_PYTHONPATH = os.environ.get("ORCHESTRATOR_PYTHONPATH", "")
@@ -133,12 +134,26 @@ def _submit_to_server(pr_url: str, pr_number: int) -> None:
         except (ValueError, subprocess.SubprocessError):
             pass
 
+        # Read execution notes from notes.md if it exists
+        notes_path = Path(NOTES_FILE)
+        execution_notes = None
+        if notes_path.exists():
+            try:
+                content = notes_path.read_text().strip()
+                if content:
+                    execution_notes = content
+            except OSError:
+                pass
+
         # Submit to server
         url = f"{SERVER_URL}/api/v1/tasks/{TASK_ID}/submit"
-        payload = json.dumps({
+        submit_data = {
             "commits_count": commits,
             "turns_used": 0,  # Could be tracked in the future
-        }).encode()
+        }
+        if execution_notes:
+            submit_data["execution_notes"] = execution_notes
+        payload = json.dumps(submit_data).encode()
 
         req = urllib.request.Request(
             url, data=payload, method="POST",

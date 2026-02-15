@@ -957,11 +957,23 @@ def _handle_submit_outcome(sdk, task_id: str, task_dir: Path, result: dict, curr
     if current_queue == "claimed":
         # Normal case — submit to move to provisional
         commits = _count_commits(task_dir, result)
+
+        # Read execution_notes from result or notes.md
+        notes = result.get("execution_notes", "")
+        if not notes:
+            notes_path = task_dir / "notes.md"
+            if notes_path.exists():
+                try:
+                    notes = notes_path.read_text().strip()
+                except OSError:
+                    pass
+
         try:
             sdk.tasks.submit(
                 task_id=task_id,
                 commits_count=commits,
                 turns_used=0,
+                execution_notes=notes if notes else None,
             )
             _update_pr_metadata(sdk, task_id, result)
             debug_log(f"Task {task_id}: submitted (claimed → provisional)")

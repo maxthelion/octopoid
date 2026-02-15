@@ -9,6 +9,7 @@ from pathlib import Path
 TASK_ID = os.environ.get("TASK_ID", "")
 SERVER_URL = os.environ.get("OCTOPOID_SERVER_URL", "")
 RESULT_FILE = os.environ.get("RESULT_FILE", "../result.json")
+NOTES_FILE = os.environ.get("NOTES_FILE", "../notes.md")
 
 
 def main() -> int:
@@ -24,6 +25,14 @@ def main() -> int:
 
     # Merge with finish outcome
     existing.setdefault("outcome", "done")
+
+    # Read notes.md and include as execution_notes
+    notes_path = Path(NOTES_FILE)
+    if notes_path.exists():
+        try:
+            existing["execution_notes"] = notes_path.read_text().strip()
+        except OSError:
+            pass
 
     result_path.write_text(json.dumps(existing, indent=2))
     print(f"Task {TASK_ID} marked as complete")
