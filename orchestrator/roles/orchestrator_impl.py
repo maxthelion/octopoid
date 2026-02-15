@@ -532,7 +532,8 @@ class OrchestratorImplRole(BaseRole):
 
         task_id = task["id"]
         task_title = task["title"]
-        base_branch = task.get("branch", "main")
+        from ..config import get_main_branch
+        base_branch = task.get("branch") or get_main_branch()
         task_path = task["path"]
 
         self.current_task_id = task_id

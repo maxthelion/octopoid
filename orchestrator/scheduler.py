@@ -748,7 +748,7 @@ def prepare_task_directory(
             debug_log(f"Cleaned stale {stale_file} from {task_dir}")
 
     # Create worktree
-    base_branch = task.get("branch", get_main_branch())
+    base_branch = task.get("branch") or get_main_branch()
     worktree_path = create_task_worktree(task)
 
     # Write task.json

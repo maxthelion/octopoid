@@ -20,6 +20,7 @@ import yaml
 from .config import (
     ACTIVE_QUEUES,
     TaskQueue,
+    get_main_branch,
     get_queue_dir,
     get_queue_limits,
     get_orchestrator_dir,
@@ -2595,7 +2596,7 @@ def recycle_to_breakdown(task_path, reason="too_large") -> dict | None:
             "Include RE_BREAKDOWN_DEPTH in new subtasks",
         ],
         priority="P1",
-        branch=project.get("branch", "main") if project else db_task.get("branch", "main"),
+        branch=project.get("branch") or db_task.get("branch") or get_main_branch(),
         created_by="recycler",
         project_id=project_id,
         queue="breakdown",

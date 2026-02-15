@@ -197,7 +197,8 @@ class HookManager:
                 message="No PR to merge (skipped)",
             )
 
-        base_branch = task.get("branch", "main")
+        from .config import get_main_branch
+        base_branch = task.get("branch") or get_main_branch()
         # Use parent project as worktree if none provided
         effective_worktree = worktree or Path(".")
         repo = self.repo_manager_factory(effective_worktree, base_branch)

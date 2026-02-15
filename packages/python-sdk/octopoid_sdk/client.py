@@ -44,7 +44,7 @@ class TasksAPI:
         context: Optional[str] = None,
         acceptance_criteria: Optional[str] = None,
         queue: str = 'incoming',
-        branch: str = 'main',
+        branch: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
         **kwargs
     ) -> Dict[str, Any]:
@@ -59,7 +59,7 @@ class TasksAPI:
             context: Task context/description
             acceptance_criteria: Success criteria
             queue: Initial queue (default: 'incoming')
-            branch: Base branch (default: 'main')
+            branch: Base branch (default: None, server/scheduler resolves)
             metadata: Additional metadata
             **kwargs: Additional task fields
 
@@ -70,8 +70,9 @@ class TasksAPI:
             'id': id,
             'file_path': file_path,
             'queue': queue,
-            'branch': branch,
         }
+        if branch is not None:
+            data['branch'] = branch
 
         if title:
             data['title'] = title
