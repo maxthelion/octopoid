@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -1822,6 +1823,118 @@ def run_housekeeping() -> None:
             job()
         except Exception as e:
             debug_log(f"Housekeeping job {job.__name__} failed: {e}")
+
+
+# =============================================================================
+# Spawn Strategies
+# =============================================================================
+
+def _requeue_task(task_id: str) -> None:
+    """Requeue a claimed task back to incoming after spawn failure."""
+    try:
+        from .queue_utils import get_sdk
+        sdk = get_sdk()
+        sdk.tasks.update(task_id, queue="incoming", claimed_by=None)
+        debug_log(f"Requeued task {task_id} back to incoming")
+    except Exception as e:
+        debug_log(f"Failed to requeue task {task_id}: {e}")
+
+
+def _init_submodule(agent_name: str) -> None:
+    """Initialize the orchestrator submodule in an agent's worktree."""
+    worktree_path = get_worktree_path(agent_name)
+    try:
+        subprocess.run(
+            ["git", "submodule", "update", "--init", "orchestrator"],
+            cwd=worktree_path,
+            capture_output=True, text=True, timeout=120,
+        )
+        sub_path = worktree_path / "orchestrator"
+        subprocess.run(["git", "checkout", "main"], cwd=sub_path, capture_output=True, text=True, timeout=30)
+        subprocess.run(["git", "fetch", "origin", "main"], cwd=sub_path, capture_output=True, text=True, timeout=60)
+        subprocess.run(["git", "reset", "--hard", "origin/main"], cwd=sub_path, capture_output=True, text=True, timeout=30)
+        _verify_submodule_isolation(sub_path, agent_name)
+        debug_log(f"Submodule initialized for {agent_name}")
+    except Exception as e:
+        debug_log(f"Submodule init failed for {agent_name}: {e}")
+
+
+def spawn_implementer(ctx: AgentContext) -> int:
+    """Spawn an implementer: prepare task dir, invoke claude directly."""
+    task_dir = prepare_task_directory(ctx.claimed_task, ctx.agent_name, ctx.agent_config)
+    pid = invoke_claude(task_dir, ctx.agent_config)
+
+    new_state = mark_started(ctx.state, pid)
+    new_state.extra["agent_mode"] = "scripts"
+    new_state.extra["task_dir"] = str(task_dir)
+    new_state.extra["current_task_id"] = ctx.claimed_task["id"]
+    save_state(new_state, ctx.state_path)
+    return pid
+
+
+def spawn_lightweight(ctx: AgentContext) -> int:
+    """Spawn a lightweight agent (no worktree, runs in parent project)."""
+    write_agent_env(ctx.agent_name, ctx.agent_config.get("id", 0), ctx.role, ctx.agent_config)
+    pid = spawn_agent(ctx.agent_name, ctx.agent_config.get("id", 0), ctx.role, ctx.agent_config)
+
+    new_state = mark_started(ctx.state, pid)
+    save_state(new_state, ctx.state_path)
+    return pid
+
+
+def spawn_worktree(ctx: AgentContext) -> int:
+    """Spawn an agent with a worktree (general case for non-lightweight, non-implementer)."""
+    # Resolve base branch for the worktree
+    base_branch = ctx.agent_config.get("base_branch", get_main_branch())
+
+    if ctx.claimed_task:
+        # Use the claimed task's branch for the worktree
+        task_branch = ctx.claimed_task.get("branch")
+        if task_branch and task_branch != "main":
+            debug_log(f"Using claimed task branch for {ctx.agent_name}: {task_branch}")
+            base_branch = task_branch
+    else:
+        # For non-claimable agents, peek at queue for branch hint
+        task_branch = peek_task_branch(ctx.role)
+        if task_branch:
+            debug_log(f"Peeked task branch for {ctx.agent_name}: {task_branch}")
+            base_branch = task_branch
+
+    debug_log(f"Ensuring worktree for {ctx.agent_name} on branch {base_branch}")
+    ensure_worktree(ctx.agent_name, base_branch)
+
+    # Initialize submodule for orchestrator_impl agents
+    if ctx.role == "orchestrator_impl":
+        _init_submodule(ctx.agent_name)
+
+    # Setup commands in worktree
+    debug_log(f"Setting up commands for {ctx.agent_name}")
+    setup_agent_commands(ctx.agent_name, ctx.role)
+
+    # Generate agent instructions
+    debug_log(f"Generating instructions for {ctx.agent_name}")
+    generate_agent_instructions(ctx.agent_name, ctx.role, ctx.agent_config)
+
+    # Write env file
+    debug_log(f"Writing env file for {ctx.agent_name}")
+    write_agent_env(ctx.agent_name, ctx.agent_config.get("id", 0), ctx.role, ctx.agent_config)
+
+    # Spawn agent
+    pid = spawn_agent(ctx.agent_name, ctx.agent_config.get("id", 0), ctx.role, ctx.agent_config)
+
+    # Update JSON state
+    new_state = mark_started(ctx.state, pid)
+    save_state(new_state, ctx.state_path)
+    return pid
+
+
+def get_spawn_strategy(ctx: AgentContext) -> Callable:
+    """Select spawn strategy based on agent type."""
+    if ctx.role == "implementer" and ctx.claimed_task:
+        return spawn_implementer
+    if ctx.agent_config.get("lightweight", False):
+        return spawn_lightweight
+    return spawn_worktree
 
 
 def run_scheduler() -> None:

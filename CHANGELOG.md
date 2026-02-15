@@ -17,6 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `HOUSEKEEPING_JOBS` list contains 10 independent housekeeping functions
   - `run_housekeeping()` function runs all jobs with try/except isolation
   - Failures in one job no longer prevent subsequent jobs from running
+- Extracted spawn strategies from scheduler into standalone functions (scheduler refactor phase 3, step 4/12):
+  - `spawn_implementer(ctx)` handles implementer spawn path (prepare task dir + invoke claude)
+  - `spawn_lightweight(ctx)` handles lightweight agents (no worktree)
+  - `spawn_worktree(ctx)` handles standard agents with worktrees
+  - `get_spawn_strategy(ctx)` dispatches to the correct strategy based on agent type
+  - `_init_submodule(agent_name)` extracted for orchestrator_impl submodule initialization
+  - `_requeue_task(task_id)` helper for error recovery on spawn failure
 
 ### Fixed
 - Unit tests now automatically mock `get_sdk()` to prevent production side effects when running `pytest tests/`
