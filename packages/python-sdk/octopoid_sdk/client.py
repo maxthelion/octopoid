@@ -46,6 +46,7 @@ class TasksAPI:
         queue: str = 'incoming',
         branch: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        breakdown_depth: Optional[int] = None,
         **kwargs
     ) -> Dict[str, Any]:
         """Create a new task
@@ -61,6 +62,7 @@ class TasksAPI:
             queue: Initial queue (default: 'incoming')
             branch: Base branch (default: None, server/scheduler resolves)
             metadata: Additional metadata
+            breakdown_depth: Breakdown depth (default: None, server defaults to 0)
             **kwargs: Additional task fields
 
         Returns:
@@ -82,6 +84,8 @@ class TasksAPI:
             data['priority'] = priority
         if metadata:
             data['metadata'] = metadata
+        if breakdown_depth is not None:
+            data['breakdown_depth'] = breakdown_depth
 
         # Add any additional fields
         data.update(kwargs)

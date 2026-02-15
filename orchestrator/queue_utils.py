@@ -1558,12 +1558,12 @@ CREATED_BY: {created_by}
             queue=queue,
             branch=branch,
             hooks=hooks_json,
+            breakdown_depth=breakdown_depth,
             metadata={
                 "created_by": created_by,
                 "blocked_by": blocked_by,
                 "project_id": project_id,
                 "checks": checks,
-                "breakdown_depth": breakdown_depth,
             }
         )
     except Exception as e:
