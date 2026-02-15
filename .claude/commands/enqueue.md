@@ -77,6 +77,21 @@ result = sdk.tasks.create(
 )
 ```
 
+## Scope Assessment
+
+Before creating a task, assess whether the work described is a good fit for a **single task** or whether it should be a **project** (multiple sequential tasks).
+
+A task is too large for a single agent if it:
+- Touches more than 2-3 files across different subsystems
+- Requires changes in multiple codebases (e.g. server TypeScript + Python orchestrator)
+- Has more than 3 distinct implementation steps
+- Would need a long task file with multiple code samples
+
+If the work is better served by a project, suggest this to the user:
+> "This looks like it spans multiple subsystems — would you like me to create a project with separate tasks instead? That way each agent gets a focused, achievable piece."
+
+Then use `sdk.projects.create()` and create individual tasks with `project_id` and appropriate `blocked_by` chains.
+
 ## Interactive Mode
 
 When run without arguments, ask for:
