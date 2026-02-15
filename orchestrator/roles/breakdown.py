@@ -82,7 +82,8 @@ Branch: {project.get('branch', 'N/A')}
 
             # Build branch diff context for re-breakdown tasks
             branch_diff_section = ""
-            task_branch = task.get("branch", "main")
+            from ..config import get_main_branch
+            task_branch = task.get("branch") or get_main_branch()
             is_rebreakdown = "re-breakdown" in task_title.lower() or "recycled" in task_content.lower()
 
             if is_rebreakdown and task_branch and task_branch != "main":

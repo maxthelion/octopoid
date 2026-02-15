@@ -4,6 +4,8 @@ from pathlib import Path
 from string import Template
 from typing import Any
 
+from .config import get_main_branch as _get_main_branch
+
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
 
 
@@ -70,7 +72,7 @@ def render_prompt(
         task_title=task.get("title", "Untitled"),
         task_content=task.get("content", ""),
         task_priority=task.get("priority", "P2"),
-        task_branch=task.get("branch", "main"),
+        task_branch=task.get("branch") or _get_main_branch(),
         task_type=task.get("type", ""),
         scripts_dir=scripts_dir,
         global_instructions=global_instructions,
