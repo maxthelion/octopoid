@@ -17,6 +17,7 @@ from .backpressure import check_backpressure_for_role
 from .config import (
     AGENT_TASK_ROLE,
     CLAIMABLE_AGENT_ROLES,
+    ROLE_ALLOWED_TOOLS,
     find_parent_project,
     get_agents,
     get_agents_runtime_dir,
@@ -848,10 +849,17 @@ def invoke_claude(task_dir: Path, agent_config: dict) -> int:
     model = agent_config.get("model", "sonnet")
     max_turns = agent_config.get("max_turns", 200)
 
+    # Determine allowed tools based on role
+    role = agent_config.get("role", "implementer")
+    allowed_tools = agent_config.get("allowed_tools")  # Check for override
+    if allowed_tools is None:
+        # Use default for role
+        allowed_tools = ROLE_ALLOWED_TOOLS.get(role, "Read,Write,Edit,Glob,Grep,Bash,Skill")
+
     cmd = [
         "claude",
         "-p", prompt,
-        "--allowedTools", "Read,Write,Edit,Glob,Grep,Bash,Skill",
+        "--allowedTools", allowed_tools,
         "--max-turns", str(max_turns),
         "--model", model,
     ]

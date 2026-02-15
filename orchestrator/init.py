@@ -2,6 +2,7 @@
 """One-time setup for parent project to use the orchestrator."""
 
 import argparse
+import json
 import shutil
 import sys
 from pathlib import Path
@@ -192,6 +193,34 @@ def init_orchestrator(
         for line in GITIGNORE_ADDITIONS.strip().split("\n"):
             if line and not line.startswith("#"):
                 print(f"      {line}")
+
+    # Create .claude/settings.local.json for scheduler command permissions
+    # This allows users running the scheduler from Claude Code to execute
+    # the necessary commands without additional prompts
+    claude_dir = parent / ".claude"
+    settings_local = claude_dir / "settings.local.json"
+    settings_created = False
+
+    if not settings_local.exists():
+        claude_dir.mkdir(parents=True, exist_ok=True)
+        settings_data = {
+            "allowedCommands": [
+                {
+                    "command": "python orchestrator/orchestrator/scheduler.py",
+                    "note": "Run the Octopoid scheduler"
+                },
+                {
+                    "command": "python -m orchestrator.orchestrator.scheduler",
+                    "note": "Run the Octopoid scheduler (module form)"
+                }
+            ]
+        }
+        settings_local.write_text(json.dumps(settings_data, indent=2) + "\n")
+        settings_created = True
+        print(f"  Created .claude/settings.local.json with scheduler command permissions")
+    else:
+        print("  .claude/settings.local.json already exists")
+        print("    (You may need to manually add scheduler command permissions)")
 
     # Print success and next steps
     print()

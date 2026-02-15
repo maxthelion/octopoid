@@ -116,6 +116,26 @@ DEFAULT_GATEKEEPER_CONFIG = {
     "optional_checks": ["style", "architecture"],
 }
 
+# Role-based tool allowlists for agents spawned by the scheduler
+# These defaults can be overridden per-agent via the allowed_tools field in agents.yaml
+ROLE_ALLOWED_TOOLS: dict[str, str] = {
+    "implementer": "Read,Write,Edit,Glob,Grep,Bash,Skill",
+    "orchestrator_impl": "Read,Write,Edit,Glob,Grep,Bash,Skill",
+    "breakdown": "Read,Glob,Grep,Bash",
+    "gatekeeper": "Read,Glob,Grep,Bash",
+    "gatekeeper_coordinator": "Read,Glob,Grep,Bash",
+    "reviewer": "Read,Glob,Grep,Bash",
+    "tester": "Read,Write,Edit,Glob,Grep,Bash,Skill",  # Can modify test files
+    "proposer": "Read,Glob,Grep,Bash",
+    "curator": "Read,Glob,Grep,Bash",
+    "github_issue_monitor": "Bash",
+    "queue_manager": "Read,Glob,Grep,Bash",
+    "pr_coordinator": "Read,Glob,Grep,Bash",
+    "pre_check": "Bash",
+    "recycler": "Bash",
+    "rebaser": "Bash",
+}
+
 ModelType = Literal["task", "proposal"]
 
 

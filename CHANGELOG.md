@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Per-role tool allowlists for IDE permission systems (GH-7)
+  - New `ROLE_ALLOWED_TOOLS` mapping in `config.py` defines default tools for each agent role
+  - Implementers get full access: Read,Write,Edit,Glob,Grep,Bash,Skill
+  - Gatekeepers/reviewers get read-only + bash: Read,Glob,Grep,Bash
+  - Breakdown agents get analysis tools only: Read,Glob,Grep,Bash
+  - GitHub issue monitor gets Bash only for `gh` commands
+  - Per-agent override via `allowed_tools` field in agents.yaml
+  - `octopoid init` now creates `.claude/settings.local.json` with scheduler command permissions
+
 ### Fixed
 - Unit tests now automatically mock `get_sdk()` to prevent production side effects when running `pytest tests/`
 - `submit-pr` script now calls server submit endpoint directly, ensuring tasks transition from `claimed` to `provisional` even if agents don't exit immediately
