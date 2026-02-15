@@ -1797,6 +1797,33 @@ def _register_orchestrator() -> None:
         debug_log(f"Orchestrator registration failed (non-fatal): {e}")
 
 
+# =============================================================================
+# Housekeeping Jobs
+# =============================================================================
+
+HOUSEKEEPING_JOBS = [
+    _register_orchestrator,
+    check_and_update_finished_agents,
+    _check_queue_health_throttled,
+    process_orchestrator_hooks,
+    process_auto_accept_tasks,
+    assign_qa_checks,
+    process_gatekeeper_reviews,
+    dispatch_gatekeeper_agents,
+    check_stale_branches,
+    check_branch_freshness,
+]
+
+
+def run_housekeeping() -> None:
+    """Run all housekeeping jobs. Each is independent and fault-isolated."""
+    for job in HOUSEKEEPING_JOBS:
+        try:
+            job()
+        except Exception as e:
+            debug_log(f"Housekeeping job {job.__name__} failed: {e}")
+
+
 def run_scheduler() -> None:
     """Main scheduler loop - evaluate and spawn agents."""
     print(f"[{datetime.now().isoformat()}] Scheduler starting")
