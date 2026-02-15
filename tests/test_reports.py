@@ -197,12 +197,12 @@ class TestIsRecent:
     """Tests for _is_recent()."""
 
     def test_recent_task_returns_true(self):
-        task = {"created": datetime.now().isoformat()}
+        task = {"completed_at": datetime.now().isoformat()}
         cutoff = datetime.now() - timedelta(hours=24)
         assert _is_recent(task, cutoff) is True
 
     def test_old_task_returns_false(self):
-        task = {"created": (datetime.now() - timedelta(days=3)).isoformat()}
+        task = {"completed_at": (datetime.now() - timedelta(days=3)).isoformat()}
         cutoff = datetime.now() - timedelta(hours=24)
         assert _is_recent(task, cutoff) is False
 
@@ -210,11 +210,41 @@ class TestIsRecent:
         assert _is_recent({}, datetime.now()) is False
 
     def test_invalid_timestamp_returns_false(self):
-        assert _is_recent({"created": "not-a-date"}, datetime.now()) is False
+        assert _is_recent({"completed_at": "not-a-date"}, datetime.now()) is False
 
     def test_handles_timezone_aware_timestamp(self):
-        task = {"created": "2026-02-07T10:00:00Z"}
+        task = {"completed_at": "2026-02-07T10:00:00Z"}
         cutoff = datetime(2026, 2, 7, 9, 0, 0)
+        assert _is_recent(task, cutoff) is True
+
+    def test_uses_completed_at_over_updated_at(self):
+        """completed_at should be preferred over updated_at."""
+        task = {
+            "completed_at": datetime.now().isoformat(),
+            "updated_at": (datetime.now() - timedelta(days=10)).isoformat(),
+        }
+        cutoff = datetime.now() - timedelta(hours=24)
+        assert _is_recent(task, cutoff) is True
+
+    def test_falls_back_to_updated_at(self):
+        """Should use updated_at when completed_at is missing."""
+        task = {"updated_at": datetime.now().isoformat()}
+        cutoff = datetime.now() - timedelta(hours=24)
+        assert _is_recent(task, cutoff) is True
+
+    def test_falls_back_to_created_at(self):
+        """Should use created_at when completed_at and updated_at are missing."""
+        task = {"created_at": datetime.now().isoformat()}
+        cutoff = datetime.now() - timedelta(hours=24)
+        assert _is_recent(task, cutoff) is True
+
+    def test_old_created_recent_completed_returns_true(self):
+        """Task created 30 days ago but completed today should be recent."""
+        task = {
+            "created_at": (datetime.now() - timedelta(days=30)).isoformat(),
+            "completed_at": datetime.now().isoformat(),
+        }
+        cutoff = datetime.now() - timedelta(days=7)
         assert _is_recent(task, cutoff) is True
 
 
