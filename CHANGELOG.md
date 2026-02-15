@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `guard_enabled`, `guard_not_running`, `guard_interval`, `guard_backpressure`, `guard_pre_check`, `guard_claim_task`
   - `AGENT_GUARDS` list and `evaluate_agent()` function for running the guard chain
   - Guards return `(should_proceed: bool, reason: str)` for composability
+- Extracted housekeeping jobs into a list with fault isolation (scheduler refactor phase 2, step 3/12):
+  - `HOUSEKEEPING_JOBS` list contains 10 independent housekeeping functions
+  - `run_housekeeping()` function runs all jobs with try/except isolation
+  - Failures in one job no longer prevent subsequent jobs from running
 
 ### Fixed
 - Unit tests now automatically mock `get_sdk()` to prevent production side effects when running `pytest tests/`
