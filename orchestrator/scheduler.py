@@ -1942,50 +1942,16 @@ def run_scheduler() -> None:
     print(f"[{datetime.now().isoformat()}] Scheduler starting")
     debug_log("Scheduler tick starting")
 
-    # Register orchestrator with API server (idempotent)
-    _register_orchestrator()
-
     # Check global pause flag
     if is_system_paused():
         print("System is paused (rm .octopoid/PAUSE or set 'paused: false' in agents.yaml)")
         debug_log("System is paused globally")
         return
 
-    # Check for finished agents first
-    check_and_update_finished_agents()
+    # Phase 1: Housekeeping
+    run_housekeeping()
 
-    # Check queue health (runs every 30 minutes)
-    _check_queue_health_throttled()
-
-    # Run orchestrator-side hooks on provisional tasks (e.g. merge_pr)
-    process_orchestrator_hooks()
-
-    # Process auto-accept tasks in provisional queue
-    process_auto_accept_tasks()
-
-    # Auto-assign gk-qa checks to app tasks with staging URLs
-    assign_qa_checks()
-
-    # Process gatekeeper reviews for provisional tasks
-    process_gatekeeper_reviews()
-
-    # Dispatch gatekeeper agents for pending checks
-    dispatch_gatekeeper_agents()
-
-    # Check for stale branches that need rebasing
-    check_stale_branches()
-
-    # Check branch freshness and auto-rebase stale provisional branches
-    check_branch_freshness()
-
-    # Check queue health and trigger queue-manager if issues detected
-    should_trigger, trigger_reason = should_trigger_queue_manager()
-    if should_trigger:
-        debug_log(f"Queue health issues detected: {trigger_reason}")
-        # The queue-manager agent will be evaluated in the normal agent loop below
-        # We just log the detection here; the agent's pre-check handles actual triggering
-
-    # Load agent configuration
+    # Phase 2 + 3: Evaluate and spawn agents
     try:
         agents = get_agents()
         debug_log(f"Loaded {len(agents)} agents from config")
@@ -1999,210 +1965,52 @@ def run_scheduler() -> None:
         debug_log("No agents configured")
         return
 
-    for agent_id, agent_config in enumerate(agents):
+    for agent_config in agents:
         agent_name = agent_config.get("name")
         role = agent_config.get("role")
-        interval = agent_config.get("interval_seconds", 300)
-        paused = agent_config.get("paused", False)
-
         if not agent_name or not role:
             print(f"Skipping invalid agent config: {agent_config}")
             debug_log(f"Invalid agent config: {agent_config}")
             continue
 
-        if paused:
-            print(f"Agent {agent_name} is paused, skipping")
-            debug_log(f"Agent {agent_name} is paused")
-            continue
+        debug_log(f"Evaluating agent {agent_name}: role={role}")
 
-        debug_log(f"Evaluating agent {agent_name}: role={role}, interval={interval}s")
-
-        # Try to acquire agent lock
+        # Acquire agent lock
         agent_lock_path = get_agent_lock_path(agent_name)
-
         with locked_or_skip(agent_lock_path) as acquired:
             if not acquired:
                 print(f"Agent {agent_name} is locked (another instance running?)")
                 debug_log(f"Agent {agent_name} lock not acquired")
                 continue
 
-            # Load agent state
+            # Build context
             state_path = get_agent_state_path(agent_name)
-            state = load_state(state_path)
-            debug_log(f"Agent {agent_name} state: running={state.running}, pid={state.pid}, last_finished={state.last_finished}")
+            ctx = AgentContext(
+                agent_config=agent_config,
+                agent_name=agent_name,
+                role=role,
+                interval=agent_config.get("interval_seconds", 300),
+                state=load_state(state_path),
+                state_path=state_path,
+            )
 
-            # Check if still running
-            if state.running and state.pid and is_process_running(state.pid):
-                print(f"Agent {agent_name} is still running (PID {state.pid})")
-                debug_log(f"Agent {agent_name} still running (PID {state.pid})")
+            # Evaluate guards
+            if not evaluate_agent(ctx):
                 continue
 
-            # If was marked running but process died, update state
-            if state.running:
-                debug_log(f"Agent {agent_name} was marked running but process died, marking as crashed")
-                state = mark_finished(state, 1)  # Assume crashed
-                save_state(state, state_path)
-
-            # Check if overdue
-            if not is_overdue(state, interval):
-                print(f"Agent {agent_name} is not due yet")
-                debug_log(f"Agent {agent_name} not due yet")
-                continue
-
-            # Check role-based backpressure (runs before spawning any process)
-            can_proceed, blocked_reason = check_backpressure_for_role(role)
-            if not can_proceed:
-                print(f"Agent {agent_name} blocked: {blocked_reason}")
-                debug_log(f"Agent {agent_name} blocked by backpressure: {blocked_reason}")
-                # Update state to track blocked status
-                state.extra["blocked_reason"] = blocked_reason
-                state.extra["blocked_at"] = datetime.now().isoformat()
-                save_state(state, state_path)
-                continue
-
-            # Clear any previous blocked status
-            if "blocked_reason" in state.extra:
-                del state.extra["blocked_reason"]
-            if "blocked_at" in state.extra:
-                del state.extra["blocked_at"]
-
-            # Run pre-check if configured (additional cheap check for work availability)
-            if not run_pre_check(agent_name, agent_config):
-                print(f"Agent {agent_name} pre-check: no work available")
-                debug_log(f"Agent {agent_name} pre-check returned no work")
-                continue
-
-            # For claimable agents: claim task before spawning.
-            # This ensures the agent has work and avoids wasted startups.
-            claimed_task = None
-            if role in CLAIMABLE_AGENT_ROLES:
-                task_role = AGENT_TASK_ROLE[role]
-                # Read allowed task types from agent config (None = any type)
-                allowed_types = agent_config.get("allowed_task_types")
-                type_filter = allowed_types[0] if isinstance(allowed_types, list) and len(allowed_types) == 1 else (
-                    ",".join(allowed_types) if isinstance(allowed_types, list) else allowed_types
-                )
-                claimed_task = claim_and_prepare_task(agent_name, task_role, type_filter=type_filter)
-                if claimed_task is None:
-                    debug_log(f"No task available for {agent_name}")
-                    continue
-                debug_log(f"Claimed task {claimed_task['id']} for {agent_name}")
-
+            # Spawn
             print(f"[{datetime.now().isoformat()}] Starting agent {agent_name} (role: {role})")
             debug_log(f"Starting agent {agent_name} (role: {role})")
 
-            # Implementers use scripts mode: prepare task dir and invoke claude directly
-            if role == "implementer" and claimed_task:
-                try:
-                    task_dir = prepare_task_directory(claimed_task, agent_name, agent_config)
-                    pid = invoke_claude(task_dir, agent_config)
-                except Exception as e:
-                    print(f"[{datetime.now().isoformat()}] Failed to spawn agent for {claimed_task['id']}: {e}")
-                    debug_log(f"Spawn failed for {claimed_task['id']}, requeuing: {e}")
-                    try:
-                        from .queue_utils import get_sdk
-                        sdk = get_sdk()
-                        sdk.tasks.update(claimed_task["id"], queue="incoming", claimed_by=None)
-                    except Exception:
-                        pass
-                    continue
-
-                new_state = mark_started(state, pid)
-                new_state.extra["agent_mode"] = "scripts"
-                new_state.extra["task_dir"] = str(task_dir)
-                new_state.extra["current_task_id"] = claimed_task["id"]
-                save_state(new_state, state_path)
-
+            strategy = get_spawn_strategy(ctx)
+            try:
+                pid = strategy(ctx)
                 print(f"Agent {agent_name} started with PID {pid}")
-                continue
-
-            # Check if this is a lightweight agent (no worktree needed)
-            is_lightweight = agent_config.get("lightweight", False)
-
-            if not is_lightweight:
-                # Determine base branch for worktree
-                base_branch = agent_config.get("base_branch", get_main_branch())
-
-                if claimed_task:
-                    # Use the claimed task's branch for the worktree
-                    task_branch = claimed_task.get("branch")
-                    if task_branch and task_branch != "main":
-                        debug_log(f"Using claimed task branch for {agent_name}: {task_branch}")
-                        base_branch = task_branch
-                else:
-                    # For non-implementer agents, peek at queue for branch hint
-                    task_branch = peek_task_branch(role)
-                    if task_branch:
-                        debug_log(f"Peeked task branch for {agent_name}: {task_branch}")
-                        base_branch = task_branch
-
-                debug_log(f"Ensuring worktree for {agent_name} on branch {base_branch}")
-                ensure_worktree(agent_name, base_branch)
-
-                # Initialize submodule for orchestrator_impl agents
-                if role == "orchestrator_impl":
-                    worktree_path = get_worktree_path(agent_name)
-                    debug_log(f"Initializing submodule in worktree for {agent_name}")
-                    try:
-                        subprocess.run(
-                            ["git", "submodule", "update", "--init", "orchestrator"],
-                            cwd=worktree_path,
-                            capture_output=True,
-                            text=True,
-                            timeout=120,
-                        )
-                        # Checkout main in the submodule and fetch latest
-                        sub_path = worktree_path / "orchestrator"
-                        subprocess.run(
-                            ["git", "checkout", "main"],
-                            cwd=sub_path,
-                            capture_output=True,
-                            text=True,
-                            timeout=30,
-                        )
-                        subprocess.run(
-                            ["git", "fetch", "origin", "main"],
-                            cwd=sub_path,
-                            capture_output=True,
-                            text=True,
-                            timeout=60,
-                        )
-                        subprocess.run(
-                            ["git", "reset", "--hard", "origin/main"],
-                            cwd=sub_path,
-                            capture_output=True,
-                            text=True,
-                            timeout=30,
-                        )
-                        # Verify the submodule has its own git object store
-                        # (not sharing with the main checkout's submodule)
-                        _verify_submodule_isolation(sub_path, agent_name)
-                        debug_log(f"Submodule initialized for {agent_name}")
-                    except Exception as e:
-                        debug_log(f"Submodule init failed for {agent_name}: {e}")
-
-                # Setup commands in worktree
-                debug_log(f"Setting up commands for {agent_name}")
-                setup_agent_commands(agent_name, role)
-
-                # Generate agent instructions
-                debug_log(f"Generating instructions for {agent_name}")
-                generate_agent_instructions(agent_name, role, agent_config)
-            else:
-                debug_log(f"Agent {agent_name} is lightweight, skipping worktree setup")
-
-            # Write env file
-            debug_log(f"Writing env file for {agent_name}")
-            write_agent_env(agent_name, agent_id, role, agent_config)
-
-            # Spawn agent
-            pid = spawn_agent(agent_name, agent_id, role, agent_config)
-
-            # Update JSON state
-            new_state = mark_started(state, pid)
-            save_state(new_state, state_path)
-
-            print(f"Agent {agent_name} started with PID {pid}")
+            except Exception as e:
+                print(f"[{datetime.now().isoformat()}] Spawn failed for {agent_name}: {e}")
+                debug_log(f"Spawn failed for {agent_name}: {e}")
+                if ctx.claimed_task:
+                    _requeue_task(ctx.claimed_task["id"])
 
     print(f"[{datetime.now().isoformat()}] Scheduler tick complete")
     debug_log("Scheduler tick complete")

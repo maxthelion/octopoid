@@ -24,6 +24,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `get_spawn_strategy(ctx)` dispatches to the correct strategy based on agent type
   - `_init_submodule(agent_name)` extracted for orchestrator_impl submodule initialization
   - `_requeue_task(task_id)` helper for error recovery on spawn failure
+- Refactored `run_scheduler()` to use pipeline architecture (scheduler refactor phase 2, step 5/12):
+  - Replaced ~270-line monolithic function with ~75-line pipeline
+  - Three-phase execution: pause check → housekeeping → evaluate + spawn agents
+  - Each agent processed through: build context → evaluate guards → spawn strategy
+  - Behaviour-identical to previous implementation (verified via debug logs and tests)
+  - Simpler control flow: no nested if/else branches for spawn logic
+  - Improved debuggability: guard failures logged with clear reason messages
 
 ### Fixed
 - Unit tests now automatically mock `get_sdk()` to prevent production side effects when running `pytest tests/`
