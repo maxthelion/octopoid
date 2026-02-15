@@ -740,6 +740,13 @@ def prepare_task_directory(
     task_dir = get_tasks_dir() / task_id
     task_dir.mkdir(parents=True, exist_ok=True)
 
+    # Clean stale artifacts from previous runs
+    for stale_file in ['result.json', 'notes.md']:
+        stale_path = task_dir / stale_file
+        if stale_path.exists():
+            stale_path.unlink()
+            debug_log(f"Cleaned stale {stale_file} from {task_dir}")
+
     # Create worktree
     base_branch = task.get("branch", get_main_branch())
     worktree_path = create_task_worktree(task)

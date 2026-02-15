@@ -64,6 +64,52 @@ class TestGetTaskBranch:
         assert branch == "agent/abc12345"
 
 
+class TestPrepareTaskDirectoryCleansStaleFiles:
+    """Tests for stale file cleanup in prepare_task_directory()."""
+
+    def test_cleans_stale_result_json(self, tmp_path, monkeypatch):
+        """Stale result.json from a previous run is deleted."""
+        monkeypatch.setattr('orchestrator.scheduler.get_tasks_dir', lambda: tmp_path)
+
+        task_id = "test-task-123"
+        task_dir = tmp_path / task_id
+        task_dir.mkdir()
+        (task_dir / "result.json").write_text('{"outcome": "submitted"}')
+
+        from unittest.mock import patch
+        from orchestrator.scheduler import prepare_task_directory
+
+        with patch('orchestrator.git_utils.create_task_worktree', return_value=tmp_path / "worktree"):
+            prepare_task_directory(
+                {"id": task_id, "role": "implement", "title": "test"},
+                "implementer-1",
+                {"role": "implementer"},
+            )
+
+        assert not (task_dir / "result.json").exists()
+
+    def test_cleans_stale_notes_md(self, tmp_path, monkeypatch):
+        """Stale notes.md from a previous run is deleted."""
+        monkeypatch.setattr('orchestrator.scheduler.get_tasks_dir', lambda: tmp_path)
+
+        task_id = "test-task-456"
+        task_dir = tmp_path / task_id
+        task_dir.mkdir()
+        (task_dir / "notes.md").write_text("# Old notes")
+
+        from unittest.mock import patch
+        from orchestrator.scheduler import prepare_task_directory
+
+        with patch('orchestrator.git_utils.create_task_worktree', return_value=tmp_path / "worktree"):
+            prepare_task_directory(
+                {"id": task_id, "role": "implement", "title": "test"},
+                "implementer-1",
+                {"role": "implementer"},
+            )
+
+        assert not (task_dir / "notes.md").exists()
+
+
 class TestCleanupTaskWorktree:
     """Tests for cleanup_task_worktree()."""
 
