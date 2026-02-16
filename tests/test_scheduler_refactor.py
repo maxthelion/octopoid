@@ -25,7 +25,6 @@ from orchestrator.scheduler import (
     evaluate_agent,
     get_spawn_strategy,
     guard_backpressure,
-    guard_claim_task,
     guard_enabled,
     guard_interval,
     guard_not_running,
@@ -379,95 +378,6 @@ class TestGuardPreCheck:
 
         assert proceed is False
         assert reason == "pre-check: no work"
-
-
-class TestGuardClaimTask:
-    """Test guard_claim_task function."""
-
-    def test_claim_task_non_claimable_returns_true(self, tmp_path):
-        """Test that non-claimable roles skip this guard."""
-        state_path = tmp_path / "state.json"
-        ctx = AgentContext(
-            agent_config={},
-            agent_name="test-agent",
-            role="proposer",  # not in CLAIMABLE_AGENT_ROLES
-            interval=300,
-            state=AgentState(),
-            state_path=state_path,
-        )
-
-        proceed, reason = guard_claim_task(ctx)
-
-        assert proceed is True
-        assert reason == ""
-        assert ctx.claimed_task is None
-
-    @patch("orchestrator.scheduler.claim_and_prepare_task")
-    def test_claim_task_success_returns_true(self, mock_claim, tmp_path):
-        """Test that claiming a task successfully sets ctx.claimed_task."""
-        task = {"id": "task-123", "title": "Test task"}
-        mock_claim.return_value = task
-
-        state_path = tmp_path / "state.json"
-        ctx = AgentContext(
-            agent_config={},
-            agent_name="test-agent",
-            role="implementer",  # claimable role
-            interval=300,
-            state=AgentState(),
-            state_path=state_path,
-        )
-
-        proceed, reason = guard_claim_task(ctx)
-
-        assert proceed is True
-        assert reason == ""
-        assert ctx.claimed_task == task
-        mock_claim.assert_called_once()
-
-    @patch("orchestrator.scheduler.claim_and_prepare_task")
-    def test_claim_task_none_returns_false(self, mock_claim, tmp_path):
-        """Test that no available tasks returns False."""
-        mock_claim.return_value = None
-
-        state_path = tmp_path / "state.json"
-        ctx = AgentContext(
-            agent_config={},
-            agent_name="test-agent",
-            role="implementer",
-            interval=300,
-            state=AgentState(),
-            state_path=state_path,
-        )
-
-        proceed, reason = guard_claim_task(ctx)
-
-        assert proceed is False
-        assert reason == "no task available"
-        assert ctx.claimed_task is None
-
-    @patch("orchestrator.scheduler.claim_and_prepare_task")
-    def test_claim_task_with_type_filter(self, mock_claim, tmp_path):
-        """Test that allowed_task_types is passed as type_filter."""
-        task = {"id": "task-123", "title": "Test task"}
-        mock_claim.return_value = task
-
-        state_path = tmp_path / "state.json"
-        ctx = AgentContext(
-            agent_config={"allowed_task_types": ["feature", "bugfix"]},
-            agent_name="test-agent",
-            role="implementer",
-            interval=300,
-            state=AgentState(),
-            state_path=state_path,
-        )
-
-        proceed, reason = guard_claim_task(ctx)
-
-        assert proceed is True
-        # Verify type_filter was passed (it should be "feature,bugfix")
-        call_kwargs = mock_claim.call_args[1]
-        assert call_kwargs["type_filter"] == "feature,bugfix"
 
 
 # =============================================================================
