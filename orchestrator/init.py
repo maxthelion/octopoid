@@ -84,6 +84,8 @@ def init_orchestrator(
         runtime_dir / "messages",
         # Task content (gitignored, server is source of truth)
         octopoid_dir / "tasks",
+        # Flow definitions
+        octopoid_dir / "flows",
     ]
 
     created_count = 0
@@ -126,6 +128,23 @@ def init_orchestrator(
         print("  Using existing .octopoid/agents.yaml")
     if gi_created:
         print("  Created .octopoid/global-instructions.md")
+
+    # Create default flow files
+    from .flow import generate_default_flow, generate_project_flow
+
+    default_flow_path = octopoid_dir / "flows" / "default.yaml"
+    if not default_flow_path.exists():
+        default_flow_path.write_text(generate_default_flow())
+        print(f"  Created: {default_flow_path.relative_to(parent)}")
+    else:
+        print(f"  Exists:  {default_flow_path.relative_to(parent)}")
+
+    project_flow_path = octopoid_dir / "flows" / "project.yaml"
+    if not project_flow_path.exists():
+        project_flow_path.write_text(generate_project_flow())
+        print(f"  Created: {project_flow_path.relative_to(parent)}")
+    else:
+        print(f"  Exists:  {project_flow_path.relative_to(parent)}")
 
     print()
 
