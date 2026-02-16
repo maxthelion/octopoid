@@ -7,7 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Full ProjectsAPI implementation in Python SDK with `get()`, `create()`, `update()`, and `get_tasks()` methods
+
 ### Changed
+- Migrated project management from local YAML files to server API in `orchestrator/queue_utils.py`
+- `create_project()` now requires `branch` parameter and validates branch existence on origin
+- `create_project()` warns if `base_branch` is "main" but current branch is a feature branch
+- Removed `_write_project_file()` and `get_projects_dir()` functions - projects now fully managed via server API
 - Added `AgentContext` dataclass to scheduler for structured per-agent state management (scheduler refactor phase 2, step 1/12)
 - Extracted guard functions from scheduler agent loop into standalone, testable functions (scheduler refactor phase 2, step 2/12):
   - `guard_enabled`, `guard_not_running`, `guard_interval`, `guard_backpressure`, `guard_pre_check`, `guard_claim_task`
