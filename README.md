@@ -169,14 +169,14 @@ When running agents in IDEs with permission systems (like Claude Code), agents n
 **View required commands:**
 
 ```bash
-orchestrator-permissions --list
+octopoid permissions --list
 ```
 
 **Generate IDE permission config:**
 
 ```bash
 # For Claude Code
-orchestrator-permissions --format claude-code > .claude/octopoid-permissions.json
+octopoid permissions --format claude-code > .claude/octopoid-permissions.json
 ```
 
 **Extend the defaults** by adding a `commands:` section to `agents.yaml`:

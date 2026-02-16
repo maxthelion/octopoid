@@ -1,10 +1,12 @@
 """Octopoid CLI — manage tasks and worktrees from the command line."""
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
 from .config import get_tasks_dir
+from .permissions import export_claude_code, format_summary
 from .queue_utils import get_sdk
 
 
@@ -171,6 +173,24 @@ def cmd_worktrees_clean(args: argparse.Namespace) -> None:
         print(f"\n{cleaned} worktree(s) removed.")
 
 
+def cmd_permissions(args: argparse.Namespace) -> None:
+    """Show or export command permissions for IDE integration."""
+    if args.list:
+        print("Octopoid agents require permission to run:")
+        print()
+        print(format_summary())
+        print()
+        print("To generate IDE permission config, run:")
+        print("  octopoid permissions --format claude-code")
+        return
+
+    if args.format:
+        if args.format == "claude-code":
+            result = export_claude_code()
+            print(json.dumps(result, indent=2))
+        return
+
+
 # ---------------------------------------------------------------------------
 # Argument parser
 # ---------------------------------------------------------------------------
@@ -212,6 +232,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_wtc = sub.add_parser("worktrees-clean", help="Prune stale task worktrees")
     p_wtc.add_argument("--dry-run", action="store_true", help="Show what would be removed")
     p_wtc.set_defaults(func=cmd_worktrees_clean)
+
+    # permissions
+    p_perm = sub.add_parser("permissions", help="Manage command permissions for IDE integration")
+    p_perm.add_argument("--list", "-l", action="store_true", help="Show required permissions")
+    p_perm.add_argument("--format", "-f", choices=["claude-code"], help="Export in IDE-specific format")
+    p_perm.set_defaults(func=cmd_permissions)
 
     return parser
 
