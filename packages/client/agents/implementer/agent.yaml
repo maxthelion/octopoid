@@ -1,0 +1,14 @@
+role: implementer
+model: sonnet
+max_turns: 200
+interval_seconds: 60
+spawn_mode: scripts
+lightweight: false
+allowed_tools:
+  - Read
+  - Write
+  - Edit
+  - Glob
+  - Grep
+  - Bash
+  - Skill
