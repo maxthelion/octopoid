@@ -4,14 +4,12 @@
 import argparse
 import json
 import os
-import shutil
 import subprocess
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from string import Template
 
 
 
@@ -22,16 +20,11 @@ from .config import (
     find_parent_project,
     get_agents,
     get_agents_runtime_dir,
-    get_commands_dir,
-    get_gatekeeper_config,
-    get_gatekeepers,
     get_global_instructions_path,
     get_logs_dir,
     get_main_branch,
     get_orchestrator_dir,
     get_tasks_dir,
-    get_templates_dir,
-    is_gatekeeper_enabled,
     is_system_paused,
 )
 from .git_utils import ensure_worktree, get_worktree_path
@@ -1132,22 +1125,6 @@ def handle_agent_result(task_id: str, agent_name: str, task_dir: Path) -> None:
         # Don't try to fail the task here — let lease monitor handle recovery
 
 
-def assign_qa_checks() -> None:
-    """Auto-assign gk-qa check to provisional app tasks that have a staging_url.
-
-    Scans provisional tasks and adds 'gk-qa' to the checks list for tasks that:
-    - Have a staging_url (deployment is ready)
-    - Are NOT orchestrator_impl tasks (those use gk-testing-octopoid)
-    - Don't already have gk-qa in their checks list
-
-    Tasks without a staging_url are silently skipped — they'll be picked up
-    on a future tick once the staging URL is populated by _store_staging_url().
-    """
-    return
-
-
-
-
 def process_orchestrator_hooks() -> None:
     """Run orchestrator-side hooks on provisional tasks.
 
@@ -1195,41 +1172,6 @@ def process_orchestrator_hooks() -> None:
     except Exception as e:
         debug_log(f"Error processing orchestrator hooks: {e}")
 
-def process_auto_accept_tasks() -> None:
-    """Process provisional tasks that have auto_accept enabled.
-
-    Moves tasks from provisional to done if auto_accept is true
-    (either on the task itself or its parent project).
-    """
-    return
-
-
-def process_gatekeeper_reviews() -> None:
-    """Process provisional tasks that have per-task checks.
-
-    Uses the DB-based check system (task.checks + task.check_results).
-    Gatekeeper agents record results; this function acts as a safety-net
-    pass that rejects any failed tasks the gatekeeper may have missed.
-
-    Tasks with all checks passed are left in provisional for human review —
-    they are NOT auto-accepted here.
-    """
-    return
-
-
-def dispatch_gatekeeper_agents() -> None:
-    """Dispatch gatekeeper agents for provisional tasks with pending checks.
-
-    For each provisional task that has pending checks, find the first one
-    and spawn a gatekeeper agent to evaluate it.
-
-    Sequential execution: only one pending check is dispatched at a time per task.
-    The next check will be dispatched on the following scheduler tick after the
-    first one completes.
-    """
-    return
-
-
 def check_and_update_finished_agents() -> None:
     """Check for agents that have finished and update their state."""
     agents_dir = get_agents_runtime_dir()
@@ -1273,224 +1215,6 @@ def check_and_update_finished_agents() -> None:
 # =============================================================================
 # Queue Health Detection (for queue-manager agent)
 # =============================================================================
-
-def detect_queue_health_issues() -> dict[str, list[dict]]:
-    """Detect queue health issues: file-DB mismatches, orphan files, zombie claims.
-
-    Returns:
-        Dictionary with keys 'file_db_mismatches', 'orphan_files', 'zombie_claims'
-        Each value is a list of issue dictionaries with details.
-    """
-    return {'file_db_mismatches': [], 'orphan_files': [], 'zombie_claims': []}
-
-
-def should_trigger_queue_manager() -> tuple[bool, str]:
-    """Check if queue-manager agent should be triggered.
-
-    Returns:
-        (should_trigger, trigger_reason) where trigger_reason describes why
-    """
-    issues = detect_queue_health_issues()
-
-    total_issues = (
-        len(issues['file_db_mismatches']) +
-        len(issues['orphan_files']) +
-        len(issues['zombie_claims'])
-    )
-
-    if total_issues == 0:
-        return False, ""
-
-    # Build trigger reason
-    parts = []
-    if issues['file_db_mismatches']:
-        parts.append(f"{len(issues['file_db_mismatches'])} file-DB mismatch(es)")
-    if issues['orphan_files']:
-        parts.append(f"{len(issues['orphan_files'])} orphan file(s)")
-    if issues['zombie_claims']:
-        parts.append(f"{len(issues['zombie_claims'])} zombie claim(s)")
-
-    trigger_reason = ", ".join(parts)
-    return True, trigger_reason
-
-
-def ensure_rebaser_worktree() -> Path | None:
-    """Ensure the dedicated rebaser worktree exists.
-
-    Creates .octopoid/runtime/agents/rebaser-worktree/ on first use,
-    detached at HEAD. Runs npm install if node_modules is missing.
-
-    Returns:
-        Path to the rebaser worktree, or None on failure
-    """
-    parent_project = find_parent_project()
-    worktree_path = get_agents_runtime_dir() / "rebaser-worktree"
-
-    if worktree_path.exists() and (worktree_path / ".git").exists():
-        return worktree_path
-
-    debug_log("Creating dedicated rebaser worktree")
-
-    try:
-        # Create the worktree detached at HEAD
-        result = subprocess.run(
-            ["git", "worktree", "add", "--detach", str(worktree_path), "HEAD"],
-            cwd=parent_project,
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-
-        if result.returncode != 0:
-            debug_log(f"Failed to create rebaser worktree: {result.stderr}")
-            return None
-
-        # Run npm install
-        debug_log("Running npm install in rebaser worktree")
-        subprocess.run(
-            ["npm", "install"],
-            cwd=worktree_path,
-            capture_output=True,
-            timeout=120,
-        )
-
-        print(f"[{datetime.now().isoformat()}] Created rebaser worktree at {worktree_path}")
-        return worktree_path
-
-    except (subprocess.TimeoutExpired, subprocess.SubprocessError) as e:
-        debug_log(f"Error creating rebaser worktree: {e}")
-        return None
-
-
-def check_branch_freshness() -> None:
-    """Check provisional app tasks for stale branches and rebase them.
-
-    For each provisional task where role='implement' and pr_url is set:
-    - Uses git merge-base --is-ancestor to check if main is ancestor of branch
-    - If main is NOT an ancestor, the branch is stale
-    - Skips branches that were rebased recently (throttled by last_rebase_attempt_at)
-    - Skips orchestrator_impl tasks (self-merge handles those)
-    - Calls rebase_stale_branch() directly for stale branches
-    """
-    return
-
-
-def _is_branch_fresh(parent_project: Path, branch: str) -> bool | None:
-    """Check if origin/main is an ancestor of the branch (i.e. branch is fresh).
-
-    Uses `git merge-base --is-ancestor origin/main origin/<branch>`.
-
-    Args:
-        parent_project: Path to the git repo
-        branch: Branch name to check
-
-    Returns:
-        True if branch is fresh (main is ancestor), False if stale,
-        None if branch not found or error
-    """
-    try:
-        # Check that the remote branch exists
-        result = subprocess.run(
-            ['git', 'rev-parse', '--verify', f'origin/{branch}'],
-            cwd=parent_project,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        if result.returncode != 0:
-            return None
-
-        # Check if origin/main is an ancestor of the branch
-        result = subprocess.run(
-            ['git', 'merge-base', '--is-ancestor', 'origin/main', f'origin/{branch}'],
-            cwd=parent_project,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-
-        # Exit code 0 means main IS ancestor (branch is fresh)
-        # Exit code 1 means main is NOT ancestor (branch is stale)
-        return result.returncode == 0
-
-    except (subprocess.TimeoutExpired, subprocess.SubprocessError):
-        return None
-
-
-def rebase_stale_branch(task_id: str, branch: str) -> bool:
-    """Rebase a stale branch onto main, run tests, and force-push.
-
-    On conflict: rebase --abort, reject task back to agent with conflict details.
-    On test failure: reject task back to agent with test output.
-    On success: force-push with --force-with-lease, log success.
-
-    Args:
-        task_id: Task identifier
-        branch: Branch name to rebase
-
-    Returns:
-        True if rebase succeeded and was pushed
-    """
-    return False
-
-
-def check_stale_branches(commits_behind_threshold: int = 5) -> None:
-    """Check provisional/review tasks for branch staleness and mark for rebase.
-
-    Compares each task's branch against current origin/main. If the branch
-    is behind by N+ commits, sets needs_rebase=True in the DB.
-
-    Skips:
-    - Tasks already marked for rebase
-    - orchestrator_impl tasks (v1 limitation)
-    - Tasks without a branch (or on main)
-
-    Args:
-        commits_behind_threshold: Number of commits behind main before
-            marking for rebase (default 5)
-    """
-    return
-
-
-def _count_commits_behind(parent_project: Path, branch: str) -> int | None:
-    """Count how many commits a branch is behind origin/main.
-
-    Args:
-        parent_project: Path to the git repo
-        branch: Branch name to check
-
-    Returns:
-        Number of commits behind, or None if branch not found
-    """
-    try:
-        # Check that the remote branch exists
-        result = subprocess.run(
-            ['git', 'rev-parse', '--verify', f'origin/{branch}'],
-            cwd=parent_project,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        if result.returncode != 0:
-            return None
-
-        # Count commits on main that are not on the branch
-        result = subprocess.run(
-            ['git', 'rev-list', '--count', f'origin/{branch}..origin/main'],
-            cwd=parent_project,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-
-        if result.returncode != 0:
-            return None
-
-        return int(result.stdout.strip())
-
-    except (subprocess.TimeoutExpired, subprocess.SubprocessError, ValueError):
-        return None
-
 
 # Track last queue health check time (global state)
 _last_queue_health_check: datetime | None = None
@@ -1640,12 +1364,6 @@ HOUSEKEEPING_JOBS = [
     check_and_update_finished_agents,
     _check_queue_health_throttled,
     process_orchestrator_hooks,
-    process_auto_accept_tasks,
-    assign_qa_checks,
-    process_gatekeeper_reviews,
-    dispatch_gatekeeper_agents,
-    check_stale_branches,
-    check_branch_freshness,
 ]
 
 

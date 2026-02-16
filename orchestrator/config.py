@@ -371,9 +371,7 @@ def get_curator_scoring() -> dict[str, float]:
 def get_agents() -> list[dict[str, Any]]:
     """Get list of configured agents.
 
-    Supports two formats:
-    - Legacy: agents.yaml with 'agents:' key containing inline config
-    - New: agents.yaml with 'fleet:' key referencing agent directories
+    Reads the 'fleet:' key from agents.yaml, which references agent directories.
 
     Returns:
         List of agent configs with merged type defaults and fleet overrides.
