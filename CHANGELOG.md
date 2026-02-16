@@ -32,6 +32,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Simpler control flow: no nested if/else branches for spawn logic
   - Improved debuggability: guard failures logged with clear reason messages
 
+### Added
+- Comprehensive test suite for scheduler refactor (step 6/12):
+  - New `tests/test_scheduler_refactor.py` with 28 unit tests
+  - Tests cover: `AgentContext` dataclass, all 6 guard functions, `evaluate_agent` chain, `get_spawn_strategy` dispatch, `run_housekeeping` fault isolation
+  - All existing scheduler tests continue to pass (behaviour-preserving refactor verified)
+
 ### Fixed
 - Unit tests now automatically mock `get_sdk()` to prevent production side effects when running `pytest tests/`
 - `submit-pr` script now calls server submit endpoint directly, ensuring tasks transition from `claimed` to `provisional` even if agents don't exit immediately
