@@ -8,7 +8,7 @@ class TestSDKMocking:
 
     def test_sdk_is_mocked_by_default(self, mock_sdk_for_unit_tests):
         """Verify that the autouse fixture mocks get_sdk() for unit tests."""
-        from orchestrator.queue_utils import get_sdk
+        from orchestrator.sdk import get_sdk
 
         sdk = get_sdk()
 
