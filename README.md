@@ -199,6 +199,16 @@ export ANTHROPIC_API_KEY="sk-ant-..."
 echo 'export ANTHROPIC_API_KEY="sk-ant-..."' >> ~/.zshrc
 ```
 
+### Flows (Declarative State Machines)
+
+Flows define how tasks move through the system. They're YAML files in `.octopoid/flows/` that specify transitions, conditions, and actions.
+
+`octopoid init` generates default flows:
+- **default.yaml** - Standard implementation flow (incoming → claimed → provisional → done)
+- **project.yaml** - Multi-task project flow with shared branch
+
+See [docs/flows.md](docs/flows.md) for full documentation on creating custom flows, conditions, and task overrides.
+
 ## What Files Does Octopoid Create?
 
 When you run `octopoid init`, these files and directories are created:
