@@ -1,0 +1,28 @@
+#!/opt/homebrew/opt/python@3.13/bin/python3.13
+"""Mark task as failed and write result.json."""
+
+import json
+import os
+import sys
+from pathlib import Path
+
+TASK_ID = os.environ.get("TASK_ID", "")
+RESULT_FILE = os.environ.get("RESULT_FILE", "../result.json")
+
+
+def main() -> int:
+    reason = " ".join(sys.argv[1:]) if len(sys.argv) > 1 else "Unknown failure"
+
+    result = {
+        "outcome": "failed",
+        "reason": reason,
+    }
+
+    result_path = Path(RESULT_FILE)
+    result_path.write_text(json.dumps(result, indent=2))
+    print(f"Task {TASK_ID} marked as failed: {reason}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

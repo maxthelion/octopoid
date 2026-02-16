@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Post review findings - handles both PR and non-PR tasks
+# For PR tasks: posts comment via gh CLI
+# For project tasks: writes to review file
+# Takes findings text from stdin or as argument
+# Exit 0 on success, 1 on failure
+
+set -euo pipefail
+
+# Source environment variables if available
+if [ -f "../env.sh" ]; then
+    source "../env.sh"
+fi
+
+# Get review body from argument or stdin
+if [ $# -gt 0 ]; then
+    REVIEW_BODY="$*"
+else
+    REVIEW_BODY=$(cat)
+fi
+
+if [ -z "$REVIEW_BODY" ]; then
+    echo "Error: No review content provided"
+    exit 1
+fi
+
+# Determine mode based on PR_NUMBER
+if [ -n "${PR_NUMBER:-}" ] && [ "$PR_NUMBER" != "null" ] && [ "$PR_NUMBER" != "" ]; then
+    # Mode: Standalone task with PR
+    echo "=== Posting Review to PR #$PR_NUMBER ==="
+
+    # Post comment using gh CLI
+    gh pr comment "$PR_NUMBER" --body "$REVIEW_BODY"
+
+    echo "Review posted successfully to PR #$PR_NUMBER"
+else
+    # Mode: Project task without PR
+    echo "=== Writing Review to File (No PR) ==="
+
+    # Write to review file in parent directory
+    REVIEW_FILE="../review.md"
+    echo "$REVIEW_BODY" > "$REVIEW_FILE"
+
+    echo "Review written to $REVIEW_FILE"
+    echo "(Project task has no PR, so review saved to file instead)"
+fi
+
+exit 0

@@ -1,0 +1,11 @@
+role: sanity-check-gatekeeper
+model: sonnet
+max_turns: 50
+interval_seconds: 120
+spawn_mode: scripts
+lightweight: true
+allowed_tools:
+  - Read
+  - Glob
+  - Grep
+  - Bash
