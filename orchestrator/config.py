@@ -381,11 +381,7 @@ def get_agents() -> list[dict[str, Any]]:
     """
     config = load_agents_config()
 
-    # Legacy format - return as-is for backward compatibility
-    if "agents" in config:
-        return config.get("agents", [])
-
-    # New fleet format
+    # Fleet format only
     fleet = config.get("fleet", [])
     if not fleet:
         return []

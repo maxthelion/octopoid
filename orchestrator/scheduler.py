@@ -38,7 +38,6 @@ from .git_utils import ensure_worktree, get_worktree_path
 from .hook_manager import HookManager
 from .lock_utils import locked_or_skip
 from .port_utils import get_port_env_vars
-from .prompt_renderer import render_prompt
 from . import queue_utils
 from .state_utils import (
     AgentState,
@@ -485,223 +484,6 @@ def get_agent_env_path(agent_name: str) -> Path:
     return get_agents_runtime_dir() / agent_name / "env.sh"
 
 
-def setup_agent_commands(agent_name: str, role: str) -> None:
-    """Copy commands to the agent's worktree.
-
-    Args:
-        agent_name: Name of the agent
-        role: Agent role (determines which commands to copy)
-    """
-    worktree_path = get_worktree_path(agent_name)
-    commands_dest = worktree_path / ".claude" / "commands"
-    commands_dest.mkdir(parents=True, exist_ok=True)
-
-    # Source directories
-    submodule_commands = get_commands_dir() / "agent"
-    project_overrides = get_orchestrator_dir() / "commands"
-
-    # Copy all agent commands from submodule
-    if submodule_commands.exists():
-        for cmd_file in submodule_commands.glob("*.md"):
-            dest_file = commands_dest / cmd_file.name
-            shutil.copy2(cmd_file, dest_file)
-
-    # Override with project-specific commands if they exist
-    if project_overrides.exists():
-        for cmd_file in project_overrides.glob("*.md"):
-            dest_file = commands_dest / cmd_file.name
-            shutil.copy2(cmd_file, dest_file)
-
-
-def generate_agent_instructions(
-    agent_name: str,
-    role: str,
-    agent_config: dict,
-    task_info: dict | None = None,
-) -> Path:
-    """Generate .agent-instructions.md in the agent's worktree.
-
-    Args:
-        agent_name: Name of the agent
-        role: Agent role
-        agent_config: Full agent configuration
-        task_info: Optional current task information
-
-    Returns:
-        Path to generated instructions file
-    """
-    worktree_path = get_worktree_path(agent_name)
-    instructions_path = worktree_path / ".agent-instructions.md"
-
-    # Load template
-    template_path = get_templates_dir() / "agent_instructions.md.tmpl"
-    if template_path.exists():
-        template_content = template_path.read_text()
-    else:
-        template_content = DEFAULT_AGENT_INSTRUCTIONS_TEMPLATE
-
-    # Load global instructions
-    global_instructions_path = get_global_instructions_path()
-    global_instructions = ""
-    if global_instructions_path.exists():
-        global_instructions = global_instructions_path.read_text()
-
-    # Build task section
-    task_section = ""
-    if task_info:
-        task_section = f"""
-## Current Task
-
-**Task ID:** {task_info.get('id', 'unknown')}
-**Title:** {task_info.get('title', 'unknown')}
-**Priority:** {task_info.get('priority', 'P2')}
-**Target Branch:** {task_info.get('branch', 'main')}
-
-{task_info.get('content', '')}
-"""
-
-    # Build constraints based on role
-    constraints = get_role_constraints(role)
-
-    # Substitute template
-    template = Template(template_content)
-    content = template.safe_substitute(
-        agent_name=agent_name,
-        role=role,
-        timestamp=datetime.now().isoformat(),
-        global_instructions=global_instructions,
-        task_section=task_section,
-        constraints=constraints,
-    )
-
-    instructions_path.write_text(content)
-    return instructions_path
-
-
-def get_role_constraints(role: str) -> str:
-    """Get role-specific constraints for agent instructions.
-
-    Args:
-        role: Agent role
-
-    Returns:
-        Markdown string with constraints
-    """
-    constraints = {
-        # Task model (v1)
-        "product_manager": """
-- You may read any files in the repository
-- You may NOT modify code files
-- Your output is task files in the queue
-- Focus on high-value, well-scoped tasks
-- Consider existing PRs and in-progress work
-""",
-        # Proposal model (v2)
-        "proposer": """
-- You may read any files in the repository
-- You may NOT modify code files
-- Your output is proposal files
-- Stay focused on your designated area
-- Review your rejected proposals before creating new ones
-- Create well-scoped, actionable proposals
-""",
-        "curator": """
-- You may read any files in the repository
-- You may NOT modify code files
-- Evaluate proposals based on project priorities
-- Provide constructive feedback when rejecting
-- Escalate conflicts to the project owner
-- Do not explore the codebase directly
-""",
-        # Gatekeeper system
-        "gatekeeper": """
-- You may read any files in the repository
-- You may NOT modify code files
-- Review the PR diff from your specialized perspective
-- Be thorough but fair in your assessment
-- Provide specific, actionable feedback for any issues
-- Record your check result using the /record-check skill
-""",
-        "gatekeeper_coordinator": """
-- You may read any files in the repository
-- You may NOT modify code files
-- Monitor PRs and coordinate gatekeeper checks
-- Aggregate check results
-- Create fix tasks when checks fail
-- Approve PRs when all checks pass
-""",
-        "pr_coordinator": """
-- You may read any files in the repository
-- You may NOT modify code files
-- Watch for open PRs that need review
-- Create review tasks for agent-created PRs
-- Avoid creating duplicate review tasks
-""",
-        # Execution layer (both models)
-        "implementer": """
-- You may read and modify code files
-- Create focused, atomic commits
-- Follow existing code patterns and conventions
-- Write tests for new functionality
-- Create a PR when work is complete
-""",
-        "orchestrator_impl": """
-- You work on the orchestrator infrastructure (Python), NOT the Boxen app
-- All code is in the orchestrator/ submodule directory (already initialized by the scheduler)
-- Work inside orchestrator/ for all edits and commits
-- Run tests: cd orchestrator && ./venv/bin/python -m pytest tests/ -v
-- Do NOT run `pip install -e .` — it will corrupt the shared scheduler venv. Just edit code and run tests.
-- Key files: orchestrator/orchestrator/db.py, queue_utils.py, scheduler.py
-- CRITICAL: Commit ONLY in the worktree's orchestrator/ submodule, not the main repo root
-- Use `git -C orchestrator/ commit` to ensure commits go to the submodule
-- Do NOT create a PR in the main repo — commit to a feature branch in the submodule
-- Do NOT use absolute paths to /Users/.../dev/boxen/orchestrator/ — that is a DIFFERENT git repo
-""",
-        "tester": """
-- You may read all files
-- You may modify test files only
-- Run existing tests and report results
-- Add missing test coverage
-- Do not modify production code
-""",
-        "reviewer": """
-- You are in READ-ONLY mode by default
-- Review code for bugs, security issues, and style
-- Leave constructive feedback
-- Approve or request changes via PR review
-- Do not modify code directly
-""",
-        # Pre-check layer (scheduler-level submission filtering)
-        "pre_check": """
-- You do NOT need a worktree (lightweight agent)
-- Pre-check provisional tasks for commits
-- Accept tasks with valid commits (pass to review)
-- Reject tasks without commits (send back for retry)
-- Recycle or escalate after max retries
-- Reset stuck claimed tasks
-- This role runs without Claude invocation
-""",
-        "recycler": """
-- You do NOT need a worktree (lightweight agent)
-- Poll provisional queue for burned-out tasks (0 commits, high turns)
-- Recycle burned-out tasks to the breakdown queue with project context
-- Accept depth-capped tasks for human review
-- This role runs without Claude invocation
-""",
-        "rebaser": """
-- You do NOT need a worktree (lightweight agent)
-- Rebase stale task branches onto current main
-- Re-run tests after rebase; escalate if tests fail
-- Force-push rebased branches with --force-with-lease
-- Skip orchestrator_impl tasks (v1 limitation)
-- Add notes to task files when human intervention is needed
-- This role runs without Claude invocation
-""",
-
-    }
-    return constraints.get(role, "- Follow standard development practices")
-
-
 def write_agent_env(agent_name: str, agent_id: int, role: str, agent_config: dict | None = None) -> Path:
     """Write environment variables file for an agent.
 
@@ -925,14 +707,13 @@ def prepare_task_directory(
     import json
     (task_dir / "task.json").write_text(json.dumps(task, indent=2))
 
-    # Copy and template scripts from agent directory (fall back to legacy path)
+    # Copy and template scripts from agent directory
     agent_dir = agent_config.get("agent_dir")
-    if agent_dir and (Path(agent_dir) / "scripts").exists():
-        scripts_src = Path(agent_dir) / "scripts"
-        debug_log(f"Using scripts from agent directory: {scripts_src}")
-    else:
-        scripts_src = Path(__file__).parent / "agent_scripts"  # legacy fallback
-        debug_log(f"Using legacy scripts directory: {scripts_src}")
+    if not agent_dir or not (Path(agent_dir) / "scripts").exists():
+        raise ValueError(f"Agent directory or scripts not found: {agent_dir}")
+
+    scripts_src = Path(agent_dir) / "scripts"
+    debug_log(f"Using scripts from agent directory: {scripts_src}")
 
     scripts_dest = task_dir / "scripts"
     scripts_dest.mkdir(exist_ok=True)
@@ -966,108 +747,80 @@ def prepare_task_directory(
     ]
     (task_dir / "env.sh").write_text("\n".join(env_lines) + "\n")
 
-    # Render prompt from agent directory (fall back to legacy)
+    # Render prompt from agent directory
     agent_dir = agent_config.get("agent_dir")
-    if agent_dir and (Path(agent_dir) / "prompt.md").exists():
-        # Use prompt template from agent directory
-        prompt_template_path = Path(agent_dir) / "prompt.md"
-        prompt_template = prompt_template_path.read_text()
-        debug_log(f"Using prompt template from agent directory: {prompt_template_path}")
+    if not agent_dir or not (Path(agent_dir) / "prompt.md").exists():
+        raise ValueError(f"Agent directory or prompt.md not found: {agent_dir}")
 
-        # Load global instructions
-        global_instructions = ""
-        gi_path = get_global_instructions_path()
-        if gi_path.exists():
-            global_instructions = gi_path.read_text()
+    # Use prompt template from agent directory
+    prompt_template_path = Path(agent_dir) / "prompt.md"
+    prompt_template = prompt_template_path.read_text()
+    debug_log(f"Using prompt template from agent directory: {prompt_template_path}")
 
-        # Load instructions.md from agent directory if available
-        instructions_md_path = Path(agent_dir) / "instructions.md"
-        if instructions_md_path.exists():
-            instructions_content = instructions_md_path.read_text()
-            # Append instructions to global instructions
-            global_instructions = global_instructions + "\n\n" + instructions_content
-            debug_log(f"Included instructions.md from agent directory: {instructions_md_path}")
+    # Load global instructions
+    global_instructions = ""
+    gi_path = get_global_instructions_path()
+    if gi_path.exists():
+        global_instructions = gi_path.read_text()
 
-        # Get agent hooks from task
-        hooks = task.get("hooks")
-        agent_hooks = None
-        if hooks:
-            if isinstance(hooks, str):
-                agent_hooks = [
-                    h for h in json.loads(hooks)
-                    if h.get("type") == "agent"
-                ]
-            elif isinstance(hooks, list):
-                agent_hooks = [h for h in hooks if h.get("type") == "agent"]
+    # Load instructions.md from agent directory if available
+    instructions_md_path = Path(agent_dir) / "instructions.md"
+    if instructions_md_path.exists():
+        instructions_content = instructions_md_path.read_text()
+        # Append instructions to global instructions
+        global_instructions = global_instructions + "\n\n" + instructions_content
+        debug_log(f"Included instructions.md from agent directory: {instructions_md_path}")
 
-        # Build required_steps section
-        required_steps = ""
-        if agent_hooks:
-            lines = ["## Required Steps Before Finishing", ""]
-            lines.append("You must complete these steps before calling finish:")
-            for i, hook in enumerate(agent_hooks, 1):
-                name = hook["name"]
-                if name == "run_tests":
-                    lines.append(f"{i}. Run tests: `../scripts/run-tests`")
-                elif name == "create_pr":
-                    lines.append(f"{i}. Submit PR: `../scripts/submit-pr`")
-                elif name == "rebase_on_main":
-                    lines.append(
-                        f"{i}. Rebase on main: "
-                        "`git fetch origin main && git rebase origin/main`"
-                    )
-                else:
-                    lines.append(f"{i}. {name}")
-            required_steps = "\n".join(lines)
+    # Get agent hooks from task
+    hooks = task.get("hooks")
+    agent_hooks = None
+    if hooks:
+        if isinstance(hooks, str):
+            agent_hooks = [
+                h for h in json.loads(hooks)
+                if h.get("type") == "agent"
+            ]
+        elif isinstance(hooks, list):
+            agent_hooks = [h for h in hooks if h.get("type") == "agent"]
 
-        # Perform template substitution
-        from string import Template
-        template = Template(prompt_template)
-        prompt = template.safe_substitute(
-            task_id=task.get("id", "unknown"),
-            task_title=task.get("title", "Untitled"),
-            task_content=task.get("content", ""),
-            task_priority=task.get("priority", "P2"),
-            task_branch=task.get("branch") or get_main_branch(),
-            task_type=task.get("type", ""),
-            scripts_dir="../scripts",
-            global_instructions=global_instructions,
-            required_steps=required_steps,
-            review_section="",
-            continuation_section="",
-        )
-    else:
-        # Legacy fallback - use render_prompt()
-        debug_log("Using legacy prompt rendering via render_prompt()")
-        global_instructions = ""
-        gi_path = get_global_instructions_path()
-        if gi_path.exists():
-            global_instructions = gi_path.read_text()
+    # Build required_steps section
+    required_steps = ""
+    if agent_hooks:
+        lines = ["## Required Steps Before Finishing", ""]
+        lines.append("You must complete these steps before calling finish:")
+        for i, hook in enumerate(agent_hooks, 1):
+            name = hook["name"]
+            if name == "run_tests":
+                lines.append(f"{i}. Run tests: `../scripts/run-tests`")
+            elif name == "create_pr":
+                lines.append(f"{i}. Submit PR: `../scripts/submit-pr`")
+            elif name == "rebase_on_main":
+                lines.append(
+                    f"{i}. Rebase on main: "
+                    "`git fetch origin main && git rebase origin/main`"
+                )
+            else:
+                lines.append(f"{i}. {name}")
+        required_steps = "\n".join(lines)
 
-        # Get agent hooks from task
-        hooks = task.get("hooks")
-        agent_hooks = None
-        if hooks:
-            if isinstance(hooks, str):
-                agent_hooks = [
-                    h for h in json.loads(hooks)
-                    if h.get("type") == "agent"
-                ]
-            elif isinstance(hooks, list):
-                agent_hooks = [h for h in hooks if h.get("type") == "agent"]
-
-        prompt = render_prompt(
-            role="implementer",
-            task=task,
-            global_instructions=global_instructions,
-            scripts_dir="../scripts",
-            agent_hooks=agent_hooks,
-        )
+    # Perform template substitution
+    from string import Template
+    template = Template(prompt_template)
+    prompt = template.safe_substitute(
+        task_id=task.get("id", "unknown"),
+        task_title=task.get("title", "Untitled"),
+        task_content=task.get("content", ""),
+        task_priority=task.get("priority", "P2"),
+        task_branch=task.get("branch") or get_main_branch(),
+        task_type=task.get("type", ""),
+        scripts_dir="../scripts",
+        global_instructions=global_instructions,
+        required_steps=required_steps,
+        review_section="",
+        continuation_section="",
+    )
 
     (task_dir / "prompt.md").write_text(prompt)
-
-    # Setup commands
-    setup_agent_commands(agent_name, "implementer")
 
     debug_log(f"Prepared task directory: {task_dir}")
     return task_dir
@@ -1987,14 +1740,6 @@ def spawn_worktree(ctx: AgentContext) -> int:
     if ctx.role == "orchestrator_impl":
         _init_submodule(ctx.agent_name)
 
-    # Setup commands in worktree
-    debug_log(f"Setting up commands for {ctx.agent_name}")
-    setup_agent_commands(ctx.agent_name, ctx.role)
-
-    # Generate agent instructions
-    debug_log(f"Generating instructions for {ctx.agent_name}")
-    generate_agent_instructions(ctx.agent_name, ctx.role, ctx.agent_config)
-
     # Write env file
     debug_log(f"Writing env file for {ctx.agent_name}")
     write_agent_env(ctx.agent_name, ctx.agent_config.get("id", 0), ctx.role, ctx.agent_config)
@@ -2156,35 +1901,5 @@ def main() -> None:
 
 
 # Default template if file doesn't exist
-DEFAULT_AGENT_INSTRUCTIONS_TEMPLATE = """# Agent Instructions
-
-**Agent:** $agent_name
-**Role:** $role
-**Generated:** $timestamp
-
-## Identity
-
-You are an autonomous agent named **$agent_name** with the role of **$role**.
-You are part of a multi-agent system coordinated by an orchestrator.
-
-## Global Instructions
-
-$global_instructions
-
-$task_section
-
-## Constraints
-
-$constraints
-
-## Important Notes
-
-- Always commit your changes with clear, descriptive messages
-- If you encounter errors, document them clearly
-- Do not modify files outside your authorized scope
-- Coordinate through the task queue, not direct communication
-"""
-
-
 if __name__ == "__main__":
     main()
