@@ -221,8 +221,32 @@ def create_task_worktree(task: dict) -> Path:
     branch_exists_on_origin = bool(result.stdout.strip())
 
     # Clean up stale state from previous failed runs.
-    # A worktree may still reference the branch (preventing deletion),
-    # so force-remove the worktree first, then delete the branch.
+    # Check if any worktree is using the branch we want to create.
+    # If so, detach it instead of deleting it.
+    worktree_list = run_git(
+        ["worktree", "list", "--porcelain"],
+        cwd=parent_repo,
+        check=False,
+    )
+    if worktree_list.returncode == 0:
+        # Parse worktree list output to find worktrees using our branch
+        for entry in worktree_list.stdout.split("\n\n"):
+            if not entry.strip():
+                continue
+            lines = entry.strip().split("\n")
+            wt_path = None
+            wt_branch = None
+            for line in lines:
+                if line.startswith("worktree "):
+                    wt_path = line.replace("worktree ", "")
+                elif line.startswith("branch "):
+                    wt_branch = line.replace("branch refs/heads/", "")
+
+            # If this worktree is using our branch, detach it
+            if wt_branch == branch and wt_path and Path(wt_path).exists():
+                run_git(["checkout", "--detach"], cwd=wt_path, check=False)
+
+    # Force-remove this task's worktree if it still exists but is broken
     run_git(
         ["worktree", "remove", "--force", str(worktree_path)],
         cwd=parent_repo,
@@ -295,11 +319,12 @@ def create_task_worktree(task: dict) -> Path:
 def cleanup_task_worktree(task_id: str, push_commits: bool = True) -> bool:
     """Clean up an ephemeral task worktree after task completion.
 
-    Pushes any unpushed commits to origin, then deletes the worktree.
+    Pushes any unpushed commits to origin, then detaches HEAD to free the branch
+    for the next task while preserving the worktree for inspection.
 
     Args:
         task_id: Task identifier
-        push_commits: Whether to push unpushed commits before deleting (default True)
+        push_commits: Whether to push unpushed commits before detaching (default True)
 
     Returns:
         True if cleanup succeeded, False otherwise
@@ -322,16 +347,27 @@ def cleanup_task_worktree(task_id: str, push_commits: bool = True) -> bool:
             if result.returncode == 0:
                 unpushed_count = int(result.stdout.strip())
                 if unpushed_count > 0:
-                    # Push to origin
-                    run_git(["push", "origin", "HEAD"], cwd=worktree_path, check=False)
+                    # Determine the branch name for pushing
+                    branch_result = run_git(
+                        ["rev-parse", "--abbrev-ref", "HEAD"],
+                        cwd=worktree_path,
+                        check=False,
+                    )
+                    if branch_result.returncode == 0 and branch_result.stdout.strip() != "HEAD":
+                        # Push explicitly with branch name for shared-branch projects
+                        branch_name = branch_result.stdout.strip()
+                        run_git(["push", "origin", f"HEAD:{branch_name}"], cwd=worktree_path, check=False)
+                    else:
+                        run_git(["push", "origin", "HEAD"], cwd=worktree_path, check=False)
 
-        # Delete the worktree
-        run_git(["worktree", "remove", "--force", str(worktree_path)], cwd=parent_repo, check=False)
+        # Detach HEAD to free the branch for the next task
+        # but preserve the worktree for inspection/debugging
+        run_git(["checkout", "--detach"], cwd=worktree_path, check=False)
 
         return True
 
     except (subprocess.CalledProcessError, ValueError, OSError):
-        # Log the error but don't fail — worktree deletion is best-effort
+        # Log the error but don't fail — worktree cleanup is best-effort
         return False
 
 
