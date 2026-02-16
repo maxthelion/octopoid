@@ -18,7 +18,7 @@ from .config import get_orchestrator_dir
 _SENTINEL = object()
 
 # Schema version for migrations
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 # Module-level flag to avoid checking schema version on every connection.
 # Reset to False if tests need to re-trigger migration.
@@ -155,6 +155,8 @@ def init_schema() -> None:
                 staging_url TEXT,
                 submitted_at TEXT,
                 completed_at TEXT,
+                flow TEXT DEFAULT 'default',
+                flow_overrides TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (project_id) REFERENCES projects(id)
@@ -439,6 +441,17 @@ def migrate_schema() -> bool:
             except sqlite3.OperationalError:
                 pass  # Column already exists
 
+        # Migration from v12 to v13: Add flow columns to tasks
+        if current < 13:
+            try:
+                conn.execute("ALTER TABLE tasks ADD COLUMN flow TEXT DEFAULT 'default'")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+            try:
+                conn.execute("ALTER TABLE tasks ADD COLUMN flow_overrides TEXT")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+
         # Update schema version
         conn.execute(
             "INSERT OR REPLACE INTO schema_info (key, value) VALUES (?, ?)",
@@ -466,6 +479,8 @@ def create_task(
     checks: list[str] | None = None,
     staging_url: str | None = None,
     validate_checks: bool = True,
+    flow: str | None = None,
+    flow_overrides: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Create a new task in the database.
 
@@ -482,6 +497,8 @@ def create_task(
         checks: Optional list of check names (e.g. ['gk-testing-octopoid'])
         staging_url: Optional staging/preview URL
         validate_checks: Ignored (for API compatibility with queue_utils.create_task)
+        flow: Flow name (defaults to 'default')
+        flow_overrides: Optional transition overrides (stored as JSON)
 
     Returns:
         Created task as dictionary
@@ -498,6 +515,10 @@ def create_task(
     if auto_accept is None:
         auto_accept = False
 
+    # Default flow
+    if flow is None:
+        flow = "default"
+
     # Normalize blocked_by: ensure None/empty/string-"None" all become SQL NULL
     if not blocked_by or blocked_by == "None":
         blocked_by = None
@@ -505,13 +526,17 @@ def create_task(
     # Store checks as comma-separated string, or NULL if empty/None
     checks_str = ",".join(checks) if checks else None
 
+    # Store flow_overrides as JSON string
+    import json
+    flow_overrides_str = json.dumps(flow_overrides) if flow_overrides else None
+
     with get_connection() as conn:
         conn.execute(
             """
-            INSERT INTO tasks (id, file_path, priority, role, branch, complexity, blocked_by, project_id, auto_accept, checks, staging_url)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO tasks (id, file_path, priority, role, branch, complexity, blocked_by, project_id, auto_accept, checks, staging_url, flow, flow_overrides)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (task_id, file_path, priority, role, branch, complexity, blocked_by, project_id, auto_accept, checks_str, staging_url),
+            (task_id, file_path, priority, role, branch, complexity, blocked_by, project_id, auto_accept, checks_str, staging_url, flow, flow_overrides_str),
         )
 
         # Log creation event
