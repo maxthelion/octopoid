@@ -66,6 +66,7 @@ export interface Task {
   breakdown_depth?: number | null   // Track depth in breakdown tree to prevent infinite loops
   review_round?: number | null      // For multi-check gatekeeper
   execution_notes?: string | null   // Agent execution summary
+  paused: boolean                   // Prevents task from being claimed
 }
 
 export interface CreateTaskRequest {
@@ -82,6 +83,7 @@ export interface CreateTaskRequest {
   breakdown_depth?: number
   project_id?: string
   auto_accept?: boolean
+  paused?: boolean
 }
 
 export interface UpdateTaskRequest {
@@ -112,6 +114,7 @@ export interface UpdateTaskRequest {
   submitted_at?: string
   completed_at?: string
   version?: number
+  paused?: boolean
 }
 
 export interface ClaimTaskRequest {

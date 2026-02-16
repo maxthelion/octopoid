@@ -55,6 +55,17 @@ try:
 except Exception:
     pass
 
+# Fetch and display paused tasks
+paused_tasks = sdk.tasks.list(paused=1)
+if paused_tasks:
+    print(f'\nPAUSED ({len(paused_tasks)} tasks)')
+    for t in paused_tasks:
+        title = (t.get('title') or t.get('id', '?'))[:45]
+        priority = t.get('priority', '?')
+        tid = t.get('id', '?')
+        queue = t.get('queue', '?')
+        print(f'  {priority} | {tid:<28} | {title} | queue={queue}')
+
 # Fetch and display tasks by queue
 for queue in ['incoming', 'claimed', 'provisional', 'done', 'failed']:
     tasks = sdk.tasks.list(queue=queue)
@@ -88,11 +99,16 @@ for queue in ['incoming', 'claimed', 'provisional', 'done', 'failed']:
 ## Output Format
 
 ```
+PAUSED (3 tasks)
+  P1 | TASK-300fa689                | Fix broken lease monitor | queue=incoming
+  P1 | TASK-2b4f120f                | Add worktree sweeper | queue=incoming
+  P2 | TASK-e7198410                | Fix registration error | queue=incoming
+
 INCOMING (4 tasks)
-  P0 | TASK-300fa689                | Fix broken lease monitor
+  P0 | TASK-abc12345                | Implement new feature
 
 CLAIMED (2 tasks)
-  P1 | TASK-2b4f120f                | Add worktree sweeper | implementer-1 | 25m ago | 0c | running
+  P1 | TASK-def67890                | Add error handling | implementer-1 | 25m ago | 0c | running
   P1 | TASK-fe10a41c                | Fix scheduler spawn failure | implementer-2 | 1h 30m ago | 0c | ORPHANED
 
 PROVISIONAL (1 tasks)
