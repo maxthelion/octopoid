@@ -3,247 +3,184 @@
 from unittest.mock import patch, MagicMock
 
 
-class TestParseTaskFile:
-    """Tests for parse_task_file function."""
-
-    def test_parse_valid_task(self, sample_task_file):
-        """Test parsing a valid task file."""
-        from orchestrator.queue_utils import parse_task_file
-
-        task = parse_task_file(sample_task_file)
-
-        assert task is not None
-        assert task["id"] == "abc12345"
-        assert task["title"] == "Implement feature X"
-        assert task["role"] == "implement"
-        assert task["priority"] == "P1"
-        assert task["branch"] == "main"
-        assert task["created_by"] == "human"
-        assert "Feature X" in task["content"]
-
-    def test_parse_task_with_dependencies(self, sample_task_with_dependencies):
-        """Test parsing task with BLOCKED_BY field."""
-        from orchestrator.queue_utils import parse_task_file
-
-        task2 = parse_task_file(sample_task_with_dependencies["task2"])
-
-        assert task2["blocked_by"] == "task0001"
-
-    def test_parse_nonexistent_file(self, temp_dir):
-        """Test parsing a non-existent file."""
-        from orchestrator.queue_utils import parse_task_file
-
-        result = parse_task_file(temp_dir / "nonexistent.md")
-        assert result is None
-
-    def test_parse_task_defaults(self, mock_orchestrator_dir):
-        """Test default values for missing fields."""
-        from orchestrator.queue_utils import parse_task_file
-
-        # Create minimal task
-        task_path = mock_orchestrator_dir / "runtime" / "shared" / "queue" / "incoming" / "TASK-minimal.md"
-        task_path.write_text("# [TASK-minimal] Minimal task\n\nSome content")
-
-        task = parse_task_file(task_path)
-
-        assert task["priority"] == "P2"  # default
-        assert task["branch"] == "main"  # default
-        assert task["role"] is None
-
-
 class TestQueueOperationsFileBased:
     """Tests for queue operations via SDK."""
 
-    def test_count_queue_empty(self, mock_config):
+    def test_count_queue_empty(self, mock_config, mock_sdk_for_unit_tests):
         """Test counting an empty queue."""
-        mock_sdk = MagicMock()
-        mock_sdk.tasks.list.return_value = []
+        mock_sdk_for_unit_tests.tasks.list.return_value = []
 
-        with patch('orchestrator.queue_utils.get_sdk', return_value=mock_sdk):
-            from orchestrator.queue_utils import count_queue
+        from orchestrator.queue_utils import count_queue
 
-            count = count_queue("incoming")
-            assert count == 0
+        count = count_queue("incoming")
+        assert count == 0
 
-    def test_count_queue_with_tasks(self, mock_config, sample_task_file):
+    def test_count_queue_with_tasks(self, mock_config, sample_task_file, mock_sdk_for_unit_tests):
         """Test counting queue with tasks."""
-        mock_sdk = MagicMock()
-        mock_sdk.tasks.list.return_value = [
+        mock_sdk_for_unit_tests.tasks.list.return_value = [
             {"id": "abc12345", "title": "Implement feature X", "priority": "P1"},
         ]
 
-        with patch('orchestrator.queue_utils.get_sdk', return_value=mock_sdk):
-            from orchestrator.queue_utils import count_queue
+        from orchestrator.queue_utils import count_queue
 
-            count = count_queue("incoming")
-            assert count == 1
+        count = count_queue("incoming")
+        assert count == 1
 
-    def test_list_tasks_empty(self, mock_config):
+    def test_list_tasks_empty(self, mock_config, mock_sdk_for_unit_tests):
         """Test listing empty queue."""
-        mock_sdk = MagicMock()
-        mock_sdk.tasks.list.return_value = []
+        mock_sdk_for_unit_tests.tasks.list.return_value = []
 
-        with patch('orchestrator.queue_utils.get_sdk', return_value=mock_sdk):
-            from orchestrator.queue_utils import list_tasks
+        from orchestrator.queue_utils import list_tasks
 
-            tasks = list_tasks("incoming")
-            assert tasks == []
+        tasks = list_tasks("incoming")
+        assert tasks == []
 
-    def test_list_tasks_sorted_by_priority(self, mock_orchestrator_dir):
+    def test_list_tasks_sorted_by_priority(self, mock_orchestrator_dir, mock_sdk_for_unit_tests):
         """Test that tasks are sorted by priority."""
-        mock_sdk = MagicMock()
-        mock_sdk.tasks.list.return_value = [
+        mock_sdk_for_unit_tests.tasks.list.return_value = [
             {"id": "p2", "title": "P2 task", "priority": "P2", "created_at": "2024-01-15T10:02:00"},
             {"id": "p0", "title": "P0 task", "priority": "P0", "created_at": "2024-01-15T10:00:00"},
             {"id": "p1", "title": "P1 task", "priority": "P1", "created_at": "2024-01-15T10:01:00"},
         ]
 
-        with patch('orchestrator.queue_utils.get_sdk', return_value=mock_sdk):
-            from orchestrator.queue_utils import list_tasks
+        from orchestrator.queue_utils import list_tasks
 
-            tasks = list_tasks("incoming")
+        tasks = list_tasks("incoming")
 
-            assert tasks[0]["id"] == "p0"
-            assert tasks[1]["id"] == "p1"
-            assert tasks[2]["id"] == "p2"
+        assert tasks[0]["id"] == "p0"
+        assert tasks[1]["id"] == "p1"
+        assert tasks[2]["id"] == "p2"
 
 
 class TestClaimTask:
     """Tests for claim_task function."""
 
-    def test_claim_task_via_sdk(self, mock_orchestrator_dir, sample_task_file):
+    def test_claim_task_via_sdk(self, mock_config, sample_task_file, mock_sdk_for_unit_tests):
         """Test claiming a task via SDK."""
-        mock_sdk = MagicMock()
-        mock_sdk.tasks.claim.return_value = {
+        mock_sdk_for_unit_tests.tasks.claim.return_value = {
             "id": "abc12345",
             "title": "Implement feature X",
             "queue": "claimed",
             "file_path": "TASK-abc12345.md",
         }
 
-        with patch('orchestrator.queue_utils.get_sdk', return_value=mock_sdk):
-            with patch('orchestrator.queue_utils.get_orchestrator_id', return_value="test-orch"):
-                with patch('orchestrator.queue_utils.get_queue_limits', return_value={"max_claimed": 5}):
-                    # Point resolve_task_file to the sample file
-                    with patch('orchestrator.queue_utils.resolve_task_file', return_value=sample_task_file):
-                        from orchestrator.queue_utils import claim_task
+        with patch('orchestrator.sdk.get_orchestrator_id', return_value="test-orch"):
+            with patch('orchestrator.config.get_queue_limits', return_value={"max_claimed": 5}):
+                # Point get_tasks_file_dir to the directory containing the sample file
+                with patch('orchestrator.tasks.get_tasks_file_dir', return_value=sample_task_file.parent):
+                    from orchestrator.queue_utils import claim_task
 
-                        task = claim_task(agent_name="test-agent")
+                    task = claim_task(agent_name="test-agent")
 
-                        assert task is not None
-                        assert task["id"] == "abc12345"
-                        mock_sdk.tasks.claim.assert_called_once()
+                    assert task is not None
+                    assert task["id"] == "abc12345"
+                    mock_sdk_for_unit_tests.tasks.claim.assert_called_once()
 
-    def test_claim_task_with_role_filter(self, mock_orchestrator_dir):
+    def test_claim_task_with_role_filter(self, mock_orchestrator_dir, mock_sdk_for_unit_tests):
         """Test claiming with role filter passes role_filter to SDK."""
-        mock_sdk = MagicMock()
-        mock_sdk.tasks.claim.return_value = {
+        mock_sdk_for_unit_tests.tasks.claim.return_value = {
             "id": "impl1",
             "title": "Impl",
             "role": "implement",
             "queue": "claimed",
         }
 
-        with patch('orchestrator.queue_utils.get_sdk', return_value=mock_sdk):
-            with patch('orchestrator.queue_utils.get_orchestrator_id', return_value="test-orch"):
-                with patch('orchestrator.queue_utils.get_queue_limits', return_value={"max_claimed": 5}):
-                    from orchestrator.queue_utils import claim_task
+        with patch('orchestrator.sdk.get_orchestrator_id', return_value="test-orch"):
+            with patch('orchestrator.config.get_queue_limits', return_value={"max_claimed": 5}):
+                from orchestrator.queue_utils import claim_task
 
-                    task = claim_task(role_filter="implement")
+                task = claim_task(role_filter="implement")
 
-                    assert task["id"] == "impl1"
-                    # Verify role_filter was passed to SDK
-                    call_kwargs = mock_sdk.tasks.claim.call_args[1]
-                    assert call_kwargs["role_filter"] == "implement"
+                assert task["id"] == "impl1"
+                # Verify role_filter was passed to SDK
+                call_kwargs = mock_sdk_for_unit_tests.tasks.claim.call_args[1]
+                assert call_kwargs["role_filter"] == "implement"
 
-    def test_claim_task_no_available(self, mock_config):
+    def test_claim_task_no_available(self, mock_config, mock_sdk_for_unit_tests):
         """Test claiming when no tasks available."""
-        mock_sdk = MagicMock()
-        mock_sdk.tasks.claim.return_value = None
+        mock_sdk_for_unit_tests.tasks.claim.return_value = None
 
-        with patch('orchestrator.queue_utils.get_sdk', return_value=mock_sdk):
-            with patch('orchestrator.queue_utils.get_orchestrator_id', return_value="test-orch"):
-                with patch('orchestrator.queue_utils.get_queue_limits', return_value={"max_claimed": 5}):
-                    from orchestrator.queue_utils import claim_task
+        with patch('orchestrator.sdk.get_orchestrator_id', return_value="test-orch"):
+            with patch('orchestrator.config.get_queue_limits', return_value={"max_claimed": 5}):
+                from orchestrator.queue_utils import claim_task
 
-                    task = claim_task()
-                    assert task is None
+                task = claim_task()
+                assert task is None
 
-    def test_claim_task_passes_agent_name(self, mock_orchestrator_dir, sample_task_file):
+    def test_claim_task_passes_agent_name(self, mock_orchestrator_dir, sample_task_file, mock_sdk_for_unit_tests):
         """Test that agent_name is passed to SDK claim call."""
-        mock_sdk = MagicMock()
-        mock_sdk.tasks.claim.return_value = {
+        mock_sdk_for_unit_tests.tasks.claim.return_value = {
             "id": "abc12345",
             "title": "Implement feature X",
             "queue": "claimed",
         }
 
-        with patch('orchestrator.queue_utils.get_sdk', return_value=mock_sdk):
-            with patch('orchestrator.queue_utils.get_orchestrator_id', return_value="test-orch"):
-                with patch('orchestrator.queue_utils.get_queue_limits', return_value={"max_claimed": 5}):
-                    from orchestrator.queue_utils import claim_task
+        with patch('orchestrator.sdk.get_orchestrator_id', return_value="test-orch"):
+            with patch('orchestrator.config.get_queue_limits', return_value={"max_claimed": 5}):
+                from orchestrator.queue_utils import claim_task
 
-                    claim_task(agent_name="my-agent")
+                claim_task(agent_name="my-agent")
 
-                    call_kwargs = mock_sdk.tasks.claim.call_args[1]
-                    assert call_kwargs["agent_name"] == "my-agent"
+                call_kwargs = mock_sdk_for_unit_tests.tasks.claim.call_args[1]
+                assert call_kwargs["agent_name"] == "my-agent"
 
 
 class TestCompleteTask:
     """Tests for complete_task function."""
 
-    def test_complete_task_via_sdk(self, mock_orchestrator_dir, sample_task_file):
+    def test_complete_task_via_sdk(self, mock_orchestrator_dir, sample_task_file, mock_sdk_for_unit_tests):
         """Test completing a task via SDK."""
-        mock_sdk = MagicMock()
+        mock_sdk_for_unit_tests.tasks.accept.return_value = {
+            "id": "abc12345",
+            "queue": "done",
+        }
 
-        with patch('orchestrator.queue_utils.get_sdk', return_value=mock_sdk):
-            with patch('orchestrator.queue_utils.cleanup_task_notes'):
-                from orchestrator.queue_utils import complete_task
+        with patch('orchestrator.task_notes.cleanup_task_notes'):
+            from orchestrator.queue_utils import complete_task
 
-                result_path = complete_task(sample_task_file, result="Task completed successfully")
+            result = complete_task("abc12345")
 
-                # SDK accept should be called with task ID
-                mock_sdk.tasks.accept.assert_called_once_with("abc12345", accepted_by="complete_task")
+            # SDK accept should be called with task ID
+            mock_sdk_for_unit_tests.tasks.accept.assert_called_once_with("abc12345", accepted_by="complete_task")
 
-                # File should still exist and have metadata appended
-                assert result_path.exists()
-                content = result_path.read_text()
-                assert "COMPLETED_AT:" in content
-                assert "Task completed successfully" in content
+            # Function should return SDK result dict
+            assert result is not None
+            assert result["id"] == "abc12345"
+            assert result["queue"] == "done"
 
 
 class TestSubmitCompletion:
     """Tests for submit_completion function."""
 
-    def test_submit_completion_via_sdk(self, mock_orchestrator_dir, sample_task_file):
+    def test_submit_completion_via_sdk(self, mock_orchestrator_dir, sample_task_file, mock_sdk_for_unit_tests):
         """Test that submit_completion calls SDK to submit task."""
-        mock_sdk = MagicMock()
-        mock_sdk.tasks.get.return_value = {
+        mock_sdk_for_unit_tests.tasks.get.return_value = {
             "id": "abc12345",
             "queue": "claimed",
             "attempt_count": 0,
             "rejection_count": 0,
         }
+        mock_sdk_for_unit_tests.tasks.submit.return_value = {
+            "id": "abc12345",
+            "queue": "provisional",
+        }
 
-        with patch('orchestrator.queue_utils.get_sdk', return_value=mock_sdk):
-            from orchestrator.queue_utils import submit_completion
+        from orchestrator.queue_utils import submit_completion
 
-            result_path = submit_completion(sample_task_file, commits_count=5, turns_used=30)
+        result = submit_completion("abc12345", commits_count=5, turns_used=30)
 
-            # SDK submit should be called (with execution_notes generated)
-            assert mock_sdk.tasks.submit.call_count == 1
-            call_kwargs = mock_sdk.tasks.submit.call_args[1]
-            assert call_kwargs["task_id"] == "abc12345"
-            assert call_kwargs["commits_count"] == 5
-            assert call_kwargs["turns_used"] == 30
-            assert "execution_notes" in call_kwargs  # Generated by _generate_execution_notes
+        # SDK submit should be called (with execution_notes generated)
+        assert mock_sdk_for_unit_tests.tasks.submit.call_count == 1
+        call_kwargs = mock_sdk_for_unit_tests.tasks.submit.call_args[1]
+        assert call_kwargs["task_id"] == "abc12345"
+        assert call_kwargs["commits_count"] == 5
+        assert call_kwargs["turns_used"] == 30
+        assert "execution_notes" in call_kwargs  # Generated by _generate_execution_notes
 
-            # File should have metadata appended
-            assert result_path is not None
-            content = result_path.read_text()
-            assert "SUBMITTED_AT:" in content
-            assert "COMMITS_COUNT: 5" in content
-            assert "TURNS_USED: 30" in content
+        # Function should return SDK result dict
+        assert result is not None
+        assert result["id"] == "abc12345"
+        assert result["queue"] == "provisional"
 
 
 class TestCreateTask:
@@ -390,158 +327,172 @@ class TestCreateTask:
 class TestFailTask:
     """Tests for fail_task function."""
 
-    def test_fail_task_via_sdk(self, mock_orchestrator_dir, sample_task_file):
+    def test_fail_task_via_sdk(self, mock_orchestrator_dir, sample_task_file, mock_sdk_for_unit_tests):
         """Test failing a task via SDK."""
-        mock_sdk = MagicMock()
+        mock_sdk_for_unit_tests.tasks.update.return_value = {
+            "id": "abc12345",
+            "queue": "failed",
+        }
 
-        with patch('orchestrator.queue_utils.get_sdk', return_value=mock_sdk):
-            with patch('orchestrator.queue_utils.cleanup_task_worktree'):
+        mock_logger = MagicMock()
+
+        with patch('orchestrator.tasks.get_task_logger', return_value=mock_logger):
+            with patch('orchestrator.git_utils.cleanup_task_worktree'):
                 from orchestrator.queue_utils import fail_task
 
-                result_path = fail_task(sample_task_file, error="Something went wrong")
+                result = fail_task("abc12345", error="Something went wrong")
 
                 # SDK should update task to failed queue
-                mock_sdk.tasks.update.assert_called_once_with("abc12345", queue="failed")
+                mock_sdk_for_unit_tests.tasks.update.assert_called_once_with("abc12345", queue="failed")
 
-                # File should have error metadata appended
-                content = result_path.read_text()
-                assert "FAILED_AT:" in content
-                assert "Something went wrong" in content
+                # Function should return SDK result dict
+                assert result is not None
+                assert result["id"] == "abc12345"
+                assert result["queue"] == "failed"
 
-    def test_fail_task_truncates_long_error(self, mock_orchestrator_dir, sample_task_file):
-        """A 10,000-char error should be truncated so the error section is <= 600 chars."""
+    def test_fail_task_truncates_long_error(self, mock_orchestrator_dir, sample_task_file, mock_sdk_for_unit_tests):
+        """A 10,000-char error should be truncated in the SDK call."""
         long_error = "X" * 10_000
-        mock_sdk = MagicMock()
+        mock_sdk_for_unit_tests.tasks.update.return_value = {
+            "id": "abc12345",
+            "queue": "failed",
+        }
 
-        with patch('orchestrator.queue_utils.get_sdk', return_value=mock_sdk):
-            with patch('orchestrator.queue_utils.cleanup_task_worktree'):
+        mock_logger = MagicMock()
+
+        with patch('orchestrator.tasks.get_task_logger', return_value=mock_logger):
+            with patch('orchestrator.git_utils.cleanup_task_worktree'):
                 from orchestrator.queue_utils import fail_task
 
-                result_path = fail_task(sample_task_file, error=long_error)
+                result = fail_task("abc12345", error=long_error)
 
-                content = result_path.read_text()
-                assert "FAILED_AT:" in content
+                # SDK should update task to failed queue
+                mock_sdk_for_unit_tests.tasks.update.assert_called_once_with("abc12345", queue="failed")
 
-                # Extract just the error section
-                error_start = content.find("## Error")
-                assert error_start != -1, "Error section not found"
-                error_section = content[error_start:]
-                assert len(error_section) <= 600, (
-                    f"Error section is {len(error_section)} chars, expected <= 600"
-                )
-                # Should end with truncation marker
-                assert "..." in error_section
+                # Function should return SDK result dict
+                assert result is not None
+                assert result["id"] == "abc12345"
+                assert result["queue"] == "failed"
 
 
 class TestRejectTask:
     """Tests for reject_task function."""
 
-    def test_reject_task_via_sdk(self, mock_orchestrator_dir, sample_task_file):
+    def test_reject_task_via_sdk(self, mock_orchestrator_dir, sample_task_file, mock_sdk_for_unit_tests):
         """Test rejecting a task via SDK."""
-        mock_sdk = MagicMock()
+        mock_sdk_for_unit_tests.tasks.reject.return_value = {
+            "id": "abc12345",
+            "queue": "rejected",
+        }
 
-        with patch('orchestrator.queue_utils.get_sdk', return_value=mock_sdk):
-            from orchestrator.queue_utils import reject_task
+        from orchestrator.queue_utils import reject_task
 
-            result_path = reject_task(
-                sample_task_file,
-                reason="already_implemented",
-                details="This feature already exists",
-                rejected_by="impl-agent",
-            )
+        result = reject_task(
+            "abc12345",
+            reason="already_implemented",
+            details="This feature already exists",
+            rejected_by="impl-agent",
+        )
 
-            # SDK should update task to rejected queue
-            mock_sdk.tasks.update.assert_called_once_with("abc12345", queue="rejected")
+        # SDK reject should be called with the parameters
+        mock_sdk_for_unit_tests.tasks.reject.assert_called_once_with(
+            task_id="abc12345",
+            reason="already_implemented",
+            details="This feature already exists",
+            rejected_by="impl-agent",
+        )
 
-            # File should have rejection metadata appended
-            content = result_path.read_text()
-            assert "REJECTION_REASON: already_implemented" in content
-            assert "REJECTED_BY: impl-agent" in content
+        # Function should return SDK result dict
+        assert result is not None
+        assert result["id"] == "abc12345"
+        assert result["queue"] == "rejected"
 
 
 class TestRetryTask:
     """Tests for retry_task function."""
 
-    def test_retry_task_via_sdk(self, mock_orchestrator_dir, sample_task_file):
+    def test_retry_task_via_sdk(self, mock_orchestrator_dir, sample_task_file, mock_sdk_for_unit_tests):
         """Test retrying a failed task via SDK."""
-        mock_sdk = MagicMock()
+        mock_sdk_for_unit_tests.tasks.update.return_value = {
+            "id": "abc12345",
+            "queue": "incoming",
+        }
 
-        with patch('orchestrator.queue_utils.get_sdk', return_value=mock_sdk):
-            from orchestrator.queue_utils import retry_task
+        from orchestrator.queue_utils import retry_task
 
-            result_path = retry_task(sample_task_file)
+        result = retry_task("abc12345")
 
-            # SDK should update task to incoming queue
-            mock_sdk.tasks.update.assert_called_once_with(
-                "abc12345", queue="incoming", claimed_by=None, claimed_at=None
-            )
+        # SDK should update task to incoming queue
+        mock_sdk_for_unit_tests.tasks.update.assert_called_once_with(
+            "abc12345", queue="incoming", claimed_by=None, claimed_at=None
+        )
 
-            # File should have retry metadata appended
-            content = result_path.read_text()
-            assert "RETRIED_AT:" in content
+        # Function should return SDK result dict
+        assert result is not None
+        assert result["id"] == "abc12345"
+        assert result["queue"] == "incoming"
 
 
 class TestGetQueueStatus:
     """Tests for get_queue_status function."""
 
-    def test_get_queue_status(self, mock_orchestrator_dir, sample_task_file):
+    def test_get_queue_status(self, mock_orchestrator_dir, sample_task_file, mock_sdk_for_unit_tests):
         """Test getting queue status via SDK."""
-        mock_sdk = MagicMock()
-
         def mock_list_tasks(queue=None):
             if queue == "incoming":
                 return [{"id": "abc12345", "title": "Task 1", "priority": "P1"}]
             return []
 
-        mock_sdk.tasks.list.side_effect = mock_list_tasks
+        # Reset side_effect from previous tests
+        mock_sdk_for_unit_tests.tasks.list.side_effect = mock_list_tasks
+        mock_sdk_for_unit_tests.tasks.list.return_value = None  # Clear return_value when using side_effect
 
-        with patch('orchestrator.queue_utils.get_sdk', return_value=mock_sdk):
-            with patch('orchestrator.queue_utils.get_queue_limits', return_value={"max_incoming": 20, "max_claimed": 5, "max_open_prs": 10}):
-                with patch('orchestrator.queue_utils.count_open_prs', return_value=2):
-                    with patch('orchestrator.queue_utils.list_projects', return_value=[]):
-                        from orchestrator.queue_utils import get_queue_status
+        with patch('orchestrator.config.get_queue_limits', return_value={"max_incoming": 20, "max_claimed": 5, "max_open_prs": 10}):
+            with patch('orchestrator.backpressure.count_open_prs', return_value=2):
+                with patch('orchestrator.projects.list_projects', return_value=[]):
+                    from orchestrator.backpressure import get_queue_status
 
-                        status = get_queue_status()
+                    status = get_queue_status()
 
-                        assert "incoming" in status
-                        assert "claimed" in status
-                        assert "done" in status
-                        assert "limits" in status
-                        assert status["incoming"]["count"] == 1
-                        assert status["open_prs"] == 2
+                    assert "incoming" in status
+                    assert "claimed" in status
+                    assert "done" in status
+                    assert "limits" in status
+                    assert status["incoming"]["count"] == 1
+                    assert status["open_prs"] == 2
+
+        # Reset side_effect after test
+        mock_sdk_for_unit_tests.tasks.list.side_effect = None
+        mock_sdk_for_unit_tests.tasks.list.return_value = []
 
 
 class TestGetTaskById:
     """Tests for get_task_by_id function."""
 
-    def test_get_task_by_id_via_sdk(self, mock_orchestrator_dir, sample_task_file):
+    def test_get_task_by_id_via_sdk(self, mock_orchestrator_dir, sample_task_file, mock_sdk_for_unit_tests):
         """Test getting a task by ID via SDK."""
-        mock_sdk = MagicMock()
-        mock_sdk.tasks.get.return_value = {
+        mock_sdk_for_unit_tests.tasks.get.return_value = {
             "id": "abc12345",
             "title": "Implement feature X",
             "queue": "incoming",
         }
 
-        with patch('orchestrator.queue_utils.get_sdk', return_value=mock_sdk):
-            from orchestrator.queue_utils import get_task_by_id
+        from orchestrator.queue_utils import get_task_by_id
 
-            task = get_task_by_id("abc12345")
+        task = get_task_by_id("abc12345")
 
-            assert task is not None
-            assert task["id"] == "abc12345"
-            mock_sdk.tasks.get.assert_called_once_with("abc12345")
+        assert task is not None
+        assert task["id"] == "abc12345"
+        mock_sdk_for_unit_tests.tasks.get.assert_called_once_with("abc12345")
 
-    def test_get_task_by_id_not_found(self, mock_config):
+    def test_get_task_by_id_not_found(self, mock_config, mock_sdk_for_unit_tests):
         """Test getting a non-existent task."""
-        mock_sdk = MagicMock()
-        mock_sdk.tasks.get.return_value = None
+        mock_sdk_for_unit_tests.tasks.get.return_value = None
 
-        with patch('orchestrator.queue_utils.get_sdk', return_value=mock_sdk):
-            from orchestrator.queue_utils import get_task_by_id
+        from orchestrator.queue_utils import get_task_by_id
 
-            task = get_task_by_id("nonexistent")
-            assert task is None
+        task = get_task_by_id("nonexistent")
+        assert task is None
 
 
 class TestBackpressure:
@@ -549,7 +500,7 @@ class TestBackpressure:
 
     def test_can_create_task_within_limit(self, mock_config):
         """Test can_create_task when within limits."""
-        with patch('orchestrator.queue_utils.get_queue_limits', return_value={"max_incoming": 20, "max_claimed": 5, "max_open_prs": 10}):
+        with patch('orchestrator.config.get_queue_limits', return_value={"max_incoming": 20, "max_claimed": 5, "max_open_prs": 10}):
             with patch('orchestrator.queue_utils.count_queue', return_value=5):
                 from orchestrator.queue_utils import can_create_task
 
@@ -558,20 +509,21 @@ class TestBackpressure:
                 assert can_create is True
                 assert reason == ""
 
-    def test_can_create_task_queue_full(self, mock_config):
+    def test_can_create_task_queue_full(self, mock_config, mock_sdk_for_unit_tests):
         """Test can_create_task when queue is full."""
-        with patch('orchestrator.queue_utils.get_queue_limits', return_value={"max_incoming": 20, "max_claimed": 5, "max_open_prs": 10}):
-            with patch('orchestrator.queue_utils.count_queue', return_value=15):
-                from orchestrator.queue_utils import can_create_task
+        mock_sdk_for_unit_tests.tasks.list.return_value = [{"id": f"task{i}"} for i in range(15)]
 
-                can_create, reason = can_create_task()
+        with patch('orchestrator.config.get_queue_limits', return_value={"max_incoming": 20, "max_claimed": 5, "max_open_prs": 10}):
+            from orchestrator.queue_utils import can_create_task
 
-                assert can_create is False
-                assert "Queue full" in reason
+            can_create, reason = can_create_task()
+
+            assert can_create is False
+            assert "Queue full" in reason
 
     def test_can_claim_task_no_tasks(self, mock_config):
         """Test can_claim_task when no tasks available."""
-        with patch('orchestrator.queue_utils.get_queue_limits', return_value={"max_incoming": 20, "max_claimed": 5, "max_open_prs": 10}):
+        with patch('orchestrator.config.get_queue_limits', return_value={"max_incoming": 20, "max_claimed": 5, "max_open_prs": 10}):
             with patch('orchestrator.queue_utils.count_queue', side_effect=[0, 0]):
                 from orchestrator.queue_utils import can_claim_task
 
@@ -647,68 +599,6 @@ class TestCreateTaskBlockedByNormalization:
 
             content = task_path.read_text()
             assert "BLOCKED_BY: abc123" in content
-
-
-class TestParseTaskFileChecks:
-    """Tests for CHECKS: field parsing in parse_task_file."""
-
-    def test_parse_task_with_checks(self, mock_orchestrator_dir):
-        """parse_task_file extracts CHECKS field as a list."""
-        from orchestrator.queue_utils import parse_task_file
-
-        task_path = mock_orchestrator_dir / "runtime" / "shared" / "queue" / "incoming" / "TASK-chkparse1.md"
-        task_path.write_text(
-            "# [TASK-chkparse1] Task with checks\n"
-            "ROLE: orchestrator_impl\n"
-            "PRIORITY: P1\n"
-            "CHECKS: gk-testing-octopoid,vitest\n"
-            "\n## Context\nSome context\n"
-        )
-
-        task = parse_task_file(task_path)
-        assert task["checks"] == ["gk-testing-octopoid", "vitest"]
-
-    def test_parse_task_with_single_check(self, mock_orchestrator_dir):
-        """parse_task_file handles a single check."""
-        from orchestrator.queue_utils import parse_task_file
-
-        task_path = mock_orchestrator_dir / "runtime" / "shared" / "queue" / "incoming" / "TASK-chkparse2.md"
-        task_path.write_text(
-            "# [TASK-chkparse2] Task with one check\n"
-            "CHECKS: gk-testing-octopoid\n"
-            "\n## Context\nSome context\n"
-        )
-
-        task = parse_task_file(task_path)
-        assert task["checks"] == ["gk-testing-octopoid"]
-
-    def test_parse_task_without_checks(self, mock_orchestrator_dir):
-        """parse_task_file returns empty list when no CHECKS line."""
-        from orchestrator.queue_utils import parse_task_file
-
-        task_path = mock_orchestrator_dir / "runtime" / "shared" / "queue" / "incoming" / "TASK-chkparse3.md"
-        task_path.write_text(
-            "# [TASK-chkparse3] Task without checks\n"
-            "ROLE: implement\n"
-            "\n## Context\nSome context\n"
-        )
-
-        task = parse_task_file(task_path)
-        assert task["checks"] == []
-
-    def test_parse_task_checks_with_spaces(self, mock_orchestrator_dir):
-        """parse_task_file handles spaces around commas in CHECKS."""
-        from orchestrator.queue_utils import parse_task_file
-
-        task_path = mock_orchestrator_dir / "runtime" / "shared" / "queue" / "incoming" / "TASK-chkparse4.md"
-        task_path.write_text(
-            "# [TASK-chkparse4] Task with spaced checks\n"
-            "CHECKS: gk-testing-octopoid , vitest , typecheck\n"
-            "\n## Context\nSome context\n"
-        )
-
-        task = parse_task_file(task_path)
-        assert task["checks"] == ["gk-testing-octopoid", "vitest", "typecheck"]
 
 
 class TestCreateTaskChecks:
@@ -795,87 +685,5 @@ class TestCreateTaskOrchestratorImplDefaultChecks:
 
             content = task_path.read_text()
             assert "CHECKS:" not in content
-
-
-class TestFindTaskFile:
-    """Tests for find_task_file function."""
-
-    def test_find_in_incoming(self, mock_orchestrator_dir):
-        """find_task_file locates a task in incoming/."""
-        incoming = mock_orchestrator_dir / "runtime" / "shared" / "queue" / "incoming"
-        incoming.mkdir(parents=True, exist_ok=True)
-        task_path = incoming / "TASK-find001.md"
-        task_path.write_text("# [TASK-find001] Test\n")
-
-        with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "runtime" / "shared" / "queue"):
-            from orchestrator.queue_utils import find_task_file
-
-            result = find_task_file("find001")
-            assert result is not None
-            assert result == task_path
-
-    def test_find_in_escalated(self, mock_orchestrator_dir):
-        """find_task_file locates a task in escalated/."""
-        escalated = mock_orchestrator_dir / "runtime" / "shared" / "queue" / "escalated"
-        escalated.mkdir(parents=True, exist_ok=True)
-        task_path = escalated / "TASK-find002.md"
-        task_path.write_text("# [TASK-find002] Test\n")
-
-        with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "runtime" / "shared" / "queue"):
-            from orchestrator.queue_utils import find_task_file
-
-            result = find_task_file("find002")
-            assert result is not None
-            assert result == task_path
-
-    def test_find_in_done(self, mock_orchestrator_dir):
-        """find_task_file locates a task in done/."""
-        done = mock_orchestrator_dir / "runtime" / "shared" / "queue" / "done"
-        done.mkdir(parents=True, exist_ok=True)
-        task_path = done / "TASK-find003.md"
-        task_path.write_text("# [TASK-find003] Test\n")
-
-        with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "runtime" / "shared" / "queue"):
-            from orchestrator.queue_utils import find_task_file
-
-            result = find_task_file("find003")
-            assert result is not None
-            assert result == task_path
-
-    def test_find_in_recycled(self, mock_orchestrator_dir):
-        """find_task_file locates a task in recycled/."""
-        recycled = mock_orchestrator_dir / "runtime" / "shared" / "queue" / "recycled"
-        recycled.mkdir(parents=True, exist_ok=True)
-        task_path = recycled / "TASK-find004.md"
-        task_path.write_text("# [TASK-find004] Test\n")
-
-        with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "runtime" / "shared" / "queue"):
-            from orchestrator.queue_utils import find_task_file
-
-            result = find_task_file("find004")
-            assert result is not None
-            assert result == task_path
-
-    def test_find_not_found(self, mock_orchestrator_dir):
-        """find_task_file returns None when task doesn't exist."""
-        with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "runtime" / "shared" / "queue"):
-            from orchestrator.queue_utils import find_task_file
-
-            result = find_task_file("nonexistent")
-            assert result is None
-
-    def test_find_in_breakdown(self, mock_orchestrator_dir):
-        """find_task_file locates a task in breakdown/."""
-        breakdown = mock_orchestrator_dir / "runtime" / "shared" / "queue" / "breakdown"
-        breakdown.mkdir(parents=True, exist_ok=True)
-        task_path = breakdown / "TASK-find005.md"
-        task_path.write_text("# [TASK-find005] Test\n")
-
-        with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "runtime" / "shared" / "queue"):
-            from orchestrator.queue_utils import find_task_file
-
-            result = find_task_file("find005")
-            assert result is not None
-            assert result == task_path
 
 

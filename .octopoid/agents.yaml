@@ -5,31 +5,24 @@ queue_limits:
   max_incoming: 20
   max_open_prs: 10
 
-agents:
-  # Implementer agents - work on tasks in the queue
-  - id: 1
-    name: implementer-1
-    role: implementer
+fleet:
+  - name: implementer-1
+    type: implementer
     enabled: true
     interval_seconds: 60
-    max_concurrent: 1
     max_turns: 200
     model: sonnet
 
-  - id: 2
-    name: implementer-2
-    role: implementer
+  - name: implementer-2
+    type: implementer
     enabled: true
     interval_seconds: 60
-    max_concurrent: 1
     max_turns: 200
     model: sonnet
 
-  # GitHub issue monitor - lightweight agent (no worktree needed)
-  - id: 101
-    name: github-issue-monitor
-    role: github_issue_monitor
-    enabled: true
+  - name: github-issue-monitor
+    type: custom
+    path: .octopoid/agents/github-issue-monitor/
+    enabled: false
     interval_seconds: 900
-    max_concurrent: 1
-    lightweight: true  # Runs in parent project, no worktree
+    lightweight: true

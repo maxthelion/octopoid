@@ -1,0 +1,6 @@
+# .octopoid/agents/github-issue-monitor/agent.yaml
+role: github_issue_monitor
+model: sonnet
+interval_seconds: 900
+lightweight: true
+spawn_mode: module

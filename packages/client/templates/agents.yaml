@@ -1,24 +1,39 @@
-# Agent Definitions
-# Configure agents that run on this orchestrator
+# Fleet Configuration
+# Configure which agents to run on this orchestrator
 
-agents:
+paused: false
+
+queue_limits:
+  max_claimed: 3
+  max_incoming: 20
+  max_open_prs: 10
+
+fleet:
+  # Implementer agents - work on tasks in the queue
   - name: implementer-1
-    role: implement
-    model: sonnet
-    max_concurrent: 1
+    type: implementer
     enabled: true
 
-  - name: breakdown-1
-    role: breakdown
-    model: sonnet
-    max_concurrent: 1
+  - name: implementer-2
+    type: implementer
     enabled: true
 
+  # Gatekeeper agent - reviews PRs before merge
   - name: gatekeeper-1
-    role: review
-    model: opus
-    max_concurrent: 1
+    type: gatekeeper
     enabled: true
 
 # Add more agents as needed
-# Each agent will claim tasks matching its role
+# Each agent references a type from packages/client/agents/<type>/
+#
+# Override type defaults:
+#   - name: implementer-special
+#     type: implementer
+#     model: opus              # override the default model
+#     max_turns: 300           # override max_turns
+#
+# Custom agents (project-specific):
+#   - name: my-custom-agent
+#     type: custom
+#     path: .octopoid/agents/my-custom-agent/
+#     enabled: true

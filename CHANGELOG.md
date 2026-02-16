@@ -7,6 +7,129 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Refactored
+
+- **Refactor queue_utils.py into entity modules** ([TASK-7a393cef])
+  - Split 2,711-line `queue_utils.py` into 7 focused modules:
+    - `sdk.py`: SDK initialization and orchestrator ID (112 lines)
+    - `tasks.py`: Task lifecycle, CRUD, and query operations (664 lines)
+    - `projects.py`: Project management (322 lines)
+    - `breakdowns.py`: Breakdown approval and task recycling (512 lines)
+    - `agent_markers.py`: Agent task marker management (112 lines)
+    - `task_notes.py`: Task notes persistence (102 lines)
+    - `backpressure.py`: Queue limits, status, and scheduler checks (92 lines)
+  - Added `_transition()` helper to eliminate repetitive lifecycle boilerplate
+  - Lifecycle functions now take `task_id: str` instead of `task_path: Path | str`
+  - Replaced `queue_utils.py` with re-export shim for backwards compatibility (41 lines)
+  - Total line reduction: 2,711 → 1,957 lines (across 7 modules + shim, 28% reduction)
+
+### Removed
+- Deleted 8 legacy test files that tested deleted code (~2,670 lines total):
+  - `tests/test_orchestrator_impl.py` (1,349 lines)
+  - `tests/test_proposer_git.py` (342 lines)
+  - `tests/test_compaction_hook.py` (263 lines)
+  - `tests/test_tool_counter.py` (304 lines)
+  - `tests/test_breakdown_context.py` (37 lines)
+  - `tests/test_pre_check.py` (6 lines)
+  - `tests/test_agent_env.py` (184 lines)
+  - `tests/test_rebaser.py` (185 lines - tested unused rebaser functions)
+- Trimmed dead code from `orchestrator/scheduler.py` (1,905 → 1,623 lines, -282 lines):
+  - Removed 6 unused imports (shutil, Template, get_commands_dir, get_gatekeeper_config, get_gatekeepers, get_templates_dir, is_gatekeeper_enabled)
+  - Removed 12 stub/dead functions:
+    - `assign_qa_checks()` - stub that just returned
+    - `process_auto_accept_tasks()` - stub that just returned
+    - `process_gatekeeper_reviews()` - stub that just returned
+    - `dispatch_gatekeeper_agents()` - stub that just returned
+    - `detect_queue_health_issues()` - returned empty dict
+    - `should_trigger_queue_manager()` - never called
+    - `ensure_rebaser_worktree()` - never called (46 lines)
+    - `check_branch_freshness()` - stub that just returned
+    - `_is_branch_fresh()` - never called (40 lines)
+    - `rebase_stale_branch()` - stub that just returned
+    - `check_stale_branches()` - stub that just returned
+    - `_count_commits_behind()` - never called (38 lines)
+  - Cleaned HOUSEKEEPING_JOBS list (removed 6 stub function references)
+
+### Changed
+- Updated `get_agents()` docstring in `orchestrator/config.py` to reflect that only fleet format is supported (removed stale "Supports two formats" text)
+
+### Documentation
+- Added inline documentation in `orchestrator/scheduler.py` above `HOUSEKEEPING_JOBS` list explaining which housekeeping functions were removed and why (all were unimplemented stubs)
+
+### Removed (from previous cleanup)
+  - Removed `orchestrator/agent_scripts/` directory (replaced by agent directories)
+  - Removed `orchestrator/prompts/implementer.md` (replaced by agent directory prompts)
+  - Removed `commands/agent/` directory (replaced by agent directory instructions)
+  - Removed `packages/client/src/roles/` directory (TypeScript roles not used)
+  - Removed obsolete Python role files from `orchestrator/roles/` (only `base.py` and `github_issue_monitor.py` remain)
+  - Removed `orchestrator/prompt_renderer.py` (no longer used)
+  - Removed legacy fallback branches in `prepare_task_directory()` - agent directories are now required
+  - Removed `setup_agent_commands()`, `generate_agent_instructions()`, `get_role_constraints()` functions
+  - Removed `DEFAULT_AGENT_INSTRUCTIONS_TEMPLATE` constant
+  - Removed legacy format support in `config.py` - fleet format is now the only supported format
+  - Reduced scheduler.py from 2190 lines to 1905 lines (-285 lines, 13% reduction)
+
+### Changed
+- Migrated octopoid's own config to use agent directory structure (refactor-12):
+  - Updated `.octopoid/agents.yaml` to new fleet format
+  - Scaffolded `.octopoid/agents/implementer/` with agent.yaml, prompt.md, instructions.md, and scripts/
+  - Scaffolded `.octopoid/agents/gatekeeper/` with full agent directory structure
+  - Added agent.yaml to `.octopoid/agents/github-issue-monitor/`
+  - Marked old files as DEPRECATED (kept for backward compatibility during migration):
+    - `orchestrator/prompts/implementer.md`
+    - `commands/agent/implement.md`
+    - `orchestrator/agent_scripts/` (now has README explaining deprecation)
+- Simplified fleet config format in agents.yaml (refactor-10):
+  - New `fleet:` key replaces inline agent config with type references
+  - Agent types reference directories in `packages/client/agents/<type>/` or `.octopoid/agents/<type>/`
+  - Fleet entries can override type defaults (model, max_turns, etc.)
+  - Custom agents supported via `type: custom` with explicit `path:`
+  - Backward compatible: legacy `agents:` format still works
+  - `get_agents()` now loads type defaults from `agent.yaml` and merges with fleet overrides
+  - All agent configs include `agent_dir` key pointing to the agent directory
+- Updated spawn strategies to read from agent directories (refactor-11):
+  - `get_spawn_strategy()` now reads `spawn_mode` from agent config instead of hardcoding role names
+  - `prepare_task_directory()` copies scripts from agent directory's `scripts/` folder
+  - Prompt rendering uses `prompt.md` template from agent directory
+  - `instructions.md` from agent directory is automatically included in prompt context
+  - All changes gracefully fall back to legacy hardcoded paths when `agent_dir` is not set
+  - Adding a new agent type now only requires creating a directory with `agent.yaml`, `prompt.md`, `instructions.md`, and `scripts/` - no scheduler code changes needed
+- Added `AgentContext` dataclass to scheduler for structured per-agent state management (scheduler refactor phase 2, step 1/12)
+- Extracted guard functions from scheduler agent loop into standalone, testable functions (scheduler refactor phase 2, step 2/12):
+  - `guard_enabled`, `guard_not_running`, `guard_interval`, `guard_backpressure`, `guard_pre_check`, `guard_claim_task`
+  - `AGENT_GUARDS` list and `evaluate_agent()` function for running the guard chain
+  - Guards return `(should_proceed: bool, reason: str)` for composability
+- Extracted housekeeping jobs into a list with fault isolation (scheduler refactor phase 2, step 3/12):
+  - `HOUSEKEEPING_JOBS` list contains 10 independent housekeeping functions
+  - `run_housekeeping()` function runs all jobs with try/except isolation
+  - Failures in one job no longer prevent subsequent jobs from running
+- Extracted spawn strategies from scheduler into standalone functions (scheduler refactor phase 3, step 4/12):
+  - `spawn_implementer(ctx)` handles implementer spawn path (prepare task dir + invoke claude)
+  - `spawn_lightweight(ctx)` handles lightweight agents (no worktree)
+  - `spawn_worktree(ctx)` handles standard agents with worktrees
+  - `get_spawn_strategy(ctx)` dispatches to the correct strategy based on agent type
+  - `_init_submodule(agent_name)` extracted for orchestrator_impl submodule initialization
+  - `_requeue_task(task_id)` helper for error recovery on spawn failure
+- Refactored `run_scheduler()` to use pipeline architecture (scheduler refactor phase 2, step 5/12):
+  - Replaced ~270-line monolithic function with ~75-line pipeline
+  - Three-phase execution: pause check → housekeeping → evaluate + spawn agents
+  - Each agent processed through: build context → evaluate guards → spawn strategy
+  - Behaviour-identical to previous implementation (verified via debug logs and tests)
+  - Simpler control flow: no nested if/else branches for spawn logic
+  - Improved debuggability: guard failures logged with clear reason messages
+
+### Added
+- Comprehensive test suite for scheduler refactor (step 6/12):
+  - New `tests/test_scheduler_refactor.py` with 28 unit tests
+  - Tests cover: `AgentContext` dataclass, all 6 guard functions, `evaluate_agent` chain, `get_spawn_strategy` dispatch, `run_housekeeping` fault isolation
+  - All existing scheduler tests continue to pass (behaviour-preserving refactor verified)
+- Agent directory scaffolding in `octopoid init` (refactor-09):
+  - `octopoid init` now copies agent type templates from `packages/client/agents/` to `.octopoid/agents/` in the user's project
+  - Scaffolds both `implementer/` and `gatekeeper/` directories with all files and subdirectories
+  - Preserves file permissions (executable scripts remain executable)
+  - Skip logic prevents overwriting existing customizations on repeated init
+  - Added `agents/` directory to package.json for npm distribution
+
 ### Fixed
 - Unit tests now automatically mock `get_sdk()` to prevent production side effects when running `pytest tests/`
 - `submit-pr` script now calls server submit endpoint directly, ensuring tasks transition from `claimed` to `provisional` even if agents don't exit immediately

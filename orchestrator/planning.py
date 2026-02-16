@@ -12,7 +12,6 @@ from typing import Any
 from uuid import uuid4
 
 from .config import get_queue_dir
-from .queue_utils import parse_task_file
 
 
 def create_planning_task(original_task_id: str, original_task_path: Path | str) -> str:
@@ -29,22 +28,29 @@ def create_planning_task(original_task_id: str, original_task_path: Path | str) 
         ID of the created planning task
     """
     original_task_path = Path(original_task_path)
-    original_task = parse_task_file(original_task_path)
 
-    if not original_task:
-        raise ValueError(f"Could not parse original task: {original_task_path}")
+    # Read original task file content
+    try:
+        original_content = original_task_path.read_text()
+    except IOError as e:
+        raise ValueError(f"Could not read original task: {original_task_path}") from e
+
+    # Extract title from first heading (# [TASK-xxx] Title)
+    title_match = re.search(r"^#\s*\[TASK-[^\]]+\]\s*(.+)$", original_content, re.MULTILINE)
+    original_title = title_match.group(1).strip() if title_match else original_task_id
+
+    # Extract branch from BRANCH: field
+    branch_match = re.search(r"^BRANCH:\s*(.+)$", original_content, re.MULTILINE)
+    branch = branch_match.group(1).strip() if branch_match else "main"
 
     plan_id = uuid4().hex[:8]
     filename = f"TASK-{plan_id}.md"
-
-    original_content = original_task.get("content", "")
-    original_title = original_task.get("title", original_task_id)
 
     content = f"""# [TASK-{plan_id}] Create implementation plan for: {original_title}
 
 ROLE: implement
 PRIORITY: P1
-BRANCH: {original_task.get('branch', 'main')}
+BRANCH: {branch}
 CREATED: {datetime.now().isoformat()}
 CREATED_BY: pre_check
 ORIGINAL_TASK: {original_task_id}

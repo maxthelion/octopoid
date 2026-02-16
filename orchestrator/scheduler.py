@@ -4,39 +4,32 @@
 import argparse
 import json
 import os
-import shutil
 import subprocess
 import sys
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from string import Template
 
 
 
-from .backpressure import check_backpressure_for_role
 from .config import (
     AGENT_TASK_ROLE,
     CLAIMABLE_AGENT_ROLES,
     find_parent_project,
     get_agents,
     get_agents_runtime_dir,
-    get_commands_dir,
-    get_gatekeeper_config,
-    get_gatekeepers,
     get_global_instructions_path,
     get_logs_dir,
     get_main_branch,
     get_orchestrator_dir,
     get_tasks_dir,
-    get_templates_dir,
-    is_gatekeeper_enabled,
     is_system_paused,
 )
 from .git_utils import ensure_worktree, get_worktree_path
 from .hook_manager import HookManager
 from .lock_utils import locked_or_skip
 from .port_utils import get_port_env_vars
-from .prompt_renderer import render_prompt
 from . import queue_utils
 from .state_utils import (
     AgentState,
@@ -51,6 +44,227 @@ from .state_utils import (
 # Global debug flag
 DEBUG = False
 _log_file: Path | None = None
+
+
+@dataclass
+class AgentContext:
+    """Everything the filter chain needs to evaluate and spawn an agent."""
+    agent_config: dict
+    agent_name: str
+    role: str
+    interval: int
+    state: AgentState
+    state_path: Path
+    claimed_task: dict | None = None
+
+
+def _resolve_type_filter(allowed_types):
+    """Resolve agent's allowed_task_types into a type filter string.
+
+    Args:
+        allowed_types: Value from agent config's "allowed_task_types" field
+
+    Returns:
+        str or None: Type filter to pass to claim_and_prepare_task
+    """
+    if isinstance(allowed_types, list) and len(allowed_types) == 1:
+        return allowed_types[0]
+    if isinstance(allowed_types, list):
+        return ",".join(allowed_types)
+    return allowed_types
+
+
+def guard_enabled(ctx: AgentContext) -> tuple[bool, str]:
+    """Check if agent is paused.
+
+    Args:
+        ctx: AgentContext containing agent configuration
+
+    Returns:
+        (should_proceed, reason_if_blocked)
+    """
+    if ctx.agent_config.get("paused", False):
+        return (False, "paused")
+    return (True, "")
+
+
+def guard_not_running(ctx: AgentContext) -> tuple[bool, str]:
+    """Check if agent process is still running; clean up crashed agents.
+
+    Args:
+        ctx: AgentContext containing agent state
+
+    Returns:
+        (should_proceed, reason_if_blocked)
+    """
+    # If agent is marked running and process exists, block
+    if ctx.state.running and ctx.state.pid and is_process_running(ctx.state.pid):
+        return (False, f"still running (PID {ctx.state.pid})")
+
+    # If marked running but process is dead, mark as crashed and proceed
+    if ctx.state.running:
+        ctx.state = mark_finished(ctx.state, 1)
+        save_state(ctx.state, ctx.state_path)
+
+    return (True, "")
+
+
+def guard_interval(ctx: AgentContext) -> tuple[bool, str]:
+    """Check if agent is due to run.
+
+    Args:
+        ctx: AgentContext containing agent state and interval
+
+    Returns:
+        (should_proceed, reason_if_blocked)
+    """
+    if not is_overdue(ctx.state, ctx.interval):
+        return (False, "not due yet")
+    return (True, "")
+
+
+# =============================================================================
+# Scheduler-specific backpressure checks
+# =============================================================================
+
+
+def check_backpressure_for_role(role: str) -> tuple[bool, str]:
+    """Get the appropriate backpressure check for a role."""
+    from .backpressure import count_queue
+
+    # Implementer, tester, reviewer
+    if role in ("implementer", "orchestrator_impl", "tester", "reviewer"):
+        incoming = count_queue("incoming")
+        if incoming == 0:
+            return False, "no_tasks"
+        from .backpressure import can_claim_task
+        return can_claim_task()
+
+    # Breakdown
+    if role == "breakdown":
+        count = count_queue("breakdown")
+        if count == 0:
+            return False, "no_breakdown_tasks"
+        return True, ""
+
+    # Recycler
+    if role == "recycler":
+        count = count_queue("provisional")
+        if count == 0:
+            return False, "no_provisional_tasks"
+        return True, ""
+
+    # Gatekeeper
+    if role == "gatekeeper":
+        try:
+            tasks = queue_utils.list_tasks("provisional")
+            for task in tasks:
+                checks = task.get("checks", [])
+                if not checks:
+                    continue
+                if task.get("commits_count", 0) == 0:
+                    continue
+                check_results = task.get("check_results", {})
+                for check_name in checks:
+                    if check_name not in check_results or check_results[check_name].get("status") not in ("pass", "fail"):
+                        return True, ""
+            return False, "no_pending_gatekeeper_checks"
+        except Exception:
+            return False, "gatekeeper_check_error"
+
+    # No check defined for this role, allow
+    return True, ""
+
+
+def guard_backpressure(ctx: AgentContext) -> tuple[bool, str]:
+    """Check role-based backpressure.
+
+    Args:
+        ctx: AgentContext containing agent role and state
+
+    Returns:
+        (should_proceed, reason_if_blocked)
+    """
+    can_proceed, reason = check_backpressure_for_role(ctx.role)
+    if not can_proceed:
+        # Update state to track blocked status
+        ctx.state.extra["blocked_reason"] = reason
+        ctx.state.extra["blocked_at"] = datetime.now().isoformat()
+        save_state(ctx.state, ctx.state_path)
+        return (False, f"backpressure: {reason}")
+
+    # Clear any previous blocked status
+    ctx.state.extra.pop("blocked_reason", None)
+    ctx.state.extra.pop("blocked_at", None)
+    return (True, "")
+
+
+def guard_pre_check(ctx: AgentContext) -> tuple[bool, str]:
+    """Run pre-check for work availability.
+
+    Args:
+        ctx: AgentContext containing agent name and config
+
+    Returns:
+        (should_proceed, reason_if_blocked)
+    """
+    if not run_pre_check(ctx.agent_name, ctx.agent_config):
+        return (False, "pre-check: no work")
+    return (True, "")
+
+
+def guard_claim_task(ctx: AgentContext) -> tuple[bool, str]:
+    """For claimable roles, claim a task.
+
+    Args:
+        ctx: AgentContext containing agent role and config
+
+    Returns:
+        (should_proceed, reason_if_blocked)
+    """
+    # Non-claimable agents skip this guard
+    if ctx.role not in CLAIMABLE_AGENT_ROLES:
+        return (True, "")
+
+    # Get task role and type filter
+    task_role = AGENT_TASK_ROLE[ctx.role]
+    allowed_types = ctx.agent_config.get("allowed_task_types")
+    type_filter = _resolve_type_filter(allowed_types)
+
+    # Try to claim a task
+    ctx.claimed_task = claim_and_prepare_task(ctx.agent_name, task_role, type_filter=type_filter)
+    if ctx.claimed_task is None:
+        return (False, "no task available")
+
+    return (True, "")
+
+
+# Guard chain: cheapest checks first, expensive checks (pre_check, claim_task) last
+AGENT_GUARDS = [
+    guard_enabled,
+    guard_not_running,
+    guard_interval,
+    guard_backpressure,
+    guard_pre_check,
+    guard_claim_task,
+]
+
+
+def evaluate_agent(ctx: AgentContext) -> bool:
+    """Run the guard chain. Returns True if agent should be spawned.
+
+    Args:
+        ctx: AgentContext containing all agent evaluation state
+
+    Returns:
+        bool: True if all guards pass and agent should spawn, False otherwise
+    """
+    for guard in AGENT_GUARDS:
+        proceed, reason = guard(ctx)
+        if not proceed:
+            debug_log(f"Agent {ctx.agent_name}: blocked by {guard.__name__}: {reason}")
+            return False
+    return True
 
 
 def setup_scheduler_debug() -> None:
@@ -315,223 +529,6 @@ def get_agent_env_path(agent_name: str) -> Path:
     return get_agents_runtime_dir() / agent_name / "env.sh"
 
 
-def setup_agent_commands(agent_name: str, role: str) -> None:
-    """Copy commands to the agent's worktree.
-
-    Args:
-        agent_name: Name of the agent
-        role: Agent role (determines which commands to copy)
-    """
-    worktree_path = get_worktree_path(agent_name)
-    commands_dest = worktree_path / ".claude" / "commands"
-    commands_dest.mkdir(parents=True, exist_ok=True)
-
-    # Source directories
-    submodule_commands = get_commands_dir() / "agent"
-    project_overrides = get_orchestrator_dir() / "commands"
-
-    # Copy all agent commands from submodule
-    if submodule_commands.exists():
-        for cmd_file in submodule_commands.glob("*.md"):
-            dest_file = commands_dest / cmd_file.name
-            shutil.copy2(cmd_file, dest_file)
-
-    # Override with project-specific commands if they exist
-    if project_overrides.exists():
-        for cmd_file in project_overrides.glob("*.md"):
-            dest_file = commands_dest / cmd_file.name
-            shutil.copy2(cmd_file, dest_file)
-
-
-def generate_agent_instructions(
-    agent_name: str,
-    role: str,
-    agent_config: dict,
-    task_info: dict | None = None,
-) -> Path:
-    """Generate .agent-instructions.md in the agent's worktree.
-
-    Args:
-        agent_name: Name of the agent
-        role: Agent role
-        agent_config: Full agent configuration
-        task_info: Optional current task information
-
-    Returns:
-        Path to generated instructions file
-    """
-    worktree_path = get_worktree_path(agent_name)
-    instructions_path = worktree_path / ".agent-instructions.md"
-
-    # Load template
-    template_path = get_templates_dir() / "agent_instructions.md.tmpl"
-    if template_path.exists():
-        template_content = template_path.read_text()
-    else:
-        template_content = DEFAULT_AGENT_INSTRUCTIONS_TEMPLATE
-
-    # Load global instructions
-    global_instructions_path = get_global_instructions_path()
-    global_instructions = ""
-    if global_instructions_path.exists():
-        global_instructions = global_instructions_path.read_text()
-
-    # Build task section
-    task_section = ""
-    if task_info:
-        task_section = f"""
-## Current Task
-
-**Task ID:** {task_info.get('id', 'unknown')}
-**Title:** {task_info.get('title', 'unknown')}
-**Priority:** {task_info.get('priority', 'P2')}
-**Target Branch:** {task_info.get('branch', 'main')}
-
-{task_info.get('content', '')}
-"""
-
-    # Build constraints based on role
-    constraints = get_role_constraints(role)
-
-    # Substitute template
-    template = Template(template_content)
-    content = template.safe_substitute(
-        agent_name=agent_name,
-        role=role,
-        timestamp=datetime.now().isoformat(),
-        global_instructions=global_instructions,
-        task_section=task_section,
-        constraints=constraints,
-    )
-
-    instructions_path.write_text(content)
-    return instructions_path
-
-
-def get_role_constraints(role: str) -> str:
-    """Get role-specific constraints for agent instructions.
-
-    Args:
-        role: Agent role
-
-    Returns:
-        Markdown string with constraints
-    """
-    constraints = {
-        # Task model (v1)
-        "product_manager": """
-- You may read any files in the repository
-- You may NOT modify code files
-- Your output is task files in the queue
-- Focus on high-value, well-scoped tasks
-- Consider existing PRs and in-progress work
-""",
-        # Proposal model (v2)
-        "proposer": """
-- You may read any files in the repository
-- You may NOT modify code files
-- Your output is proposal files
-- Stay focused on your designated area
-- Review your rejected proposals before creating new ones
-- Create well-scoped, actionable proposals
-""",
-        "curator": """
-- You may read any files in the repository
-- You may NOT modify code files
-- Evaluate proposals based on project priorities
-- Provide constructive feedback when rejecting
-- Escalate conflicts to the project owner
-- Do not explore the codebase directly
-""",
-        # Gatekeeper system
-        "gatekeeper": """
-- You may read any files in the repository
-- You may NOT modify code files
-- Review the PR diff from your specialized perspective
-- Be thorough but fair in your assessment
-- Provide specific, actionable feedback for any issues
-- Record your check result using the /record-check skill
-""",
-        "gatekeeper_coordinator": """
-- You may read any files in the repository
-- You may NOT modify code files
-- Monitor PRs and coordinate gatekeeper checks
-- Aggregate check results
-- Create fix tasks when checks fail
-- Approve PRs when all checks pass
-""",
-        "pr_coordinator": """
-- You may read any files in the repository
-- You may NOT modify code files
-- Watch for open PRs that need review
-- Create review tasks for agent-created PRs
-- Avoid creating duplicate review tasks
-""",
-        # Execution layer (both models)
-        "implementer": """
-- You may read and modify code files
-- Create focused, atomic commits
-- Follow existing code patterns and conventions
-- Write tests for new functionality
-- Create a PR when work is complete
-""",
-        "orchestrator_impl": """
-- You work on the orchestrator infrastructure (Python), NOT the Boxen app
-- All code is in the orchestrator/ submodule directory (already initialized by the scheduler)
-- Work inside orchestrator/ for all edits and commits
-- Run tests: cd orchestrator && ./venv/bin/python -m pytest tests/ -v
-- Do NOT run `pip install -e .` — it will corrupt the shared scheduler venv. Just edit code and run tests.
-- Key files: orchestrator/orchestrator/db.py, queue_utils.py, scheduler.py
-- CRITICAL: Commit ONLY in the worktree's orchestrator/ submodule, not the main repo root
-- Use `git -C orchestrator/ commit` to ensure commits go to the submodule
-- Do NOT create a PR in the main repo — commit to a feature branch in the submodule
-- Do NOT use absolute paths to /Users/.../dev/boxen/orchestrator/ — that is a DIFFERENT git repo
-""",
-        "tester": """
-- You may read all files
-- You may modify test files only
-- Run existing tests and report results
-- Add missing test coverage
-- Do not modify production code
-""",
-        "reviewer": """
-- You are in READ-ONLY mode by default
-- Review code for bugs, security issues, and style
-- Leave constructive feedback
-- Approve or request changes via PR review
-- Do not modify code directly
-""",
-        # Pre-check layer (scheduler-level submission filtering)
-        "pre_check": """
-- You do NOT need a worktree (lightweight agent)
-- Pre-check provisional tasks for commits
-- Accept tasks with valid commits (pass to review)
-- Reject tasks without commits (send back for retry)
-- Recycle or escalate after max retries
-- Reset stuck claimed tasks
-- This role runs without Claude invocation
-""",
-        "recycler": """
-- You do NOT need a worktree (lightweight agent)
-- Poll provisional queue for burned-out tasks (0 commits, high turns)
-- Recycle burned-out tasks to the breakdown queue with project context
-- Accept depth-capped tasks for human review
-- This role runs without Claude invocation
-""",
-        "rebaser": """
-- You do NOT need a worktree (lightweight agent)
-- Rebase stale task branches onto current main
-- Re-run tests after rebase; escalate if tests fail
-- Force-push rebased branches with --force-with-lease
-- Skip orchestrator_impl tasks (v1 limitation)
-- Add notes to task files when human intervention is needed
-- This role runs without Claude invocation
-""",
-
-    }
-    return constraints.get(role, "- Follow standard development practices")
-
-
 def write_agent_env(agent_name: str, agent_id: int, role: str, agent_config: dict | None = None) -> Path:
     """Write environment variables file for an agent.
 
@@ -755,8 +752,14 @@ def prepare_task_directory(
     import json
     (task_dir / "task.json").write_text(json.dumps(task, indent=2))
 
-    # Copy and template scripts
-    scripts_src = Path(__file__).parent / "agent_scripts"
+    # Copy and template scripts from agent directory
+    agent_dir = agent_config.get("agent_dir")
+    if not agent_dir or not (Path(agent_dir) / "scripts").exists():
+        raise ValueError(f"Agent directory or scripts not found: {agent_dir}")
+
+    scripts_src = Path(agent_dir) / "scripts"
+    debug_log(f"Using scripts from agent directory: {scripts_src}")
+
     scripts_dest = task_dir / "scripts"
     scripts_dest.mkdir(exist_ok=True)
 
@@ -789,11 +792,29 @@ def prepare_task_directory(
     ]
     (task_dir / "env.sh").write_text("\n".join(env_lines) + "\n")
 
-    # Render prompt
+    # Render prompt from agent directory
+    agent_dir = agent_config.get("agent_dir")
+    if not agent_dir or not (Path(agent_dir) / "prompt.md").exists():
+        raise ValueError(f"Agent directory or prompt.md not found: {agent_dir}")
+
+    # Use prompt template from agent directory
+    prompt_template_path = Path(agent_dir) / "prompt.md"
+    prompt_template = prompt_template_path.read_text()
+    debug_log(f"Using prompt template from agent directory: {prompt_template_path}")
+
+    # Load global instructions
     global_instructions = ""
     gi_path = get_global_instructions_path()
     if gi_path.exists():
         global_instructions = gi_path.read_text()
+
+    # Load instructions.md from agent directory if available
+    instructions_md_path = Path(agent_dir) / "instructions.md"
+    if instructions_md_path.exists():
+        instructions_content = instructions_md_path.read_text()
+        # Append instructions to global instructions
+        global_instructions = global_instructions + "\n\n" + instructions_content
+        debug_log(f"Included instructions.md from agent directory: {instructions_md_path}")
 
     # Get agent hooks from task
     hooks = task.get("hooks")
@@ -807,17 +828,44 @@ def prepare_task_directory(
         elif isinstance(hooks, list):
             agent_hooks = [h for h in hooks if h.get("type") == "agent"]
 
-    prompt = render_prompt(
-        role="implementer",
-        task=task,
-        global_instructions=global_instructions,
-        scripts_dir="../scripts",
-        agent_hooks=agent_hooks,
-    )
-    (task_dir / "prompt.md").write_text(prompt)
+    # Build required_steps section
+    required_steps = ""
+    if agent_hooks:
+        lines = ["## Required Steps Before Finishing", ""]
+        lines.append("You must complete these steps before calling finish:")
+        for i, hook in enumerate(agent_hooks, 1):
+            name = hook["name"]
+            if name == "run_tests":
+                lines.append(f"{i}. Run tests: `../scripts/run-tests`")
+            elif name == "create_pr":
+                lines.append(f"{i}. Submit PR: `../scripts/submit-pr`")
+            elif name == "rebase_on_main":
+                lines.append(
+                    f"{i}. Rebase on main: "
+                    "`git fetch origin main && git rebase origin/main`"
+                )
+            else:
+                lines.append(f"{i}. {name}")
+        required_steps = "\n".join(lines)
 
-    # Setup commands
-    setup_agent_commands(agent_name, "implementer")
+    # Perform template substitution
+    from string import Template
+    template = Template(prompt_template)
+    prompt = template.safe_substitute(
+        task_id=task.get("id", "unknown"),
+        task_title=task.get("title", "Untitled"),
+        task_content=task.get("content", ""),
+        task_priority=task.get("priority", "P2"),
+        task_branch=task.get("branch") or get_main_branch(),
+        task_type=task.get("type", ""),
+        scripts_dir="../scripts",
+        global_instructions=global_instructions,
+        required_steps=required_steps,
+        review_section="",
+        continuation_section="",
+    )
+
+    (task_dir / "prompt.md").write_text(prompt)
 
     debug_log(f"Prepared task directory: {task_dir}")
     return task_dir
@@ -1129,22 +1177,6 @@ def handle_agent_result(task_id: str, agent_name: str, task_dir: Path) -> None:
         # Don't try to fail the task here — let lease monitor handle recovery
 
 
-def assign_qa_checks() -> None:
-    """Auto-assign gk-qa check to provisional app tasks that have a staging_url.
-
-    Scans provisional tasks and adds 'gk-qa' to the checks list for tasks that:
-    - Have a staging_url (deployment is ready)
-    - Are NOT orchestrator_impl tasks (those use gk-testing-octopoid)
-    - Don't already have gk-qa in their checks list
-
-    Tasks without a staging_url are silently skipped — they'll be picked up
-    on a future tick once the staging URL is populated by _store_staging_url().
-    """
-    return
-
-
-
-
 def process_orchestrator_hooks() -> None:
     """Run orchestrator-side hooks on provisional tasks.
 
@@ -1192,41 +1224,6 @@ def process_orchestrator_hooks() -> None:
     except Exception as e:
         debug_log(f"Error processing orchestrator hooks: {e}")
 
-def process_auto_accept_tasks() -> None:
-    """Process provisional tasks that have auto_accept enabled.
-
-    Moves tasks from provisional to done if auto_accept is true
-    (either on the task itself or its parent project).
-    """
-    return
-
-
-def process_gatekeeper_reviews() -> None:
-    """Process provisional tasks that have per-task checks.
-
-    Uses the DB-based check system (task.checks + task.check_results).
-    Gatekeeper agents record results; this function acts as a safety-net
-    pass that rejects any failed tasks the gatekeeper may have missed.
-
-    Tasks with all checks passed are left in provisional for human review —
-    they are NOT auto-accepted here.
-    """
-    return
-
-
-def dispatch_gatekeeper_agents() -> None:
-    """Dispatch gatekeeper agents for provisional tasks with pending checks.
-
-    For each provisional task that has pending checks, find the first one
-    and spawn a gatekeeper agent to evaluate it.
-
-    Sequential execution: only one pending check is dispatched at a time per task.
-    The next check will be dispatched on the following scheduler tick after the
-    first one completes.
-    """
-    return
-
-
 def check_and_update_finished_agents() -> None:
     """Check for agents that have finished and update their state."""
     agents_dir = get_agents_runtime_dir()
@@ -1270,224 +1267,6 @@ def check_and_update_finished_agents() -> None:
 # =============================================================================
 # Queue Health Detection (for queue-manager agent)
 # =============================================================================
-
-def detect_queue_health_issues() -> dict[str, list[dict]]:
-    """Detect queue health issues: file-DB mismatches, orphan files, zombie claims.
-
-    Returns:
-        Dictionary with keys 'file_db_mismatches', 'orphan_files', 'zombie_claims'
-        Each value is a list of issue dictionaries with details.
-    """
-    return {'file_db_mismatches': [], 'orphan_files': [], 'zombie_claims': []}
-
-
-def should_trigger_queue_manager() -> tuple[bool, str]:
-    """Check if queue-manager agent should be triggered.
-
-    Returns:
-        (should_trigger, trigger_reason) where trigger_reason describes why
-    """
-    issues = detect_queue_health_issues()
-
-    total_issues = (
-        len(issues['file_db_mismatches']) +
-        len(issues['orphan_files']) +
-        len(issues['zombie_claims'])
-    )
-
-    if total_issues == 0:
-        return False, ""
-
-    # Build trigger reason
-    parts = []
-    if issues['file_db_mismatches']:
-        parts.append(f"{len(issues['file_db_mismatches'])} file-DB mismatch(es)")
-    if issues['orphan_files']:
-        parts.append(f"{len(issues['orphan_files'])} orphan file(s)")
-    if issues['zombie_claims']:
-        parts.append(f"{len(issues['zombie_claims'])} zombie claim(s)")
-
-    trigger_reason = ", ".join(parts)
-    return True, trigger_reason
-
-
-def ensure_rebaser_worktree() -> Path | None:
-    """Ensure the dedicated rebaser worktree exists.
-
-    Creates .octopoid/runtime/agents/rebaser-worktree/ on first use,
-    detached at HEAD. Runs npm install if node_modules is missing.
-
-    Returns:
-        Path to the rebaser worktree, or None on failure
-    """
-    parent_project = find_parent_project()
-    worktree_path = get_agents_runtime_dir() / "rebaser-worktree"
-
-    if worktree_path.exists() and (worktree_path / ".git").exists():
-        return worktree_path
-
-    debug_log("Creating dedicated rebaser worktree")
-
-    try:
-        # Create the worktree detached at HEAD
-        result = subprocess.run(
-            ["git", "worktree", "add", "--detach", str(worktree_path), "HEAD"],
-            cwd=parent_project,
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-
-        if result.returncode != 0:
-            debug_log(f"Failed to create rebaser worktree: {result.stderr}")
-            return None
-
-        # Run npm install
-        debug_log("Running npm install in rebaser worktree")
-        subprocess.run(
-            ["npm", "install"],
-            cwd=worktree_path,
-            capture_output=True,
-            timeout=120,
-        )
-
-        print(f"[{datetime.now().isoformat()}] Created rebaser worktree at {worktree_path}")
-        return worktree_path
-
-    except (subprocess.TimeoutExpired, subprocess.SubprocessError) as e:
-        debug_log(f"Error creating rebaser worktree: {e}")
-        return None
-
-
-def check_branch_freshness() -> None:
-    """Check provisional app tasks for stale branches and rebase them.
-
-    For each provisional task where role='implement' and pr_url is set:
-    - Uses git merge-base --is-ancestor to check if main is ancestor of branch
-    - If main is NOT an ancestor, the branch is stale
-    - Skips branches that were rebased recently (throttled by last_rebase_attempt_at)
-    - Skips orchestrator_impl tasks (self-merge handles those)
-    - Calls rebase_stale_branch() directly for stale branches
-    """
-    return
-
-
-def _is_branch_fresh(parent_project: Path, branch: str) -> bool | None:
-    """Check if origin/main is an ancestor of the branch (i.e. branch is fresh).
-
-    Uses `git merge-base --is-ancestor origin/main origin/<branch>`.
-
-    Args:
-        parent_project: Path to the git repo
-        branch: Branch name to check
-
-    Returns:
-        True if branch is fresh (main is ancestor), False if stale,
-        None if branch not found or error
-    """
-    try:
-        # Check that the remote branch exists
-        result = subprocess.run(
-            ['git', 'rev-parse', '--verify', f'origin/{branch}'],
-            cwd=parent_project,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        if result.returncode != 0:
-            return None
-
-        # Check if origin/main is an ancestor of the branch
-        result = subprocess.run(
-            ['git', 'merge-base', '--is-ancestor', 'origin/main', f'origin/{branch}'],
-            cwd=parent_project,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-
-        # Exit code 0 means main IS ancestor (branch is fresh)
-        # Exit code 1 means main is NOT ancestor (branch is stale)
-        return result.returncode == 0
-
-    except (subprocess.TimeoutExpired, subprocess.SubprocessError):
-        return None
-
-
-def rebase_stale_branch(task_id: str, branch: str) -> bool:
-    """Rebase a stale branch onto main, run tests, and force-push.
-
-    On conflict: rebase --abort, reject task back to agent with conflict details.
-    On test failure: reject task back to agent with test output.
-    On success: force-push with --force-with-lease, log success.
-
-    Args:
-        task_id: Task identifier
-        branch: Branch name to rebase
-
-    Returns:
-        True if rebase succeeded and was pushed
-    """
-    return False
-
-
-def check_stale_branches(commits_behind_threshold: int = 5) -> None:
-    """Check provisional/review tasks for branch staleness and mark for rebase.
-
-    Compares each task's branch against current origin/main. If the branch
-    is behind by N+ commits, sets needs_rebase=True in the DB.
-
-    Skips:
-    - Tasks already marked for rebase
-    - orchestrator_impl tasks (v1 limitation)
-    - Tasks without a branch (or on main)
-
-    Args:
-        commits_behind_threshold: Number of commits behind main before
-            marking for rebase (default 5)
-    """
-    return
-
-
-def _count_commits_behind(parent_project: Path, branch: str) -> int | None:
-    """Count how many commits a branch is behind origin/main.
-
-    Args:
-        parent_project: Path to the git repo
-        branch: Branch name to check
-
-    Returns:
-        Number of commits behind, or None if branch not found
-    """
-    try:
-        # Check that the remote branch exists
-        result = subprocess.run(
-            ['git', 'rev-parse', '--verify', f'origin/{branch}'],
-            cwd=parent_project,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        if result.returncode != 0:
-            return None
-
-        # Count commits on main that are not on the branch
-        result = subprocess.run(
-            ['git', 'rev-list', '--count', f'origin/{branch}..origin/main'],
-            cwd=parent_project,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-
-        if result.returncode != 0:
-            return None
-
-        return int(result.stdout.strip())
-
-    except (subprocess.TimeoutExpired, subprocess.SubprocessError, ValueError):
-        return None
-
 
 # Track last queue health check time (global state)
 _last_queue_health_check: datetime | None = None
@@ -1628,13 +1407,161 @@ def _register_orchestrator() -> None:
         debug_log(f"Orchestrator registration failed (non-fatal): {e}")
 
 
+# =============================================================================
+# Housekeeping Jobs
+# =============================================================================
+#
+# The following functions were removed during the scheduler refactor:
+#
+# - process_auto_accept_tasks(): Dead code — auto_accept feature not implemented
+#   (function body was just `return` in pre-refactor code)
+#
+# - assign_qa_checks(): Dead code — gatekeeper QA system not implemented
+#   (function body was just `return` in pre-refactor code)
+#
+# - process_gatekeeper_reviews(): Dead code — gatekeeper review system not implemented
+#   (function body was just `return` in pre-refactor code)
+#
+# - dispatch_gatekeeper_agents(): Dead code — gatekeeper agent dispatch not implemented
+#   (function body was just `return` in pre-refactor code)
+#
+# - check_stale_branches(): Dead code — branch staleness monitoring not implemented
+#   (function body was just `return` in pre-refactor code; helper functions existed
+#   but were never called)
+#
+# - check_branch_freshness(): Dead code — branch freshness checks not implemented
+#   (function body was just `return` in pre-refactor code; rebase logic was stubbed)
+#
+# Note: process_orchestrator_hooks() is still active and listed below.
+
+HOUSEKEEPING_JOBS = [
+    _register_orchestrator,
+    check_and_update_finished_agents,
+    _check_queue_health_throttled,
+    process_orchestrator_hooks,
+]
+
+
+def run_housekeeping() -> None:
+    """Run all housekeeping jobs. Each is independent and fault-isolated."""
+    for job in HOUSEKEEPING_JOBS:
+        try:
+            job()
+        except Exception as e:
+            debug_log(f"Housekeeping job {job.__name__} failed: {e}")
+
+
+# =============================================================================
+# Spawn Strategies
+# =============================================================================
+
+def _requeue_task(task_id: str) -> None:
+    """Requeue a claimed task back to incoming after spawn failure."""
+    try:
+        from .queue_utils import get_sdk
+        sdk = get_sdk()
+        sdk.tasks.update(task_id, queue="incoming", claimed_by=None)
+        debug_log(f"Requeued task {task_id} back to incoming")
+    except Exception as e:
+        debug_log(f"Failed to requeue task {task_id}: {e}")
+
+
+def _init_submodule(agent_name: str) -> None:
+    """Initialize the orchestrator submodule in an agent's worktree."""
+    worktree_path = get_worktree_path(agent_name)
+    try:
+        subprocess.run(
+            ["git", "submodule", "update", "--init", "orchestrator"],
+            cwd=worktree_path,
+            capture_output=True, text=True, timeout=120,
+        )
+        sub_path = worktree_path / "orchestrator"
+        subprocess.run(["git", "checkout", "main"], cwd=sub_path, capture_output=True, text=True, timeout=30)
+        subprocess.run(["git", "fetch", "origin", "main"], cwd=sub_path, capture_output=True, text=True, timeout=60)
+        subprocess.run(["git", "reset", "--hard", "origin/main"], cwd=sub_path, capture_output=True, text=True, timeout=30)
+        _verify_submodule_isolation(sub_path, agent_name)
+        debug_log(f"Submodule initialized for {agent_name}")
+    except Exception as e:
+        debug_log(f"Submodule init failed for {agent_name}: {e}")
+
+
+def spawn_implementer(ctx: AgentContext) -> int:
+    """Spawn an implementer: prepare task dir, invoke claude directly."""
+    task_dir = prepare_task_directory(ctx.claimed_task, ctx.agent_name, ctx.agent_config)
+    pid = invoke_claude(task_dir, ctx.agent_config)
+
+    new_state = mark_started(ctx.state, pid)
+    new_state.extra["agent_mode"] = "scripts"
+    new_state.extra["task_dir"] = str(task_dir)
+    new_state.extra["current_task_id"] = ctx.claimed_task["id"]
+    save_state(new_state, ctx.state_path)
+    return pid
+
+
+def spawn_lightweight(ctx: AgentContext) -> int:
+    """Spawn a lightweight agent (no worktree, runs in parent project)."""
+    write_agent_env(ctx.agent_name, ctx.agent_config.get("id", 0), ctx.role, ctx.agent_config)
+    pid = spawn_agent(ctx.agent_name, ctx.agent_config.get("id", 0), ctx.role, ctx.agent_config)
+
+    new_state = mark_started(ctx.state, pid)
+    save_state(new_state, ctx.state_path)
+    return pid
+
+
+def spawn_worktree(ctx: AgentContext) -> int:
+    """Spawn an agent with a worktree (general case for non-lightweight, non-implementer)."""
+    # Resolve base branch for the worktree
+    base_branch = ctx.agent_config.get("base_branch", get_main_branch())
+
+    if ctx.claimed_task:
+        # Use the claimed task's branch for the worktree
+        task_branch = ctx.claimed_task.get("branch")
+        if task_branch and task_branch != "main":
+            debug_log(f"Using claimed task branch for {ctx.agent_name}: {task_branch}")
+            base_branch = task_branch
+    else:
+        # For non-claimable agents, peek at queue for branch hint
+        task_branch = peek_task_branch(ctx.role)
+        if task_branch:
+            debug_log(f"Peeked task branch for {ctx.agent_name}: {task_branch}")
+            base_branch = task_branch
+
+    debug_log(f"Ensuring worktree for {ctx.agent_name} on branch {base_branch}")
+    ensure_worktree(ctx.agent_name, base_branch)
+
+    # Initialize submodule for orchestrator_impl agents
+    if ctx.role == "orchestrator_impl":
+        _init_submodule(ctx.agent_name)
+
+    # Write env file
+    debug_log(f"Writing env file for {ctx.agent_name}")
+    write_agent_env(ctx.agent_name, ctx.agent_config.get("id", 0), ctx.role, ctx.agent_config)
+
+    # Spawn agent
+    pid = spawn_agent(ctx.agent_name, ctx.agent_config.get("id", 0), ctx.role, ctx.agent_config)
+
+    # Update JSON state
+    new_state = mark_started(ctx.state, pid)
+    save_state(new_state, ctx.state_path)
+    return pid
+
+
+def get_spawn_strategy(ctx: AgentContext) -> Callable:
+    """Select spawn strategy based on agent config."""
+    spawn_mode = ctx.agent_config.get("spawn_mode", "worktree")
+    is_lightweight = ctx.agent_config.get("lightweight", False)
+
+    if spawn_mode == "scripts" and ctx.claimed_task:
+        return spawn_implementer
+    if is_lightweight:
+        return spawn_lightweight
+    return spawn_worktree
+
+
 def run_scheduler() -> None:
     """Main scheduler loop - evaluate and spawn agents."""
     print(f"[{datetime.now().isoformat()}] Scheduler starting")
     debug_log("Scheduler tick starting")
-
-    # Register orchestrator with API server (idempotent)
-    _register_orchestrator()
 
     # Check global pause flag
     if is_system_paused():
@@ -1642,41 +1569,10 @@ def run_scheduler() -> None:
         debug_log("System is paused globally")
         return
 
-    # Check for finished agents first
-    check_and_update_finished_agents()
+    # Phase 1: Housekeeping
+    run_housekeeping()
 
-    # Check queue health (runs every 30 minutes)
-    _check_queue_health_throttled()
-
-    # Run orchestrator-side hooks on provisional tasks (e.g. merge_pr)
-    process_orchestrator_hooks()
-
-    # Process auto-accept tasks in provisional queue
-    process_auto_accept_tasks()
-
-    # Auto-assign gk-qa checks to app tasks with staging URLs
-    assign_qa_checks()
-
-    # Process gatekeeper reviews for provisional tasks
-    process_gatekeeper_reviews()
-
-    # Dispatch gatekeeper agents for pending checks
-    dispatch_gatekeeper_agents()
-
-    # Check for stale branches that need rebasing
-    check_stale_branches()
-
-    # Check branch freshness and auto-rebase stale provisional branches
-    check_branch_freshness()
-
-    # Check queue health and trigger queue-manager if issues detected
-    should_trigger, trigger_reason = should_trigger_queue_manager()
-    if should_trigger:
-        debug_log(f"Queue health issues detected: {trigger_reason}")
-        # The queue-manager agent will be evaluated in the normal agent loop below
-        # We just log the detection here; the agent's pre-check handles actual triggering
-
-    # Load agent configuration
+    # Phase 2 + 3: Evaluate and spawn agents
     try:
         agents = get_agents()
         debug_log(f"Loaded {len(agents)} agents from config")
@@ -1690,210 +1586,52 @@ def run_scheduler() -> None:
         debug_log("No agents configured")
         return
 
-    for agent_id, agent_config in enumerate(agents):
+    for agent_config in agents:
         agent_name = agent_config.get("name")
         role = agent_config.get("role")
-        interval = agent_config.get("interval_seconds", 300)
-        paused = agent_config.get("paused", False)
-
         if not agent_name or not role:
             print(f"Skipping invalid agent config: {agent_config}")
             debug_log(f"Invalid agent config: {agent_config}")
             continue
 
-        if paused:
-            print(f"Agent {agent_name} is paused, skipping")
-            debug_log(f"Agent {agent_name} is paused")
-            continue
+        debug_log(f"Evaluating agent {agent_name}: role={role}")
 
-        debug_log(f"Evaluating agent {agent_name}: role={role}, interval={interval}s")
-
-        # Try to acquire agent lock
+        # Acquire agent lock
         agent_lock_path = get_agent_lock_path(agent_name)
-
         with locked_or_skip(agent_lock_path) as acquired:
             if not acquired:
                 print(f"Agent {agent_name} is locked (another instance running?)")
                 debug_log(f"Agent {agent_name} lock not acquired")
                 continue
 
-            # Load agent state
+            # Build context
             state_path = get_agent_state_path(agent_name)
-            state = load_state(state_path)
-            debug_log(f"Agent {agent_name} state: running={state.running}, pid={state.pid}, last_finished={state.last_finished}")
+            ctx = AgentContext(
+                agent_config=agent_config,
+                agent_name=agent_name,
+                role=role,
+                interval=agent_config.get("interval_seconds", 300),
+                state=load_state(state_path),
+                state_path=state_path,
+            )
 
-            # Check if still running
-            if state.running and state.pid and is_process_running(state.pid):
-                print(f"Agent {agent_name} is still running (PID {state.pid})")
-                debug_log(f"Agent {agent_name} still running (PID {state.pid})")
+            # Evaluate guards
+            if not evaluate_agent(ctx):
                 continue
 
-            # If was marked running but process died, update state
-            if state.running:
-                debug_log(f"Agent {agent_name} was marked running but process died, marking as crashed")
-                state = mark_finished(state, 1)  # Assume crashed
-                save_state(state, state_path)
-
-            # Check if overdue
-            if not is_overdue(state, interval):
-                print(f"Agent {agent_name} is not due yet")
-                debug_log(f"Agent {agent_name} not due yet")
-                continue
-
-            # Check role-based backpressure (runs before spawning any process)
-            can_proceed, blocked_reason = check_backpressure_for_role(role)
-            if not can_proceed:
-                print(f"Agent {agent_name} blocked: {blocked_reason}")
-                debug_log(f"Agent {agent_name} blocked by backpressure: {blocked_reason}")
-                # Update state to track blocked status
-                state.extra["blocked_reason"] = blocked_reason
-                state.extra["blocked_at"] = datetime.now().isoformat()
-                save_state(state, state_path)
-                continue
-
-            # Clear any previous blocked status
-            if "blocked_reason" in state.extra:
-                del state.extra["blocked_reason"]
-            if "blocked_at" in state.extra:
-                del state.extra["blocked_at"]
-
-            # Run pre-check if configured (additional cheap check for work availability)
-            if not run_pre_check(agent_name, agent_config):
-                print(f"Agent {agent_name} pre-check: no work available")
-                debug_log(f"Agent {agent_name} pre-check returned no work")
-                continue
-
-            # For claimable agents: claim task before spawning.
-            # This ensures the agent has work and avoids wasted startups.
-            claimed_task = None
-            if role in CLAIMABLE_AGENT_ROLES:
-                task_role = AGENT_TASK_ROLE[role]
-                # Read allowed task types from agent config (None = any type)
-                allowed_types = agent_config.get("allowed_task_types")
-                type_filter = allowed_types[0] if isinstance(allowed_types, list) and len(allowed_types) == 1 else (
-                    ",".join(allowed_types) if isinstance(allowed_types, list) else allowed_types
-                )
-                claimed_task = claim_and_prepare_task(agent_name, task_role, type_filter=type_filter)
-                if claimed_task is None:
-                    debug_log(f"No task available for {agent_name}")
-                    continue
-                debug_log(f"Claimed task {claimed_task['id']} for {agent_name}")
-
+            # Spawn
             print(f"[{datetime.now().isoformat()}] Starting agent {agent_name} (role: {role})")
             debug_log(f"Starting agent {agent_name} (role: {role})")
 
-            # Implementers use scripts mode: prepare task dir and invoke claude directly
-            if role == "implementer" and claimed_task:
-                try:
-                    task_dir = prepare_task_directory(claimed_task, agent_name, agent_config)
-                    pid = invoke_claude(task_dir, agent_config)
-                except Exception as e:
-                    print(f"[{datetime.now().isoformat()}] Failed to spawn agent for {claimed_task['id']}: {e}")
-                    debug_log(f"Spawn failed for {claimed_task['id']}, requeuing: {e}")
-                    try:
-                        from .queue_utils import get_sdk
-                        sdk = get_sdk()
-                        sdk.tasks.update(claimed_task["id"], queue="incoming", claimed_by=None)
-                    except Exception:
-                        pass
-                    continue
-
-                new_state = mark_started(state, pid)
-                new_state.extra["agent_mode"] = "scripts"
-                new_state.extra["task_dir"] = str(task_dir)
-                new_state.extra["current_task_id"] = claimed_task["id"]
-                save_state(new_state, state_path)
-
+            strategy = get_spawn_strategy(ctx)
+            try:
+                pid = strategy(ctx)
                 print(f"Agent {agent_name} started with PID {pid}")
-                continue
-
-            # Check if this is a lightweight agent (no worktree needed)
-            is_lightweight = agent_config.get("lightweight", False)
-
-            if not is_lightweight:
-                # Determine base branch for worktree
-                base_branch = agent_config.get("base_branch", get_main_branch())
-
-                if claimed_task:
-                    # Use the claimed task's branch for the worktree
-                    task_branch = claimed_task.get("branch")
-                    if task_branch and task_branch != "main":
-                        debug_log(f"Using claimed task branch for {agent_name}: {task_branch}")
-                        base_branch = task_branch
-                else:
-                    # For non-implementer agents, peek at queue for branch hint
-                    task_branch = peek_task_branch(role)
-                    if task_branch:
-                        debug_log(f"Peeked task branch for {agent_name}: {task_branch}")
-                        base_branch = task_branch
-
-                debug_log(f"Ensuring worktree for {agent_name} on branch {base_branch}")
-                ensure_worktree(agent_name, base_branch)
-
-                # Initialize submodule for orchestrator_impl agents
-                if role == "orchestrator_impl":
-                    worktree_path = get_worktree_path(agent_name)
-                    debug_log(f"Initializing submodule in worktree for {agent_name}")
-                    try:
-                        subprocess.run(
-                            ["git", "submodule", "update", "--init", "orchestrator"],
-                            cwd=worktree_path,
-                            capture_output=True,
-                            text=True,
-                            timeout=120,
-                        )
-                        # Checkout main in the submodule and fetch latest
-                        sub_path = worktree_path / "orchestrator"
-                        subprocess.run(
-                            ["git", "checkout", "main"],
-                            cwd=sub_path,
-                            capture_output=True,
-                            text=True,
-                            timeout=30,
-                        )
-                        subprocess.run(
-                            ["git", "fetch", "origin", "main"],
-                            cwd=sub_path,
-                            capture_output=True,
-                            text=True,
-                            timeout=60,
-                        )
-                        subprocess.run(
-                            ["git", "reset", "--hard", "origin/main"],
-                            cwd=sub_path,
-                            capture_output=True,
-                            text=True,
-                            timeout=30,
-                        )
-                        # Verify the submodule has its own git object store
-                        # (not sharing with the main checkout's submodule)
-                        _verify_submodule_isolation(sub_path, agent_name)
-                        debug_log(f"Submodule initialized for {agent_name}")
-                    except Exception as e:
-                        debug_log(f"Submodule init failed for {agent_name}: {e}")
-
-                # Setup commands in worktree
-                debug_log(f"Setting up commands for {agent_name}")
-                setup_agent_commands(agent_name, role)
-
-                # Generate agent instructions
-                debug_log(f"Generating instructions for {agent_name}")
-                generate_agent_instructions(agent_name, role, agent_config)
-            else:
-                debug_log(f"Agent {agent_name} is lightweight, skipping worktree setup")
-
-            # Write env file
-            debug_log(f"Writing env file for {agent_name}")
-            write_agent_env(agent_name, agent_id, role, agent_config)
-
-            # Spawn agent
-            pid = spawn_agent(agent_name, agent_id, role, agent_config)
-
-            # Update JSON state
-            new_state = mark_started(state, pid)
-            save_state(new_state, state_path)
-
-            print(f"Agent {agent_name} started with PID {pid}")
+            except Exception as e:
+                print(f"[{datetime.now().isoformat()}] Spawn failed for {agent_name}: {e}")
+                debug_log(f"Spawn failed for {agent_name}: {e}")
+                if ctx.claimed_task:
+                    _requeue_task(ctx.claimed_task["id"])
 
     print(f"[{datetime.now().isoformat()}] Scheduler tick complete")
     debug_log("Scheduler tick complete")
@@ -1956,35 +1694,5 @@ def main() -> None:
 
 
 # Default template if file doesn't exist
-DEFAULT_AGENT_INSTRUCTIONS_TEMPLATE = """# Agent Instructions
-
-**Agent:** $agent_name
-**Role:** $role
-**Generated:** $timestamp
-
-## Identity
-
-You are an autonomous agent named **$agent_name** with the role of **$role**.
-You are part of a multi-agent system coordinated by an orchestrator.
-
-## Global Instructions
-
-$global_instructions
-
-$task_section
-
-## Constraints
-
-$constraints
-
-## Important Notes
-
-- Always commit your changes with clear, descriptive messages
-- If you encounter errors, document them clearly
-- Do not modify files outside your authorized scope
-- Coordinate through the task queue, not direct communication
-"""
-
-
 if __name__ == "__main__":
     main()

@@ -209,6 +209,17 @@ When you run `octopoid init`, these files and directories are created:
 .octopoid/
 ├── config.yaml          # Server URL, cluster name, machine ID
 ├── agents.yaml          # Agent definitions (what roles run)
+├── agents/              # Agent type templates (customizable)
+│   ├── implementer/     # Implementer agent configuration
+│   │   ├── agent.yaml   # Capabilities, model settings
+│   │   ├── prompt.md    # Base prompt template
+│   │   ├── instructions.md  # Agent-specific instructions
+│   │   └── scripts/     # Helper scripts
+│   └── gatekeeper/      # Gatekeeper agent configuration
+│       ├── agent.yaml
+│       ├── prompt.md
+│       ├── instructions.md
+│       └── scripts/
 ├── runtime/             # Runtime state (don't commit)
 │   ├── orchestrator_id.txt    # Your registered orchestrator ID
 │   ├── orchestrator.pid       # Process ID when running
