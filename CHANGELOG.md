@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Simplified fleet config format in agents.yaml (refactor-10):
+  - New `fleet:` key replaces inline agent config with type references
+  - Agent types reference directories in `packages/client/agents/<type>/` or `.octopoid/agents/<type>/`
+  - Fleet entries can override type defaults (model, max_turns, etc.)
+  - Custom agents supported via `type: custom` with explicit `path:`
+  - Backward compatible: legacy `agents:` format still works
+  - `get_agents()` now loads type defaults from `agent.yaml` and merges with fleet overrides
+  - All agent configs include `agent_dir` key pointing to the agent directory
 - Added `AgentContext` dataclass to scheduler for structured per-agent state management (scheduler refactor phase 2, step 1/12)
 - Extracted guard functions from scheduler agent loop into standalone, testable functions (scheduler refactor phase 2, step 2/12):
   - `guard_enabled`, `guard_not_running`, `guard_interval`, `guard_backpressure`, `guard_pre_check`, `guard_claim_task`

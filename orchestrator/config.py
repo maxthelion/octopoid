@@ -369,9 +369,76 @@ def get_curator_scoring() -> dict[str, float]:
 
 
 def get_agents() -> list[dict[str, Any]]:
-    """Get list of configured agents."""
+    """Get list of configured agents.
+
+    Supports two formats:
+    - Legacy: agents.yaml with 'agents:' key containing inline config
+    - New: agents.yaml with 'fleet:' key referencing agent directories
+
+    Returns:
+        List of agent configs with merged type defaults and fleet overrides.
+        Each entry includes an 'agent_dir' key pointing to the agent directory.
+    """
     config = load_agents_config()
-    return config.get("agents", [])
+
+    # Legacy format - return as-is for backward compatibility
+    if "agents" in config:
+        return config.get("agents", [])
+
+    # New fleet format
+    fleet = config.get("fleet", [])
+    if not fleet:
+        return []
+
+    agents = []
+    for entry in fleet:
+        agent_type = entry.get("type", "")
+        if not agent_type:
+            continue
+
+        # Resolve agent directory
+        if agent_type == "custom":
+            agent_dir_str = entry.get("path", "")
+            if not agent_dir_str:
+                continue
+            agent_dir = Path(agent_dir_str)
+            if not agent_dir.is_absolute():
+                agent_dir = find_parent_project() / agent_dir
+        else:
+            # Look in packages/client/agents/<type>/ first (product templates)
+            # Fall back to .octopoid/agents/<type>/ (scaffolded copies)
+            product_dir = find_parent_project() / "packages" / "client" / "agents" / agent_type
+            scaffolded_dir = find_parent_project() / ".octopoid" / "agents" / agent_type
+
+            if product_dir.exists():
+                agent_dir = product_dir
+            elif scaffolded_dir.exists():
+                agent_dir = scaffolded_dir
+            else:
+                # Agent type not found, skip this entry
+                continue
+
+        # Load type defaults from agent.yaml
+        type_defaults = {}
+        agent_yaml = agent_dir / "agent.yaml"
+        if agent_yaml.exists():
+            with open(agent_yaml) as f:
+                type_defaults = yaml.safe_load(f) or {}
+
+        # Merge: type defaults < fleet overrides
+        merged = {**type_defaults, **entry}
+        merged["agent_dir"] = str(agent_dir)
+
+        # Ensure 'enabled' defaults to True if not specified
+        merged.setdefault("enabled", True)
+
+        # Skip disabled agents
+        if not merged.get("enabled", True):
+            continue
+
+        agents.append(merged)
+
+    return agents
 
 
 def is_system_paused() -> bool:
