@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Refactored
+
+- **Refactor queue_utils.py into entity modules** ([TASK-7a393cef])
+  - Split 2,711-line `queue_utils.py` into 8 focused modules:
+    - `sdk.py`: SDK initialization and orchestrator ID (~112 lines)
+    - `tasks.py`: Task lifecycle, CRUD, and query operations (~1,007 lines)
+    - `projects.py`: Project management (~306 lines)
+    - `breakdowns.py`: Breakdown approval and task recycling (~489 lines)
+    - `agent_markers.py`: Agent task marker management (~114 lines)
+    - `task_notes.py`: Task notes persistence (~106 lines)
+    - `backpressure.py`: Queue limits, status, and scheduler checks (~334 lines)
+    - `compat.py`: Legacy helpers for backwards compatibility (~169 lines)
+  - Added `_transition()` helper to eliminate repetitive lifecycle boilerplate
+  - Lifecycle functions now take `task_id: str` instead of `task_path: Path | str`
+  - Replaced `queue_utils.py` with re-export shim for backwards compatibility (~162 lines)
+  - Total line reduction: 2,711 → 2,637 lines (across 8 modules + shim)
+
 ### Removed
 - Deleted 8 legacy test files that tested deleted code (~2,670 lines total):
   - `tests/test_orchestrator_impl.py` (1,349 lines)
