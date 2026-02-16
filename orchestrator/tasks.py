@@ -150,13 +150,14 @@ def accept_completion(
     """Accept a provisional task via API (moves to done queue)."""
     from .task_notes import cleanup_task_notes
 
-    result = _transition(
-        task_id,
-        "done",
-        cleanup_worktree=True,
-        push_commits=True,
-        log_fn=lambda l: l.log_accepted(accepted_by=accepted_by or "unknown")
-    )
+    sdk = get_sdk()
+    result = sdk.tasks.accept(task_id, accepted_by=accepted_by or "unknown")
+
+    logger = get_task_logger(task_id)
+    logger.log_accepted(accepted_by=accepted_by or "unknown")
+
+    from .git_utils import cleanup_task_worktree
+    cleanup_task_worktree(task_id, push_commits=True)
 
     cleanup_task_notes(task_id)
     return result
@@ -312,7 +313,8 @@ def get_review_feedback(task_id: str) -> str | None:
 
 def escalate_to_planning(task_id: str, plan_id: str) -> dict:
     """Escalate a task to planning queue."""
-    return _transition(task_id, "escalated")
+    sdk = get_sdk()
+    return sdk.tasks.update(task_id, queue="escalated", plan_id=plan_id)
 
 def fail_task(task_id: str, error: str) -> dict:
     """Fail a task (moves to failed queue with cleanup)."""
@@ -331,7 +333,13 @@ def reject_task(
     rejected_by: str | None = None,
 ) -> dict:
     """Reject a task (moves to rejected queue)."""
-    return _transition(task_id, "rejected")
+    sdk = get_sdk()
+    return sdk.tasks.reject(
+        task_id=task_id,
+        reason=reason,
+        details=details,
+        rejected_by=rejected_by,
+    )
 
 def retry_task(task_id: str) -> dict:
     """Retry a failed task (moves back to incoming)."""
@@ -408,7 +416,14 @@ def mark_needs_continuation(
     agent_name: str | None = None,
 ) -> dict:
     """Mark a task as needing continuation."""
-    return _transition(task_id, "needs_continuation")
+    sdk = get_sdk()
+    return sdk.tasks.update(
+        task_id,
+        queue="needs_continuation",
+        reason=reason,
+        branch_name=branch_name,
+        agent_name=agent_name,
+    )
 
 def resume_task(task_id: str, agent_name: str | None = None) -> dict:
     """Resume a held or continuation task."""
