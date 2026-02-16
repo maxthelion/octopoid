@@ -352,29 +352,22 @@ def resolve_hooks(hook_point: HookPoint, task_type: str | None = None) -> list[H
     """Resolve which hooks to run for a given hook point and task type.
 
     Resolution order:
-    1. Task has type → use task_types.<type>.hooks.<point>
-    2. No type or type has no hooks for this point → use top-level hooks.<point>
-    3. No top-level hooks → use DEFAULT_HOOKS
+    1. Use top-level hooks.<point>
+    2. No top-level hooks → use DEFAULT_HOOKS
 
     Returns:
         Ordered list of hook functions to execute
     """
-    from .config import get_hooks_for_type, get_hooks_config
+    from .config import get_hooks_config
 
     point_name = hook_point.value
 
-    # 1. Try task-type-specific hooks
-    if task_type:
-        type_hooks = get_hooks_for_type(task_type)
-        if type_hooks and point_name in type_hooks:
-            return _names_to_functions(type_hooks[point_name])
-
-    # 2. Try project-level hooks
+    # 1. Try project-level hooks
     project_hooks = get_hooks_config()
     if point_name in project_hooks:
         return _names_to_functions(project_hooks[point_name])
 
-    # 3. Fall back to defaults
+    # 2. Fall back to defaults
     if point_name in DEFAULT_HOOKS:
         return _names_to_functions(DEFAULT_HOOKS[point_name])
 

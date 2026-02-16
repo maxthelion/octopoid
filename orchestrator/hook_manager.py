@@ -72,27 +72,21 @@ class HookManager:
         """Resolve hooks from config for a new task.
 
         Uses the same resolution order as hooks.resolve_hooks():
-        1. Task type hooks (task_types.<type>.hooks)
-        2. Project-level hooks (hooks:)
-        3. Default hooks
+        1. Project-level hooks (hooks:)
+        2. Default hooks
 
         Returns:
             List of hook dicts in server data model format, ready to
             be stored on the task via the API.
         """
-        from .config import get_hooks_config, get_hooks_for_type
+        from .config import get_hooks_config
 
         hooks_config: dict[str, list[str]] | None = None
 
-        # 1. Try task-type-specific hooks
-        if task_type:
-            hooks_config = get_hooks_for_type(task_type)
+        # 1. Try project-level hooks
+        hooks_config = get_hooks_config()
 
-        # 2. Fall back to project-level hooks
-        if not hooks_config:
-            hooks_config = get_hooks_config()
-
-        # 3. If still empty, use defaults
+        # 2. If still empty, use defaults
         if not hooks_config:
             hooks_config = DEFAULT_HOOKS.copy()
 

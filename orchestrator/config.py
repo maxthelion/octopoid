@@ -61,18 +61,6 @@ TaskRole = Literal[
     "test",
 ]
 
-# Agent roles that claim tasks (role -> task role_filter)
-AGENT_TASK_ROLE: dict[str, str] = {
-    "implementer": "implement",
-    "orchestrator_impl": "orchestrator_impl",
-    "breakdown": "breakdown",
-    "reviewer": "review",
-    "tester": "test",
-}
-
-# Agent roles that claim tasks before spawning (scheduler pre-claims)
-CLAIMABLE_AGENT_ROLES: set[str] = {"implementer", "orchestrator_impl"}
-
 
 # Port allocation
 BASE_PORT = 41000
@@ -596,37 +584,3 @@ def get_hooks_config() -> dict[str, list[str]]:
     if hooks and isinstance(hooks, dict):
         return hooks
     return DEFAULT_HOOKS_CONFIG.copy()
-
-
-def get_task_types_config() -> dict[str, Any]:
-    """Get task type definitions from .octopoid/config.yaml.
-
-    Returns:
-        Dict mapping type name to its config (hooks, agents, etc).
-        Empty dict if not configured.
-    """
-    config = _load_project_config()
-    types = config.get("task_types")
-    if types and isinstance(types, dict):
-        return types
-    return {}
-
-
-def get_hooks_for_type(task_type: str) -> dict[str, list[str]] | None:
-    """Get hooks configuration for a specific task type.
-
-    Args:
-        task_type: The task type name (e.g. "product", "infrastructure")
-
-    Returns:
-        Dict mapping hook point names to hook name lists, or None if
-        the type has no hooks defined.
-    """
-    types = get_task_types_config()
-    type_config = types.get(task_type)
-    if not type_config or not isinstance(type_config, dict):
-        return None
-    hooks = type_config.get("hooks")
-    if hooks and isinstance(hooks, dict):
-        return hooks
-    return None
