@@ -145,6 +145,10 @@ def mock_sdk_for_unit_tests(request):
         yield
         return
 
+    # Reset the global SDK cache before each test
+    import orchestrator.sdk
+    orchestrator.sdk._sdk = None
+
     # Create a mock SDK
     mock_sdk = MagicMock()
 
@@ -158,5 +162,12 @@ def mock_sdk_for_unit_tests(request):
     mock_sdk.tasks.accept.return_value = {"id": "test-task-id", "queue": "done"}
 
     # Apply the mock for the duration of the test
-    with patch('orchestrator.queue_utils.get_sdk', return_value=mock_sdk):
-        yield mock_sdk
+    # Patch at multiple locations where get_sdk is imported
+    with patch('orchestrator.sdk.get_sdk', return_value=mock_sdk):
+        with patch('orchestrator.tasks.get_sdk', return_value=mock_sdk):
+            with patch('orchestrator.projects.get_sdk', return_value=mock_sdk):
+                with patch('orchestrator.breakdowns.get_sdk', return_value=mock_sdk):
+                    yield mock_sdk
+
+    # Reset the SDK cache after the test as well
+    orchestrator.sdk._sdk = None

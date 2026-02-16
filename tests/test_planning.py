@@ -43,12 +43,12 @@ class TestCreatePlanningTask:
             assert "Implement feature X" in content
             assert "Feature X works correctly" in content
 
-    def test_create_planning_task_invalid_original(self, mock_orchestrator_dir):
+    def test_create_planning_task_invalid_original(self, mock_orchestrator_dir, mock_sdk_for_unit_tests):
         """Test creating planning task for invalid original task."""
         with patch('orchestrator.planning.get_queue_dir', return_value=mock_orchestrator_dir / "shared" / "queue"):
             from orchestrator.planning import create_planning_task
 
-            with pytest.raises(ValueError, match="Could not parse"):
+            with pytest.raises(ValueError, match="Could not read"):
                 create_planning_task("invalid", mock_orchestrator_dir / "nonexistent.md")
 
 
@@ -221,11 +221,11 @@ The original task was too complex.
 class TestCreateMicroTasks:
     """Tests for create_micro_tasks function."""
 
-    def test_create_micro_tasks(self, mock_orchestrator_dir):
+    def test_create_micro_tasks(self, mock_orchestrator_dir, mock_sdk_for_unit_tests):
         """Test creating micro-tasks from parsed plan."""
         tasks_dir = mock_orchestrator_dir / "tasks"
         tasks_dir.mkdir(parents=True, exist_ok=True)
-        with patch('orchestrator.queue_utils.get_tasks_file_dir', return_value=tasks_dir):
+        with patch('orchestrator.tasks.get_tasks_file_dir', return_value=tasks_dir):
             from orchestrator.planning import create_micro_tasks
 
             micro_tasks = [
@@ -258,11 +258,11 @@ class TestCreateMicroTasks:
             task_files = list(tasks_dir.glob("TASK-*.md"))
             assert len([f for f in task_files if created_ids[0] in f.name or created_ids[1] in f.name]) == 2
 
-    def test_create_micro_tasks_empty_list(self, mock_orchestrator_dir):
+    def test_create_micro_tasks_empty_list(self, mock_orchestrator_dir, mock_sdk_for_unit_tests):
         """Test creating micro-tasks with empty list."""
         tasks_dir = mock_orchestrator_dir / "tasks"
         tasks_dir.mkdir(parents=True, exist_ok=True)
-        with patch('orchestrator.queue_utils.get_tasks_file_dir', return_value=tasks_dir):
+        with patch('orchestrator.tasks.get_tasks_file_dir', return_value=tasks_dir):
             from orchestrator.planning import create_micro_tasks
 
             created_ids = create_micro_tasks([], original_task_id="test")
@@ -273,12 +273,12 @@ class TestCreateMicroTasks:
 class TestPlanningIntegration:
     """Integration tests for the planning workflow."""
 
-    def test_full_planning_workflow(self, mock_orchestrator_dir, sample_task_file):
+    def test_full_planning_workflow(self, mock_orchestrator_dir, sample_task_file, mock_sdk_for_unit_tests):
         """Test the full planning workflow: create plan -> parse -> create micro-tasks."""
         tasks_dir = mock_orchestrator_dir / "tasks"
         tasks_dir.mkdir(parents=True, exist_ok=True)
         with patch('orchestrator.planning.get_queue_dir', return_value=mock_orchestrator_dir / "shared" / "queue"):
-            with patch('orchestrator.queue_utils.get_tasks_file_dir', return_value=tasks_dir):
+            with patch('orchestrator.tasks.get_tasks_file_dir', return_value=tasks_dir):
                 from orchestrator.planning import create_planning_task, parse_plan_document, create_micro_tasks
 
                 # Step 1: Create planning task

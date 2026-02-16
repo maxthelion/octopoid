@@ -599,81 +599,69 @@ class TestApproveAndMerge:
         task.update(overrides)
         return task
 
-    @patch("orchestrator.queue_utils.cleanup_task_notes")
+    @patch("orchestrator.task_notes.cleanup_task_notes")
     @patch("orchestrator.hooks.run_hooks")
-    @patch("orchestrator.queue_utils.get_sdk")
-    def test_success_flow(self, mock_get_sdk, mock_run_hooks, mock_cleanup):
+    def test_success_flow(self, mock_run_hooks, mock_cleanup, mock_sdk_for_unit_tests):
         """Hooks pass → task accepted via SDK."""
-        from orchestrator.queue_utils import approve_and_merge
-
-        mock_sdk = MagicMock()
-        mock_sdk.tasks.get.return_value = self._mock_task()
-        mock_get_sdk.return_value = mock_sdk
+        mock_sdk_for_unit_tests.tasks.get.return_value = self._mock_task()
 
         mock_run_hooks.return_value = (True, [
             HookResult(status=HookStatus.SUCCESS, message="Merged", context={"pr_number": 55}),
         ])
 
+        from orchestrator.queue_utils import approve_and_merge
+
         result = approve_and_merge("TSK-100")
 
         assert result["merged"] is True
         assert result.get("error") is None
-        mock_sdk.tasks.accept.assert_called_once_with("TSK-100", accepted_by="scheduler")
+        mock_sdk_for_unit_tests.tasks.accept.assert_called_once_with("TSK-100", accepted_by="scheduler")
         mock_cleanup.assert_called_once_with("TSK-100")
 
-    @patch("orchestrator.queue_utils.cleanup_task_notes")
+    @patch("orchestrator.task_notes.cleanup_task_notes")
     @patch("orchestrator.hooks.run_hooks")
-    @patch("orchestrator.queue_utils.get_sdk")
-    def test_hook_failure_blocks_accept(self, mock_get_sdk, mock_run_hooks, mock_cleanup):
+    def test_hook_failure_blocks_accept(self, mock_run_hooks, mock_cleanup, mock_sdk_for_unit_tests):
         """Hook failure → task NOT accepted, error returned."""
-        from orchestrator.queue_utils import approve_and_merge
-
-        mock_sdk = MagicMock()
-        mock_sdk.tasks.get.return_value = self._mock_task()
-        mock_get_sdk.return_value = mock_sdk
+        mock_sdk_for_unit_tests.tasks.get.return_value = self._mock_task()
 
         mock_run_hooks.return_value = (False, [
             HookResult(status=HookStatus.FAILURE, message="PR is not mergeable"),
         ])
 
+        from orchestrator.queue_utils import approve_and_merge
+
         result = approve_and_merge("TSK-100")
 
         assert "error" in result
         assert "not mergeable" in result["error"]
-        mock_sdk.tasks.accept.assert_not_called()
+        mock_sdk_for_unit_tests.tasks.accept.assert_not_called()
         mock_cleanup.assert_not_called()
 
-    @patch("orchestrator.queue_utils.get_sdk")
-    def test_missing_task(self, mock_get_sdk):
+    def test_missing_task(self, mock_sdk_for_unit_tests):
         """Non-existent task returns error."""
-        from orchestrator.queue_utils import approve_and_merge
+        mock_sdk_for_unit_tests.tasks.get.return_value = None
 
-        mock_sdk = MagicMock()
-        mock_sdk.tasks.get.return_value = None
-        mock_get_sdk.return_value = mock_sdk
+        from orchestrator.queue_utils import approve_and_merge
 
         result = approve_and_merge("TSK-MISSING")
 
         assert "error" in result
         assert "not found" in result["error"]
 
-    @patch("orchestrator.queue_utils.cleanup_task_notes")
+    @patch("orchestrator.task_notes.cleanup_task_notes")
     @patch("orchestrator.hooks.run_hooks")
-    @patch("orchestrator.queue_utils.get_sdk")
-    def test_no_pr_skips_merge_still_accepts(self, mock_get_sdk, mock_run_hooks, mock_cleanup):
+    def test_no_pr_skips_merge_still_accepts(self, mock_run_hooks, mock_cleanup, mock_sdk_for_unit_tests):
         """Task without PR: merge_pr hook skips, task still accepted."""
-        from orchestrator.queue_utils import approve_and_merge
-
-        mock_sdk = MagicMock()
-        mock_sdk.tasks.get.return_value = self._mock_task(pr_number=None, pr_url=None)
-        mock_get_sdk.return_value = mock_sdk
+        mock_sdk_for_unit_tests.tasks.get.return_value = self._mock_task(pr_number=None, pr_url=None)
 
         mock_run_hooks.return_value = (True, [
             HookResult(status=HookStatus.SKIP, message="No pr_number"),
         ])
 
+        from orchestrator.queue_utils import approve_and_merge
+
         result = approve_and_merge("TSK-100")
 
         assert result.get("error") is None
         assert result["merged"] is False  # No hook set merged
-        mock_sdk.tasks.accept.assert_called_once()
+        mock_sdk_for_unit_tests.tasks.accept.assert_called_once()
