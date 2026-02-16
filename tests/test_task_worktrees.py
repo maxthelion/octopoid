@@ -94,6 +94,70 @@ class TestCreateTaskWorktree:
         """Should checkout existing branch if it exists on origin."""
         pass
 
+    def test_uses_existing_local_branch_when_checked_out(self):
+        """Should use existing local branch even if it's checked out elsewhere.
+
+        This tests the fix for when a project branch is already checked out
+        in the parent repo and a task tries to create a worktree for it.
+        """
+        import subprocess
+        import tempfile
+        import shutil
+        from pathlib import Path
+        from unittest.mock import patch
+
+        # Create a temporary git repository
+        temp_dir = Path(tempfile.mkdtemp())
+        try:
+            # Initialize git repo
+            subprocess.run(["git", "init"], cwd=temp_dir, check=True, capture_output=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=temp_dir, check=True, capture_output=True)
+            subprocess.run(["git", "config", "user.name", "Test User"], cwd=temp_dir, check=True, capture_output=True)
+
+            # Create initial commit on main
+            (temp_dir / "README.md").write_text("# Test Repo")
+            subprocess.run(["git", "add", "README.md"], cwd=temp_dir, check=True, capture_output=True)
+            subprocess.run(["git", "commit", "-m", "Initial commit"], cwd=temp_dir, check=True, capture_output=True)
+
+            # Create and checkout a feature branch (simulating project branch)
+            subprocess.run(["git", "checkout", "-b", "feature/test-branch"], cwd=temp_dir, check=True, capture_output=True)
+
+            # Create .octopoid/tasks directory structure
+            tasks_dir = temp_dir / ".octopoid" / "tasks"
+            tasks_dir.mkdir(parents=True, exist_ok=True)
+
+            # Mock the config functions to point to our temp repo
+            with patch('orchestrator.config.find_parent_project', return_value=temp_dir):
+                with patch('orchestrator.config.get_tasks_dir', return_value=tasks_dir):
+                    # Create a task that should use the feature branch
+                    task = {
+                        "id": "test123",
+                        "role": "implement",
+                    }
+
+                    # Mock get_task_branch to return the checked-out branch
+                    with patch('orchestrator.git_utils.get_task_branch', return_value="feature/test-branch"):
+                        # This should NOT fail even though feature/test-branch is checked out
+                        worktree_path = create_task_worktree(task)
+
+                        # Verify worktree was created
+                        assert worktree_path.exists()
+                        assert (worktree_path / ".git").exists()
+
+                        # Verify it's on the correct branch
+                        result = subprocess.run(
+                            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                            cwd=worktree_path,
+                            capture_output=True,
+                            text=True,
+                            check=True,
+                        )
+                        assert result.stdout.strip() == "feature/test-branch"
+
+        finally:
+            # Clean up
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
 
 class TestCleanupTaskWorktree:
     """Tests for cleanup_task_worktree()."""

@@ -221,6 +221,13 @@ def create_task_worktree(task: dict) -> Path:
     except subprocess.CalledProcessError:
         pass  # May fail if offline
 
+    # Check if branch already exists locally (including if it's checked out)
+    branch_exists_locally = run_git(
+        ["rev-parse", "--verify", f"refs/heads/{branch}"],
+        cwd=parent_repo,
+        check=False,
+    ).returncode == 0
+
     # Check if branch exists on origin
     result = run_git(
         ["ls-remote", "--heads", "origin", branch],
@@ -229,7 +236,15 @@ def create_task_worktree(task: dict) -> Path:
     )
     branch_exists_on_origin = bool(result.stdout.strip())
 
-    if branch_exists_on_origin:
+    if branch_exists_locally:
+        # Branch exists locally (possibly checked out elsewhere)
+        # Use existing branch as start point without -b flag
+        # Use --force to allow checking out the same branch in multiple worktrees
+        run_git(
+            ["worktree", "add", "--force", str(worktree_path), branch],
+            cwd=parent_repo,
+        )
+    elif branch_exists_on_origin:
         # Pull existing branch from origin
         run_git(
             ["worktree", "add", "-b", branch, str(worktree_path), f"origin/{branch}"],
