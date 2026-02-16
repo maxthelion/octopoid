@@ -3,6 +3,7 @@
 This module handles project CRUD operations and project-to-breakdown handoff.
 """
 
+import re
 import subprocess
 from typing import Any
 from uuid import uuid4
@@ -48,6 +49,10 @@ def create_project(
     except subprocess.CalledProcessError:
         branch_exists = False
 
+    # Raise error if branch doesn't exist on origin
+    if not branch_exists:
+        raise ValueError(f"Branch '{branch}' does not exist on origin")
+
     # Check if we're on a feature branch but base_branch is main
     try:
         current_branch = subprocess.run(
@@ -89,8 +94,11 @@ def get_project(project_id: str) -> dict[str, Any] | None:
     Returns:
         Project as dictionary or None if not found
     """
-    sdk = get_sdk()
-    return sdk.projects.get(project_id)
+    try:
+        sdk = get_sdk()
+        return sdk.projects.get(project_id)
+    except Exception:
+        return None
 
 
 def list_projects(status: str | None = None) -> list[dict[str, Any]]:
@@ -102,8 +110,11 @@ def list_projects(status: str | None = None) -> list[dict[str, Any]]:
     Returns:
         List of project dictionaries
     """
-    sdk = get_sdk()
-    return sdk.projects.list(status=status)
+    try:
+        sdk = get_sdk()
+        return sdk.projects.list(status=status)
+    except Exception:
+        return []
 
 
 def activate_project(project_id: str, create_branch: bool = True) -> dict[str, Any] | None:
@@ -213,8 +224,9 @@ def send_to_breakdown(
     from .tasks import create_task
 
     if as_project:
-        # Generate branch name from title
-        branch_name = f"feature/{title.lower().replace(' ', '-')[:50]}"
+        # Generate branch name from title - sanitize to valid git ref characters
+        slug = re.sub(r'[^a-z0-9_/-]', '', title.lower().replace(' ', '-'))[:50]
+        branch_name = f"feature/{slug}"
 
         # Create project
         project = create_project(
