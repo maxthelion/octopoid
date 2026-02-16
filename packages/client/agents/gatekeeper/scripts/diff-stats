@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Report diff statistics
+# Always exits 0 (informational only)
+
+set -euo pipefail
+
+# Source environment variables if available
+if [ -f "../env.sh" ]; then
+    source "../env.sh"
+fi
+
+echo "=== Diff Statistics ==="
+echo ""
+
+# Get diff stats
+git diff --stat main..HEAD
+
+echo ""
+
+# Get summary counts
+FILES_CHANGED=$(git diff --shortstat main..HEAD | grep -oE '[0-9]+ file' | grep -oE '[0-9]+' || echo "0")
+INSERTIONS=$(git diff --shortstat main..HEAD | grep -oE '[0-9]+ insertion' | grep -oE '[0-9]+' || echo "0")
+DELETIONS=$(git diff --shortstat main..HEAD | grep -oE '[0-9]+ deletion' | grep -oE '[0-9]+' || echo "0")
+
+echo "Summary:"
+echo "  Files changed: $FILES_CHANGED"
+echo "  Lines added: +$INSERTIONS"
+echo "  Lines removed: -$DELETIONS"
+echo ""
+
+# Always exit 0 (informational)
+exit 0
