@@ -37,6 +37,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Updated `get_agents()` docstring in `orchestrator/config.py` to reflect that only fleet format is supported (removed stale "Supports two formats" text)
 
+### Documentation
+- Added inline documentation in `orchestrator/scheduler.py` above `HOUSEKEEPING_JOBS` list explaining which housekeeping functions were removed and why (all were unimplemented stubs)
+
 ### Removed (from previous cleanup)
   - Removed `orchestrator/agent_scripts/` directory (replaced by agent directories)
   - Removed `orchestrator/prompts/implementer.md` (replaced by agent directory prompts)
