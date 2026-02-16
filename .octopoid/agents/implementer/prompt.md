@@ -1,7 +1,3 @@
-# DEPRECATED: Moved to packages/client/agents/implementer/prompt.md
-# This file is kept for backward compatibility during migration.
-# New agent instances should use the agent directory structure.
-
 # Task: [$task_id] $task_title
 
 **Priority:** $task_priority

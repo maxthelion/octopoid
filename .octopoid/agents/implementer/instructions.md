@@ -1,7 +1,3 @@
-# DEPRECATED: Moved to packages/client/agents/implementer/instructions.md
-# This file is kept for backward compatibility during migration.
-# New agent instances should use the agent directory structure.
-
 # Implementation Guide
 
 You are implementing a feature or fix. Follow these guidelines:
