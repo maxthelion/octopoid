@@ -19,7 +19,6 @@ from .config import (
 from .sdk import get_sdk, get_orchestrator_id
 from .task_logger import get_task_logger
 
-
 def _transition(
     task_id: str,
     queue: str,
@@ -54,11 +53,9 @@ def _transition(
 
     return result
 
-
 # =============================================================================
 # Task Lifecycle Functions
 # =============================================================================
-
 
 def claim_task(
     role_filter: str | None = None,
@@ -131,11 +128,9 @@ def claim_task(
 
     return task
 
-
 def unclaim_task(task_id: str) -> dict:
     """Return a claimed task to the incoming queue."""
     return _transition(task_id, "incoming", claimed_by=None)
-
 
 def complete_task(task_id: str) -> dict:
     """Move a task to done queue. For review flow, use submit_completion()."""
@@ -145,7 +140,6 @@ def complete_task(task_id: str) -> dict:
     result = sdk.tasks.accept(task_id, accepted_by="complete_task")
     cleanup_task_notes(task_id)
     return result
-
 
 def submit_completion(
     task_id: str,
@@ -222,7 +216,6 @@ def submit_completion(
 
     return result
 
-
 def accept_completion(
     task_id: str,
     accepted_by: str | None = None,
@@ -251,7 +244,6 @@ def accept_completion(
 
     cleanup_task_notes(task_id)
     return result
-
 
 def reject_completion(
     task_id: str,
@@ -293,7 +285,6 @@ def reject_completion(
 
     return updated_task
 
-
 def _insert_rejection_feedback(content: str, feedback_section: str) -> str:
     """Insert rejection feedback after metadata, before first ## heading."""
     # Strip existing rejection notices
@@ -313,7 +304,6 @@ def _insert_rejection_feedback(content: str, feedback_section: str) -> str:
         lines.append('')
         lines.extend(feedback_section.rstrip('\n').split('\n'))
     return '\n'.join(lines)
-
 
 def review_reject_task(
     task_id: str,
@@ -417,7 +407,6 @@ def review_reject_task(
 
     return (task_id, action)
 
-
 def get_review_feedback(task_id: str) -> str | None:
     """Extract review feedback sections from a task's markdown file.
 
@@ -460,11 +449,9 @@ def get_review_feedback(task_id: str) -> str | None:
 
     return "\n\n---\n\n".join(section.strip() for section in legacy_sections)
 
-
 def escalate_to_planning(task_id: str, plan_id: str) -> dict:
     """Escalate a task to planning queue."""
     return _transition(task_id, "escalated")
-
 
 def fail_task(task_id: str, error: str) -> dict:
     """Fail a task (moves to failed queue with cleanup)."""
@@ -476,7 +463,6 @@ def fail_task(task_id: str, error: str) -> dict:
         log_fn=lambda l: l.log_failed(error=error_summary)
     )
 
-
 def reject_task(
     task_id: str,
     reason: str,
@@ -486,12 +472,10 @@ def reject_task(
     """Reject a task (moves to rejected queue)."""
     return _transition(task_id, "rejected")
 
-
 def retry_task(task_id: str) -> dict:
     """Retry a failed task (moves back to incoming)."""
     sdk = get_sdk()
     return sdk.tasks.update(task_id, queue="incoming", claimed_by=None, claimed_at=None)
-
 
 def reset_task(task_id: str) -> dict[str, Any]:
     """Reset a task to incoming via API with clean state."""
@@ -525,7 +509,6 @@ def reset_task(task_id: str) -> dict[str, Any]:
     except Exception as e:
         raise RuntimeError(f"Failed to reset task {task_id}: {e}")
 
-
 def hold_task(task_id: str) -> dict[str, Any]:
     """Hold a task (moves to escalated queue)."""
     try:
@@ -557,7 +540,6 @@ def hold_task(task_id: str) -> dict[str, Any]:
     except Exception as e:
         raise RuntimeError(f"Failed to hold task {task_id}: {e}")
 
-
 def mark_needs_continuation(
     task_id: str,
     reason: str,
@@ -566,7 +548,6 @@ def mark_needs_continuation(
 ) -> dict:
     """Mark a task as needing continuation."""
     return _transition(task_id, "needs_continuation")
-
 
 def resume_task(task_id: str, agent_name: str | None = None) -> dict:
     """Resume a held or continuation task."""
@@ -578,7 +559,6 @@ def resume_task(task_id: str, agent_name: str | None = None) -> dict:
         claimed_by=agent_name or "unknown",
         orchestrator_id=orchestrator_id,
     )
-
 
 def find_task_by_id(task_id: str, queues: list[str] | None = None) -> dict[str, Any] | None:
     """Find a task by ID, optionally filtered by queue state."""
@@ -607,7 +587,6 @@ def find_task_by_id(task_id: str, queues: list[str] | None = None) -> dict[str, 
 
     return task
 
-
 def get_continuation_tasks(agent_name: str | None = None) -> list[dict[str, Any]]:
     """Get tasks that need continuation, optionally filtered by agent."""
     tasks = list_tasks("needs_continuation")
@@ -622,7 +601,6 @@ def get_continuation_tasks(agent_name: str | None = None) -> list[dict[str, Any]
         return filtered
 
     return tasks
-
 
 def create_task(
     title: str,
@@ -738,12 +716,10 @@ CREATED_BY: {created_by}
 
     return task_path
 
-
 def is_task_still_valid(task_id: str) -> bool:
     """Check if a task still exists in active queues."""
     task = find_task_by_id(task_id, queues=ACTIVE_QUEUES)
     return task is not None
-
 
 def get_task_by_id(task_id: str) -> dict[str, Any] | None:
     """Get a task by ID from the API."""
@@ -755,7 +731,6 @@ def get_task_by_id(task_id: str) -> dict[str, Any] | None:
         # Log error but don't crash
         print(f"Warning: Failed to get task {task_id}: {e}")
         return None
-
 
 def list_tasks(subdir: str) -> list[dict[str, Any]]:
     """List all tasks in a queue."""
@@ -775,7 +750,6 @@ def list_tasks(subdir: str) -> list[dict[str, Any]]:
     except Exception as e:
         print(f"Warning: Failed to list tasks in queue {subdir}: {e}")
         return []
-
 
 def approve_and_merge(
     task_id: str,
