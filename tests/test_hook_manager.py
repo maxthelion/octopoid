@@ -58,13 +58,15 @@ class TestResolveHooksForTask:
             assert h["type"] == ("orchestrator" if h["name"] == "merge_pr" else "agent")
             assert h["status"] == "pending"
 
-    def test_type_overrides_project(self, tmp_path):
+    def test_task_type_parameter_ignored(self, tmp_path):
+        """Task type parameter is ignored since task_types config was removed."""
         d = tmp_path / ".octopoid"
         d.mkdir()
         (d / "config.yaml").write_text(YAML_TYPE_OVERRIDE)
         with patch("orchestrator.config.find_parent_project", return_value=tmp_path):
             result = HookManager(_sdk()).resolve_hooks_for_task(task_type="hotfix")
-        assert [h["name"] for h in result] == ["create_pr"]
+        # Should use project-level hooks, not type-specific ones
+        assert [h["name"] for h in result] == ["rebase_on_main", "create_pr"]
 
     def test_unknown_type_falls_through(self, tmp_path):
         d = tmp_path / ".octopoid"
