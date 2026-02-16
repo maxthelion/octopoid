@@ -714,12 +714,16 @@ def prepare_task_directory(
         dest.chmod(0o755)
 
     # Write env.sh
+    from .git_utils import get_task_branch
+    task_branch = get_task_branch(task)
+
     orchestrator_submodule = find_parent_project() / "orchestrator"
     env_lines = [
         "#!/bin/bash",
         f"export TASK_ID='{task_id}'",
         f"export TASK_TITLE='{task.get('title', '')}'",
         f"export BASE_BRANCH='{base_branch}'",
+        f"export TASK_BRANCH='{task_branch}'",
         f"export OCTOPOID_SERVER_URL='{os.environ.get('OCTOPOID_SERVER_URL') or _get_server_url_from_config()}'",
         f"export AGENT_NAME='{agent_name}'",
         f"export WORKTREE='{worktree_path}'",
