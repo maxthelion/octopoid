@@ -9,14 +9,20 @@ fleet:
   - name: implementer-1
     type: implementer
     enabled: true
+    interval_seconds: 60
+    max_turns: 200
+    model: sonnet
 
   - name: implementer-2
     type: implementer
     enabled: true
+    interval_seconds: 60
+    max_turns: 200
+    model: sonnet
 
   - name: github-issue-monitor
     type: custom
     path: .octopoid/agents/github-issue-monitor/
-    enabled: true
+    enabled: false
     interval_seconds: 900
     lightweight: true
