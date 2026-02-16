@@ -9,6 +9,7 @@ import sys
 TASK_ID = os.environ.get("TASK_ID", "")
 TASK_TITLE = os.environ.get("TASK_TITLE", "Untitled")
 BASE_BRANCH = os.environ.get("BASE_BRANCH", "main")
+TASK_BRANCH = os.environ.get("TASK_BRANCH", "")
 AGENT_NAME = os.environ.get("AGENT_NAME", "unknown")
 SERVER_URL = os.environ.get("OCTOPOID_SERVER_URL", "")
 RESULT_FILE = os.environ.get("RESULT_FILE", "../result.json")
@@ -48,6 +49,7 @@ def main() -> int:
         pr = repo.create_pr(
             title=f"[{TASK_ID}] {TASK_TITLE}",
             body=pr_body,
+            task_branch=TASK_BRANCH if TASK_BRANCH else None,
         )
         print(f"PR: {pr.url} (new={pr.created})")
 
