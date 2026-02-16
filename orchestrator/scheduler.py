@@ -13,7 +13,6 @@ from pathlib import Path
 
 
 
-from .backpressure import check_backpressure_for_role
 from .config import (
     AGENT_TASK_ROLE,
     CLAIMABLE_AGENT_ROLES,
@@ -122,6 +121,59 @@ def guard_interval(ctx: AgentContext) -> tuple[bool, str]:
     if not is_overdue(ctx.state, ctx.interval):
         return (False, "not due yet")
     return (True, "")
+
+
+# =============================================================================
+# Scheduler-specific backpressure checks
+# =============================================================================
+
+
+def check_backpressure_for_role(role: str) -> tuple[bool, str]:
+    """Get the appropriate backpressure check for a role."""
+    from .backpressure import count_queue
+
+    # Implementer, tester, reviewer
+    if role in ("implementer", "orchestrator_impl", "tester", "reviewer"):
+        incoming = count_queue("incoming")
+        if incoming == 0:
+            return False, "no_tasks"
+        from .backpressure import can_claim_task
+        return can_claim_task()
+
+    # Breakdown
+    if role == "breakdown":
+        count = count_queue("breakdown")
+        if count == 0:
+            return False, "no_breakdown_tasks"
+        return True, ""
+
+    # Recycler
+    if role == "recycler":
+        count = count_queue("provisional")
+        if count == 0:
+            return False, "no_provisional_tasks"
+        return True, ""
+
+    # Gatekeeper
+    if role == "gatekeeper":
+        try:
+            tasks = queue_utils.list_tasks("provisional")
+            for task in tasks:
+                checks = task.get("checks", [])
+                if not checks:
+                    continue
+                if task.get("commits_count", 0) == 0:
+                    continue
+                check_results = task.get("check_results", {})
+                for check_name in checks:
+                    if check_name not in check_results or check_results[check_name].get("status") not in ("pass", "fail"):
+                        return True, ""
+            return False, "no_pending_gatekeeper_checks"
+        except Exception:
+            return False, "gatekeeper_check_error"
+
+    # No check defined for this role, allow
+    return True, ""
 
 
 def guard_backpressure(ctx: AgentContext) -> tuple[bool, str]:
