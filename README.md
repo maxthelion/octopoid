@@ -444,6 +444,8 @@ After initialization, these commands are available in Claude Code:
 | `/agent-status` | Show agent states |
 | `/add-agent` | Add a new agent |
 | `/pause-agent` | Pause/resume an agent |
+| `/pause-task` | Pause a task to prevent claiming |
+| `/unpause-task` | Resume a paused task |
 | `/retry-failed` | Retry failed tasks |
 | `/tune-backpressure` | Adjust queue limits |
 | `/tune-intervals` | Adjust agent intervals |
