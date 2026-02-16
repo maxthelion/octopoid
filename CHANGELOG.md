@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Migrated octopoid's own config to use agent directory structure (refactor-12):
+  - Updated `.octopoid/agents.yaml` to new fleet format
+  - Scaffolded `.octopoid/agents/implementer/` with agent.yaml, prompt.md, instructions.md, and scripts/
+  - Scaffolded `.octopoid/agents/gatekeeper/` with full agent directory structure
+  - Added agent.yaml to `.octopoid/agents/github-issue-monitor/`
+  - Marked old files as DEPRECATED (kept for backward compatibility during migration):
+    - `orchestrator/prompts/implementer.md`
+    - `commands/agent/implement.md`
+    - `orchestrator/agent_scripts/` (now has README explaining deprecation)
 - Simplified fleet config format in agents.yaml (refactor-10):
   - New `fleet:` key replaces inline agent config with type references
   - Agent types reference directories in `packages/client/agents/<type>/` or `.octopoid/agents/<type>/`
