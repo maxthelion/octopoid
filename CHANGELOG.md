@@ -37,6 +37,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - New `tests/test_scheduler_refactor.py` with 28 unit tests
   - Tests cover: `AgentContext` dataclass, all 6 guard functions, `evaluate_agent` chain, `get_spawn_strategy` dispatch, `run_housekeeping` fault isolation
   - All existing scheduler tests continue to pass (behaviour-preserving refactor verified)
+- Agent directory scaffolding in `octopoid init` (refactor-09):
+  - `octopoid init` now copies agent type templates from `packages/client/agents/` to `.octopoid/agents/` in the user's project
+  - Scaffolds both `implementer/` and `gatekeeper/` directories with all files and subdirectories
+  - Preserves file permissions (executable scripts remain executable)
+  - Skip logic prevents overwriting existing customizations on repeated init
+  - Added `agents/` directory to package.json for npm distribution
 
 ### Fixed
 - Unit tests now automatically mock `get_sdk()` to prevent production side effects when running `pytest tests/`
