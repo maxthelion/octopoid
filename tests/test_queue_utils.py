@@ -76,8 +76,8 @@ class TestClaimTask:
         with patch('orchestrator.sdk.get_sdk', return_value=mock_sdk):
             with patch('orchestrator.sdk.get_orchestrator_id', return_value="test-orch"):
                 with patch('orchestrator.config.get_queue_limits', return_value={"max_claimed": 5}):
-                    # Point resolve_task_file to the sample file
-                    with patch('orchestrator.compat.resolve_task_file', return_value=sample_task_file):
+                    # Point get_tasks_file_dir to the directory containing the sample file
+                    with patch('orchestrator.tasks.get_tasks_file_dir', return_value=sample_task_file.parent):
                         from orchestrator.queue_utils import claim_task
 
                         task = claim_task(agent_name="test-agent")
