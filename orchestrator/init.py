@@ -71,6 +71,7 @@ def init_orchestrator(
         orchestrator_dir / "agents",
         orchestrator_dir / "messages",
         orchestrator_dir / "prompts",  # For proposer prompts
+        orchestrator_dir / "flows",  # Flow definitions
         # Task queue
         orchestrator_dir / "shared" / "queue" / "incoming",
         orchestrator_dir / "shared" / "queue" / "claimed",
@@ -96,6 +97,23 @@ def init_orchestrator(
         print(f"  Created: {agents_yaml.relative_to(parent)}")
     else:
         print(f"  Exists:  {agents_yaml.relative_to(parent)}")
+
+    # Create default flow files
+    from .flow import generate_default_flow, generate_project_flow
+
+    default_flow_path = orchestrator_dir / "flows" / "default.yaml"
+    if not default_flow_path.exists():
+        default_flow_path.write_text(generate_default_flow())
+        print(f"  Created: {default_flow_path.relative_to(parent)}")
+    else:
+        print(f"  Exists:  {default_flow_path.relative_to(parent)}")
+
+    project_flow_path = orchestrator_dir / "flows" / "project.yaml"
+    if not project_flow_path.exists():
+        project_flow_path.write_text(generate_project_flow())
+        print(f"  Created: {project_flow_path.relative_to(parent)}")
+    else:
+        print(f"  Exists:  {project_flow_path.relative_to(parent)}")
 
     print()
 
