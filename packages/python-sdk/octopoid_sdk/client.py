@@ -298,6 +298,96 @@ class ProjectsAPI:
             return response['projects']
         return response if isinstance(response, list) else []
 
+    def get(self, project_id: str) -> Optional[Dict[str, Any]]:
+        """Get a single project by ID
+
+        Args:
+            project_id: Project ID
+
+        Returns:
+            Project dictionary or None if not found
+        """
+        try:
+            return self.client._request('GET', f'/api/v1/projects/{project_id}')
+        except requests.HTTPError as e:
+            if e.response.status_code == 404:
+                return None
+            raise
+
+    def create(
+        self,
+        id: str,
+        title: str,
+        description: Optional[str] = None,
+        status: str = 'draft',
+        branch: Optional[str] = None,
+        base_branch: str = 'main',
+        auto_accept: bool = False,
+        created_by: Optional[str] = None,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """Create a new project
+
+        Args:
+            id: Project ID
+            title: Project title
+            description: Project description
+            status: Initial status (default: 'draft')
+            branch: Feature branch name
+            base_branch: Base branch (default: 'main')
+            auto_accept: Auto-accept all tasks (default: False)
+            created_by: Creator name
+            **kwargs: Additional project fields
+
+        Returns:
+            Created project dictionary
+        """
+        data = {
+            'id': id,
+            'title': title,
+            'status': status,
+            'base_branch': base_branch,
+            'auto_accept': auto_accept,
+        }
+
+        if description:
+            data['description'] = description
+        if branch:
+            data['branch'] = branch
+        if created_by:
+            data['created_by'] = created_by
+
+        # Add any additional fields
+        data.update(kwargs)
+
+        return self.client._request('POST', '/api/v1/projects', json=data)
+
+    def update(self, project_id: str, **updates) -> Dict[str, Any]:
+        """Update project fields
+
+        Args:
+            project_id: Project ID
+            **updates: Fields to update (status, title, description, branch, etc.)
+
+        Returns:
+            Updated project dictionary
+        """
+        return self.client._request('PATCH', f'/api/v1/projects/{project_id}', json=updates)
+
+    def get_tasks(self, project_id: str) -> List[Dict[str, Any]]:
+        """Get all tasks belonging to a project
+
+        Args:
+            project_id: Project ID
+
+        Returns:
+            List of task dictionaries
+        """
+        response = self.client._request('GET', f'/api/v1/projects/{project_id}/tasks')
+        if isinstance(response, dict) and 'tasks' in response:
+            return response['tasks']
+        return response if isinstance(response, list) else []
+
 
 class StatusAPI:
     """Status and health API endpoints"""

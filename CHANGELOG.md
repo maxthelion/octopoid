@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Projects now use server API instead of local YAML files** ([TASK-082c8162])
+  - Added `get()`, `create()`, `update()`, and `get_tasks()` methods to Python SDK `ProjectsAPI` class
+  - Rewrote `orchestrator/projects.py` to use SDK instead of local YAML file storage
+  - Removed `_write_project_file()` and `get_projects_dir()` functions (no longer needed)
+  - Added branch validation on project creation:
+    - `branch` parameter is now required (raises `ValueError` if None)
+    - Warns if creating project with `base_branch='main'` while on feature branch
+    - Validates branch exists on origin (checks `git ls-remote`)
+  - `send_to_breakdown()` now auto-generates branch name from project title
+
 ### Refactored
 
 - **Refactor queue_utils.py into entity modules** ([TASK-7a393cef])

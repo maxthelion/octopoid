@@ -4,26 +4,10 @@ This module handles project CRUD operations and project-to-breakdown handoff.
 """
 
 import subprocess
-from datetime import datetime
-from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-import yaml
-
-from .config import get_orchestrator_dir
 from .sdk import get_sdk
-
-
-def get_projects_dir() -> Path:
-    """Get the projects directory.
-
-    Returns:
-        Path to .octopoid/shared/projects/
-    """
-    projects_dir = get_orchestrator_dir() / "shared" / "projects"
-    projects_dir.mkdir(parents=True, exist_ok=True)
-    return projects_dir
 
 
 def create_project(
@@ -33,80 +17,71 @@ def create_project(
     base_branch: str = "main",
     branch: str | None = None,
 ) -> dict[str, Any]:
-    """Create a new project via API with local YAML file.
+    """Create a new project via server API.
 
     Args:
         title: Project title
         description: Project description
         created_by: Who created the project
         base_branch: Base branch to create feature branch from
-        branch: Feature branch name (auto-generated if not provided)
+        branch: Feature branch name (required, will be validated)
 
     Returns:
         Created project as dictionary
+
+    Raises:
+        ValueError: If branch is None or validation fails
     """
+    # Validate branch is required
+    if not branch:
+        raise ValueError("branch is required for project creation")
+
+    # Validate branch exists on origin
+    try:
+        result = subprocess.run(
+            ["git", "ls-remote", "--heads", "origin", branch],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        branch_exists = bool(result.stdout.strip())
+    except subprocess.CalledProcessError:
+        branch_exists = False
+
+    # Check if we're on a feature branch but base_branch is main
+    try:
+        current_branch = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+
+        if base_branch == "main" and current_branch != "main" and not current_branch.startswith("agent/"):
+            print(f"Warning: Creating project with base_branch='main' while on feature branch '{current_branch}'")
+            print(f"Consider using base_branch='{current_branch}' instead")
+    except subprocess.CalledProcessError:
+        pass  # Ignore git errors
+
     # Generate project ID
     project_id = f"PROJ-{uuid4().hex[:8]}"
 
-    try:
-        sdk = get_sdk()
-        # Note: SDK projects API needs to be implemented in the SDK client
-        # For now, create local YAML file only
-        # TODO: Add sdk.projects.create() when server endpoint exists
+    sdk = get_sdk()
+    project = sdk.projects.create(
+        id=project_id,
+        title=title,
+        description=description,
+        status="draft",
+        branch=branch,
+        base_branch=base_branch,
+        created_by=created_by,
+    )
 
-        project = {
-            "id": project_id,
-            "title": title,
-            "description": description,
-            "status": "draft",
-            "branch": branch,
-            "base_branch": base_branch,
-            "created_at": datetime.now().isoformat(),
-            "created_by": created_by,
-        }
-
-        # Write YAML file for visibility
-        _write_project_file(project)
-
-        return project
-    except Exception as e:
-        print(f"Warning: Failed to create project: {e}")
-        raise
-
-
-def _write_project_file(project: dict[str, Any]) -> Path:
-    """Write project data to YAML file.
-
-    Args:
-        project: Project dictionary
-
-    Returns:
-        Path to the YAML file
-    """
-    projects_dir = get_projects_dir()
-    file_path = projects_dir / f"{project['id']}.yaml"
-
-    # Convert to YAML-friendly format
-    data = {
-        "id": project["id"],
-        "title": project["title"],
-        "description": project.get("description"),
-        "status": project.get("status", "draft"),
-        "branch": project.get("branch"),
-        "base_branch": project.get("base_branch", "main"),
-        "created_at": project.get("created_at"),
-        "created_by": project.get("created_by"),
-        "completed_at": project.get("completed_at"),
-    }
-
-    with open(file_path, "w") as f:
-        yaml.dump(data, f, default_flow_style=False, allow_unicode=True)
-
-    return file_path
+    return project
 
 
 def get_project(project_id: str) -> dict[str, Any] | None:
-    """Get a project by ID via API.
+    """Get a project by ID via server API.
 
     Args:
         project_id: Project identifier
@@ -114,55 +89,21 @@ def get_project(project_id: str) -> dict[str, Any] | None:
     Returns:
         Project as dictionary or None if not found
     """
-    try:
-        sdk = get_sdk()
-        # Note: SDK projects API needs to be implemented
-        # For now, read from local YAML file
-        # TODO: Use sdk.projects.get() when server endpoint exists
-
-        projects_dir = get_projects_dir()
-        file_path = projects_dir / f"{project_id}.yaml"
-
-        if not file_path.exists():
-            return None
-
-        with open(file_path) as f:
-            return yaml.safe_load(f)
-    except Exception as e:
-        print(f"Warning: Failed to get project {project_id}: {e}")
-        return None
+    sdk = get_sdk()
+    return sdk.projects.get(project_id)
 
 
 def list_projects(status: str | None = None) -> list[dict[str, Any]]:
-    """List projects via API, optionally filtered by status.
+    """List projects via server API, optionally filtered by status.
 
     Args:
-        status: Filter by status (draft, active, complete, abandoned)
+        status: Filter by status (draft, active, completed, archived)
 
     Returns:
         List of project dictionaries
     """
-    try:
-        sdk = get_sdk()
-        # Note: SDK projects API needs to be implemented
-        # For now, read from local YAML files
-        # TODO: Use sdk.projects.list() when server endpoint exists
-
-        projects_dir = get_projects_dir()
-        if not projects_dir.exists():
-            return []
-
-        projects = []
-        for file_path in projects_dir.glob("PROJ-*.yaml"):
-            with open(file_path) as f:
-                project = yaml.safe_load(f)
-                if status is None or project.get("status") == status:
-                    projects.append(project)
-
-        return projects
-    except Exception as e:
-        print(f"Warning: Failed to list projects: {e}")
-        return []
+    sdk = get_sdk()
+    return sdk.projects.list(status=status)
 
 
 def activate_project(project_id: str, create_branch: bool = True) -> dict[str, Any] | None:
@@ -194,9 +135,9 @@ def activate_project(project_id: str, create_branch: bool = True) -> dict[str, A
         except subprocess.CalledProcessError:
             pass  # Branch may already exist
 
-    # Update status
-    project["status"] = "active"
-    _write_project_file(project)
+    # Update status via API
+    sdk = get_sdk()
+    project = sdk.projects.update(project_id, status="active")
 
     return project
 
@@ -210,7 +151,8 @@ def get_project_tasks(project_id: str) -> list[dict[str, Any]]:
     Returns:
         List of task dictionaries
     """
-    return []
+    sdk = get_sdk()
+    return sdk.projects.get_tasks(project_id)
 
 
 def get_project_status(project_id: str) -> dict[str, Any] | None:
@@ -271,11 +213,15 @@ def send_to_breakdown(
     from .tasks import create_task
 
     if as_project:
+        # Generate branch name from title
+        branch_name = f"feature/{title.lower().replace(' ', '-')[:50]}"
+
         # Create project
         project = create_project(
             title=title,
             description=description,
             created_by=created_by,
+            branch=branch_name,
         )
 
         # Create initial breakdown task for the project
