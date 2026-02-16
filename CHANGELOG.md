@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Simplify create_task_worktree: remove dead ancestry logic** ([TASK-3288d983])
+  - Removed obsolete branch ancestry checking (ls-remote, merge-base --is-ancestor)
+  - Removed remote and local branch deletion logic (git push origin --delete, git branch -D)
+  - Reduced create_task_worktree() from ~60 lines to ~20 lines
+  - Worktrees now always created as detached HEADs from the correct base branch
+  - Tests updated to reflect simplified implementation
+
 - **Fix worktree creation: detached HEADs + branch lifecycle** ([TASK-8f741bbf])
   - Worktrees now always created as detached HEADs (no branch conflicts)
   - Added `_add_detached_worktree()` and `_remove_worktree()` helper functions

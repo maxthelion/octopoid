@@ -128,15 +128,11 @@ class TestPrepareTaskDirectoryCleansStaleFiles:
 class TestCreateTaskWorktree:
     """Tests for create_task_worktree() base branch selection."""
 
-    def _make_mock_run_git(self, *, ls_remote_stdout="", verify_rc=0, is_ancestor_rc=0,
-                           local_branch_rc=1):
+    def _make_mock_run_git(self, *, verify_rc=0):
         """Build a side_effect for run_git that handles branching logic.
 
         Args:
-            ls_remote_stdout: stdout for ls-remote (empty = branch not on origin)
             verify_rc: returncode for rev-parse --verify of start_point
-            is_ancestor_rc: returncode for merge-base --is-ancestor check
-            local_branch_rc: returncode for rev-parse --verify of local branch
         """
         calls = []
 
@@ -146,19 +142,8 @@ class TestCreateTaskWorktree:
             result.returncode = 0
             result.stdout = ""
 
-            if args[:2] == ["ls-remote", "--heads"]:
-                result.stdout = ls_remote_stdout
-            elif args[:2] == ["rev-parse", "--verify"]:
-                ref = args[2]
-                if ref.startswith("origin/"):
-                    result.returncode = verify_rc
-                else:
-                    # Local branch check
-                    result.returncode = local_branch_rc
-            elif args[:2] == ["merge-base", "--is-ancestor"]:
-                result.returncode = is_ancestor_rc
-            elif args[:1] == ["merge-base"] and "--is-ancestor" not in args:
-                result.stdout = "abc123\n"
+            if args[:2] == ["rev-parse", "--verify"]:
+                result.returncode = verify_rc
 
             return result
 
@@ -211,39 +196,6 @@ class TestCreateTaskWorktree:
         add_args = self._find_worktree_add(calls)
         # Should fall back to origin/main, not use origin/feature/gone
         assert add_args[-1] == "origin/main"
-
-    def test_existing_remote_branch_reused_when_correctly_based(self, temp_dir):
-        """Remote branch based on correct start_point is reused."""
-        task = {"id": "TASK-abc123", "role": "implement", "branch": "feature/xyz"}
-
-        _, calls, _ = self._run(
-            task, temp_dir,
-            ls_remote_stdout="abc123\trefs/heads/agent/TASK-abc123",
-            is_ancestor_rc=0,  # start_point IS ancestor of remote branch
-        )
-
-        add_args = self._find_worktree_add(calls)
-        # Should reuse the remote branch
-        assert add_args[-1] == "origin/agent/TASK-abc123"
-
-    def test_existing_remote_branch_recreated_when_stale(self, temp_dir):
-        """Remote branch NOT based on correct start_point is deleted and recreated."""
-        task = {"id": "TASK-abc123", "role": "implement", "branch": "feature/xyz"}
-
-        _, calls, _ = self._run(
-            task, temp_dir,
-            ls_remote_stdout="abc123\trefs/heads/agent/TASK-abc123",
-            is_ancestor_rc=1,  # start_point is NOT ancestor → stale
-        )
-
-        # Should have deleted the remote branch
-        delete_calls = [c for c in calls if c[:3] == ["push", "origin", "--delete"]]
-        assert len(delete_calls) == 1
-        assert delete_calls[0][3] == "agent/TASK-abc123"
-
-        # Should create worktree from the correct start_point, not the stale remote
-        add_args = self._find_worktree_add(calls)
-        assert add_args[-1] == "origin/feature/xyz"
 
     def test_existing_worktree_is_reused(self, temp_dir):
         """Existing worktree with .git is returned immediately."""
