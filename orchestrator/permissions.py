@@ -162,7 +162,7 @@ Examples:
         print(format_summary())
         print()
         print("To generate IDE permission config, run:")
-        print("  orchestrator-permissions --format claude-code")
+        print("  octopoid permissions --format claude-code")
         return 0
 
     else:
