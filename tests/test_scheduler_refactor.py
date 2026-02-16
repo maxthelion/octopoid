@@ -579,7 +579,7 @@ class TestGetSpawnStrategy:
         """Test that implementer role with claimed_task returns spawn_implementer."""
         state_path = tmp_path / "state.json"
         ctx = AgentContext(
-            agent_config={},
+            agent_config={"spawn_mode": "scripts"},
             agent_name="test-agent",
             role="implementer",
             interval=300,

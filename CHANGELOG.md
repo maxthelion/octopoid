@@ -8,7 +8,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Removed
-- Deleted legacy code paths left behind by scheduler refactor:
+- Deleted 8 legacy test files that tested deleted code (~2,670 lines total):
+  - `tests/test_orchestrator_impl.py` (1,349 lines)
+  - `tests/test_proposer_git.py` (342 lines)
+  - `tests/test_compaction_hook.py` (263 lines)
+  - `tests/test_tool_counter.py` (304 lines)
+  - `tests/test_breakdown_context.py` (37 lines)
+  - `tests/test_pre_check.py` (6 lines)
+  - `tests/test_agent_env.py` (184 lines)
+  - `tests/test_rebaser.py` (185 lines - tested unused rebaser functions)
+- Trimmed dead code from `orchestrator/scheduler.py` (1,905 → 1,623 lines, -282 lines):
+  - Removed 6 unused imports (shutil, Template, get_commands_dir, get_gatekeeper_config, get_gatekeepers, get_templates_dir, is_gatekeeper_enabled)
+  - Removed 12 stub/dead functions:
+    - `assign_qa_checks()` - stub that just returned
+    - `process_auto_accept_tasks()` - stub that just returned
+    - `process_gatekeeper_reviews()` - stub that just returned
+    - `dispatch_gatekeeper_agents()` - stub that just returned
+    - `detect_queue_health_issues()` - returned empty dict
+    - `should_trigger_queue_manager()` - never called
+    - `ensure_rebaser_worktree()` - never called (46 lines)
+    - `check_branch_freshness()` - stub that just returned
+    - `_is_branch_fresh()` - never called (40 lines)
+    - `rebase_stale_branch()` - stub that just returned
+    - `check_stale_branches()` - stub that just returned
+    - `_count_commits_behind()` - never called (38 lines)
+  - Cleaned HOUSEKEEPING_JOBS list (removed 6 stub function references)
+
+### Changed
+- Updated `get_agents()` docstring in `orchestrator/config.py` to reflect that only fleet format is supported (removed stale "Supports two formats" text)
+
+### Removed (from previous cleanup)
   - Removed `orchestrator/agent_scripts/` directory (replaced by agent directories)
   - Removed `orchestrator/prompts/implementer.md` (replaced by agent directory prompts)
   - Removed `commands/agent/` directory (replaced by agent directory instructions)

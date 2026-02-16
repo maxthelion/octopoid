@@ -74,6 +74,12 @@ class TestPrepareTaskDirectoryCleansStaleFiles:
         """Stale result.json from a previous run is deleted."""
         monkeypatch.setattr('orchestrator.scheduler.get_tasks_dir', lambda: tmp_path)
 
+        # Create fake agent directory with scripts and prompt
+        agent_dir = tmp_path / "agent"
+        agent_dir.mkdir()
+        (agent_dir / "scripts").mkdir()
+        (agent_dir / "prompt.md").write_text("# Test prompt")
+
         task_id = "test-task-123"
         task_dir = tmp_path / task_id
         task_dir.mkdir()
@@ -86,7 +92,7 @@ class TestPrepareTaskDirectoryCleansStaleFiles:
             prepare_task_directory(
                 {"id": task_id, "role": "implement", "title": "test"},
                 "implementer-1",
-                {"role": "implementer"},
+                {"role": "implementer", "agent_dir": str(agent_dir)},
             )
 
         assert not (task_dir / "result.json").exists()
@@ -94,6 +100,12 @@ class TestPrepareTaskDirectoryCleansStaleFiles:
     def test_cleans_stale_notes_md(self, tmp_path, monkeypatch):
         """Stale notes.md from a previous run is deleted."""
         monkeypatch.setattr('orchestrator.scheduler.get_tasks_dir', lambda: tmp_path)
+
+        # Create fake agent directory with scripts and prompt
+        agent_dir = tmp_path / "agent"
+        agent_dir.mkdir()
+        (agent_dir / "scripts").mkdir()
+        (agent_dir / "prompt.md").write_text("# Test prompt")
 
         task_id = "test-task-456"
         task_dir = tmp_path / task_id
@@ -107,7 +119,7 @@ class TestPrepareTaskDirectoryCleansStaleFiles:
             prepare_task_directory(
                 {"id": task_id, "role": "implement", "title": "test"},
                 "implementer-1",
-                {"role": "implementer"},
+                {"role": "implementer", "agent_dir": str(agent_dir)},
             )
 
         assert not (task_dir / "notes.md").exists()
