@@ -3,7 +3,7 @@
  * Creates .octopoid directory and configuration
  */
 
-import { mkdirSync, writeFileSync, existsSync, copyFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync, existsSync, copyFileSync, cpSync, readdirSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { hostname } from 'node:os'
@@ -97,6 +97,27 @@ export async function initCommand(options: InitOptions): Promise<void> {
     console.log('✅ Created:', agentsPath)
   }
 
+  // Scaffold agent directories
+  const agentsTemplateDir = join(__dirname, '..', '..', 'agents')
+  const agentsDestDir = join(octopoidDir, 'agents')
+
+  if (existsSync(agentsTemplateDir)) {
+    mkdirSync(agentsDestDir, { recursive: true })
+
+    for (const entry of readdirSync(agentsTemplateDir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue
+
+      const destPath = join(agentsDestDir, entry.name)
+      if (existsSync(destPath)) {
+        console.log(`  ⏭️  Skipping ${entry.name}/ (already exists)`)
+        continue
+      }
+
+      cpSync(join(agentsTemplateDir, entry.name), destPath, { recursive: true })
+      console.log(`✅ Created: .octopoid/agents/${entry.name}/`)
+    }
+  }
+
   // Create .gitignore
   const gitignorePath = join(octopoidDir, '.gitignore')
   writeFileSync(
@@ -120,9 +141,6 @@ cache.db
   console.log('Next steps:')
   console.log('  1. Review configuration: .octopoid/config.yaml')
   console.log('  2. Configure agents: .octopoid/agents.yaml')
-  if (mode === 'remote') {
-    console.log('  3. Start orchestrator: octopoid start')
-  } else {
-    console.log('  3. Start orchestrator: octopoid start')
-  }
+  console.log('  3. Customise agents: .octopoid/agents/')
+  console.log('  4. Start orchestrator: octopoid start')
 }
