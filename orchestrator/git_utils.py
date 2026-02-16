@@ -214,7 +214,6 @@ def create_task_worktree(task: dict) -> Path:
     parent_repo = find_parent_project()
     task_id = task["id"]
     worktree_path = get_task_worktree_path(task_id)
-    branch = get_task_branch(task)
 
     # Reuse existing valid worktree
     if worktree_path.exists() and (worktree_path / ".git").exists():
@@ -231,54 +230,11 @@ def create_task_worktree(task: dict) -> Path:
     # Fetch latest from origin
     run_git(["fetch", "origin"], cwd=parent_repo, check=False)
 
-    # Check if branch exists on origin
-    result = run_git(
-        ["ls-remote", "--heads", "origin", branch],
-        cwd=parent_repo,
-        check=False,
-    )
-    branch_exists_on_origin = bool(result.stdout.strip())
-
-    # Clean up stale state from previous failed runs.
-    # Check if any worktree is using the branch we want to create.
-    # If so, detach it instead of deleting it.
-    worktree_list = run_git(
-        ["worktree", "list", "--porcelain"],
-        cwd=parent_repo,
-        check=False,
-    )
-    if worktree_list.returncode == 0:
-        # Parse worktree list output to find worktrees using our branch
-        for entry in worktree_list.stdout.split("\n\n"):
-            if not entry.strip():
-                continue
-            lines = entry.strip().split("\n")
-            wt_path = None
-            wt_branch = None
-            for line in lines:
-                if line.startswith("worktree "):
-                    wt_path = line.replace("worktree ", "")
-                elif line.startswith("branch "):
-                    wt_branch = line.replace("branch refs/heads/", "")
-
-            # If this worktree is using our branch, detach it
-            if wt_branch == branch and wt_path and Path(wt_path).exists():
-                run_git(["checkout", "--detach"], cwd=wt_path, check=False)
-
-    # Force-remove this task's worktree if it still exists but is broken
-    _remove_worktree(parent_repo, worktree_path)
-
-    local_check = run_git(
-        ["rev-parse", "--verify", branch],
-        cwd=parent_repo,
-        check=False,
-    )
-    if local_check.returncode == 0:
-        run_git(["branch", "-D", branch], cwd=parent_repo, check=False)
-
     # Determine the correct base branch for this task
     base_branch = task.get("branch") or get_main_branch()
     start_point = f"origin/{base_branch}"
+
+    # Verify start point exists, fall back to origin/main if not
     verify = run_git(
         ["rev-parse", "--verify", start_point],
         cwd=parent_repo,
@@ -288,31 +244,8 @@ def create_task_worktree(task: dict) -> Path:
         start_point = "origin/main"
 
     # Always create worktrees as detached HEADs.
-    # Agents will create the branch when they're ready to push via ensure_on_branch().
-    if branch_exists_on_origin:
-        # Remote branch exists — check it's based on the correct parent.
-        # If it's not an ancestor of start_point, the branch is stale
-        # (e.g. based on main when it should be based on a feature branch).
-        remote_ref = f"origin/{branch}"
-        is_ancestor = run_git(
-            ["merge-base", "--is-ancestor", start_point, remote_ref],
-            cwd=parent_repo,
-            check=False,
-        )
-        if is_ancestor.returncode != 0:
-            # Remote branch is not based on our start_point — delete and recreate
-            run_git(
-                ["push", "origin", "--delete", branch],
-                cwd=parent_repo,
-                check=False,
-            )
-            _add_detached_worktree(parent_repo, worktree_path, start_point)
-        else:
-            # Remote branch is correctly based — start from it
-            _add_detached_worktree(parent_repo, worktree_path, remote_ref)
-    else:
-        # New branch — start from the task's base branch
-        _add_detached_worktree(parent_repo, worktree_path, start_point)
+    # Agents will create the branch when they're ready to push.
+    _add_detached_worktree(parent_repo, worktree_path, start_point)
 
     return worktree_path
 
