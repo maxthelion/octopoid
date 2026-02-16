@@ -163,61 +163,6 @@ class TestHookResolutionWithConfig:
         assert hooks[1] is BUILTIN_HOOKS["run_tests"]
         assert hooks[2] is BUILTIN_HOOKS["create_pr"]
 
-    def test_resolve_type_overrides_project(self, tmp_path):
-        """Task type hooks take precedence over project-level hooks."""
-        config_dir = tmp_path / ".octopoid"
-        config_dir.mkdir()
-        (config_dir / "config.yaml").write_text(
-            "hooks:\n"
-            "  before_submit:\n"
-            "    - rebase_on_main\n"
-            "    - create_pr\n"
-            "\n"
-            "task_types:\n"
-            "  hotfix:\n"
-            "    hooks:\n"
-            "      before_submit:\n"
-            "        - run_tests\n"
-            "        - create_pr\n"
-        )
-
-        with patch("orchestrator.config.find_parent_project", return_value=tmp_path):
-            # Hotfix type uses its own hooks (no rebase)
-            hotfix_hooks = resolve_hooks(HookPoint.BEFORE_SUBMIT, task_type="hotfix")
-            assert len(hotfix_hooks) == 2
-            assert hotfix_hooks[0] is BUILTIN_HOOKS["run_tests"]
-            assert hotfix_hooks[1] is BUILTIN_HOOKS["create_pr"]
-
-            # Untyped task falls through to project-level hooks
-            default_hooks = resolve_hooks(HookPoint.BEFORE_SUBMIT, task_type=None)
-            assert len(default_hooks) == 2
-            assert default_hooks[0] is BUILTIN_HOOKS["rebase_on_main"]
-            assert default_hooks[1] is BUILTIN_HOOKS["create_pr"]
-
-    def test_unknown_type_falls_through(self, tmp_path):
-        """Unknown task type falls through to project-level hooks."""
-        config_dir = tmp_path / ".octopoid"
-        config_dir.mkdir()
-        (config_dir / "config.yaml").write_text(
-            "hooks:\n"
-            "  before_submit:\n"
-            "    - create_pr\n"
-            "\n"
-            "task_types:\n"
-            "  product:\n"
-            "    hooks:\n"
-            "      before_submit:\n"
-            "        - run_tests\n"
-            "        - create_pr\n"
-        )
-
-        with patch("orchestrator.config.find_parent_project", return_value=tmp_path):
-            hooks = resolve_hooks(HookPoint.BEFORE_SUBMIT, task_type="unknown_type")
-
-        # Should fall through to project-level
-        assert len(hooks) == 1
-        assert hooks[0] is BUILTIN_HOOKS["create_pr"]
-
     def test_no_config_uses_defaults(self):
         """No config file at all uses DEFAULT_HOOKS (just create_pr)."""
         with patch("orchestrator.config.find_parent_project", return_value=Path("/nonexistent")):
@@ -320,35 +265,6 @@ class TestHookExecution:
         assert results[0].status == HookStatus.FAILURE
         assert results[0].remediation_prompt is not None
         mock_pr.assert_not_called()
-
-    def test_pipeline_type_specific(self, tmp_path):
-        """Pipeline uses type-specific hooks when task has a type."""
-        config_dir = tmp_path / ".octopoid"
-        config_dir.mkdir()
-        (config_dir / "config.yaml").write_text(
-            "hooks:\n"
-            "  before_submit:\n"
-            "    - rebase_on_main\n"
-            "    - create_pr\n"
-            "\n"
-            "task_types:\n"
-            "  hotfix:\n"
-            "    hooks:\n"
-            "      before_submit:\n"
-            "        - create_pr\n"
-        )
-
-        ctx = _make_ctx(task_type="hotfix", extra={"stdout": "hotfix applied"})
-
-        with patch("orchestrator.config.find_parent_project", return_value=tmp_path), \
-             patch("orchestrator.git_utils.create_pull_request", return_value="https://github.com/test/pr/99"):
-            all_ok, results = run_hooks(HookPoint.BEFORE_SUBMIT, ctx)
-
-        # Should only have create_pr (no rebase for hotfix)
-        assert all_ok is True
-        assert len(results) == 1
-        assert results[0].context["pr_url"] == "https://github.com/test/pr/99"
-
 
 # ---------------------------------------------------------------------------
 # Server-side hook enforcement (Phase 2)

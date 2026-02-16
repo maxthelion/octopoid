@@ -339,8 +339,7 @@ class TestResolveHooks:
 
     def test_defaults_when_no_config(self):
         """With no config, defaults to [create_pr] for before_submit."""
-        with patch("orchestrator.config.get_hooks_for_type", return_value=None), \
-             patch("orchestrator.config.get_hooks_config", return_value={}):
+        with patch("orchestrator.config.get_hooks_config", return_value={}):
             hooks = resolve_hooks(HookPoint.BEFORE_SUBMIT, task_type=None)
 
         assert len(hooks) == 1
@@ -348,8 +347,7 @@ class TestResolveHooks:
 
     def test_project_level_hooks(self):
         """Project-level hooks override defaults."""
-        with patch("orchestrator.config.get_hooks_for_type", return_value=None), \
-             patch("orchestrator.config.get_hooks_config", return_value={
+        with patch("orchestrator.config.get_hooks_config", return_value={
                  "before_submit": ["rebase_on_main", "create_pr"]
              }):
             hooks = resolve_hooks(HookPoint.BEFORE_SUBMIT, task_type=None)
@@ -358,37 +356,9 @@ class TestResolveHooks:
         assert hooks[0] is BUILTIN_HOOKS["rebase_on_main"]
         assert hooks[1] is BUILTIN_HOOKS["create_pr"]
 
-    def test_type_level_hooks_override_project(self):
-        """Task-type-specific hooks override project-level hooks."""
-        with patch("orchestrator.config.get_hooks_for_type", return_value={
-                 "before_submit": ["run_tests", "create_pr"]
-             }), \
-             patch("orchestrator.config.get_hooks_config", return_value={
-                 "before_submit": ["rebase_on_main", "create_pr"]
-             }):
-            hooks = resolve_hooks(HookPoint.BEFORE_SUBMIT, task_type="product")
-
-        assert len(hooks) == 2
-        assert hooks[0] is BUILTIN_HOOKS["run_tests"]
-        assert hooks[1] is BUILTIN_HOOKS["create_pr"]
-
-    def test_type_without_hooks_falls_through(self):
-        """If type config has no hooks for this point, fall through to project."""
-        with patch("orchestrator.config.get_hooks_for_type", return_value={
-                 "before_merge": ["some_hook"]  # Different hook point
-             }), \
-             patch("orchestrator.config.get_hooks_config", return_value={
-                 "before_submit": ["create_pr"]
-             }):
-            hooks = resolve_hooks(HookPoint.BEFORE_SUBMIT, task_type="infrastructure")
-
-        assert len(hooks) == 1
-        assert hooks[0] is BUILTIN_HOOKS["create_pr"]
-
     def test_unknown_hook_name_skipped(self):
         """Unknown hook names are silently skipped."""
-        with patch("orchestrator.config.get_hooks_for_type", return_value=None), \
-             patch("orchestrator.config.get_hooks_config", return_value={
+        with patch("orchestrator.config.get_hooks_config", return_value={
                  "before_submit": ["nonexistent_hook", "create_pr"]
              }):
             hooks = resolve_hooks(HookPoint.BEFORE_SUBMIT)
@@ -398,8 +368,7 @@ class TestResolveHooks:
 
     def test_empty_hook_point(self):
         """Hook points with no config and no defaults return empty list."""
-        with patch("orchestrator.config.get_hooks_for_type", return_value=None), \
-             patch("orchestrator.config.get_hooks_config", return_value={}), \
+        with patch("orchestrator.config.get_hooks_config", return_value={}), \
              patch("orchestrator.hooks.DEFAULT_HOOKS", {"before_submit": ["create_pr"]}):
             hooks = resolve_hooks(HookPoint.BEFORE_MERGE, task_type=None)
 
@@ -407,20 +376,8 @@ class TestResolveHooks:
 
     def test_before_merge_defaults(self):
         """BEFORE_MERGE defaults to [merge_pr] when no config."""
-        with patch("orchestrator.config.get_hooks_for_type", return_value=None), \
-             patch("orchestrator.config.get_hooks_config", return_value={}):
+        with patch("orchestrator.config.get_hooks_config", return_value={}):
             hooks = resolve_hooks(HookPoint.BEFORE_MERGE, task_type=None)
-
-        assert len(hooks) == 1
-        assert hooks[0] is BUILTIN_HOOKS["merge_pr"]
-
-    def test_before_merge_type_override(self):
-        """Task-type-specific hooks override defaults for BEFORE_MERGE."""
-        with patch("orchestrator.config.get_hooks_for_type", return_value={
-                 "before_merge": ["merge_pr"]
-             }), \
-             patch("orchestrator.config.get_hooks_config", return_value={}):
-            hooks = resolve_hooks(HookPoint.BEFORE_MERGE, task_type="product")
 
         assert len(hooks) == 1
         assert hooks[0] is BUILTIN_HOOKS["merge_pr"]
@@ -531,49 +488,6 @@ class TestConfigIntegration:
             result = get_hooks_config()
 
         assert result == {"before_submit": ["rebase_on_main", "create_pr"]}
-
-    def test_get_task_types_config_empty(self):
-        """When no task_types configured, returns empty dict."""
-        from orchestrator.config import get_task_types_config
-
-        with patch("orchestrator.config.find_parent_project", return_value=Path("/nonexistent")):
-            result = get_task_types_config()
-
-        assert result == {}
-
-    def test_get_hooks_for_type(self, tmp_path):
-        """Resolves hooks for a specific task type."""
-        from orchestrator.config import get_hooks_for_type
-
-        config_dir = tmp_path / ".octopoid"
-        config_dir.mkdir()
-        (config_dir / "config.yaml").write_text(
-            "task_types:\n"
-            "  product:\n"
-            "    hooks:\n"
-            "      before_submit:\n"
-            "        - run_tests\n"
-            "        - create_pr\n"
-        )
-
-        with patch("orchestrator.config.find_parent_project", return_value=tmp_path):
-            result = get_hooks_for_type("product")
-
-        assert result == {"before_submit": ["run_tests", "create_pr"]}
-
-    def test_get_hooks_for_type_missing(self, tmp_path):
-        """Unknown task type returns None."""
-        from orchestrator.config import get_hooks_for_type
-
-        config_dir = tmp_path / ".octopoid"
-        config_dir.mkdir()
-        (config_dir / "config.yaml").write_text("task_types:\n  product:\n    hooks:\n      before_submit: [create_pr]\n")
-
-        with patch("orchestrator.config.find_parent_project", return_value=tmp_path):
-            result = get_hooks_for_type("unknown_type")
-
-        assert result is None
-
 
 # ---------------------------------------------------------------------------
 # approve_and_merge (queue_utils integration with hooks)
