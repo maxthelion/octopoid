@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Task pausing: added `paused` boolean field to tasks table for cleanly preventing tasks from being claimed
+  - Claim endpoint skips paused tasks
+  - PATCH endpoint can set/unset paused
+  - Queue-status script shows paused tasks in dedicated section
+  - Python SDK supports paused via `sdk.tasks.update(id, paused=True/False)` and `sdk.tasks.list(paused=1)`
+
 ### Changed
 - Added `AgentContext` dataclass to scheduler for structured per-agent state management (scheduler refactor phase 2, step 1/12)
 - Extracted guard functions from scheduler agent loop into standalone, testable functions (scheduler refactor phase 2, step 2/12):
