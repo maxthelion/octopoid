@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Added `AgentContext` dataclass to scheduler for structured per-agent state management (scheduler refactor phase 2, step 1/12)
+- Extracted guard functions from scheduler agent loop into standalone, testable functions (scheduler refactor phase 2, step 2/12):
+  - `guard_enabled`, `guard_not_running`, `guard_interval`, `guard_backpressure`, `guard_pre_check`, `guard_claim_task`
+  - `AGENT_GUARDS` list and `evaluate_agent()` function for running the guard chain
+  - Guards return `(should_proceed: bool, reason: str)` for composability
+- Extracted housekeeping jobs into a list with fault isolation (scheduler refactor phase 2, step 3/12):
+  - `HOUSEKEEPING_JOBS` list contains 10 independent housekeeping functions
+  - `run_housekeeping()` function runs all jobs with try/except isolation
+  - Failures in one job no longer prevent subsequent jobs from running
+- Extracted spawn strategies from scheduler into standalone functions (scheduler refactor phase 3, step 4/12):
+  - `spawn_implementer(ctx)` handles implementer spawn path (prepare task dir + invoke claude)
+  - `spawn_lightweight(ctx)` handles lightweight agents (no worktree)
+  - `spawn_worktree(ctx)` handles standard agents with worktrees
+  - `get_spawn_strategy(ctx)` dispatches to the correct strategy based on agent type
+  - `_init_submodule(agent_name)` extracted for orchestrator_impl submodule initialization
+  - `_requeue_task(task_id)` helper for error recovery on spawn failure
+- Refactored `run_scheduler()` to use pipeline architecture (scheduler refactor phase 2, step 5/12):
+  - Replaced ~270-line monolithic function with ~75-line pipeline
+  - Three-phase execution: pause check → housekeeping → evaluate + spawn agents
+  - Each agent processed through: build context → evaluate guards → spawn strategy
+  - Behaviour-identical to previous implementation (verified via debug logs and tests)
+  - Simpler control flow: no nested if/else branches for spawn logic
+  - Improved debuggability: guard failures logged with clear reason messages
+
+### Added
+- Comprehensive test suite for scheduler refactor (step 6/12):
+  - New `tests/test_scheduler_refactor.py` with 28 unit tests
+  - Tests cover: `AgentContext` dataclass, all 6 guard functions, `evaluate_agent` chain, `get_spawn_strategy` dispatch, `run_housekeeping` fault isolation
+  - All existing scheduler tests continue to pass (behaviour-preserving refactor verified)
+
 ### Fixed
 - Unit tests now automatically mock `get_sdk()` to prevent production side effects when running `pytest tests/`
 - `submit-pr` script now calls server submit endpoint directly, ensuring tasks transition from `claimed` to `provisional` even if agents don't exit immediately

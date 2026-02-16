@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# Flag out-of-scope changes (advisory only)
+# Always exits 0 (non-blocking)
+
+set -euo pipefail
+
+# Source environment variables if available
+if [ -f "../env.sh" ]; then
+    source "../env.sh"
+fi
+
+echo "=== Checking Scope ==="
+
+# Get list of changed files
+CHANGED_FILES=$(git diff --name-only main..HEAD)
+
+# Files that are often edited without being in the task scope
+ADVISORY_FILES=(
+    "CHANGELOG.md"
+    "README.md"
+    "HISTORY.md"
+    "NEWS.md"
+    "docs/"
+    ".github/"
+)
+
+FOUND_ADVISORY=0
+
+for pattern in "${ADVISORY_FILES[@]}"; do
+    if echo "$CHANGED_FILES" | grep -q "$pattern"; then
+        if [ $FOUND_ADVISORY -eq 0 ]; then
+            echo ""
+            echo "Advisory: The following files are commonly out-of-scope:"
+            FOUND_ADVISORY=1
+        fi
+        echo "$CHANGED_FILES" | grep "$pattern" | sed 's/^/  - /'
+    fi
+done
+
+if [ $FOUND_ADVISORY -eq 0 ]; then
+    echo "No common out-of-scope files detected."
+fi
+
+echo ""
+echo "Note: This is advisory only. Check the task description to see if these changes were requested."
+echo ""
+
+# Always exit 0 (advisory check)
+exit 0
