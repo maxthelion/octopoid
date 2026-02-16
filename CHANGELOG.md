@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- Deleted legacy code paths left behind by scheduler refactor:
+  - Removed `orchestrator/agent_scripts/` directory (replaced by agent directories)
+  - Removed `orchestrator/prompts/implementer.md` (replaced by agent directory prompts)
+  - Removed `commands/agent/` directory (replaced by agent directory instructions)
+  - Removed `packages/client/src/roles/` directory (TypeScript roles not used)
+  - Removed obsolete Python role files from `orchestrator/roles/` (only `base.py` and `github_issue_monitor.py` remain)
+  - Removed `orchestrator/prompt_renderer.py` (no longer used)
+  - Removed legacy fallback branches in `prepare_task_directory()` - agent directories are now required
+  - Removed `setup_agent_commands()`, `generate_agent_instructions()`, `get_role_constraints()` functions
+  - Removed `DEFAULT_AGENT_INSTRUCTIONS_TEMPLATE` constant
+  - Removed legacy format support in `config.py` - fleet format is now the only supported format
+  - Reduced scheduler.py from 2190 lines to 1905 lines (-285 lines, 13% reduction)
+
 ### Changed
 - Migrated octopoid's own config to use agent directory structure (refactor-12):
   - Updated `.octopoid/agents.yaml` to new fleet format
