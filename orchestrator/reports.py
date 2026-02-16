@@ -415,59 +415,71 @@ def _gather_messages() -> list[dict[str, Any]]:
 
 
 def _gather_agents() -> list[dict[str, Any]]:
-    """Gather agent status from config and state files."""
+    """Gather agent status from blueprints and running instances."""
     from .config import get_agents, get_agents_runtime_dir, get_notes_dir
     from .state_utils import is_process_running
 
-    agents = get_agents()
+    blueprints = get_agents()
     runtime_dir = get_agents_runtime_dir()
     notes_dir = get_notes_dir()
 
     result = []
-    for agent in agents:
-        name = agent["name"]
-        role = agent.get("role", "unknown")
-        paused = agent.get("paused", False)
 
-        # Load state.json
-        state = _load_agent_state(runtime_dir / name / "state.json")
+    # Scan runtime dir for all agent instances (both running and idle)
+    if runtime_dir.exists():
+        for agent_dir in sorted(runtime_dir.iterdir()):
+            if not agent_dir.is_dir():
+                continue
 
-        # Determine status — verify PID is actually alive when state says running
-        state_says_running = state.get("running", False)
-        pid = state.get("pid")
-        actually_running = state_says_running and is_process_running(pid)
+            instance_name = agent_dir.name
 
-        if paused:
-            status = "paused"
-        elif actually_running:
-            status = "running"
-        else:
-            blocked = (state.get("extra") or {}).get("blocked_reason", "")
-            status = f"idle({blocked[:20]})" if blocked else "idle"
+            # Find which blueprint this instance belongs to
+            # Instances are named like "implementer-1", "implementer-2", etc.
+            blueprint_name = instance_name.rsplit('-', 1)[0] if '-' in instance_name else instance_name
+            blueprint_config = blueprints.get(blueprint_name, {})
+            role = blueprint_config.get("role", "unknown")
+            paused = blueprint_config.get("paused", False)
 
-        # Current task — only valid if agent is actually running
-        current_task = state.get("current_task") if actually_running else None
+            # Load state.json
+            state = _load_agent_state(agent_dir / "state.json")
 
-        # Recent tasks: query DB for tasks previously claimed by this agent
-        recent_tasks = _get_recent_tasks_for_agent(name)
+            # Determine status — verify PID is actually alive when state says running
+            state_says_running = state.get("running", False)
+            pid = state.get("pid")
+            actually_running = state_says_running and is_process_running(pid)
 
-        # Notes: look for task notes for current task
-        agent_notes = _get_agent_notes(notes_dir, current_task)
+            if paused:
+                status = "paused"
+            elif actually_running:
+                status = "running"
+            else:
+                blocked = (state.get("extra") or {}).get("blocked_reason", "")
+                status = f"idle({blocked[:20]})" if blocked else "idle"
 
-        result.append({
-            "name": name,
-            "role": role,
-            "status": status,
-            "paused": paused,
-            "current_task": current_task,
-            "last_started": state.get("last_started"),
-            "last_finished": state.get("last_finished"),
-            "last_exit_code": state.get("last_exit_code"),
-            "consecutive_failures": state.get("consecutive_failures", 0),
-            "total_runs": state.get("total_runs", 0),
-            "recent_tasks": recent_tasks,
-            "notes": agent_notes,
-        })
+            # Current task — only valid if agent is actually running
+            current_task = state.get("current_task") if actually_running else None
+
+            # Recent tasks: query DB for tasks previously claimed by this blueprint
+            recent_tasks = _get_recent_tasks_for_agent(blueprint_name)
+
+            # Notes: look for task notes for current task
+            agent_notes = _get_agent_notes(notes_dir, current_task)
+
+            result.append({
+                "name": instance_name,
+                "blueprint": blueprint_name,
+                "role": role,
+                "status": status,
+                "paused": paused,
+                "current_task": current_task,
+                "last_started": state.get("last_started"),
+                "last_finished": state.get("last_finished"),
+                "last_exit_code": state.get("last_exit_code"),
+                "consecutive_failures": state.get("consecutive_failures", 0),
+                "total_runs": state.get("total_runs", 0),
+                "recent_tasks": recent_tasks,
+                "notes": agent_notes,
+            })
 
     return result
 
@@ -565,26 +577,33 @@ def _gather_health() -> dict[str, Any]:
     from .queue_utils import count_queue
     from .state_utils import is_process_running
 
-    agents = get_agents()
+    blueprints = get_agents()
 
     # Determine scheduler status
     scheduler_status = _get_scheduler_status()
 
-    # Count idle agents (non-paused, not running)
+    # Count running instances across all blueprints
     runtime_dir = get_orchestrator_dir() / "agents"
-    idle_count = 0
     running_count = 0
-    paused_count = 0
+    total_capacity = 0  # Sum of max_instances across all blueprints
 
-    for agent in agents:
-        if agent.get("paused"):
+    if runtime_dir.exists():
+        for agent_dir in runtime_dir.iterdir():
+            if not agent_dir.is_dir():
+                continue
+            state = _load_agent_state(agent_dir / "state.json")
+            if state.get("running") and is_process_running(state.get("pid")):
+                running_count += 1
+
+    # Calculate total capacity and paused blueprints
+    paused_count = 0
+    for blueprint_name, blueprint_config in blueprints.items():
+        if blueprint_config.get("paused") or not blueprint_config.get("enabled", True):
             paused_count += 1
-            continue
-        state = _load_agent_state(runtime_dir / agent["name"] / "state.json")
-        if state.get("running") and is_process_running(state.get("pid")):
-            running_count += 1
         else:
-            idle_count += 1
+            total_capacity += blueprint_config.get("max_instances", 1)
+
+    idle_capacity = total_capacity - running_count
 
     # Queue depth = incoming + claimed + breakdown
     queue_depth = count_queue("incoming") + count_queue("claimed")
@@ -596,10 +615,11 @@ def _gather_health() -> dict[str, Any]:
     return {
         "scheduler": scheduler_status,
         "system_paused": is_system_paused(),
-        "idle_agents": idle_count,
+        "idle_capacity": idle_capacity,
         "running_agents": running_count,
-        "paused_agents": paused_count,
-        "total_agents": len(agents),
+        "paused_blueprints": paused_count,
+        "total_blueprints": len(blueprints),
+        "total_capacity": total_capacity,
         "queue_depth": queue_depth,
     }
 

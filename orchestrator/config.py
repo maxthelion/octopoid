@@ -255,10 +255,41 @@ def get_curator_scoring() -> dict[str, float]:
         return DEFAULT_CURATOR_SCORING.copy()
 
 
-def get_agents() -> list[dict[str, Any]]:
-    """Get list of configured agents."""
+def get_agents() -> dict[str, dict[str, Any]]:
+    """Get dictionary of configured agent blueprints.
+
+    Returns:
+        Dictionary mapping blueprint name to blueprint configuration.
+        Each blueprint can spawn multiple instances up to max_instances.
+    """
     config = load_agents_config()
-    return config.get("agents", [])
+    agents_config = config.get("agents", {})
+
+    # Handle legacy fleet format for backwards compatibility
+    if "fleet" in config and not agents_config:
+        # Convert fleet list to blueprints dict
+        fleet = config.get("fleet", [])
+        blueprints = {}
+        for agent in fleet:
+            name = agent.get("name", "")
+            if not name:
+                continue
+            # Extract blueprint name by removing instance suffix (-1, -2, etc.)
+            import re
+            blueprint_name = re.sub(r'-\d+$', '', name)
+            if blueprint_name not in blueprints:
+                # First instance of this blueprint
+                blueprints[blueprint_name] = dict(agent)
+                blueprints[blueprint_name]["max_instances"] = 1
+                # Remove instance-specific name
+                if "name" in blueprints[blueprint_name]:
+                    del blueprints[blueprint_name]  ["name"]
+            else:
+                # Additional instance - increment max_instances
+                blueprints[blueprint_name]["max_instances"] += 1
+        return blueprints
+
+    return agents_config
 
 
 def is_system_paused() -> bool:
@@ -274,16 +305,16 @@ def is_system_paused() -> bool:
         return False
 
 
-def get_proposers() -> list[dict[str, Any]]:
-    """Get list of configured proposer agents."""
-    agents = get_agents()
-    return [a for a in agents if a.get("role") == "proposer"]
+def get_proposers() -> dict[str, dict[str, Any]]:
+    """Get dictionary of configured proposer agent blueprints."""
+    blueprints = get_agents()
+    return {name: config for name, config in blueprints.items() if config.get("role") == "proposer"}
 
 
-def get_curators() -> list[dict[str, Any]]:
-    """Get list of configured curator agents."""
-    agents = get_agents()
-    return [a for a in agents if a.get("role") == "curator"]
+def get_curators() -> dict[str, dict[str, Any]]:
+    """Get dictionary of configured curator agent blueprints."""
+    blueprints = get_agents()
+    return {name: config for name, config in blueprints.items() if config.get("role") == "curator"}
 
 
 def get_orchestrator_submodule_path() -> Path:
@@ -325,16 +356,16 @@ def is_gatekeeper_enabled() -> bool:
     return get_gatekeeper_config()["enabled"]
 
 
-def get_gatekeepers() -> list[dict[str, Any]]:
-    """Get list of configured gatekeeper agents."""
-    agents = get_agents()
-    return [a for a in agents if a.get("role") == "gatekeeper"]
+def get_gatekeepers() -> dict[str, dict[str, Any]]:
+    """Get dictionary of configured gatekeeper agent blueprints."""
+    blueprints = get_agents()
+    return {name: config for name, config in blueprints.items() if config.get("role") == "gatekeeper"}
 
 
-def get_gatekeeper_coordinators() -> list[dict[str, Any]]:
-    """Get list of configured gatekeeper coordinator agents."""
-    agents = get_agents()
-    return [a for a in agents if a.get("role") == "gatekeeper_coordinator"]
+def get_gatekeeper_coordinators() -> dict[str, dict[str, Any]]:
+    """Get dictionary of configured gatekeeper coordinator agent blueprints."""
+    blueprints = get_agents()
+    return {name: config for name, config in blueprints.items() if config.get("role") == "gatekeeper_coordinator"}
 
 
 # =============================================================================
@@ -408,7 +439,7 @@ def is_db_enabled() -> bool:
     return get_database_config()["enabled"]
 
 
-def get_pre_checkers() -> list[dict[str, Any]]:
-    """Get list of configured pre-check agents."""
-    agents = get_agents()
-    return [a for a in agents if a.get("role") in ("pre_check", "validator")]
+def get_pre_checkers() -> dict[str, dict[str, Any]]:
+    """Get dictionary of configured pre-check agent blueprints."""
+    blueprints = get_agents()
+    return {name: config for name, config in blueprints.items() if config.get("role") in ("pre_check", "validator")}

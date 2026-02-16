@@ -866,27 +866,36 @@ def dispatch_gatekeeper_agents() -> None:
 
             debug_log(f"Need gatekeeper for task {task_id}, check: {pending_gk_check}")
 
-            # Find an available gatekeeper agent to dispatch
+            # Find an available gatekeeper blueprint to dispatch
             dispatched = False
-            for gk_config in gk_agents:
-                gk_name = gk_config.get("name")
-                if not gk_name:
-                    continue
-
-                # Check if agent focus matches the check
-                gk_focus = gk_config.get("focus", "")
+            for gk_blueprint_name, gk_blueprint_config in gk_agents.items():
+                # Check if blueprint focus matches the check
+                gk_focus = gk_blueprint_config.get("focus", "")
                 # Match if focus appears in check name (e.g., "testing" matches "gk-testing-octopoid")
                 # Check names like "gk-testing-octopoid", "gk-qa", "architecture-review" should match
                 # focus "testing", "qa", "architecture" respectively.
                 if gk_focus and gk_focus not in pending_gk_check:
-                    debug_log(f"Gatekeeper {gk_name} (focus={gk_focus}) does not match check {pending_gk_check}, skipping")
+                    debug_log(f"Gatekeeper blueprint {gk_blueprint_name} (focus={gk_focus}) does not match check {pending_gk_check}, skipping")
                     continue
 
-                # Check if this gatekeeper is currently running
-                gk_state_path = get_agent_state_path(gk_name)
+                # Check if paused
+                if gk_blueprint_config.get("paused", False) or not gk_blueprint_config.get("enabled", True):
+                    debug_log(f"Gatekeeper blueprint {gk_blueprint_name} is paused or disabled, skipping")
+                    continue
+
+                # Find an available instance slot for this blueprint
+                max_instances = gk_blueprint_config.get("max_instances", 1)
+                instance_name = find_available_instance_name(gk_blueprint_name, max_instances)
+
+                if not instance_name:
+                    debug_log(f"Gatekeeper blueprint {gk_blueprint_name} has no available instances")
+                    continue
+
+                # Check instance state
+                gk_state_path = get_agent_state_path(instance_name)
                 gk_state = load_state(gk_state_path)
                 if gk_state.running and gk_state.pid and is_process_running(gk_state.pid):
-                    debug_log(f"Gatekeeper {gk_name} is busy, trying next")
+                    debug_log(f"Gatekeeper instance {instance_name} is busy")
                     continue
 
                 # If was running but process died, mark finished
@@ -895,21 +904,16 @@ def dispatch_gatekeeper_agents() -> None:
                     save_state(gk_state, gk_state_path)
 
                 # Check interval
-                interval = gk_config.get("interval_seconds", 300)
-                if not is_overdue(gk_state, interval):
-                    debug_log(f"Gatekeeper {gk_name} not due yet, trying next")
-                    continue
-
-                # Check if paused
-                if gk_config.get("paused", False):
-                    debug_log(f"Gatekeeper {gk_name} is paused, trying next")
+                interval = gk_blueprint_config.get("interval_seconds", 300)
+                if gk_state.last_started and not is_overdue(gk_state, interval):
+                    debug_log(f"Gatekeeper instance {instance_name} not due yet")
                     continue
 
                 # Spawn the gatekeeper with review context
-                debug_log(f"Dispatching {gk_name} for task {task_id} check {pending_gk_check}")
+                debug_log(f"Dispatching gatekeeper instance {instance_name} for task {task_id} check {pending_gk_check}")
 
                 # Build config with review context for spawn_agent
-                dispatch_config = dict(gk_config)
+                dispatch_config = dict(gk_blueprint_config)
                 dispatch_config["review_task_id"] = task_id
                 dispatch_config["review_check_name"] = pending_gk_check
 
@@ -920,29 +924,26 @@ def dispatch_gatekeeper_agents() -> None:
                     task_branch = task.get("branch")
                     if task_branch and task_branch != "main":
                         base_branch = task_branch
-                    ensure_worktree(gk_name, base_branch)
-                    setup_agent_commands(gk_name, "gatekeeper")
-                    generate_agent_instructions(gk_name, "gatekeeper", dispatch_config)
+                    ensure_worktree(instance_name, base_branch)
+                    setup_agent_commands(instance_name, "gatekeeper")
+                    generate_agent_instructions(instance_name, "gatekeeper", dispatch_config)
 
-                # Find agent_id from config
-                all_agents = get_agents()
-                agent_id = next(
-                    (i for i, a in enumerate(all_agents) if a.get("name") == gk_name),
-                    0,
-                )
+                # Find blueprint_id for port allocation
+                all_blueprints = get_agents()
+                blueprint_id = list(all_blueprints.keys()).index(gk_blueprint_name) if gk_blueprint_name in all_blueprints else 0
 
-                write_agent_env(gk_name, agent_id, "gatekeeper", dispatch_config)
-                pid = spawn_agent(gk_name, agent_id, "gatekeeper", dispatch_config)
+                write_agent_env(instance_name, blueprint_id, "gatekeeper", dispatch_config)
+                pid = spawn_agent(instance_name, blueprint_id, "gatekeeper", dispatch_config)
 
                 # Update state
                 new_state = mark_started(gk_state, pid)
                 save_state(new_state, gk_state_path)
 
-                # Update DB
-                db.upsert_agent(gk_name, role="gatekeeper", running=True, pid=pid, current_task_id=task_id)
-                db.mark_agent_started(gk_name, pid, task_id=task_id)
+                # Update DB - use blueprint name for claimed_by
+                db.upsert_agent(gk_blueprint_name, role="gatekeeper", running=True, pid=pid, current_task_id=task_id)
+                db.mark_agent_started(gk_blueprint_name, pid, task_id=task_id)
 
-                print(f"[{datetime.now().isoformat()}] Dispatched gatekeeper {gk_name} for task {task_id} check {pending_gk_check}")
+                print(f"[{datetime.now().isoformat()}] Dispatched gatekeeper {instance_name} (blueprint: {gk_blueprint_name}) for task {task_id} check {pending_gk_check}")
 
                 dispatched = True
                 break  # One gatekeeper per task
@@ -1745,6 +1746,66 @@ def check_queue_health() -> None:
         debug_log(f"Queue health check failed: {e}")
 
 
+def count_running_instances(blueprint_name: str) -> int:
+    """Count how many instances of a blueprint are currently running.
+
+    Args:
+        blueprint_name: Name of the agent blueprint
+
+    Returns:
+        Number of currently running instances
+    """
+    agents_dir = get_agents_runtime_dir()
+    if not agents_dir.exists():
+        return 0
+
+    running_count = 0
+    # Scan all agent directories for instances of this blueprint
+    for agent_dir in agents_dir.iterdir():
+        if not agent_dir.is_dir():
+            continue
+
+        agent_name = agent_dir.name
+        # Match instances like "implementer-1", "implementer-2", or "implementer-<uuid>"
+        # Also match exact blueprint name for backward compat
+        if not (agent_name == blueprint_name or agent_name.startswith(f"{blueprint_name}-")):
+            continue
+
+        state_path = get_agent_state_path(agent_name)
+        state = load_state(state_path)
+
+        if state.running and state.pid and is_process_running(state.pid):
+            running_count += 1
+
+    return running_count
+
+
+def find_available_instance_name(blueprint_name: str, max_instances: int) -> str | None:
+    """Find an available instance name for a blueprint.
+
+    Args:
+        blueprint_name: Name of the blueprint
+        max_instances: Maximum instances allowed
+
+    Returns:
+        Instance name (e.g., "implementer-1") or None if all slots taken
+    """
+    agents_dir = get_agents_runtime_dir()
+    agents_dir.mkdir(parents=True, exist_ok=True)
+
+    # Try instance numbers 1 through max_instances
+    for i in range(1, max_instances + 1):
+        instance_name = f"{blueprint_name}-{i}"
+        state_path = get_agent_state_path(instance_name)
+        state = load_state(state_path)
+
+        # This slot is available if not running or process died
+        if not state.running or not state.pid or not is_process_running(state.pid):
+            return instance_name
+
+    return None
+
+
 def run_scheduler() -> None:
     """Main scheduler loop - evaluate and spawn agents."""
     print(f"[{datetime.now().isoformat()}] Scheduler starting")
@@ -1787,117 +1848,130 @@ def run_scheduler() -> None:
         # The queue-manager agent will be evaluated in the normal agent loop below
         # We just log the detection here; the agent's pre-check handles actual triggering
 
-    # Load agent configuration
+    # Load agent blueprints
     try:
-        agents = get_agents()
-        debug_log(f"Loaded {len(agents)} agents from config")
+        blueprints = get_agents()
+        debug_log(f"Loaded {len(blueprints)} agent blueprints from config")
     except FileNotFoundError as e:
         print(f"Error: {e}")
         debug_log(f"Failed to load agents config: {e}")
         sys.exit(1)
 
-    if not agents:
-        print("No agents configured in agents.yaml")
-        debug_log("No agents configured")
+    if not blueprints:
+        print("No agent blueprints configured in agents.yaml")
+        debug_log("No agent blueprints configured")
         return
 
-    for agent_id, agent_config in enumerate(agents):
-        agent_name = agent_config.get("name")
-        role = agent_config.get("role")
-        interval = agent_config.get("interval_seconds", 300)
-        paused = agent_config.get("paused", False)
+    # Global concurrent limit from config
+    from .config import load_agents_config
+    config = load_agents_config()
+    max_concurrent = config.get("agents", {}).get("max_concurrent")
+    if max_concurrent:
+        # Count total running instances across all blueprints
+        total_running = sum(count_running_instances(bp_name) for bp_name in blueprints.keys())
+        if total_running >= max_concurrent:
+            print(f"Global concurrent limit reached: {total_running}/{max_concurrent}")
+            debug_log(f"Global concurrent limit reached: {total_running}/{max_concurrent}")
+            return
 
-        if not agent_name or not role:
-            print(f"Skipping invalid agent config: {agent_config}")
-            debug_log(f"Invalid agent config: {agent_config}")
+    # Iterate over blueprints and spawn instances as needed
+    for blueprint_id, (blueprint_name, blueprint_config) in enumerate(blueprints.items()):
+        role = blueprint_config.get("role")
+        max_instances = blueprint_config.get("max_instances", 1)
+        interval = blueprint_config.get("interval_seconds", 300)
+        paused = blueprint_config.get("paused", False)
+        enabled = blueprint_config.get("enabled", True)
+
+        if not role:
+            print(f"Skipping invalid blueprint {blueprint_name}: missing role")
+            debug_log(f"Invalid blueprint {blueprint_name}: missing role")
             continue
 
-        if paused:
-            print(f"Agent {agent_name} is paused, skipping")
-            debug_log(f"Agent {agent_name} is paused")
+        if paused or not enabled:
+            debug_log(f"Blueprint {blueprint_name} is paused or disabled, skipping")
             continue
 
-        debug_log(f"Evaluating agent {agent_name}: role={role}, interval={interval}s")
+        debug_log(f"Evaluating blueprint {blueprint_name}: role={role}, max_instances={max_instances}")
 
-        # Try to acquire agent lock
-        agent_lock_path = get_agent_lock_path(agent_name)
+        # Count currently running instances
+        running_count = count_running_instances(blueprint_name)
+        debug_log(f"Blueprint {blueprint_name}: {running_count}/{max_instances} instances running")
+
+        if running_count >= max_instances:
+            debug_log(f"Blueprint {blueprint_name} at capacity ({running_count}/{max_instances})")
+            continue
+
+        # Check role-based backpressure BEFORE trying to spawn
+        can_proceed, blocked_reason = check_backpressure_for_role(role)
+        if not can_proceed:
+            debug_log(f"Blueprint {blueprint_name} blocked by backpressure: {blocked_reason}")
+            continue
+
+        # Run pre-check if configured (lightweight check for work availability)
+        if not run_pre_check(blueprint_name, blueprint_config):
+            debug_log(f"Blueprint {blueprint_name} pre-check: no work available")
+            continue
+
+        # Find an available instance slot
+        instance_name = find_available_instance_name(blueprint_name, max_instances)
+        if not instance_name:
+            debug_log(f"Blueprint {blueprint_name}: no available instance slots")
+            continue
+
+        debug_log(f"Selected instance name: {instance_name}")
+
+        # Try to acquire instance lock
+        agent_lock_path = get_agent_lock_path(instance_name)
 
         with locked_or_skip(agent_lock_path) as acquired:
             if not acquired:
-                print(f"Agent {agent_name} is locked (another instance running?)")
-                debug_log(f"Agent {agent_name} lock not acquired")
+                debug_log(f"Instance {instance_name} lock not acquired, trying next blueprint")
                 continue
 
-            # Load agent state
-            state_path = get_agent_state_path(agent_name)
+            # Load instance state
+            state_path = get_agent_state_path(instance_name)
             state = load_state(state_path)
-            debug_log(f"Agent {agent_name} state: running={state.running}, pid={state.pid}, last_finished={state.last_finished}")
 
-            # Check if still running
+            # Double-check process isn't running (race condition protection)
             if state.running and state.pid and is_process_running(state.pid):
-                print(f"Agent {agent_name} is still running (PID {state.pid})")
-                debug_log(f"Agent {agent_name} still running (PID {state.pid})")
+                debug_log(f"Instance {instance_name} is running (PID {state.pid}), was counted correctly")
                 continue
 
             # If was marked running but process died, update state
             if state.running:
-                debug_log(f"Agent {agent_name} was marked running but process died, marking as crashed")
-                state = mark_finished(state, 1)  # Assume crashed
+                debug_log(f"Instance {instance_name} was running but process died, marking as crashed")
+                state = mark_finished(state, 1)
                 save_state(state, state_path)
 
-            # Check if overdue
-            if not is_overdue(state, interval):
-                print(f"Agent {agent_name} is not due yet")
-                debug_log(f"Agent {agent_name} not due yet")
+            # Check interval - only enforce for instances that have run before
+            if state.last_started and not is_overdue(state, interval):
+                debug_log(f"Instance {instance_name} not due yet (interval={interval}s)")
                 continue
 
-            # Check role-based backpressure (runs before spawning any process)
-            can_proceed, blocked_reason = check_backpressure_for_role(role)
-            if not can_proceed:
-                print(f"Agent {agent_name} blocked: {blocked_reason}")
-                debug_log(f"Agent {agent_name} blocked by backpressure: {blocked_reason}")
-                # Update state to track blocked status
-                state.extra["blocked_reason"] = blocked_reason
-                state.extra["blocked_at"] = datetime.now().isoformat()
-                save_state(state, state_path)
-                continue
-
-            # Clear any previous blocked status
-            if "blocked_reason" in state.extra:
-                del state.extra["blocked_reason"]
-            if "blocked_at" in state.extra:
-                del state.extra["blocked_at"]
-
-            # Run pre-check if configured (additional cheap check for work availability)
-            if not run_pre_check(agent_name, agent_config):
-                print(f"Agent {agent_name} pre-check: no work available")
-                debug_log(f"Agent {agent_name} pre-check returned no work")
-                continue
-
-            print(f"[{datetime.now().isoformat()}] Starting agent {agent_name} (role: {role})")
-            debug_log(f"Starting agent {agent_name} (role: {role})")
+            print(f"[{datetime.now().isoformat()}] Spawning {instance_name} (blueprint: {blueprint_name}, role: {role})")
+            debug_log(f"Spawning instance {instance_name} from blueprint {blueprint_name}")
 
             # Check if this is a lightweight agent (no worktree needed)
-            is_lightweight = agent_config.get("lightweight", False)
+            is_lightweight = blueprint_config.get("lightweight", False)
 
             if not is_lightweight:
                 # Determine base branch for worktree
-                base_branch = agent_config.get("base_branch", "main")
+                base_branch = blueprint_config.get("base_branch", "main")
 
                 # For agents that work on specific queues, peek at the next task's branch
                 # This avoids agents wasting turns on git checkout
                 task_branch = peek_task_branch(role)
                 if task_branch:
-                    debug_log(f"Peeked task branch for {agent_name}: {task_branch}")
+                    debug_log(f"Peeked task branch for {instance_name}: {task_branch}")
                     base_branch = task_branch
 
-                debug_log(f"Ensuring worktree for {agent_name} on branch {base_branch}")
-                ensure_worktree(agent_name, base_branch)
+                debug_log(f"Ensuring worktree for {instance_name} on branch {base_branch}")
+                ensure_worktree(instance_name, base_branch)
 
                 # Initialize submodule for orchestrator_impl agents
                 if role == "orchestrator_impl":
-                    worktree_path = get_worktree_path(agent_name)
-                    debug_log(f"Initializing submodule in worktree for {agent_name}")
+                    worktree_path = get_worktree_path(instance_name)
+                    debug_log(f"Initializing submodule in worktree for {instance_name}")
                     try:
                         subprocess.run(
                             ["git", "submodule", "update", "--init", "orchestrator"],
@@ -1931,27 +2005,28 @@ def run_scheduler() -> None:
                         )
                         # Verify the submodule has its own git object store
                         # (not sharing with the main checkout's submodule)
-                        _verify_submodule_isolation(sub_path, agent_name)
-                        debug_log(f"Submodule initialized for {agent_name}")
+                        _verify_submodule_isolation(sub_path, instance_name)
+                        debug_log(f"Submodule initialized for {instance_name}")
                     except Exception as e:
-                        debug_log(f"Submodule init failed for {agent_name}: {e}")
+                        debug_log(f"Submodule init failed for {instance_name}: {e}")
 
                 # Setup commands in worktree
-                debug_log(f"Setting up commands for {agent_name}")
-                setup_agent_commands(agent_name, role)
+                debug_log(f"Setting up commands for {instance_name}")
+                setup_agent_commands(instance_name, role)
 
                 # Generate agent instructions
-                debug_log(f"Generating instructions for {agent_name}")
-                generate_agent_instructions(agent_name, role, agent_config)
+                debug_log(f"Generating instructions for {instance_name}")
+                generate_agent_instructions(instance_name, role, blueprint_config)
             else:
-                debug_log(f"Agent {agent_name} is lightweight, skipping worktree setup")
+                debug_log(f"Instance {instance_name} is lightweight, skipping worktree setup")
 
             # Write env file
-            debug_log(f"Writing env file for {agent_name}")
-            write_agent_env(agent_name, agent_id, role, agent_config)
+            debug_log(f"Writing env file for {instance_name}")
+            # Use blueprint_id as the agent_id for port allocation
+            write_agent_env(instance_name, blueprint_id, role, blueprint_config)
 
             # Spawn agent
-            pid = spawn_agent(agent_name, agent_id, role, agent_config)
+            pid = spawn_agent(instance_name, blueprint_id, role, blueprint_config)
 
             # Update JSON state
             new_state = mark_started(state, pid)
@@ -1961,12 +2036,13 @@ def run_scheduler() -> None:
             if is_db_enabled():
                 try:
                     from . import db
-                    db.upsert_agent(agent_name, role=role, running=True, pid=pid)
-                    db.mark_agent_started(agent_name, pid)
+                    # Use blueprint_name as claimed_by identifier
+                    db.upsert_agent(blueprint_name, role=role, running=True, pid=pid)
+                    db.mark_agent_started(blueprint_name, pid)
                 except Exception as e:
-                    debug_log(f"Failed to update agent {agent_name} in DB: {e}")
+                    debug_log(f"Failed to update agent {blueprint_name} in DB: {e}")
 
-            print(f"Agent {agent_name} started with PID {pid}")
+            print(f"Instance {instance_name} started with PID {pid} (blueprint: {blueprint_name})")
 
     print(f"[{datetime.now().isoformat()}] Scheduler tick complete")
     debug_log("Scheduler tick complete")

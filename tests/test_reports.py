@@ -416,9 +416,10 @@ class TestGatherAgents:
     def test_returns_agent_entries_with_all_fields(
         self, mock_notes_dir, mock_runtime_dir, mock_agents, mock_recent, tmp_path
     ):
-        mock_agents.return_value = [
-            {"name": "impl-1", "role": "implementer", "paused": False},
-        ]
+        # Mock blueprints as dict (new format)
+        mock_agents.return_value = {
+            "impl": {"role": "implementer", "paused": False, "max_instances": 1},
+        }
         runtime_dir = tmp_path / "agents"
         (runtime_dir / "impl-1").mkdir(parents=True)
         state_file = runtime_dir / "impl-1" / "state.json"
@@ -440,6 +441,7 @@ class TestGatherAgents:
         assert len(agents) == 1
         agent = agents[0]
         assert agent["name"] == "impl-1"
+        assert agent["blueprint"] == "impl"
         assert agent["role"] == "implementer"
         assert agent["status"] == "idle"
         assert agent["paused"] is False
@@ -457,9 +459,9 @@ class TestGatherAgents:
     def test_paused_agent_shows_paused_status(
         self, mock_notes_dir, mock_runtime_dir, mock_agents, mock_recent, tmp_path
     ):
-        mock_agents.return_value = [
-            {"name": "agent-1", "role": "implementer", "paused": True},
-        ]
+        mock_agents.return_value = {
+            "agent": {"role": "implementer", "paused": True, "max_instances": 1},
+        }
         runtime_dir = tmp_path / "agents"
         (runtime_dir / "agent-1").mkdir(parents=True)
         mock_runtime_dir.return_value = runtime_dir
@@ -478,9 +480,9 @@ class TestGatherAgents:
         self, mock_pid_check, mock_notes_dir, mock_runtime_dir, mock_agents,
         mock_recent, tmp_path
     ):
-        mock_agents.return_value = [
-            {"name": "agent-1", "role": "implementer", "paused": False},
-        ]
+        mock_agents.return_value = {
+            "agent": {"role": "implementer", "paused": False, "max_instances": 1},
+        }
         runtime_dir = tmp_path / "agents"
         (runtime_dir / "agent-1").mkdir(parents=True)
         (runtime_dir / "agent-1" / "state.json").write_text(
@@ -504,9 +506,9 @@ class TestGatherAgents:
         mock_recent, tmp_path
     ):
         """Agent with running=True but dead process should show idle."""
-        mock_agents.return_value = [
-            {"name": "agent-1", "role": "implementer", "paused": False},
-        ]
+        mock_agents.return_value = {
+            "agent": {"role": "implementer", "paused": False, "max_instances": 1},
+        }
         runtime_dir = tmp_path / "agents"
         (runtime_dir / "agent-1").mkdir(parents=True)
         (runtime_dir / "agent-1" / "state.json").write_text(
@@ -537,13 +539,13 @@ class TestGatherHealth:
     def test_returns_health_fields(
         self, mock_agents, mock_orch_dir, mock_paused, mock_count, mock_sched, tmp_path
     ):
-        mock_agents.return_value = [
-            {"name": "agent-1", "paused": False},
-            {"name": "agent-2", "paused": True},
-        ]
+        mock_agents.return_value = {
+            "agent-a": {"role": "implementer", "paused": False, "max_instances": 2},
+            "agent-b": {"role": "tester", "paused": True, "max_instances": 1},
+        }
         runtime_dir = tmp_path / "agents"
-        (runtime_dir / "agent-1").mkdir(parents=True)
-        (runtime_dir / "agent-2").mkdir(parents=True)
+        (runtime_dir / "agent-a-1").mkdir(parents=True)
+        (runtime_dir / "agent-a-2").mkdir(parents=True)
         mock_orch_dir.return_value = tmp_path
 
         # count_queue returns 3 for incoming, 1 for claimed, 0 for breakdown
@@ -553,16 +555,18 @@ class TestGatherHealth:
 
         assert health["scheduler"] == "running"
         assert health["system_paused"] is False
-        assert health["idle_agents"] == 1
-        assert health["paused_agents"] == 1
-        assert health["total_agents"] == 2
+        assert health["idle_capacity"] == 2  # 2 max_instances for agent-a, 0 running
+        assert health["running_agents"] == 0
+        assert health["paused_blueprints"] == 1
+        assert health["total_blueprints"] == 2
+        assert health["total_capacity"] == 2  # Only non-paused blueprints
         assert health["queue_depth"] == 4
 
     @patch("orchestrator.reports._get_scheduler_status", return_value="not_loaded")
     @patch("orchestrator.queue_utils.count_queue", return_value=0)
     @patch("orchestrator.config.is_system_paused", return_value=True)
     @patch("orchestrator.config.get_orchestrator_dir")
-    @patch("orchestrator.config.get_agents", return_value=[])
+    @patch("orchestrator.config.get_agents", return_value={})
     def test_handles_empty_agents(
         self, mock_agents, mock_orch_dir, mock_paused, mock_count, mock_sched, tmp_path
     ):
@@ -571,10 +575,11 @@ class TestGatherHealth:
 
         health = _gather_health()
 
-        assert health["idle_agents"] == 0
+        assert health["idle_capacity"] == 0
         assert health["running_agents"] == 0
-        assert health["paused_agents"] == 0
-        assert health["total_agents"] == 0
+        assert health["paused_blueprints"] == 0
+        assert health["total_blueprints"] == 0
+        assert health["total_capacity"] == 0
         assert health["system_paused"] is True
 
 

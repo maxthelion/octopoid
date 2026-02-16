@@ -65,12 +65,14 @@ class Condition:
             else:
                 # Check agent exists (skip if agents.yaml not found - e.g. in tests)
                 try:
-                    agents = get_agents()
-                    agent_names = [a["name"] for a in agents]
-                    if self.agent not in agent_names:
+                    blueprints = get_agents()
+                    # Check both blueprint names and roles
+                    blueprint_names = list(blueprints.keys())
+                    blueprint_roles = [bp.get("role") for bp in blueprints.values()]
+                    if self.agent not in blueprint_names and self.agent not in blueprint_roles:
                         errors.append(
                             f"Flow '{flow_name}' transition '{transition}' condition '{self.name}': "
-                            f"agent '{self.agent}' not found in agents.yaml"
+                            f"agent '{self.agent}' not found in agents.yaml blueprints"
                         )
                 except FileNotFoundError:
                     # agents.yaml not found - skip validation (e.g. in tests)
@@ -142,13 +144,13 @@ class Transition:
         # Validate agent exists if specified (skip if agents.yaml not found - e.g. in tests)
         if self.agent:
             try:
-                agents = get_agents()
-                agent_names = [a["name"] for a in agents]
-                agent_roles = [a.get("role") for a in agents]
-                if self.agent not in agent_names and self.agent not in agent_roles:
+                blueprints = get_agents()
+                blueprint_names = list(blueprints.keys())
+                blueprint_roles = [bp.get("role") for bp in blueprints.values()]
+                if self.agent not in blueprint_names and self.agent not in blueprint_roles:
                     errors.append(
                         f"Flow '{flow_name}' transition '{transition_key}': "
-                        f"agent '{self.agent}' not found in agents.yaml (by name or role)"
+                        f"agent '{self.agent}' not found in agents.yaml blueprints (by name or role)"
                     )
             except FileNotFoundError:
                 # agents.yaml not found - skip validation (e.g. in tests)
