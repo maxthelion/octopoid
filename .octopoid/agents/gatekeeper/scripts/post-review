@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Post review findings as a PR comment
+# Takes findings text from stdin or as argument
+# Exit 0 on success, 1 on failure
+
+set -euo pipefail
+
+# Source environment variables if available
+if [ -f "../env.sh" ]; then
+    source "../env.sh"
+fi
+
+# Get PR number from environment or fail
+if [ -z "${PR_NUMBER:-}" ]; then
+    echo "Error: PR_NUMBER environment variable not set"
+    exit 1
+fi
+
+# Get review body from argument or stdin
+if [ $# -gt 0 ]; then
+    REVIEW_BODY="$*"
+else
+    REVIEW_BODY=$(cat)
+fi
+
+if [ -z "$REVIEW_BODY" ]; then
+    echo "Error: No review content provided"
+    exit 1
+fi
+
+echo "=== Posting Review to PR #$PR_NUMBER ==="
+
+# Post comment using gh CLI
+gh pr comment "$PR_NUMBER" --body "$REVIEW_BODY"
+
+echo "Review posted successfully"
+exit 0
