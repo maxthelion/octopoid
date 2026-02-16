@@ -7,13 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-- **Integration test for 2-task project lifecycle** ([TASK-1597e6f5])
-  - Tests full lifecycle: project creation, sequential task execution, worktree detachment
-  - Verifies task 1 worktree is based on correct branch (not defaulting to main)
-  - Verifies task 1 commits are pushed and visible to task 2
-  - Verifies worktrees are detached (not deleted) after task completion
-  - Uses local bare repo as origin to avoid polluting remote
+### Fixed
+
+- **Fix worktree creation: detached HEADs + branch lifecycle** ([TASK-8f741bbf])
+  - Worktrees now always created as detached HEADs (no branch conflicts)
+  - Added `_add_detached_worktree()` and `_remove_worktree()` helper functions
+  - Added `RepoManager.ensure_on_branch()` to create branch from detached HEAD
+  - Updated `push_branch()` to raise clear error on detached HEAD
+  - Updated `create_pr()` to accept `task_branch` param and handle detached HEAD
+  - Added `TASK_BRANCH` env var to scheduler's env.sh
+  - Updated submit-pr script to pass TASK_BRANCH to create_pr
+  - Fixed `cleanup_task_worktree()` to handle detached HEAD gracefully
+  - Resolves issue where agents couldn't start work due to "branch already exists" errors
 
 ### Refactored
 
