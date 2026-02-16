@@ -158,5 +158,5 @@ def mock_sdk_for_unit_tests(request):
     mock_sdk.tasks.accept.return_value = {"id": "test-task-id", "queue": "done"}
 
     # Apply the mock for the duration of the test
-    with patch('orchestrator.queue_utils.get_sdk', return_value=mock_sdk):
+    with patch('orchestrator.sdk.get_sdk', return_value=mock_sdk):
         yield mock_sdk

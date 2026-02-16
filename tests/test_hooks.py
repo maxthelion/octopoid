@@ -601,7 +601,7 @@ class TestApproveAndMerge:
 
     @patch("orchestrator.queue_utils.cleanup_task_notes")
     @patch("orchestrator.hooks.run_hooks")
-    @patch("orchestrator.queue_utils.get_sdk")
+    @patch("orchestrator.sdk.get_sdk")
     def test_success_flow(self, mock_get_sdk, mock_run_hooks, mock_cleanup):
         """Hooks pass → task accepted via SDK."""
         from orchestrator.queue_utils import approve_and_merge
@@ -623,7 +623,7 @@ class TestApproveAndMerge:
 
     @patch("orchestrator.queue_utils.cleanup_task_notes")
     @patch("orchestrator.hooks.run_hooks")
-    @patch("orchestrator.queue_utils.get_sdk")
+    @patch("orchestrator.sdk.get_sdk")
     def test_hook_failure_blocks_accept(self, mock_get_sdk, mock_run_hooks, mock_cleanup):
         """Hook failure → task NOT accepted, error returned."""
         from orchestrator.queue_utils import approve_and_merge
@@ -643,7 +643,7 @@ class TestApproveAndMerge:
         mock_sdk.tasks.accept.assert_not_called()
         mock_cleanup.assert_not_called()
 
-    @patch("orchestrator.queue_utils.get_sdk")
+    @patch("orchestrator.sdk.get_sdk")
     def test_missing_task(self, mock_get_sdk):
         """Non-existent task returns error."""
         from orchestrator.queue_utils import approve_and_merge
@@ -659,7 +659,7 @@ class TestApproveAndMerge:
 
     @patch("orchestrator.queue_utils.cleanup_task_notes")
     @patch("orchestrator.hooks.run_hooks")
-    @patch("orchestrator.queue_utils.get_sdk")
+    @patch("orchestrator.sdk.get_sdk")
     def test_no_pr_skips_merge_still_accepts(self, mock_get_sdk, mock_run_hooks, mock_cleanup):
         """Task without PR: merge_pr hook skips, task still accepted."""
         from orchestrator.queue_utils import approve_and_merge
