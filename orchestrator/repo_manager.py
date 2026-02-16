@@ -128,6 +128,39 @@ class RepoManager:
 
     # --- Branch & commit ---
 
+    def ensure_on_branch(self, branch_name: str) -> str:
+        """Ensure the worktree is on the specified branch.
+
+        If already on the branch, does nothing.
+        If on detached HEAD, creates the branch from HEAD.
+        If on a different named branch, raises an error.
+
+        Args:
+            branch_name: The branch name to ensure
+
+        Returns:
+            The branch name
+
+        Raises:
+            RuntimeError: If on a different named branch than expected
+        """
+        status = self.get_status()
+
+        if status.branch == branch_name:
+            return branch_name
+
+        if status.branch == "HEAD":
+            # On detached HEAD — create branch from current position
+            result = self._run_git(["checkout", "-b", branch_name], check=False)
+            if result.returncode != 0:
+                # Branch already exists locally — just check it out
+                self._run_git(["checkout", branch_name])
+            return branch_name
+
+        raise RuntimeError(
+            f"On branch '{status.branch}', expected '{branch_name}' or detached HEAD"
+        )
+
     def push_branch(self, force: bool = False) -> str:
         """Push the current branch to origin.
 
@@ -138,9 +171,14 @@ class RepoManager:
             The branch name that was pushed.
 
         Raises:
+            RuntimeError: If on detached HEAD (must create branch first)
             subprocess.CalledProcessError: If push fails.
         """
         status = self.get_status()
+        if status.branch == "HEAD":
+            raise RuntimeError(
+                "Cannot push from detached HEAD. Create a branch first using ensure_on_branch()."
+            )
         args = ["push", "-u", "origin", status.branch]
         if force:
             args.insert(1, "--force-with-lease")
@@ -217,7 +255,7 @@ class RepoManager:
 
     # --- PR lifecycle ---
 
-    def create_pr(self, title: str, body: str = "") -> PrInfo:
+    def create_pr(self, title: str, body: str = "", task_branch: str | None = None) -> PrInfo:
         """Push branch and create a pull request. Idempotent.
 
         If a PR already exists for this branch, returns its info.
@@ -225,14 +263,26 @@ class RepoManager:
         Args:
             title: PR title
             body: PR body/description
+            task_branch: Branch name to create if on detached HEAD (optional)
 
         Returns:
             PrInfo with URL, number, and whether it was newly created.
 
         Raises:
             subprocess.CalledProcessError: If push or PR creation fails.
+            RuntimeError: If on detached HEAD and task_branch not provided
         """
-        # Push branch first
+        # If on detached HEAD and task_branch provided, create the branch first
+        status = self.get_status()
+        if status.branch == "HEAD":
+            if not task_branch:
+                raise RuntimeError(
+                    "On detached HEAD but no task_branch provided. "
+                    "Pass task_branch parameter to create_pr()."
+                )
+            self.ensure_on_branch(task_branch)
+
+        # Push branch
         branch = self.push_branch()
 
         # Check if PR already exists
