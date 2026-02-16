@@ -17,6 +17,7 @@ from .sdk import get_orchestrator_id, get_sdk
 
 # Task lifecycle and CRUD
 from .tasks import (
+    _insert_rejection_feedback,
     accept_completion,
     approve_and_merge,
     claim_task,
@@ -98,6 +99,12 @@ from .compat import (
     resolve_task_file,
 )
 
+# Config helpers (for test compatibility)
+from .config import get_queue_dir, get_queue_limits
+
+# Git utilities (for test compatibility)
+from .git_utils import cleanup_task_worktree
+
 __all__ = [
     # SDK
     "get_sdk",
@@ -126,6 +133,7 @@ __all__ = [
     "get_task_by_id",
     "list_tasks",
     "approve_and_merge",
+    "_insert_rejection_feedback",  # For test compatibility
     # Projects
     "create_project",
     "get_project",
@@ -158,6 +166,11 @@ __all__ = [
     "can_create_task",
     "can_claim_task",
     "get_queue_status",
+    # Config helpers
+    "get_queue_dir",
+    "get_queue_limits",
+    # Git utilities
+    "cleanup_task_worktree",
     # Legacy compat
     "parse_task_file",
     "resolve_task_file",

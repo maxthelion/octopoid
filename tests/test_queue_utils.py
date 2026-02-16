@@ -59,7 +59,7 @@ class TestQueueOperationsFileBased:
         mock_sdk = MagicMock()
         mock_sdk.tasks.list.return_value = []
 
-        with patch('orchestrator.queue_utils.get_sdk', return_value=mock_sdk):
+        with patch('orchestrator.sdk.get_sdk', return_value=mock_sdk):
             from orchestrator.queue_utils import count_queue
 
             count = count_queue("incoming")
@@ -72,7 +72,7 @@ class TestQueueOperationsFileBased:
             {"id": "abc12345", "title": "Implement feature X", "priority": "P1"},
         ]
 
-        with patch('orchestrator.queue_utils.get_sdk', return_value=mock_sdk):
+        with patch('orchestrator.sdk.get_sdk', return_value=mock_sdk):
             from orchestrator.queue_utils import count_queue
 
             count = count_queue("incoming")
@@ -83,7 +83,7 @@ class TestQueueOperationsFileBased:
         mock_sdk = MagicMock()
         mock_sdk.tasks.list.return_value = []
 
-        with patch('orchestrator.queue_utils.get_sdk', return_value=mock_sdk):
+        with patch('orchestrator.sdk.get_sdk', return_value=mock_sdk):
             from orchestrator.queue_utils import list_tasks
 
             tasks = list_tasks("incoming")
@@ -98,7 +98,7 @@ class TestQueueOperationsFileBased:
             {"id": "p1", "title": "P1 task", "priority": "P1", "created_at": "2024-01-15T10:01:00"},
         ]
 
-        with patch('orchestrator.queue_utils.get_sdk', return_value=mock_sdk):
+        with patch('orchestrator.sdk.get_sdk', return_value=mock_sdk):
             from orchestrator.queue_utils import list_tasks
 
             tasks = list_tasks("incoming")
@@ -111,7 +111,7 @@ class TestQueueOperationsFileBased:
 class TestClaimTask:
     """Tests for claim_task function."""
 
-    def test_claim_task_via_sdk(self, mock_orchestrator_dir, sample_task_file):
+    def test_claim_task_via_sdk(self, mock_config, sample_task_file):
         """Test claiming a task via SDK."""
         mock_sdk = MagicMock()
         mock_sdk.tasks.claim.return_value = {
@@ -121,11 +121,11 @@ class TestClaimTask:
             "file_path": "TASK-abc12345.md",
         }
 
-        with patch('orchestrator.queue_utils.get_sdk', return_value=mock_sdk):
-            with patch('orchestrator.queue_utils.get_orchestrator_id', return_value="test-orch"):
-                with patch('orchestrator.queue_utils.get_queue_limits', return_value={"max_claimed": 5}):
+        with patch('orchestrator.sdk.get_sdk', return_value=mock_sdk):
+            with patch('orchestrator.sdk.get_orchestrator_id', return_value="test-orch"):
+                with patch('orchestrator.config.get_queue_limits', return_value={"max_claimed": 5}):
                     # Point resolve_task_file to the sample file
-                    with patch('orchestrator.queue_utils.resolve_task_file', return_value=sample_task_file):
+                    with patch('orchestrator.compat.resolve_task_file', return_value=sample_task_file):
                         from orchestrator.queue_utils import claim_task
 
                         task = claim_task(agent_name="test-agent")
@@ -144,9 +144,9 @@ class TestClaimTask:
             "queue": "claimed",
         }
 
-        with patch('orchestrator.queue_utils.get_sdk', return_value=mock_sdk):
-            with patch('orchestrator.queue_utils.get_orchestrator_id', return_value="test-orch"):
-                with patch('orchestrator.queue_utils.get_queue_limits', return_value={"max_claimed": 5}):
+        with patch('orchestrator.sdk.get_sdk', return_value=mock_sdk):
+            with patch('orchestrator.sdk.get_orchestrator_id', return_value="test-orch"):
+                with patch('orchestrator.config.get_queue_limits', return_value={"max_claimed": 5}):
                     from orchestrator.queue_utils import claim_task
 
                     task = claim_task(role_filter="implement")
@@ -161,9 +161,9 @@ class TestClaimTask:
         mock_sdk = MagicMock()
         mock_sdk.tasks.claim.return_value = None
 
-        with patch('orchestrator.queue_utils.get_sdk', return_value=mock_sdk):
-            with patch('orchestrator.queue_utils.get_orchestrator_id', return_value="test-orch"):
-                with patch('orchestrator.queue_utils.get_queue_limits', return_value={"max_claimed": 5}):
+        with patch('orchestrator.sdk.get_sdk', return_value=mock_sdk):
+            with patch('orchestrator.sdk.get_orchestrator_id', return_value="test-orch"):
+                with patch('orchestrator.config.get_queue_limits', return_value={"max_claimed": 5}):
                     from orchestrator.queue_utils import claim_task
 
                     task = claim_task()
@@ -178,9 +178,9 @@ class TestClaimTask:
             "queue": "claimed",
         }
 
-        with patch('orchestrator.queue_utils.get_sdk', return_value=mock_sdk):
-            with patch('orchestrator.queue_utils.get_orchestrator_id', return_value="test-orch"):
-                with patch('orchestrator.queue_utils.get_queue_limits', return_value={"max_claimed": 5}):
+        with patch('orchestrator.sdk.get_sdk', return_value=mock_sdk):
+            with patch('orchestrator.sdk.get_orchestrator_id', return_value="test-orch"):
+                with patch('orchestrator.config.get_queue_limits', return_value={"max_claimed": 5}):
                     from orchestrator.queue_utils import claim_task
 
                     claim_task(agent_name="my-agent")
@@ -196,8 +196,8 @@ class TestCompleteTask:
         """Test completing a task via SDK."""
         mock_sdk = MagicMock()
 
-        with patch('orchestrator.queue_utils.get_sdk', return_value=mock_sdk):
-            with patch('orchestrator.queue_utils.cleanup_task_notes'):
+        with patch('orchestrator.sdk.get_sdk', return_value=mock_sdk):
+            with patch('orchestrator.task_notes.cleanup_task_notes'):
                 from orchestrator.queue_utils import complete_task
 
                 result_path = complete_task(sample_task_file, result="Task completed successfully")
@@ -225,7 +225,7 @@ class TestSubmitCompletion:
             "rejection_count": 0,
         }
 
-        with patch('orchestrator.queue_utils.get_sdk', return_value=mock_sdk):
+        with patch('orchestrator.sdk.get_sdk', return_value=mock_sdk):
             from orchestrator.queue_utils import submit_completion
 
             result_path = submit_completion(sample_task_file, commits_count=5, turns_used=30)
@@ -394,8 +394,8 @@ class TestFailTask:
         """Test failing a task via SDK."""
         mock_sdk = MagicMock()
 
-        with patch('orchestrator.queue_utils.get_sdk', return_value=mock_sdk):
-            with patch('orchestrator.queue_utils.cleanup_task_worktree'):
+        with patch('orchestrator.sdk.get_sdk', return_value=mock_sdk):
+            with patch('orchestrator.git_utils.cleanup_task_worktree'):
                 from orchestrator.queue_utils import fail_task
 
                 result_path = fail_task(sample_task_file, error="Something went wrong")
@@ -413,8 +413,8 @@ class TestFailTask:
         long_error = "X" * 10_000
         mock_sdk = MagicMock()
 
-        with patch('orchestrator.queue_utils.get_sdk', return_value=mock_sdk):
-            with patch('orchestrator.queue_utils.cleanup_task_worktree'):
+        with patch('orchestrator.sdk.get_sdk', return_value=mock_sdk):
+            with patch('orchestrator.git_utils.cleanup_task_worktree'):
                 from orchestrator.queue_utils import fail_task
 
                 result_path = fail_task(sample_task_file, error=long_error)
@@ -440,7 +440,7 @@ class TestRejectTask:
         """Test rejecting a task via SDK."""
         mock_sdk = MagicMock()
 
-        with patch('orchestrator.queue_utils.get_sdk', return_value=mock_sdk):
+        with patch('orchestrator.sdk.get_sdk', return_value=mock_sdk):
             from orchestrator.queue_utils import reject_task
 
             result_path = reject_task(
@@ -466,7 +466,7 @@ class TestRetryTask:
         """Test retrying a failed task via SDK."""
         mock_sdk = MagicMock()
 
-        with patch('orchestrator.queue_utils.get_sdk', return_value=mock_sdk):
+        with patch('orchestrator.sdk.get_sdk', return_value=mock_sdk):
             from orchestrator.queue_utils import retry_task
 
             result_path = retry_task(sample_task_file)
@@ -495,8 +495,8 @@ class TestGetQueueStatus:
 
         mock_sdk.tasks.list.side_effect = mock_list_tasks
 
-        with patch('orchestrator.queue_utils.get_sdk', return_value=mock_sdk):
-            with patch('orchestrator.queue_utils.get_queue_limits', return_value={"max_incoming": 20, "max_claimed": 5, "max_open_prs": 10}):
+        with patch('orchestrator.sdk.get_sdk', return_value=mock_sdk):
+            with patch('orchestrator.config.get_queue_limits', return_value={"max_incoming": 20, "max_claimed": 5, "max_open_prs": 10}):
                 with patch('orchestrator.queue_utils.count_open_prs', return_value=2):
                     with patch('orchestrator.queue_utils.list_projects', return_value=[]):
                         from orchestrator.queue_utils import get_queue_status
@@ -523,7 +523,7 @@ class TestGetTaskById:
             "queue": "incoming",
         }
 
-        with patch('orchestrator.queue_utils.get_sdk', return_value=mock_sdk):
+        with patch('orchestrator.sdk.get_sdk', return_value=mock_sdk):
             from orchestrator.queue_utils import get_task_by_id
 
             task = get_task_by_id("abc12345")
@@ -537,7 +537,7 @@ class TestGetTaskById:
         mock_sdk = MagicMock()
         mock_sdk.tasks.get.return_value = None
 
-        with patch('orchestrator.queue_utils.get_sdk', return_value=mock_sdk):
+        with patch('orchestrator.sdk.get_sdk', return_value=mock_sdk):
             from orchestrator.queue_utils import get_task_by_id
 
             task = get_task_by_id("nonexistent")
@@ -549,7 +549,7 @@ class TestBackpressure:
 
     def test_can_create_task_within_limit(self, mock_config):
         """Test can_create_task when within limits."""
-        with patch('orchestrator.queue_utils.get_queue_limits', return_value={"max_incoming": 20, "max_claimed": 5, "max_open_prs": 10}):
+        with patch('orchestrator.config.get_queue_limits', return_value={"max_incoming": 20, "max_claimed": 5, "max_open_prs": 10}):
             with patch('orchestrator.queue_utils.count_queue', return_value=5):
                 from orchestrator.queue_utils import can_create_task
 
@@ -560,7 +560,7 @@ class TestBackpressure:
 
     def test_can_create_task_queue_full(self, mock_config):
         """Test can_create_task when queue is full."""
-        with patch('orchestrator.queue_utils.get_queue_limits', return_value={"max_incoming": 20, "max_claimed": 5, "max_open_prs": 10}):
+        with patch('orchestrator.config.get_queue_limits', return_value={"max_incoming": 20, "max_claimed": 5, "max_open_prs": 10}):
             with patch('orchestrator.queue_utils.count_queue', return_value=15):
                 from orchestrator.queue_utils import can_create_task
 
@@ -571,7 +571,7 @@ class TestBackpressure:
 
     def test_can_claim_task_no_tasks(self, mock_config):
         """Test can_claim_task when no tasks available."""
-        with patch('orchestrator.queue_utils.get_queue_limits', return_value={"max_incoming": 20, "max_claimed": 5, "max_open_prs": 10}):
+        with patch('orchestrator.config.get_queue_limits', return_value={"max_incoming": 20, "max_claimed": 5, "max_open_prs": 10}):
             with patch('orchestrator.queue_utils.count_queue', side_effect=[0, 0]):
                 from orchestrator.queue_utils import can_claim_task
 
