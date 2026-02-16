@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Integration test for 2-task project lifecycle** ([TASK-1597e6f5])
+  - Tests full lifecycle: project creation, sequential task execution, worktree detachment
+  - Verifies task 1 worktree is based on correct branch (not defaulting to main)
+  - Verifies task 1 commits are pushed and visible to task 2
+  - Verifies worktrees are detached (not deleted) after task completion
+  - Uses local bare repo as origin to avoid polluting remote
+
 ### Refactored
 
 - **Refactor queue_utils.py into entity modules** ([TASK-7a393cef])
