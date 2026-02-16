@@ -1358,6 +1358,29 @@ def _register_orchestrator() -> None:
 # =============================================================================
 # Housekeeping Jobs
 # =============================================================================
+#
+# The following functions were removed during the scheduler refactor:
+#
+# - process_auto_accept_tasks(): Dead code — auto_accept feature not implemented
+#   (function body was just `return` in pre-refactor code)
+#
+# - assign_qa_checks(): Dead code — gatekeeper QA system not implemented
+#   (function body was just `return` in pre-refactor code)
+#
+# - process_gatekeeper_reviews(): Dead code — gatekeeper review system not implemented
+#   (function body was just `return` in pre-refactor code)
+#
+# - dispatch_gatekeeper_agents(): Dead code — gatekeeper agent dispatch not implemented
+#   (function body was just `return` in pre-refactor code)
+#
+# - check_stale_branches(): Dead code — branch staleness monitoring not implemented
+#   (function body was just `return` in pre-refactor code; helper functions existed
+#   but were never called)
+#
+# - check_branch_freshness(): Dead code — branch freshness checks not implemented
+#   (function body was just `return` in pre-refactor code; rebase logic was stubbed)
+#
+# Note: process_orchestrator_hooks() is still active and listed below.
 
 HOUSEKEEPING_JOBS = [
     _register_orchestrator,
