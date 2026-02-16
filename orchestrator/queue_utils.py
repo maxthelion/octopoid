@@ -12,11 +12,12 @@ Import from specific modules instead:
 
 from .sdk import get_orchestrator_id, get_sdk
 from .tasks import (
-    accept_completion, approve_and_merge, claim_task, complete_task, create_task,
-    escalate_to_planning, fail_task, find_task_by_id, get_continuation_tasks,
-    get_review_feedback, get_task_by_id, hold_task, is_task_still_valid, list_tasks,
-    mark_needs_continuation, reject_completion, reject_task, reset_task, resume_task,
-    retry_task, review_reject_task, submit_completion, unclaim_task,
+    _insert_rejection_feedback, accept_completion, approve_and_merge, claim_task,
+    complete_task, create_task, escalate_to_planning, fail_task, find_task_by_id,
+    get_continuation_tasks, get_review_feedback, get_task_by_id, hold_task,
+    is_task_still_valid, list_tasks, mark_needs_continuation, reject_completion,
+    reject_task, reset_task, resume_task, retry_task, review_reject_task,
+    submit_completion, unclaim_task,
 )
 from .projects import (
     activate_project, create_project, get_project, get_project_status,
