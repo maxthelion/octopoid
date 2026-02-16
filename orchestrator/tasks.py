@@ -133,84 +133,18 @@ def claim_task(
 
 
 def unclaim_task(task_id: str) -> dict:
-    """Return a claimed task to the incoming queue via API.
-
-    Used when a system-level error (not a task error) prevents work,
-    e.g. Claude dies instantly due to auth issues. The task is returned
-    cleanly so another agent can pick it up later.
-
-    Args:
-        task_id: Task identifier
-
-    Returns:
-        Updated task from API
-    """
+    """Return a claimed task to the incoming queue."""
     return _transition(task_id, "incoming", claimed_by=None)
 
 
 def complete_task(task_id: str) -> dict:
-    """Move a task to the done queue via API.
-
-    Note: This directly marks a task as done. For tasks requiring review,
-    use submit_completion() instead to go through the provisional queue.
-
-    Args:
-        task_id: Task identifier
-
-    Returns:
-        Updated task from API
-    """
+    """Move a task to done queue. For review flow, use submit_completion()."""
     from .task_notes import cleanup_task_notes
 
     sdk = get_sdk()
     result = sdk.tasks.accept(task_id, accepted_by="complete_task")
     cleanup_task_notes(task_id)
     return result
-
-
-def _generate_execution_notes(
-    task_info: dict,
-    commits_count: int,
-    turns_used: int | None = None,
-) -> str:
-    """Generate execution notes summarizing what was done.
-
-    Args:
-        task_info: Parsed task information
-        commits_count: Number of commits made
-        turns_used: Number of Claude turns used
-
-    Returns:
-        Execution notes string (concise summary)
-    """
-    parts = []
-
-    # Commit summary
-    if commits_count > 0:
-        parts.append(f"Created {commits_count} commit{'s' if commits_count != 1 else ''}")
-    else:
-        parts.append("No commits made")
-
-    # Turn usage
-    if turns_used:
-        parts.append(f"{turns_used} turn{'s' if turns_used != 1 else ''} used")
-
-    # Try to get commit messages from git log (if in a repo)
-    try:
-        result = subprocess.run(
-            ["git", "log", "--oneline", "-n", str(min(commits_count, 5))],
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=False,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            commit_summary = result.stdout.strip().replace("\n", "; ")
-            parts.append(f"Changes: {commit_summary}")
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        pass
-
-    return ". ".join(parts) + "."
 
 
 def submit_completion(
@@ -251,10 +185,25 @@ def submit_completion(
             accepted_by="submit_completion",
         )
 
-    # Generate execution notes
-    execution_notes = _generate_execution_notes(
-        task, commits_count, turns_used
-    )
+    # Generate execution notes inline
+    parts = []
+    if commits_count > 0:
+        parts.append(f"Created {commits_count} commit{'s' if commits_count != 1 else ''}")
+    else:
+        parts.append("No commits made")
+    if turns_used:
+        parts.append(f"{turns_used} turn{'s' if turns_used != 1 else ''} used")
+    try:
+        result = subprocess.run(
+            ["git", "log", "--oneline", "-n", str(min(commits_count, 5))],
+            capture_output=True, text=True, timeout=5, check=False,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            commit_summary = result.stdout.strip().replace("\n", "; ")
+            parts.append(f"Changes: {commit_summary}")
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+    execution_notes = ". ".join(parts) + "."
 
     # Submit via API (moves to provisional queue)
     result = sdk.tasks.submit(
@@ -346,54 +295,23 @@ def reject_completion(
 
 
 def _insert_rejection_feedback(content: str, feedback_section: str) -> str:
-    """Insert rejection feedback after the metadata block, before ## Context.
-
-    The metadata block consists of lines like ROLE:, PRIORITY:, BRANCH:, etc.
-    that appear between the title (# [TASK-...]) and the first ## heading.
-
-    On repeated rejections, any existing rejection notice is replaced so only
-    the latest feedback appears.
-
-    Args:
-        content: Original task file content
-        feedback_section: The formatted rejection notice to insert
-
-    Returns:
-        Content with rejection feedback inserted after metadata
-    """
-    # Strip any existing rejection notice section (new format)
-    content = re.sub(
-        r'\n*## Rejection Notice.*?(?=\n## |\Z)',
-        '',
-        content,
-        flags=re.DOTALL,
-    )
-
-    # Also strip old-style "## Review Feedback" sections (from before this change)
-    content = re.sub(
-        r'\n*## Review Feedback \(rejection #\d+\).*?(?=\n## |\Z)',
-        '',
-        content,
-        flags=re.DOTALL,
-    )
-
-    # Find where to insert: before the first ## heading
+    """Insert rejection feedback after metadata, before first ## heading."""
+    # Strip existing rejection notices
+    content = re.sub(r'\n*## Rejection Notice.*?(?=\n## |\Z)', '', content, flags=re.DOTALL)
+    content = re.sub(r'\n*## Review Feedback \(rejection #\d+\).*?(?=\n## |\Z)', '', content, flags=re.DOTALL)
+    # Find insertion point
     lines = content.split('\n')
     insert_idx = None
-
     for i, line in enumerate(lines):
         if line.startswith('## '):
             insert_idx = i
             break
-
     if insert_idx is not None:
         feedback_lines = feedback_section.rstrip('\n').split('\n')
         lines = lines[:insert_idx] + feedback_lines + ['', ''] + lines[insert_idx:]
     else:
-        # No ## heading found — append at the end
         lines.append('')
         lines.extend(feedback_section.rstrip('\n').split('\n'))
-
     return '\n'.join(lines)
 
 
@@ -544,31 +462,12 @@ def get_review_feedback(task_id: str) -> str | None:
 
 
 def escalate_to_planning(task_id: str, plan_id: str) -> dict:
-    """Escalate a failed task to planning.
-
-    Creates a planning task to break down the original task into micro-tasks.
-    Called when a task has exceeded max_attempts_before_planning.
-
-    Args:
-        task_id: Task identifier being escalated
-        plan_id: ID of the new planning task
-
-    Returns:
-        Updated task from API
-    """
+    """Escalate a task to planning queue."""
     return _transition(task_id, "escalated")
 
 
 def fail_task(task_id: str, error: str) -> dict:
-    """Fail a task via API (moves to failed queue).
-
-    Args:
-        task_id: Task identifier
-        error: Error message/description
-
-    Returns:
-        Updated task from API
-    """
+    """Fail a task (moves to failed queue with cleanup)."""
     error_summary = error[:200] + ("..." if len(error) > 200 else "")
     return _transition(
         task_id,
@@ -584,52 +483,18 @@ def reject_task(
     details: str | None = None,
     rejected_by: str | None = None,
 ) -> dict:
-    """Reject a task and move it to the rejected queue via API.
-
-    Use this when a task cannot or should not be completed, for example:
-    - Functionality already exists (already_implemented)
-    - Task is blocked by unmet dependencies (blocked)
-    - Task doesn't make sense or is invalid (invalid_task)
-    - Task duplicates another task (duplicate)
-    - Task is out of scope for the agent (out_of_scope)
-
-    Args:
-        task_id: Task identifier
-        reason: Rejection reason code (already_implemented, blocked, invalid_task, duplicate, out_of_scope)
-        details: Detailed explanation of why the task is being rejected
-        rejected_by: Name of the agent rejecting the task
-
-    Returns:
-        Updated task from API
-    """
+    """Reject a task (moves to rejected queue)."""
     return _transition(task_id, "rejected")
 
 
 def retry_task(task_id: str) -> dict:
-    """Retry a failed task via API (moves back to incoming).
-
-    Args:
-        task_id: Task identifier
-
-    Returns:
-        Updated task from API
-    """
+    """Retry a failed task (moves back to incoming)."""
     sdk = get_sdk()
     return sdk.tasks.update(task_id, queue="incoming", claimed_by=None, claimed_at=None)
 
 
 def reset_task(task_id: str) -> dict[str, Any]:
-    """Reset a task to incoming via API with clean state.
-
-    Args:
-        task_id: Task identifier (e.g. "9f5cda4b")
-
-    Returns:
-        Dict with 'task_id', 'action'
-
-    Raises:
-        RuntimeError: If the API update fails
-    """
+    """Reset a task to incoming via API with clean state."""
     try:
         sdk = get_sdk()
 
@@ -662,17 +527,7 @@ def reset_task(task_id: str) -> dict[str, Any]:
 
 
 def hold_task(task_id: str) -> dict[str, Any]:
-    """Park a task in the escalated queue via API so the scheduler ignores it.
-
-    Args:
-        task_id: Task identifier (e.g. "9f5cda4b")
-
-    Returns:
-        Dict with 'task_id', 'action'
-
-    Raises:
-        RuntimeError: If the API update fails
-    """
+    """Hold a task (moves to escalated queue)."""
     try:
         sdk = get_sdk()
 
@@ -709,33 +564,12 @@ def mark_needs_continuation(
     branch_name: str | None = None,
     agent_name: str | None = None,
 ) -> dict:
-    """Mark a task as needing continuation via API and move to needs_continuation queue.
-
-    Use this when an agent exits before completing work (e.g., max turns reached).
-    The task can be resumed by the same or another agent.
-
-    Args:
-        task_id: Task identifier
-        reason: Why continuation is needed (e.g., "max_turns_reached", "uncommitted_changes")
-        branch_name: Branch where work-in-progress exists
-        agent_name: Agent that was working on the task
-
-    Returns:
-        Updated task from API
-    """
+    """Mark a task as needing continuation."""
     return _transition(task_id, "needs_continuation")
 
 
 def resume_task(task_id: str, agent_name: str | None = None) -> dict:
-    """Move a task from needs_continuation back to claimed via API for resumption.
-
-    Args:
-        task_id: Task identifier
-        agent_name: Agent resuming the task
-
-    Returns:
-        Updated task from API
-    """
+    """Resume a held or continuation task."""
     sdk = get_sdk()
     orchestrator_id = get_orchestrator_id()
     return sdk.tasks.update(
@@ -747,19 +581,7 @@ def resume_task(task_id: str, agent_name: str | None = None) -> dict:
 
 
 def find_task_by_id(task_id: str, queues: list[str] | None = None) -> dict[str, Any] | None:
-    """Find a task by its ID, optionally filtered by queue state.
-
-    Fetches from the API and reads the task file from disk to populate
-    'content', just like claim_task() does.
-
-    Args:
-        task_id: Task ID to find (e.g., "9f5cda4b")
-        queues: Only return the task if it's in one of these queues
-                (e.g., ["claimed", "needs_continuation"])
-
-    Returns:
-        Task info dict (with content) or None if not found / not in specified queues
-    """
+    """Find a task by ID, optionally filtered by queue state."""
     task = get_task_by_id(task_id)
 
     if task is None:
@@ -787,14 +609,7 @@ def find_task_by_id(task_id: str, queues: list[str] | None = None) -> dict[str, 
 
 
 def get_continuation_tasks(agent_name: str | None = None) -> list[dict[str, Any]]:
-    """Get tasks that need continuation, optionally filtered by agent.
-
-    Args:
-        agent_name: Filter to tasks last worked on by this agent
-
-    Returns:
-        List of tasks needing continuation
-    """
+    """Get tasks that need continuation, optionally filtered by agent."""
     tasks = list_tasks("needs_continuation")
 
     if agent_name:
@@ -823,28 +638,7 @@ def create_task(
     checks: list[str] | None = None,
     breakdown_depth: int = 0,
 ) -> Path:
-    """Create a new task file in the specified queue.
-
-    Args:
-        title: Task title
-        role: Target role (implement, test, review, breakdown)
-        context: Background/context section content
-        acceptance_criteria: List of acceptance criteria lines, or a single
-            string (which will be split on newlines). Lines already prefixed
-            with "- [ ]" are kept as-is; bare lines get the prefix added.
-        priority: P0, P1, or P2
-        branch: Base branch to work from
-        created_by: Who created the task
-        blocked_by: Comma-separated list of task IDs that block this task
-        project_id: Optional parent project ID
-        queue: Queue to create in (default: incoming, can be 'breakdown')
-        checks: Optional list of check names that must pass before human review
-            (e.g. ['gk-testing-octopoid'])
-        breakdown_depth: Number of breakdown levels deep (0 = original task)
-
-    Returns:
-        Path to created task file
-    """
+    """Create a new task file in the specified queue."""
     task_id = uuid4().hex[:8]
     filename = f"TASK-{task_id}.md"
 
@@ -946,30 +740,13 @@ CREATED_BY: {created_by}
 
 
 def is_task_still_valid(task_id: str) -> bool:
-    """Check if a task is still valid to work on.
-
-    A task is valid if it's in an active queue (claimed or needs_continuation).
-    If it's in a terminal queue (done, failed, rejected, etc.), it should not be resumed.
-
-    Args:
-        task_id: Task ID to check
-
-    Returns:
-        True if task can still be worked on
-    """
+    """Check if a task still exists in active queues."""
     task = find_task_by_id(task_id, queues=ACTIVE_QUEUES)
     return task is not None
 
 
 def get_task_by_id(task_id: str) -> dict[str, Any] | None:
-    """Get a task by its ID from the API server.
-
-    Args:
-        task_id: Task identifier (e.g., 'abc12345')
-
-    Returns:
-        Task dict or None if not found
-    """
+    """Get a task by ID from the API."""
     try:
         sdk = get_sdk()
         task = sdk.tasks.get(task_id)
@@ -981,14 +758,7 @@ def get_task_by_id(task_id: str) -> dict[str, Any] | None:
 
 
 def list_tasks(subdir: str) -> list[dict[str, Any]]:
-    """List tasks in a queue from the API server.
-
-    Args:
-        subdir: Queue name ('incoming', 'claimed', 'done', 'failed', 'provisional')
-
-    Returns:
-        List of task dictionaries sorted by priority and creation time
-    """
+    """List all tasks in a queue."""
     try:
         sdk = get_sdk()
         tasks = sdk.tasks.list(queue=subdir)
