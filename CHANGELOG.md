@@ -16,6 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Backward compatible: legacy `agents:` format still works
   - `get_agents()` now loads type defaults from `agent.yaml` and merges with fleet overrides
   - All agent configs include `agent_dir` key pointing to the agent directory
+- Updated spawn strategies to read from agent directories (refactor-11):
+  - `get_spawn_strategy()` now reads `spawn_mode` from agent config instead of hardcoding role names
+  - `prepare_task_directory()` copies scripts from agent directory's `scripts/` folder
+  - Prompt rendering uses `prompt.md` template from agent directory
+  - `instructions.md` from agent directory is automatically included in prompt context
+  - All changes gracefully fall back to legacy hardcoded paths when `agent_dir` is not set
+  - Adding a new agent type now only requires creating a directory with `agent.yaml`, `prompt.md`, `instructions.md`, and `scripts/` - no scheduler code changes needed
 - Added `AgentContext` dataclass to scheduler for structured per-agent state management (scheduler refactor phase 2, step 1/12)
 - Extracted guard functions from scheduler agent loop into standalone, testable functions (scheduler refactor phase 2, step 2/12):
   - `guard_enabled`, `guard_not_running`, `guard_interval`, `guard_backpressure`, `guard_pre_check`, `guard_claim_task`
