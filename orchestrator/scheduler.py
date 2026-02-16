@@ -925,8 +925,15 @@ def prepare_task_directory(
     import json
     (task_dir / "task.json").write_text(json.dumps(task, indent=2))
 
-    # Copy and template scripts
-    scripts_src = Path(__file__).parent / "agent_scripts"
+    # Copy and template scripts from agent directory (fall back to legacy path)
+    agent_dir = agent_config.get("agent_dir")
+    if agent_dir and (Path(agent_dir) / "scripts").exists():
+        scripts_src = Path(agent_dir) / "scripts"
+        debug_log(f"Using scripts from agent directory: {scripts_src}")
+    else:
+        scripts_src = Path(__file__).parent / "agent_scripts"  # legacy fallback
+        debug_log(f"Using legacy scripts directory: {scripts_src}")
+
     scripts_dest = task_dir / "scripts"
     scripts_dest.mkdir(exist_ok=True)
 
@@ -959,31 +966,104 @@ def prepare_task_directory(
     ]
     (task_dir / "env.sh").write_text("\n".join(env_lines) + "\n")
 
-    # Render prompt
-    global_instructions = ""
-    gi_path = get_global_instructions_path()
-    if gi_path.exists():
-        global_instructions = gi_path.read_text()
+    # Render prompt from agent directory (fall back to legacy)
+    agent_dir = agent_config.get("agent_dir")
+    if agent_dir and (Path(agent_dir) / "prompt.md").exists():
+        # Use prompt template from agent directory
+        prompt_template_path = Path(agent_dir) / "prompt.md"
+        prompt_template = prompt_template_path.read_text()
+        debug_log(f"Using prompt template from agent directory: {prompt_template_path}")
 
-    # Get agent hooks from task
-    hooks = task.get("hooks")
-    agent_hooks = None
-    if hooks:
-        if isinstance(hooks, str):
-            agent_hooks = [
-                h for h in json.loads(hooks)
-                if h.get("type") == "agent"
-            ]
-        elif isinstance(hooks, list):
-            agent_hooks = [h for h in hooks if h.get("type") == "agent"]
+        # Load global instructions
+        global_instructions = ""
+        gi_path = get_global_instructions_path()
+        if gi_path.exists():
+            global_instructions = gi_path.read_text()
 
-    prompt = render_prompt(
-        role="implementer",
-        task=task,
-        global_instructions=global_instructions,
-        scripts_dir="../scripts",
-        agent_hooks=agent_hooks,
-    )
+        # Load instructions.md from agent directory if available
+        instructions_md_path = Path(agent_dir) / "instructions.md"
+        if instructions_md_path.exists():
+            instructions_content = instructions_md_path.read_text()
+            # Append instructions to global instructions
+            global_instructions = global_instructions + "\n\n" + instructions_content
+            debug_log(f"Included instructions.md from agent directory: {instructions_md_path}")
+
+        # Get agent hooks from task
+        hooks = task.get("hooks")
+        agent_hooks = None
+        if hooks:
+            if isinstance(hooks, str):
+                agent_hooks = [
+                    h for h in json.loads(hooks)
+                    if h.get("type") == "agent"
+                ]
+            elif isinstance(hooks, list):
+                agent_hooks = [h for h in hooks if h.get("type") == "agent"]
+
+        # Build required_steps section
+        required_steps = ""
+        if agent_hooks:
+            lines = ["## Required Steps Before Finishing", ""]
+            lines.append("You must complete these steps before calling finish:")
+            for i, hook in enumerate(agent_hooks, 1):
+                name = hook["name"]
+                if name == "run_tests":
+                    lines.append(f"{i}. Run tests: `../scripts/run-tests`")
+                elif name == "create_pr":
+                    lines.append(f"{i}. Submit PR: `../scripts/submit-pr`")
+                elif name == "rebase_on_main":
+                    lines.append(
+                        f"{i}. Rebase on main: "
+                        "`git fetch origin main && git rebase origin/main`"
+                    )
+                else:
+                    lines.append(f"{i}. {name}")
+            required_steps = "\n".join(lines)
+
+        # Perform template substitution
+        from string import Template
+        template = Template(prompt_template)
+        prompt = template.safe_substitute(
+            task_id=task.get("id", "unknown"),
+            task_title=task.get("title", "Untitled"),
+            task_content=task.get("content", ""),
+            task_priority=task.get("priority", "P2"),
+            task_branch=task.get("branch") or get_main_branch(),
+            task_type=task.get("type", ""),
+            scripts_dir="../scripts",
+            global_instructions=global_instructions,
+            required_steps=required_steps,
+            review_section="",
+            continuation_section="",
+        )
+    else:
+        # Legacy fallback - use render_prompt()
+        debug_log("Using legacy prompt rendering via render_prompt()")
+        global_instructions = ""
+        gi_path = get_global_instructions_path()
+        if gi_path.exists():
+            global_instructions = gi_path.read_text()
+
+        # Get agent hooks from task
+        hooks = task.get("hooks")
+        agent_hooks = None
+        if hooks:
+            if isinstance(hooks, str):
+                agent_hooks = [
+                    h for h in json.loads(hooks)
+                    if h.get("type") == "agent"
+                ]
+            elif isinstance(hooks, list):
+                agent_hooks = [h for h in hooks if h.get("type") == "agent"]
+
+        prompt = render_prompt(
+            role="implementer",
+            task=task,
+            global_instructions=global_instructions,
+            scripts_dir="../scripts",
+            agent_hooks=agent_hooks,
+        )
+
     (task_dir / "prompt.md").write_text(prompt)
 
     # Setup commands
@@ -1929,10 +2009,13 @@ def spawn_worktree(ctx: AgentContext) -> int:
 
 
 def get_spawn_strategy(ctx: AgentContext) -> Callable:
-    """Select spawn strategy based on agent type."""
-    if ctx.role == "implementer" and ctx.claimed_task:
+    """Select spawn strategy based on agent config."""
+    spawn_mode = ctx.agent_config.get("spawn_mode", "worktree")
+    is_lightweight = ctx.agent_config.get("lightweight", False)
+
+    if spawn_mode == "scripts" and ctx.claimed_task:
         return spawn_implementer
-    if ctx.agent_config.get("lightweight", False):
+    if is_lightweight:
         return spawn_lightweight
     return spawn_worktree
 
