@@ -57,14 +57,14 @@ def isolate_from_production():
     """Ensure get_sdk() always resolves to the local test server.
 
     The env var is already set at module level, but this fixture also
-    clears the cached SDK inside queue_utils so any prior import cannot
+    clears the cached SDK inside the sdk module so any prior import cannot
     leak a production SDK into test code.
     """
-    import orchestrator.queue_utils as qu
+    import orchestrator.sdk as sdk_module
 
     # Force-clear the cached SDK so get_sdk() re-initialises with env var
-    old_sdk = qu._sdk
-    qu._sdk = None
+    old_sdk = sdk_module._sdk
+    sdk_module._sdk = None
 
     # Double-check env var is still pointing at test server
     assert os.environ.get("OCTOPOID_SERVER_URL") == TEST_SERVER_URL
@@ -72,7 +72,7 @@ def isolate_from_production():
     yield
 
     # Restore original state
-    qu._sdk = old_sdk
+    sdk_module._sdk = old_sdk
     if _ORIGINAL_SERVER_URL is None:
         os.environ.pop("OCTOPOID_SERVER_URL", None)
     else:
