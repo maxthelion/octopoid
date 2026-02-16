@@ -239,8 +239,9 @@ def create_task_worktree(task: dict) -> Path:
     if branch_exists_locally:
         # Branch exists locally (possibly checked out elsewhere)
         # Use existing branch as start point without -b flag
+        # Use --force to allow checking out the same branch in multiple worktrees
         run_git(
-            ["worktree", "add", str(worktree_path), branch],
+            ["worktree", "add", "--force", str(worktree_path), branch],
             cwd=parent_repo,
         )
     elif branch_exists_on_origin:
