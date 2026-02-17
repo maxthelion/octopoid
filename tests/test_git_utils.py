@@ -617,3 +617,185 @@ class TestGetSubmoduleStatus:
         assert result["exists"] is True
         assert result["branch"] == ""
         assert result["commits_ahead"] == 0
+
+
+class TestCreateTaskWorktree:
+    """Tests for create_task_worktree branch mismatch detection."""
+
+    def _make_worktree(self, path: Path) -> None:
+        """Create a fake valid worktree directory."""
+        path.mkdir(parents=True)
+        (path / ".git").write_text("gitdir: ...")
+
+    def test_reuses_existing_worktree_on_correct_branch(self, temp_dir):
+        """Existing worktree is reused when it's based on the correct branch."""
+        from orchestrator.git_utils import create_task_worktree
+
+        task = {"id": "abc12345", "branch": "main"}
+        worktree_path = temp_dir / "tasks" / "abc12345" / "worktree"
+        self._make_worktree(worktree_path)
+
+        def mock_run_git(args, cwd=None, check=True):
+            result = MagicMock()
+            result.returncode = 0
+            result.stdout = "abc123def456\n"
+            return result
+
+        with patch('orchestrator.git_utils.find_parent_project', return_value=temp_dir), \
+             patch('orchestrator.git_utils.get_task_worktree_path', return_value=worktree_path), \
+             patch('orchestrator.git_utils.run_git', side_effect=mock_run_git) as mock_git:
+
+            result = create_task_worktree(task)
+
+            assert result == worktree_path
+            # Should NOT have called worktree add (reused existing)
+            add_calls = [c for c in mock_git.call_args_list if c[0][0][:2] == ["worktree", "add"]]
+            assert len(add_calls) == 0
+
+    def test_recreates_worktree_on_branch_mismatch(self, temp_dir):
+        """Existing worktree is deleted and recreated when based on wrong branch."""
+        from orchestrator.git_utils import create_task_worktree
+
+        task = {"id": "abc12345", "branch": "feature/new-branch"}
+        worktree_path = temp_dir / "tasks" / "abc12345" / "worktree"
+        self._make_worktree(worktree_path)
+
+        call_log = []
+
+        def mock_run_git(args, cwd=None, check=True):
+            call_log.append(args[:])
+            result = MagicMock()
+            result.stdout = "abc123def456\n"
+
+            if args[0] == "rev-parse" and "--verify" in args:
+                # Both verify calls succeed
+                result.returncode = 0
+            elif args == ["rev-parse", "HEAD"]:
+                result.returncode = 0
+                result.stdout = "oldcommit111\n"
+            elif args[0] == "merge-base" and "--is-ancestor" in args:
+                # origin/feature/new-branch is NOT ancestor of old worktree HEAD
+                result.returncode = 1
+            elif args[0] == "worktree" and args[1] == "remove":
+                # Remove the worktree directory to simulate actual removal
+                import shutil
+                if worktree_path.exists():
+                    shutil.rmtree(worktree_path)
+                result.returncode = 0
+            elif args[0] == "worktree" and args[1] == "prune":
+                result.returncode = 0
+            elif args == ["fetch", "origin"]:
+                result.returncode = 0
+            elif args[0] == "worktree" and args[1] == "add":
+                # Simulate creating the worktree directory
+                worktree_path.mkdir(parents=True, exist_ok=True)
+                result.returncode = 0
+            else:
+                result.returncode = 0
+            return result
+
+        with patch('orchestrator.git_utils.find_parent_project', return_value=temp_dir), \
+             patch('orchestrator.git_utils.get_task_worktree_path', return_value=worktree_path), \
+             patch('orchestrator.git_utils.run_git', side_effect=mock_run_git):
+
+            result = create_task_worktree(task)
+
+            assert result == worktree_path
+            # Worktree remove must have been called
+            remove_calls = [c for c in call_log if c[:2] == ["worktree", "remove"]]
+            assert len(remove_calls) == 1
+            # Worktree add must have been called to recreate
+            add_calls = [c for c in call_log if c[:2] == ["worktree", "add"]]
+            assert len(add_calls) == 1
+
+    def test_logs_mismatch_message(self, temp_dir, capsys):
+        """Branch mismatch logs a clear debug message."""
+        from orchestrator.git_utils import create_task_worktree
+
+        task = {"id": "abc12345", "branch": "feature/correct-branch"}
+        worktree_path = temp_dir / "tasks" / "abc12345" / "worktree"
+        self._make_worktree(worktree_path)
+
+        def mock_run_git(args, cwd=None, check=True):
+            result = MagicMock()
+            result.stdout = "somecommit\n"
+            if args[0] == "merge-base" and "--is-ancestor" in args:
+                result.returncode = 1  # mismatch
+            elif args[0] == "worktree" and args[1] == "remove":
+                import shutil
+                if worktree_path.exists():
+                    shutil.rmtree(worktree_path)
+                result.returncode = 0
+            else:
+                result.returncode = 0
+            return result
+
+        with patch('orchestrator.git_utils.find_parent_project', return_value=temp_dir), \
+             patch('orchestrator.git_utils.get_task_worktree_path', return_value=worktree_path), \
+             patch('orchestrator.git_utils.run_git', side_effect=mock_run_git):
+
+            create_task_worktree(task)
+
+        captured = capsys.readouterr()
+        assert "branch mismatch" in captured.out.lower()
+        assert "abc12345" in captured.out
+        assert "feature/correct-branch" in captured.out
+
+    def test_does_not_check_branch_for_new_worktree(self, temp_dir):
+        """Branch check is skipped when no worktree exists yet."""
+        from orchestrator.git_utils import create_task_worktree
+
+        task = {"id": "newtask1", "branch": "main"}
+        worktree_path = temp_dir / "tasks" / "newtask1" / "worktree"
+        # Don't create worktree — it doesn't exist yet
+
+        def mock_run_git(args, cwd=None, check=True):
+            result = MagicMock()
+            result.returncode = 0
+            result.stdout = "abc123\n"
+            if args[:2] == ["worktree", "add"]:
+                worktree_path.mkdir(parents=True, exist_ok=True)
+            return result
+
+        with patch('orchestrator.git_utils.find_parent_project', return_value=temp_dir), \
+             patch('orchestrator.git_utils.get_task_worktree_path', return_value=worktree_path), \
+             patch('orchestrator.git_utils.run_git', side_effect=mock_run_git) as mock_git:
+
+            result = create_task_worktree(task)
+
+            assert result == worktree_path
+            # merge-base should NOT have been called (no existing worktree to check)
+            merge_base_calls = [
+                c for c in mock_git.call_args_list
+                if c[0][0][:2] == ["merge-base"]
+            ]
+            assert len(merge_base_calls) == 0
+
+    def test_treats_missing_origin_branch_as_match(self, temp_dir):
+        """If origin/<branch> doesn't exist, existing worktree is kept."""
+        from orchestrator.git_utils import create_task_worktree
+
+        task = {"id": "abc12345", "branch": "nonexistent-branch"}
+        worktree_path = temp_dir / "tasks" / "abc12345" / "worktree"
+        self._make_worktree(worktree_path)
+
+        def mock_run_git(args, cwd=None, check=True):
+            result = MagicMock()
+            result.stdout = "abc123\n"
+            if args[:2] == ["rev-parse", "--verify"]:
+                # origin/nonexistent-branch doesn't exist
+                result.returncode = 1
+            else:
+                result.returncode = 0
+            return result
+
+        with patch('orchestrator.git_utils.find_parent_project', return_value=temp_dir), \
+             patch('orchestrator.git_utils.get_task_worktree_path', return_value=worktree_path), \
+             patch('orchestrator.git_utils.run_git', side_effect=mock_run_git) as mock_git:
+
+            result = create_task_worktree(task)
+
+            assert result == worktree_path
+            # Should not recreate the worktree
+            add_calls = [c for c in mock_git.call_args_list if c[0][0][:2] == ["worktree", "add"]]
+            assert len(add_calls) == 0

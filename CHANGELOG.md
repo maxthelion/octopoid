@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Detect and fix worktree branch mismatches in scheduler** ([TASK-a4d02a1c])
+  - `create_task_worktree()` now checks if an existing worktree is based on the correct branch before reusing it
+  - If `origin/<branch>` is not an ancestor of the worktree HEAD, the worktree is deleted and recreated from the correct branch
+  - Branch mismatch is logged clearly via `print()` for debug visibility
+  - Added `_worktree_branch_matches()` helper that uses `git merge-base --is-ancestor`
+  - Treats missing remote branches as a match to avoid spurious deletions
+  - Added 5 new unit tests covering match, mismatch, logging, new worktree, and missing origin cases
+
 - **Simplify create_task_worktree: remove dead ancestry logic** ([TASK-3288d983])
   - Removed obsolete branch ancestry checking (ls-remote, merge-base --is-ancestor)
   - Removed remote and local branch deletion logic (git push origin --delete, git branch -D)
