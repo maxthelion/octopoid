@@ -136,6 +136,13 @@ def check_backpressure_for_role(role: str) -> tuple[bool, str]:
             return False, "no_provisional_tasks"
         return True, ""
 
+    # Gatekeeper — checks provisional queue
+    if role == "gatekeeper":
+        count = count_queue("provisional")
+        if count == 0:
+            return False, "no_provisional_tasks"
+        return True, ""
+
     # No check defined for this role, allow
     return True, ""
 
@@ -177,6 +184,41 @@ def guard_pre_check(ctx: AgentContext) -> tuple[bool, str]:
     return (True, "")
 
 
+def guard_claim_task(ctx: AgentContext) -> tuple[bool, str]:
+    """Claim a task for scripts-mode agents (sets ctx.claimed_task).
+
+    Only active for agents with spawn_mode=scripts.
+    Reads claim_from from agent config (default: 'incoming').
+    For gatekeeper agents, claim_from should be 'provisional'.
+
+    Args:
+        ctx: AgentContext containing agent config
+
+    Returns:
+        (should_proceed, reason_if_blocked)
+    """
+    spawn_mode = ctx.agent_config.get("spawn_mode", "worktree")
+    if spawn_mode != "scripts":
+        # Not a scripts-mode agent — skip claim, let the role module claim
+        return (True, "")
+
+    claim_from = ctx.agent_config.get("claim_from", "incoming")
+    type_filter = ctx.agent_config.get("type_filter")
+
+    task = claim_and_prepare_task(
+        agent_name=ctx.agent_name,
+        role=ctx.role,
+        type_filter=type_filter,
+        claim_from=claim_from,
+    )
+
+    if task is None:
+        return (False, "no_task_to_claim")
+
+    ctx.claimed_task = task
+    return (True, "")
+
+
 # Guard chain: cheapest checks first, expensive checks last
 AGENT_GUARDS = [
     guard_enabled,
@@ -184,6 +226,7 @@ AGENT_GUARDS = [
     guard_interval,
     guard_backpressure,
     guard_pre_check,
+    guard_claim_task,
 ]
 
 
@@ -410,7 +453,12 @@ def check_continuation_for_agent(agent_name: str) -> dict | None:
     return None
 
 
-def claim_and_prepare_task(agent_name: str, role: str, type_filter: str | None = None) -> dict | None:
+def claim_and_prepare_task(
+    agent_name: str,
+    role: str,
+    type_filter: str | None = None,
+    claim_from: str = "incoming",
+) -> dict | None:
     """Claim a task and write it to the agent's runtime dir.
 
     Checks for continuation work first, then tries to claim a fresh task.
@@ -421,16 +469,24 @@ def claim_and_prepare_task(agent_name: str, role: str, type_filter: str | None =
         agent_name: Name of the agent
         role: Agent role (e.g. 'implement')
         type_filter: Only claim tasks with this type (from agent config)
+        claim_from: Queue to claim from (default: 'incoming'). Gatekeeper uses 'provisional'.
 
     Returns:
         Task dict if work is available, None otherwise
     """
-    # 1. Check for continuation work
-    task = check_continuation_for_agent(agent_name)
+    # 1. Check for continuation work (only for incoming queue claims)
+    task = None
+    if claim_from == "incoming":
+        task = check_continuation_for_agent(agent_name)
 
     # 2. If no continuation, claim a fresh task
     if task is None:
-        task = queue_utils.claim_task(role_filter=role, agent_name=agent_name, type_filter=type_filter)
+        task = queue_utils.claim_task(
+            role_filter=role,
+            agent_name=agent_name,
+            type_filter=type_filter,
+            from_queue=claim_from,
+        )
 
     if task is None:
         return None
@@ -1050,6 +1106,108 @@ def _handle_continuation_outcome(sdk, task_id: str, agent_name: str, current_que
         debug_log(f"Task {task_id}: unexpected queue {current_queue} for continuation outcome")
 
 
+def handle_gatekeeper_result(task_id: str, agent_name: str, task_dir: Path) -> None:
+    """Handle the result of a gatekeeper agent run.
+
+    The gatekeeper writes result.json with:
+      {"status": "success", "decision": "approve"/"reject", "comment": "<markdown>"}
+    or on failure:
+      {"status": "failure", "message": "<reason>"}
+
+    Args:
+        task_id: Task identifier
+        agent_name: Name of the gatekeeper agent
+        task_dir: Path to the task directory containing result.json
+    """
+    import json
+
+    result_path = task_dir / "result.json"
+    if not result_path.exists():
+        debug_log(f"Gatekeeper {agent_name}: no result.json for {task_id}, returning to incoming")
+        try:
+            sdk = queue_utils.get_sdk()
+            task = sdk.tasks.get(task_id)
+            if task and task.get("queue") == "provisional":
+                sdk.tasks.reject(task_id, reason="Gatekeeper produced no result", rejected_by="gatekeeper")
+        except Exception as e:
+            debug_log(f"Gatekeeper reject failed for {task_id}: {e}")
+        return
+
+    try:
+        result = json.loads(result_path.read_text())
+    except json.JSONDecodeError:
+        debug_log(f"Gatekeeper {agent_name}: invalid result.json for {task_id}")
+        result = {"status": "failure", "message": "Invalid result.json"}
+
+    status = result.get("status")
+    decision = result.get("decision")
+    comment = result.get("comment", "")
+
+    debug_log(f"Gatekeeper {agent_name}: task={task_id} status={status} decision={decision}")
+
+    try:
+        sdk = queue_utils.get_sdk()
+
+        # Fetch current task state
+        task = sdk.tasks.get(task_id)
+        if not task:
+            debug_log(f"Gatekeeper: task {task_id} not found on server, skipping")
+            return
+
+        current_queue = task.get("queue", "unknown")
+        pr_number = task.get("pr_number")
+
+        if status == "failure":
+            # Agent couldn't complete review — return task to incoming for retry
+            debug_log(f"Gatekeeper: review failed for {task_id}, returning to incoming")
+            message = result.get("message", "Gatekeeper could not complete review")
+            if current_queue == "provisional":
+                sdk.tasks.reject(task_id, reason=message, rejected_by="gatekeeper")
+            return
+
+        # Post review comment to PR if we have one
+        if pr_number and comment:
+            try:
+                from .pr_utils import add_pr_comment
+                add_pr_comment(int(pr_number), comment)
+                debug_log(f"Gatekeeper: posted review comment to PR #{pr_number}")
+            except Exception as e:
+                debug_log(f"Gatekeeper: failed to post PR comment: {e}")
+
+        if decision == "approve":
+            debug_log(f"Gatekeeper: approving task {task_id}")
+            try:
+                queue_utils.approve_and_merge(task_id)
+                print(f"[{datetime.now().isoformat()}] Gatekeeper approved task {task_id}")
+            except Exception as e:
+                debug_log(f"Gatekeeper: approve_and_merge failed for {task_id}: {e}")
+                # Fallback: accept via SDK directly
+                sdk.tasks.accept(task_id, accepted_by="gatekeeper")
+
+        elif decision == "reject":
+            debug_log(f"Gatekeeper: rejecting task {task_id}")
+            if current_queue == "provisional":
+                reason = comment or "Rejected by gatekeeper"
+                sdk.tasks.reject(
+                    task_id,
+                    reason=reason,
+                    rejected_by="gatekeeper",
+                )
+                print(f"[{datetime.now().isoformat()}] Gatekeeper rejected task {task_id}")
+
+        else:
+            debug_log(f"Gatekeeper: unknown decision '{decision}' for {task_id}, rejecting back to incoming")
+            if current_queue == "provisional":
+                sdk.tasks.reject(
+                    task_id,
+                    reason=f"Gatekeeper produced unknown decision: {decision}",
+                    rejected_by="gatekeeper",
+                )
+
+    except Exception as e:
+        debug_log(f"Error handling gatekeeper result for {task_id}: {e}")
+
+
 def handle_agent_result(task_id: str, agent_name: str, task_dir: Path) -> None:
     """Handle the result of a script-based agent run.
 
@@ -1197,10 +1355,16 @@ def check_and_update_finished_agents() -> None:
                 if state.extra.get("agent_mode") == "scripts" and state.extra.get("task_dir"):
                     task_dir_str = state.extra["task_dir"]
                     current_task = state.extra.get("current_task_id", "")
+                    agent_role = state.extra.get("agent_role", "")
                     if current_task:
-                        handle_agent_result(
-                            current_task, agent_name, Path(task_dir_str)
-                        )
+                        if agent_role == "gatekeeper":
+                            handle_gatekeeper_result(
+                                current_task, agent_name, Path(task_dir_str)
+                            )
+                        else:
+                            handle_agent_result(
+                                current_task, agent_name, Path(task_dir_str)
+                            )
 
                 print(f"[{datetime.now().isoformat()}] Agent {agent_name} finished (exit code: {exit_code})")
 
@@ -1433,6 +1597,7 @@ def spawn_implementer(ctx: AgentContext) -> int:
 
     new_state = mark_started(ctx.state, pid)
     new_state.extra["agent_mode"] = "scripts"
+    new_state.extra["agent_role"] = ctx.role
     new_state.extra["task_dir"] = str(task_dir)
     new_state.extra["current_task_id"] = ctx.claimed_task["id"]
     save_state(new_state, ctx.state_path)

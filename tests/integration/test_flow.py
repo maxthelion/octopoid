@@ -292,3 +292,53 @@ class TestTaskLifecycleFlow:
             assert claimed_in_a is not None
         finally:
             scope_b_sdk.close()
+
+    def test_gatekeeper_approve_flow(self, scoped_sdk, orchestrator_id):
+        """Gatekeeper claims from provisional queue and approves: provisional → done."""
+        # Create task and advance to provisional
+        task_id = create_provisional(scoped_sdk, orchestrator_id)
+
+        # Gatekeeper claims from provisional queue using queue='provisional'
+        reviewed = scoped_sdk.tasks.claim(
+            orchestrator_id=orchestrator_id,
+            agent_name="gatekeeper-1",
+            role_filter="implement",
+            queue="provisional",
+        )
+        assert reviewed is not None
+        assert reviewed["id"] == task_id
+        # Task stays in provisional (claim_for_review transition)
+        assert reviewed["queue"] == "provisional"
+
+        # Gatekeeper approves: provisional → done
+        accepted = scoped_sdk.tasks.accept(task_id, accepted_by="gatekeeper-1")
+        assert accepted["queue"] == "done"
+
+    def test_gatekeeper_reject_flow(self, scoped_sdk, orchestrator_id):
+        """Gatekeeper claims from provisional queue and rejects: provisional → incoming."""
+        # Create task and advance to provisional
+        task_id = create_provisional(scoped_sdk, orchestrator_id)
+
+        # Gatekeeper claims from provisional queue
+        reviewed = scoped_sdk.tasks.claim(
+            orchestrator_id=orchestrator_id,
+            agent_name="gatekeeper-1",
+            role_filter="implement",
+            queue="provisional",
+        )
+        assert reviewed is not None
+        assert reviewed["id"] == task_id
+        assert reviewed["queue"] == "provisional"
+
+        # Gatekeeper rejects: provisional → incoming
+        rejected = scoped_sdk.tasks.reject(task_id, reason="Tests are failing")
+        assert rejected["queue"] == "incoming"
+
+        # Task should be claimable again by implementer
+        reclaimed = scoped_sdk.tasks.claim(
+            orchestrator_id=orchestrator_id,
+            agent_name="implementer-1",
+            role_filter="implement",
+        )
+        assert reclaimed is not None
+        assert reclaimed["id"] == task_id
