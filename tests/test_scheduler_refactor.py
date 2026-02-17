@@ -22,9 +22,11 @@ from orchestrator.scheduler import (
     AGENT_GUARDS,
     HOUSEKEEPING_JOBS,
     AgentContext,
+    _resolve_type_filter,
     evaluate_agent,
     get_spawn_strategy,
     guard_backpressure,
+    guard_claim_task,
     guard_enabled,
     guard_interval,
     guard_not_running,
@@ -550,6 +552,207 @@ class TestGetSpawnStrategy:
         strategy = get_spawn_strategy(ctx)
 
         assert strategy == spawn_worktree
+
+
+# =============================================================================
+# _resolve_type_filter Tests
+# =============================================================================
+
+
+class TestResolveTypeFilter:
+    """Test _resolve_type_filter helper."""
+
+    def test_single_item_list(self):
+        """Test that a single-item list returns the item itself."""
+        result = _resolve_type_filter(["feature"])
+        assert result == "feature"
+
+    def test_multi_item_list(self):
+        """Test that a multi-item list returns comma-joined string."""
+        result = _resolve_type_filter(["feature", "bugfix"])
+        assert result == "feature,bugfix"
+
+    def test_string_passthrough(self):
+        """Test that a string is returned as-is."""
+        result = _resolve_type_filter("feature")
+        assert result == "feature"
+
+    def test_none_passthrough(self):
+        """Test that None is returned as-is."""
+        result = _resolve_type_filter(None)
+        assert result is None
+
+
+# =============================================================================
+# guard_claim_task Tests
+# =============================================================================
+
+
+class TestGuardClaimTask:
+    """Test guard_claim_task function."""
+
+    def test_non_claimable_role_passes(self, tmp_path):
+        """Test that non-claimable roles pass through without claiming."""
+        state_path = tmp_path / "state.json"
+        ctx = AgentContext(
+            agent_config={},
+            agent_name="test-agent",
+            role="breakdown",
+            interval=300,
+            state=AgentState(),
+            state_path=state_path,
+        )
+
+        proceed, reason = guard_claim_task(ctx)
+
+        assert proceed is True
+        assert reason == ""
+        assert ctx.claimed_task is None
+
+    def test_claimable_role_claims_task(self, tmp_path):
+        """Test that claimable role claims a task and passes."""
+        state_path = tmp_path / "state.json"
+        ctx = AgentContext(
+            agent_config={"spawn_mode": "scripts"},
+            agent_name="impl-agent",
+            role="implementer",
+            interval=300,
+            state=AgentState(),
+            state_path=state_path,
+        )
+        task = {"id": "task-abc", "title": "Test task"}
+
+        with patch("orchestrator.scheduler.claim_and_prepare_task", return_value=task) as mock_claim:
+            proceed, reason = guard_claim_task(ctx)
+
+        assert proceed is True
+        assert reason == ""
+        assert ctx.claimed_task == task
+        mock_claim.assert_called_once_with("impl-agent", "implement", type_filter=None)
+
+    def test_claimable_role_blocks_when_no_task(self, tmp_path):
+        """Test that claimable role blocks when no task is available."""
+        state_path = tmp_path / "state.json"
+        ctx = AgentContext(
+            agent_config={},
+            agent_name="impl-agent",
+            role="implementer",
+            interval=300,
+            state=AgentState(),
+            state_path=state_path,
+        )
+
+        with patch("orchestrator.scheduler.claim_and_prepare_task", return_value=None):
+            proceed, reason = guard_claim_task(ctx)
+
+        assert proceed is False
+        assert reason == "no task available"
+        assert ctx.claimed_task is None
+
+    def test_claim_task_passes_type_filter(self, tmp_path):
+        """Test that allowed_task_types config is passed as type_filter."""
+        state_path = tmp_path / "state.json"
+        ctx = AgentContext(
+            agent_config={"allowed_task_types": ["feature", "bugfix"]},
+            agent_name="impl-agent",
+            role="implementer",
+            interval=300,
+            state=AgentState(),
+            state_path=state_path,
+        )
+        task = {"id": "task-xyz"}
+
+        with patch("orchestrator.scheduler.claim_and_prepare_task", return_value=task) as mock_claim:
+            guard_claim_task(ctx)
+
+        mock_claim.assert_called_once_with("impl-agent", "implement", type_filter="feature,bugfix")
+
+    def test_orchestrator_impl_role_claims_task(self, tmp_path):
+        """Test that orchestrator_impl role also claims tasks."""
+        state_path = tmp_path / "state.json"
+        ctx = AgentContext(
+            agent_config={},
+            agent_name="orch-impl-agent",
+            role="orchestrator_impl",
+            interval=300,
+            state=AgentState(),
+            state_path=state_path,
+        )
+        task = {"id": "task-orch"}
+
+        with patch("orchestrator.scheduler.claim_and_prepare_task", return_value=task) as mock_claim:
+            proceed, reason = guard_claim_task(ctx)
+
+        assert proceed is True
+        mock_claim.assert_called_once_with("orch-impl-agent", "orchestrator_impl", type_filter=None)
+
+
+# =============================================================================
+# Integration Tests
+# =============================================================================
+
+
+class TestGuardClaimTaskIntegration:
+    """Integration tests for guard_claim_task in the full guard chain."""
+
+    def test_agent_guards_includes_claim_task(self):
+        """Test that AGENT_GUARDS contains guard_claim_task."""
+        guard_names = [g.__name__ for g in AGENT_GUARDS]
+        assert "guard_claim_task" in guard_names
+
+    def test_guard_claim_task_is_last_guard(self):
+        """Test that guard_claim_task is the last guard in the chain."""
+        assert AGENT_GUARDS[-1] == guard_claim_task
+
+    def test_spawn_strategy_returns_implementer_when_claimed(self, tmp_path):
+        """Test that spawn strategy returns spawn_implementer when task is claimed."""
+        state_path = tmp_path / "state.json"
+        ctx = AgentContext(
+            agent_config={"spawn_mode": "scripts"},
+            agent_name="impl-agent",
+            role="implementer",
+            interval=300,
+            state=AgentState(),
+            state_path=state_path,
+            claimed_task={"id": "task-123"},
+        )
+
+        strategy = get_spawn_strategy(ctx)
+        assert strategy == spawn_implementer
+
+    def test_implementer_guard_chain_claims_and_spawns(self, tmp_path):
+        """Test full guard chain for implementer: claim task then get spawn_implementer strategy."""
+        state_path = tmp_path / "state.json"
+        task = {"id": "task-456", "title": "Feature implementation"}
+        ctx = AgentContext(
+            agent_config={"spawn_mode": "scripts"},
+            agent_name="impl-agent",
+            role="implementer",
+            interval=300,
+            state=AgentState(),
+            state_path=state_path,
+        )
+
+        all_guards_except_claim = [
+            Mock(return_value=(True, "")),
+            Mock(return_value=(True, "")),
+            Mock(return_value=(True, "")),
+            Mock(return_value=(True, "")),
+            Mock(return_value=(True, "")),
+            guard_claim_task,
+        ]
+        for g in all_guards_except_claim[:-1]:
+            g.__name__ = "mock_guard"
+
+        with patch("orchestrator.scheduler.claim_and_prepare_task", return_value=task):
+            with patch("orchestrator.scheduler.AGENT_GUARDS", all_guards_except_claim):
+                result = evaluate_agent(ctx)
+
+        assert result is True
+        assert ctx.claimed_task == task
+        # After guard chain, spawn strategy should be implementer
+        strategy = get_spawn_strategy(ctx)
+        assert strategy == spawn_implementer
 
 
 # =============================================================================

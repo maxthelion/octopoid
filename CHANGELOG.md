@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Restore guard_claim_task deleted by d858559** ([TASK-84de2c5e])
+  - Restored `AGENT_TASK_ROLE` and `CLAIMABLE_AGENT_ROLES` constants to `orchestrator/config.py`
+  - Restored `_resolve_type_filter()` and `guard_claim_task()` to `orchestrator/scheduler.py`
+  - Added `guard_claim_task` back to `AGENT_GUARDS` as the final guard
+  - Without this guard, `ctx.claimed_task` was always `None`, preventing implementers from using the `spawn_implementer` path and causing crashes on the missing `orchestrator.roles.implementer` module
+  - Added 16 new tests covering `_resolve_type_filter`, `guard_claim_task`, and integration scenarios
+
 - **Detect and fix worktree branch mismatches in scheduler** ([TASK-a4d02a1c])
   - `create_task_worktree()` now checks if an existing worktree is based on the correct branch before reusing it
   - If `origin/<branch>` is not an ancestor of the worktree HEAD, the worktree is deleted and recreated from the correct branch

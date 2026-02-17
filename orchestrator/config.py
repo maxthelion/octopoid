@@ -61,6 +61,18 @@ TaskRole = Literal[
     "test",
 ]
 
+# Agent roles that claim tasks (role -> task role_filter)
+AGENT_TASK_ROLE: dict[str, str] = {
+    "implementer": "implement",
+    "orchestrator_impl": "orchestrator_impl",
+    "breakdown": "breakdown",
+    "reviewer": "review",
+    "tester": "test",
+}
+
+# Agent roles that claim tasks before spawning (scheduler pre-claims)
+CLAIMABLE_AGENT_ROLES: set[str] = {"implementer", "orchestrator_impl"}
+
 
 # Port allocation
 BASE_PORT = 41000
