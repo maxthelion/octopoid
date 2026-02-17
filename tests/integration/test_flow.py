@@ -296,13 +296,13 @@ class TestTaskLifecycleFlow:
     def test_gatekeeper_approve_flow(self, scoped_sdk, orchestrator_id):
         """Gatekeeper claims from provisional queue and approves: provisional → done."""
         # Create task and advance to provisional
-        task_id = create_provisional(scoped_sdk, orchestrator_id)
+        task_id = create_provisional(scoped_sdk, orchestrator_id, role="review")
 
         # Gatekeeper claims from provisional queue using queue='provisional'
         reviewed = scoped_sdk.tasks.claim(
             orchestrator_id=orchestrator_id,
             agent_name="gatekeeper-1",
-            role_filter="implement",
+            role_filter="review",
             queue="provisional",
         )
         assert reviewed is not None
@@ -317,13 +317,13 @@ class TestTaskLifecycleFlow:
     def test_gatekeeper_reject_flow(self, scoped_sdk, orchestrator_id):
         """Gatekeeper claims from provisional queue and rejects: provisional → incoming."""
         # Create task and advance to provisional
-        task_id = create_provisional(scoped_sdk, orchestrator_id)
+        task_id = create_provisional(scoped_sdk, orchestrator_id, role="review")
 
         # Gatekeeper claims from provisional queue
         reviewed = scoped_sdk.tasks.claim(
             orchestrator_id=orchestrator_id,
             agent_name="gatekeeper-1",
-            role_filter="implement",
+            role_filter="review",
             queue="provisional",
         )
         assert reviewed is not None
@@ -338,7 +338,7 @@ class TestTaskLifecycleFlow:
         reclaimed = scoped_sdk.tasks.claim(
             orchestrator_id=orchestrator_id,
             agent_name="implementer-1",
-            role_filter="implement",
+            role_filter="review",
         )
         assert reclaimed is not None
         assert reclaimed["id"] == task_id
