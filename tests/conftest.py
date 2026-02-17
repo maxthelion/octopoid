@@ -2,12 +2,10 @@
 
 import tempfile
 import shutil
-import uuid
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 import pytest
-import requests
 
 
 @pytest.fixture
@@ -173,27 +171,3 @@ def mock_sdk_for_unit_tests(request):
 
     # Reset the SDK cache after the test as well
     orchestrator.sdk._sdk = None
-
-
-_TEST_SERVER_URL = "http://localhost:9787"
-
-
-@pytest.fixture(scope="session")
-def test_server_url():
-    """Return the local test server URL, skipping if the server is not running."""
-    try:
-        response = requests.get(f"{_TEST_SERVER_URL}/api/health", timeout=2)
-        response.raise_for_status()
-    except (requests.ConnectionError, requests.Timeout, requests.HTTPError):
-        pytest.skip("Local test server is not running on port 9787")
-    return _TEST_SERVER_URL
-
-
-@pytest.fixture
-def scoped_sdk(test_server_url):
-    """SDK client scoped to this test — complete isolation via real server."""
-    from octopoid_sdk import OctopoidSDK
-    scope = f"test-{uuid.uuid4().hex[:8]}"
-    sdk = OctopoidSDK(server_url=test_server_url, scope=scope)
-    yield sdk
-    sdk.close()
