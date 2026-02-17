@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Scope support in Python SDK** ([TASK-c8953729])
+  - `OctopoidSDK` now accepts an optional `scope: str` parameter in `__init__()`
+  - Scope is auto-injected into all requests via `_request()`: GET requests receive it as a query param, POST/PATCH/DELETE as a JSON body field
+  - Backwards compatible — `scope=None` (the default) preserves existing behavior
+  - Added `test_server_url` session fixture in `tests/conftest.py` that checks if the local test server is running on port 9787 and skips otherwise
+  - Added `scoped_sdk` pytest fixture that creates an isolated `OctopoidSDK` instance with a unique UUID-based scope per test
+  - Converted `TestApproveAndMerge` to integration tests using `scoped_sdk` against the real local server; kept `TestApproveAndMergeUnit` for error-path unit tests that require mocking
+
 ### Fixed
 
 - **Detect and fix worktree branch mismatches in scheduler** ([TASK-a4d02a1c])

@@ -490,12 +490,12 @@ class TestConfigIntegration:
         assert result == {"before_submit": ["rebase_on_main", "create_pr"]}
 
 # ---------------------------------------------------------------------------
-# approve_and_merge (queue_utils integration with hooks)
+# approve_and_merge — mocked unit tests (error paths)
 # ---------------------------------------------------------------------------
 
 
-class TestApproveAndMerge:
-    """Tests for queue_utils.approve_and_merge using BEFORE_MERGE hooks."""
+class TestApproveAndMergeUnit:
+    """Unit tests for approve_and_merge covering error paths via mock SDK."""
 
     def _mock_task(self, **overrides):
         """Return a fake task dict."""
@@ -512,25 +512,6 @@ class TestApproveAndMerge:
         }
         task.update(overrides)
         return task
-
-    @patch("orchestrator.task_notes.cleanup_task_notes")
-    @patch("orchestrator.hooks.run_hooks")
-    def test_success_flow(self, mock_run_hooks, mock_cleanup, mock_sdk_for_unit_tests):
-        """Hooks pass → task accepted via SDK."""
-        mock_sdk_for_unit_tests.tasks.get.return_value = self._mock_task()
-
-        mock_run_hooks.return_value = (True, [
-            HookResult(status=HookStatus.SUCCESS, message="Merged", context={"pr_number": 55}),
-        ])
-
-        from orchestrator.queue_utils import approve_and_merge
-
-        result = approve_and_merge("TSK-100")
-
-        assert result["merged"] is True
-        assert result.get("error") is None
-        mock_sdk_for_unit_tests.tasks.accept.assert_called_once_with("TSK-100", accepted_by="scheduler")
-        mock_cleanup.assert_called_once_with("TSK-100")
 
     @patch("orchestrator.task_notes.cleanup_task_notes")
     @patch("orchestrator.hooks.run_hooks")
@@ -562,20 +543,113 @@ class TestApproveAndMerge:
         assert "error" in result
         assert "not found" in result["error"]
 
-    @patch("orchestrator.task_notes.cleanup_task_notes")
-    @patch("orchestrator.hooks.run_hooks")
-    def test_no_pr_skips_merge_still_accepts(self, mock_run_hooks, mock_cleanup, mock_sdk_for_unit_tests):
-        """Task without PR: merge_pr hook skips, task still accepted."""
-        mock_sdk_for_unit_tests.tasks.get.return_value = self._mock_task(pr_number=None, pr_url=None)
 
-        mock_run_hooks.return_value = (True, [
-            HookResult(status=HookStatus.SKIP, message="No pr_number"),
-        ])
+# ---------------------------------------------------------------------------
+# approve_and_merge — integration tests against real server (scoped_sdk)
+# ---------------------------------------------------------------------------
 
-        from orchestrator.queue_utils import approve_and_merge
 
-        result = approve_and_merge("TSK-100")
+import uuid as _uuid
 
-        assert result.get("error") is None
-        assert result["merged"] is False  # No hook set merged
-        mock_sdk_for_unit_tests.tasks.accept.assert_called_once()
+
+class TestApproveAndMerge:
+    """Integration tests for approve_and_merge against the real local server.
+
+    Uses the scoped_sdk fixture for test isolation — each test gets its own
+    scope and sees only its own data. Tests skip gracefully when the local
+    server is not running.
+    """
+
+    def _make_task_id(self) -> str:
+        return f"TSK-test-{_uuid.uuid4().hex[:8]}"
+
+    def test_success_flow(self, scoped_sdk):
+        """Full lifecycle: create → claim → submit → approve_and_merge → done."""
+        task_id = self._make_task_id()
+
+        # Create task via real server
+        scoped_sdk.tasks.create(
+            id=task_id,
+            file_path=f"/tasks/{task_id}.md",
+            title="Integration test task",
+            queue="incoming",
+        )
+
+        # Claim the task
+        claimed = scoped_sdk.tasks.claim(
+            orchestrator_id="test-orchestrator",
+            agent_name="test-agent",
+        )
+        assert claimed is not None, "No task was claimable — check scope isolation"
+        assert claimed["id"] == task_id
+
+        # Submit the task (moves to done/review queue)
+        scoped_sdk.tasks.submit(
+            task_id=task_id,
+            commits_count=1,
+            turns_used=1,
+        )
+
+        # Verify task is in submitted state before merging
+        task = scoped_sdk.tasks.get(task_id)
+        assert task is not None
+        assert task["queue"] in ("done", "review", "submitted")
+
+        # approve_and_merge uses get_sdk() internally — patch it to use our scoped SDK
+        with patch("orchestrator.tasks.get_sdk", return_value=scoped_sdk), \
+             patch("orchestrator.task_notes.cleanup_task_notes"), \
+             patch("orchestrator.hooks.run_hooks", return_value=(True, [
+                 HookResult(status=HookStatus.SKIP, message="No PR in test"),
+             ])):
+            from orchestrator.queue_utils import approve_and_merge
+            result = approve_and_merge(task_id)
+
+        assert result.get("error") is None, f"approve_and_merge failed: {result.get('error')}"
+
+        # Verify task reached 'done' on the real server
+        final = scoped_sdk.tasks.get(task_id)
+        assert final is not None
+        assert final["queue"] == "done"
+
+    def test_missing_task(self, scoped_sdk):
+        """Non-existent task ID returns an error dict."""
+        with patch("orchestrator.tasks.get_sdk", return_value=scoped_sdk):
+            from orchestrator.queue_utils import approve_and_merge
+            result = approve_and_merge("TSK-does-not-exist-xyz")
+
+        assert "error" in result
+        assert "not found" in result["error"]
+
+    def test_hook_failure_blocks_accept(self, scoped_sdk):
+        """If BEFORE_MERGE hooks fail, task is NOT accepted."""
+        task_id = self._make_task_id()
+
+        scoped_sdk.tasks.create(
+            id=task_id,
+            file_path=f"/tasks/{task_id}.md",
+            title="Hook failure test task",
+            queue="incoming",
+        )
+
+        # Claim and submit so the task is in a review-ready state
+        scoped_sdk.tasks.claim(
+            orchestrator_id="test-orchestrator",
+            agent_name="test-agent",
+        )
+        scoped_sdk.tasks.submit(task_id=task_id, commits_count=0, turns_used=1)
+
+        with patch("orchestrator.tasks.get_sdk", return_value=scoped_sdk), \
+             patch("orchestrator.task_notes.cleanup_task_notes"), \
+             patch("orchestrator.hooks.run_hooks", return_value=(False, [
+                 HookResult(status=HookStatus.FAILURE, message="PR is not mergeable"),
+             ])):
+            from orchestrator.queue_utils import approve_and_merge
+            result = approve_and_merge(task_id)
+
+        assert "error" in result
+        assert "not mergeable" in result["error"]
+
+        # Task should NOT be in 'done' — it was blocked
+        task = scoped_sdk.tasks.get(task_id)
+        assert task is not None
+        assert task["queue"] != "done"
