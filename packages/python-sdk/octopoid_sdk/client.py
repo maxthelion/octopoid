@@ -328,11 +328,13 @@ class OctopoidSDK:
         self,
         server_url: str,
         api_key: Optional[str] = None,
-        timeout: int = 30
+        timeout: int = 30,
+        scope: Optional[str] = None
     ):
         self.server_url = server_url.rstrip('/')
         self.api_key = api_key
         self.timeout = timeout
+        self.scope = scope
         self.session = requests.Session()
 
         if api_key:
@@ -352,6 +354,15 @@ class OctopoidSDK:
         json: Optional[Dict] = None
     ) -> Any:
         """Make HTTP request to API"""
+        # Auto-inject scope into requests when set
+        if self.scope:
+            if method == 'GET':
+                if params is None:
+                    params = {}
+                params.setdefault('scope', self.scope)
+            elif json is not None:
+                json.setdefault('scope', self.scope)
+
         url = f'{self.server_url}{path}'
 
         try:
