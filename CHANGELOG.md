@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Flow-driven scheduler execution** ([TASK-f584b935])
+  - Added `orchestrator/steps.py` with `STEP_REGISTRY`, `execute_steps()`, and gatekeeper steps (`post_review_comment`, `merge_pr`, `reject_with_feedback`)
+  - Added `.octopoid/flows/default.yaml` declaring the standard implementation flow with gatekeeper on the `provisional → done` transition
+  - Added `handle_agent_result_via_flow()` in scheduler replacing the hardcoded `if agent_role == "gatekeeper"` dispatch
+  - Added `get_claim_queue_for_role()` to derive claim queue from flow definition rather than agent config
+  - Updated `guard_claim_task()` to use flow-driven claim queue lookup
+  - Updated `generate_default_flow()` to match new gatekeeper-based flow structure
+  - Added `test_flow_driven_gatekeeper_claim_queue` integration test
+  - Future agent types register steps and add flow YAML without modifying the scheduler
+
 - **Flow tests for task lifecycle using scoped SDK** ([TASK-848f426f])
   - Added `tests/integration/test_flow.py` with 11 tests covering full state machine paths
   - Tests: claim with role filter, claim with type filter, requeue to incoming, double claim fails, submit without claim fails, reject preserves metadata, blocked task not claimable, unblock on accept, scope claim isolation, full happy path, reject returns to incoming
