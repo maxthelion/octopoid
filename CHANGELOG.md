@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Flow tests for task lifecycle using scoped SDK** ([TASK-848f426f])
+  - Added `tests/integration/test_flow.py` with 11 tests covering full state machine paths
+  - Tests: claim with role filter, claim with type filter, requeue to incoming, double claim fails, submit without claim fails, reject preserves metadata, blocked task not claimable, unblock on accept, scope claim isolation, full happy path, reject returns to incoming
+  - Added `tests/integration/flow_helpers.py` with reusable `create_task`, `create_and_claim`, `create_provisional` helpers
+  - All tests use `scoped_sdk` fixture for complete per-test isolation
+  - All tests skip gracefully when local server is not running
+
 ### Fixed
 
 - **Detect and fix worktree branch mismatches in scheduler** ([TASK-a4d02a1c])
