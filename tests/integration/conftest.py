@@ -151,3 +151,13 @@ def _cleanup_all_tasks(sdk):
                 pass  # already deleted
     except Exception as e:
         print(f"Warning: cleanup failed: {e}")
+
+
+@pytest.fixture
+def scoped_sdk(test_server_url):
+    """SDK client scoped to this test — complete isolation, no cleanup needed."""
+    import uuid
+    scope = f"test-{uuid.uuid4().hex[:8]}"
+    client = OctopoidSDK(server_url=test_server_url, scope=scope)
+    yield client
+    client.close()
