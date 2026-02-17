@@ -342,10 +342,10 @@ def get_default_flow_name() -> str:
 def generate_default_flow() -> str:
     """Generate the default flow YAML content.
 
-    This matches the current hardcoded behavior:
+    This matches the current behavior:
     - incoming → claimed: implementer agent claims
-    - claimed → provisional: runs rebase_on_main, run_tests, create_pr
-    - provisional → done: human approval, runs merge_pr
+    - claimed → provisional: runs push_branch, run_tests, create_pr, submit_to_server
+    - provisional → done: gatekeeper agent reviews, runs post_review_comment, merge_pr
     """
     return """name: default
 description: Standard implementation with review
@@ -355,13 +355,15 @@ transitions:
     agent: implementer
 
   "claimed -> provisional":
-    runs: [rebase_on_main, run_tests, create_pr]
+    runs: [push_branch, run_tests, create_pr, submit_to_server]
 
   "provisional -> done":
     conditions:
-      - name: human_approval
-        type: manual
-    runs: [merge_pr]
+      - name: gatekeeper_review
+        type: agent
+        agent: gatekeeper
+        on_fail: incoming
+    runs: [post_review_comment, merge_pr]
 """
 
 
