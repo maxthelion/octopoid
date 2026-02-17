@@ -14,6 +14,8 @@ from pathlib import Path
 
 
 from .config import (
+    AGENT_TASK_ROLE,
+    CLAIMABLE_AGENT_ROLES,
     find_parent_project,
     get_agents,
     get_agents_runtime_dir,
@@ -54,6 +56,22 @@ class AgentContext:
     state: AgentState
     state_path: Path
     claimed_task: dict | None = None
+
+
+def _resolve_type_filter(allowed_types: list | str | None) -> str | None:
+    """Resolve agent's allowed_task_types into a type filter string.
+
+    Args:
+        allowed_types: Value from agent config's "allowed_task_types" field
+
+    Returns:
+        str or None: Type filter to pass to claim_and_prepare_task
+    """
+    if isinstance(allowed_types, list) and len(allowed_types) == 1:
+        return allowed_types[0]
+    if isinstance(allowed_types, list):
+        return ",".join(allowed_types)
+    return allowed_types
 
 
 def guard_enabled(ctx: AgentContext) -> tuple[bool, str]:
@@ -177,13 +195,40 @@ def guard_pre_check(ctx: AgentContext) -> tuple[bool, str]:
     return (True, "")
 
 
-# Guard chain: cheapest checks first, expensive checks last
+def guard_claim_task(ctx: AgentContext) -> tuple[bool, str]:
+    """For claimable roles, claim a task.
+
+    Args:
+        ctx: AgentContext containing agent role and config
+
+    Returns:
+        (should_proceed, reason_if_blocked)
+    """
+    # Non-claimable agents skip this guard
+    if ctx.role not in CLAIMABLE_AGENT_ROLES:
+        return (True, "")
+
+    # Get task role and type filter
+    task_role = AGENT_TASK_ROLE[ctx.role]
+    allowed_types = ctx.agent_config.get("allowed_task_types")
+    type_filter = _resolve_type_filter(allowed_types)
+
+    # Try to claim a task
+    ctx.claimed_task = claim_and_prepare_task(ctx.agent_name, task_role, type_filter=type_filter)
+    if ctx.claimed_task is None:
+        return (False, "no task available")
+
+    return (True, "")
+
+
+# Guard chain: cheapest checks first, expensive checks (pre_check, claim_task) last
 AGENT_GUARDS = [
     guard_enabled,
     guard_not_running,
     guard_interval,
     guard_backpressure,
     guard_pre_check,
+    guard_claim_task,
 ]
 
 
