@@ -357,23 +357,30 @@ def get_curator_scoring() -> dict[str, float]:
 
 
 def get_agents() -> list[dict[str, Any]]:
-    """Get list of configured agents.
+    """Get list of configured agent blueprints.
 
-    Reads the 'fleet:' key from agents.yaml, which references agent directories.
+    Reads the 'agents:' dict from agents.yaml, which maps blueprint names to configs.
 
     Returns:
-        List of agent configs with merged type defaults and fleet overrides.
-        Each entry includes an 'agent_dir' key pointing to the agent directory.
+        List of agent blueprint configs with resolved 'agent_dir' and 'blueprint_name'.
+        Each entry includes:
+        - blueprint_name: the key from agents.yaml (e.g. "implementer")
+        - agent_dir: resolved path to agent scripts directory
+        - max_instances: defaults to 1
+        - All other fields from the blueprint config
     """
     config = load_agents_config()
 
-    # Fleet format only
-    fleet = config.get("fleet", [])
-    if not fleet:
+    # Blueprint map format: agents: {name: {config}}
+    agents_map = config.get("agents", {})
+    if not agents_map:
         return []
 
     agents = []
-    for entry in fleet:
+    for blueprint_name, entry in agents_map.items():
+        if not isinstance(entry, dict):
+            continue
+
         agent_type = entry.get("type", "")
         if not agent_type:
             continue
@@ -407,12 +414,16 @@ def get_agents() -> list[dict[str, Any]]:
             with open(agent_yaml) as f:
                 type_defaults = yaml.safe_load(f) or {}
 
-        # Merge: type defaults < fleet overrides
+        # Merge: type defaults < blueprint overrides
         merged = {**type_defaults, **entry}
+        merged["blueprint_name"] = blueprint_name
         merged["agent_dir"] = str(agent_dir)
 
         # Ensure 'enabled' defaults to True if not specified
         merged.setdefault("enabled", True)
+
+        # Ensure 'max_instances' defaults to 1
+        merged.setdefault("max_instances", 1)
 
         # Skip disabled agents
         if not merged.get("enabled", True):

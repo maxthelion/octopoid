@@ -91,6 +91,117 @@ def guard_not_running(ctx: AgentContext) -> tuple[bool, str]:
     return (True, "")
 
 
+# =============================================================================
+# Pool PID Tracking
+# =============================================================================
+
+
+def get_blueprint_pids_path(blueprint_name: str) -> Path:
+    """Path to running_pids.json for a blueprint."""
+    return get_agents_runtime_dir() / blueprint_name / "running_pids.json"
+
+
+def load_blueprint_pids(blueprint_name: str) -> dict[int, dict]:
+    """Load {pid: instance_info} map for a blueprint.
+
+    Args:
+        blueprint_name: The blueprint name (e.g. "implementer")
+
+    Returns:
+        Dict mapping PID (int) to instance info dict
+    """
+    pids_path = get_blueprint_pids_path(blueprint_name)
+    if not pids_path.exists():
+        return {}
+    try:
+        raw = json.loads(pids_path.read_text())
+        # JSON keys are strings; convert to int
+        return {int(k): v for k, v in raw.items()}
+    except (json.JSONDecodeError, OSError, ValueError):
+        return {}
+
+
+def save_blueprint_pids(blueprint_name: str, pids: dict[int, dict]) -> None:
+    """Save blueprint PIDs atomically (write to temp, rename).
+
+    Args:
+        blueprint_name: The blueprint name
+        pids: Dict mapping PID (int) to instance info dict
+    """
+    import os
+    import tempfile
+
+    pids_path = get_blueprint_pids_path(blueprint_name)
+    pids_path.parent.mkdir(parents=True, exist_ok=True)
+
+    fd, temp_path = tempfile.mkstemp(
+        dir=pids_path.parent, prefix=".pids_", suffix=".json"
+    )
+    try:
+        with os.fdopen(fd, "w") as f:
+            # Convert int keys to strings for JSON
+            json.dump({str(k): v for k, v in pids.items()}, f, indent=2)
+        os.rename(temp_path, pids_path)
+    except Exception:
+        try:
+            os.unlink(temp_path)
+        except OSError:
+            pass
+        raise
+
+
+def count_running_instances(blueprint_name: str) -> int:
+    """Count live PIDs for a blueprint, cleaning up stale entries.
+
+    Args:
+        blueprint_name: The blueprint name
+
+    Returns:
+        Number of currently-running instance processes
+    """
+    pids = load_blueprint_pids(blueprint_name)
+    if not pids:
+        return 0
+
+    live_pids = {pid: info for pid, info in pids.items() if is_process_running(pid)}
+
+    # Clean up stale entries if any died
+    if len(live_pids) != len(pids):
+        save_blueprint_pids(blueprint_name, live_pids)
+
+    return len(live_pids)
+
+
+def register_instance_pid(blueprint_name: str, pid: int, info: dict) -> None:
+    """Add a PID to the blueprint's tracking file.
+
+    Args:
+        blueprint_name: The blueprint name
+        pid: Process ID to register
+        info: Instance metadata (instance_name, task_id, etc.)
+    """
+    pids = load_blueprint_pids(blueprint_name)
+    pids[pid] = info
+    save_blueprint_pids(blueprint_name, pids)
+
+
+def guard_pool_capacity(ctx: AgentContext) -> tuple[bool, str]:
+    """Check if the blueprint pool has capacity for a new instance.
+
+    Args:
+        ctx: AgentContext containing agent config with blueprint_name and max_instances
+
+    Returns:
+        (should_proceed, reason_if_blocked)
+    """
+    blueprint_name = ctx.agent_config.get("blueprint_name", ctx.agent_name)
+    max_instances = ctx.agent_config.get("max_instances", 1)
+    running = count_running_instances(blueprint_name)
+    if running >= max_instances:
+        return (False, f"at capacity ({running}/{max_instances})")
+    return (True, "")
+
+
 def guard_interval(ctx: AgentContext) -> tuple[bool, str]:
     """Check if agent is due to run.
 
@@ -180,7 +291,7 @@ def guard_pre_check(ctx: AgentContext) -> tuple[bool, str]:
 # Guard chain: cheapest checks first, expensive checks last
 AGENT_GUARDS = [
     guard_enabled,
-    guard_not_running,
+    guard_pool_capacity,
     guard_interval,
     guard_backpressure,
     guard_pre_check,
@@ -1166,43 +1277,65 @@ def process_orchestrator_hooks() -> None:
         debug_log(f"Error processing orchestrator hooks: {e}")
 
 def check_and_update_finished_agents() -> None:
-    """Check for agents that have finished and update their state."""
-    agents_dir = get_agents_runtime_dir()
-    if not agents_dir.exists():
+    """Check for agents that have finished and update their state.
+
+    Reads running_pids.json per blueprint, detects finished PIDs,
+    handles results, and cleans up ephemeral instance state directories.
+    """
+    try:
+        from .config import get_agents
+        blueprints = get_agents()
+    except Exception as e:
+        debug_log(f"Failed to load agents for finished-agent check: {e}")
         return
 
-    for agent_dir in agents_dir.iterdir():
-        if not agent_dir.is_dir():
+    for blueprint in blueprints:
+        blueprint_name = blueprint.get("blueprint_name", "")
+        if not blueprint_name:
             continue
 
-        agent_name = agent_dir.name
-        state_path = get_agent_state_path(agent_name)
-        state = load_state(state_path)
+        pids = load_blueprint_pids(blueprint_name)
+        if not pids:
+            continue
 
-        if state.running and state.pid:
-            if not is_process_running(state.pid):
-                # Process has finished, read exit code from file
-                exit_code = read_agent_exit_code(agent_name)
-                if exit_code is None:
-                    # No exit code file - assume crashed
-                    exit_code = 1
-                    debug_log(f"Agent {agent_name} finished without exit code file, assuming crash")
-                else:
-                    debug_log(f"Agent {agent_name} finished with exit code {exit_code}")
+        finished_pids = {pid: info for pid, info in pids.items() if not is_process_running(pid)}
+        if not finished_pids:
+            continue
 
-                new_state = mark_finished(state, exit_code)
-                save_state(new_state, state_path)
+        for pid, info in finished_pids.items():
+            instance_name = info.get("instance_name", f"{blueprint_name}-{pid}")
+            task_id = info.get("task_id", "")
+            agent_mode = info.get("agent_mode", "")
+            task_dir_str = info.get("task_dir", "")
 
-                # Handle script-mode agent results
-                if state.extra.get("agent_mode") == "scripts" and state.extra.get("task_dir"):
-                    task_dir_str = state.extra["task_dir"]
-                    current_task = state.extra.get("current_task_id", "")
-                    if current_task:
-                        handle_agent_result(
-                            current_task, agent_name, Path(task_dir_str)
-                        )
+            # Read exit code from instance's exit_code file
+            exit_code = read_agent_exit_code(instance_name)
+            if exit_code is None:
+                # No exit code file — default to 1 (crash/failure)
+                exit_code = 1
+                debug_log(f"Instance {instance_name} (PID {pid}) finished without exit code file, assuming crash")
+            else:
+                debug_log(f"Instance {instance_name} (PID {pid}) finished with exit code {exit_code}")
 
-                print(f"[{datetime.now().isoformat()}] Agent {agent_name} finished (exit code: {exit_code})")
+            # Handle script-mode agent results
+            if agent_mode == "scripts" and task_dir_str and task_id:
+                handle_agent_result(task_id, instance_name, Path(task_dir_str))
+
+            # Clean up ephemeral instance state directory
+            instance_dir = get_agents_runtime_dir() / instance_name
+            if instance_dir.exists() and instance_dir != get_agents_runtime_dir() / blueprint_name:
+                try:
+                    import shutil
+                    shutil.rmtree(instance_dir)
+                    debug_log(f"Cleaned up ephemeral instance dir: {instance_dir}")
+                except Exception as e:
+                    debug_log(f"Failed to clean up {instance_dir}: {e}")
+
+            print(f"[{datetime.now().isoformat()}] Instance {instance_name} finished (exit code: {exit_code})")
+
+        # Remove finished PIDs from tracking
+        live_pids = {pid: info for pid, info in pids.items() if pid not in finished_pids}
+        save_blueprint_pids(blueprint_name, live_pids)
 
 
 # =============================================================================
@@ -1431,11 +1564,14 @@ def spawn_implementer(ctx: AgentContext) -> int:
     task_dir = prepare_task_directory(ctx.claimed_task, ctx.agent_name, ctx.agent_config)
     pid = invoke_claude(task_dir, ctx.agent_config)
 
-    new_state = mark_started(ctx.state, pid)
-    new_state.extra["agent_mode"] = "scripts"
-    new_state.extra["task_dir"] = str(task_dir)
-    new_state.extra["current_task_id"] = ctx.claimed_task["id"]
-    save_state(new_state, ctx.state_path)
+    blueprint_name = ctx.agent_config.get("blueprint_name", ctx.agent_name)
+    task_id = ctx.claimed_task["id"]
+    register_instance_pid(blueprint_name, pid, {
+        "instance_name": ctx.agent_name,
+        "task_id": task_id,
+        "task_dir": str(task_dir),
+        "agent_mode": "scripts",
+    })
     return pid
 
 
@@ -1444,8 +1580,10 @@ def spawn_lightweight(ctx: AgentContext) -> int:
     write_agent_env(ctx.agent_name, ctx.agent_config.get("id", 0), ctx.role, ctx.agent_config)
     pid = spawn_agent(ctx.agent_name, ctx.agent_config.get("id", 0), ctx.role, ctx.agent_config)
 
-    new_state = mark_started(ctx.state, pid)
-    save_state(new_state, ctx.state_path)
+    blueprint_name = ctx.agent_config.get("blueprint_name", ctx.agent_name)
+    register_instance_pid(blueprint_name, pid, {
+        "instance_name": ctx.agent_name,
+    })
     return pid
 
 
@@ -1481,9 +1619,13 @@ def spawn_worktree(ctx: AgentContext) -> int:
     # Spawn agent
     pid = spawn_agent(ctx.agent_name, ctx.agent_config.get("id", 0), ctx.role, ctx.agent_config)
 
-    # Update JSON state
-    new_state = mark_started(ctx.state, pid)
-    save_state(new_state, ctx.state_path)
+    # Register PID in blueprint tracking file
+    blueprint_name = ctx.agent_config.get("blueprint_name", ctx.agent_name)
+    task_id = ctx.claimed_task["id"] if ctx.claimed_task else None
+    register_instance_pid(blueprint_name, pid, {
+        "instance_name": ctx.agent_name,
+        "task_id": task_id,
+    })
     return pid
 
 
@@ -1500,7 +1642,7 @@ def get_spawn_strategy(ctx: AgentContext) -> Callable:
 
 
 def run_scheduler() -> None:
-    """Main scheduler loop - evaluate and spawn agents."""
+    """Main scheduler loop - evaluate and spawn agents using pool model."""
     print(f"[{datetime.now().isoformat()}] Scheduler starting")
     debug_log("Scheduler tick starting")
 
@@ -1513,66 +1655,84 @@ def run_scheduler() -> None:
     # Phase 1: Housekeeping
     run_housekeeping()
 
-    # Phase 2 + 3: Evaluate and spawn agents
+    # Phase 2 + 3: Evaluate blueprints and spawn ephemeral instances
     try:
-        agents = get_agents()
-        debug_log(f"Loaded {len(agents)} agents from config")
+        blueprints = get_agents()
+        debug_log(f"Loaded {len(blueprints)} blueprints from config")
     except FileNotFoundError as e:
         print(f"Error: {e}")
         debug_log(f"Failed to load agents config: {e}")
         sys.exit(1)
 
-    if not agents:
+    if not blueprints:
         print("No agents configured in agents.yaml")
         debug_log("No agents configured")
         return
 
-    for agent_config in agents:
-        agent_name = agent_config.get("name")
-        role = agent_config.get("role")
-        if not agent_name or not role:
-            print(f"Skipping invalid agent config: {agent_config}")
-            debug_log(f"Invalid agent config: {agent_config}")
+    for blueprint in blueprints:
+        blueprint_name = blueprint.get("blueprint_name")
+        role = blueprint.get("role")
+        if not blueprint_name or not role:
+            print(f"Skipping invalid blueprint config: {blueprint}")
+            debug_log(f"Invalid blueprint config: {blueprint}")
             continue
 
-        debug_log(f"Evaluating agent {agent_name}: role={role}")
+        debug_log(f"Evaluating blueprint {blueprint_name}: role={role}")
 
-        # Acquire agent lock
-        agent_lock_path = get_agent_lock_path(agent_name)
-        with locked_or_skip(agent_lock_path) as acquired:
+        # Acquire blueprint lock to prevent concurrent scheduling of the same blueprint
+        blueprint_lock_path = get_agent_lock_path(blueprint_name)
+        with locked_or_skip(blueprint_lock_path) as acquired:
             if not acquired:
-                print(f"Agent {agent_name} is locked (another instance running?)")
-                debug_log(f"Agent {agent_name} lock not acquired")
+                print(f"Blueprint {blueprint_name} is locked (another scheduler tick running?)")
+                debug_log(f"Blueprint {blueprint_name} lock not acquired")
                 continue
 
-            # Build context
-            state_path = get_agent_state_path(agent_name)
+            # Build context using a placeholder state (pool model uses PID tracking)
+            state_path = get_agent_state_path(blueprint_name)
             ctx = AgentContext(
-                agent_config=agent_config,
-                agent_name=agent_name,
+                agent_config=blueprint,
+                agent_name=blueprint_name,
                 role=role,
-                interval=agent_config.get("interval_seconds", 300),
+                interval=blueprint.get("interval_seconds", 300),
                 state=load_state(state_path),
                 state_path=state_path,
             )
 
-            # Evaluate guards
+            # Evaluate guards (uses guard_pool_capacity instead of guard_not_running)
             if not evaluate_agent(ctx):
                 continue
 
+            # Claim a task to determine instance name
+            type_filter = blueprint.get("type_filter")
+            claimed_task = claim_and_prepare_task(
+                blueprint_name, role, type_filter=type_filter
+            )
+
+            if claimed_task is None:
+                debug_log(f"Blueprint {blueprint_name}: no task available to claim")
+                continue
+
+            # Generate ephemeral instance name: {blueprint}-{task_id[:8]}
+            task_id = claimed_task["id"]
+            short_task_id = task_id.replace("TASK-", "")[:8]
+            instance_name = f"{blueprint_name}-{short_task_id}"
+
+            # Set claimed_task and instance name on context for spawn strategies
+            ctx.claimed_task = claimed_task
+            ctx.agent_name = instance_name
+
             # Spawn
-            print(f"[{datetime.now().isoformat()}] Starting agent {agent_name} (role: {role})")
-            debug_log(f"Starting agent {agent_name} (role: {role})")
+            print(f"[{datetime.now().isoformat()}] Starting instance {instance_name} (blueprint: {blueprint_name}, role: {role})")
+            debug_log(f"Starting instance {instance_name} from blueprint {blueprint_name}")
 
             strategy = get_spawn_strategy(ctx)
             try:
                 pid = strategy(ctx)
-                print(f"Agent {agent_name} started with PID {pid}")
+                print(f"Instance {instance_name} started with PID {pid}")
             except Exception as e:
-                print(f"[{datetime.now().isoformat()}] Spawn failed for {agent_name}: {e}")
-                debug_log(f"Spawn failed for {agent_name}: {e}")
-                if ctx.claimed_task:
-                    _requeue_task(ctx.claimed_task["id"])
+                print(f"[{datetime.now().isoformat()}] Spawn failed for {instance_name}: {e}")
+                debug_log(f"Spawn failed for {instance_name}: {e}")
+                _requeue_task(task_id)
 
     print(f"[{datetime.now().isoformat()}] Scheduler tick complete")
     debug_log("Scheduler tick complete")

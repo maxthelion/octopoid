@@ -441,12 +441,13 @@ def _gather_messages() -> list[dict[str, Any]]:
 
 
 def _gather_agents() -> list[dict[str, Any]]:
-    """Gather agent status from config and state files."""
+    """Gather blueprint agent status from config and pool PID tracking."""
     try:
         from .config import get_agents, get_agents_runtime_dir, get_notes_dir
         from .state_utils import is_process_running
+        from .scheduler import load_blueprint_pids
 
-        agents = get_agents()
+        blueprints = get_agents()
     except FileNotFoundError:
         # Agents config not found - return empty list (API-only mode)
         return []
@@ -457,47 +458,46 @@ def _gather_agents() -> list[dict[str, Any]]:
     notes_dir = get_notes_dir()
 
     result = []
-    for agent in agents:
-        name = agent["name"]
-        role = agent.get("role", "unknown")
-        paused = agent.get("paused", False)
+    for blueprint in blueprints:
+        blueprint_name = blueprint.get("blueprint_name", blueprint.get("name", "unknown"))
+        role = blueprint.get("role", "unknown")
+        paused = blueprint.get("paused", False)
+        max_instances = blueprint.get("max_instances", 1)
 
-        # Load state.json
-        state = _load_agent_state(runtime_dir / name / "state.json")
-
-        # Determine status — verify PID is actually alive when state says running
-        state_says_running = state.get("running", False)
-        pid = state.get("pid")
-        actually_running = state_says_running and is_process_running(pid)
+        # Load pool PIDs to determine running count
+        pids = load_blueprint_pids(blueprint_name)
+        live_pids = {pid: info for pid, info in pids.items() if is_process_running(pid)}
+        running_count = len(live_pids)
 
         if paused:
             status = "paused"
-        elif actually_running:
-            status = "running"
+        elif running_count > 0:
+            status = f"running({running_count}/{max_instances})"
         else:
+            # Check for blocked reason in blueprint-level state
+            state = _load_agent_state(runtime_dir / blueprint_name / "state.json")
             blocked = (state.get("extra") or {}).get("blocked_reason", "")
             status = f"idle({blocked[:20]})" if blocked else "idle"
 
-        # Current task — only valid if agent is actually running
-        current_task = state.get("current_task") if actually_running else None
+        # Current tasks being worked on by live instances
+        current_tasks = [info.get("task_id") for info in live_pids.values() if info.get("task_id")]
+        current_task = current_tasks[0] if current_tasks else None
 
-        # Recent tasks: query DB for tasks previously claimed by this agent
-        recent_tasks = _get_recent_tasks_for_agent(name)
+        # Recent tasks: query DB for tasks previously claimed by this blueprint
+        recent_tasks = _get_recent_tasks_for_agent(blueprint_name)
 
         # Notes: look for task notes for current task
         agent_notes = _get_agent_notes(notes_dir, current_task)
 
         result.append({
-            "name": name,
+            "name": blueprint_name,
             "role": role,
             "status": status,
             "paused": paused,
+            "running_instances": running_count,
+            "max_instances": max_instances,
+            "idle_capacity": max(0, max_instances - running_count),
             "current_task": current_task,
-            "last_started": state.get("last_started"),
-            "last_finished": state.get("last_finished"),
-            "last_exit_code": state.get("last_exit_code"),
-            "consecutive_failures": state.get("consecutive_failures", 0),
-            "total_runs": state.get("total_runs", 0),
             "recent_tasks": recent_tasks,
             "notes": agent_notes,
         })
@@ -575,38 +575,44 @@ def _get_agent_notes(notes_dir: Path, current_task: str | None) -> str | None:
 
 
 def _gather_health(sdk: Optional["OctopoidSDK"] = None) -> dict[str, Any]:
-    """Gather system health information."""
+    """Gather system health information using pool metrics."""
     from .state_utils import is_process_running
 
     # Try to load agent config, but gracefully handle API-only mode
     try:
         from .config import get_agents, get_orchestrator_dir, is_system_paused
-        agents = get_agents()
+        from .scheduler import load_blueprint_pids
+        blueprints = get_agents()
         scheduler_status = _get_scheduler_status()
-        runtime_dir = get_orchestrator_dir() / "agents"
         system_paused = is_system_paused()
     except (FileNotFoundError, Exception):
         # API-only mode or config not found - use defaults
-        agents = []
+        blueprints = []
         scheduler_status = "api-only"
-        runtime_dir = None
         system_paused = False
 
-    # Count idle agents (non-paused, not running)
+    # Count running/idle/paused instances across all blueprints
     idle_count = 0
     running_count = 0
     paused_count = 0
 
-    if runtime_dir:
-        for agent in agents:
-            if agent.get("paused"):
-                paused_count += 1
-                continue
-            state = _load_agent_state(runtime_dir / agent["name"] / "state.json")
-            if state.get("running") and is_process_running(state.get("pid")):
-                running_count += 1
-            else:
-                idle_count += 1
+    for blueprint in blueprints:
+        blueprint_name = blueprint.get("blueprint_name", "")
+        max_instances = blueprint.get("max_instances", 1)
+
+        if blueprint.get("paused"):
+            paused_count += 1
+            continue
+
+        # Count live PIDs for this blueprint
+        try:
+            pids = load_blueprint_pids(blueprint_name)
+            live = sum(1 for pid in pids if is_process_running(pid))
+        except Exception:
+            live = 0
+
+        running_count += live
+        idle_count += max(0, max_instances - live)
 
     # Queue depth = incoming + claimed + breakdown
     if sdk:
@@ -633,7 +639,7 @@ def _gather_health(sdk: Optional["OctopoidSDK"] = None) -> dict[str, Any]:
         "idle_agents": idle_count,
         "running_agents": running_count,
         "paused_agents": paused_count,
-        "total_agents": len(agents),
+        "total_agents": len(blueprints),
         "queue_depth": queue_depth,
     }
 

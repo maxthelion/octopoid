@@ -11,6 +11,7 @@ Safety layers:
 """
 
 import os
+import uuid
 
 # ── STEP 0: Set env var at module level ─────────────────────────────
 # This runs at import time (before any session fixture), so get_sdk()
@@ -50,6 +51,19 @@ def sdk():
     """SDK client connected to test server."""
     _assert_not_production(TEST_SERVER_URL)
     return OctopoidSDK(server_url=TEST_SERVER_URL)
+
+
+@pytest.fixture
+def scoped_sdk(test_server_url):
+    """SDK client scoped to this test — complete isolation via real server.
+
+    Each test gets its own scope, so it only sees tasks it created.
+    """
+    _assert_not_production(test_server_url)
+    scope = f"test-{uuid.uuid4().hex[:8]}"
+    client = OctopoidSDK(server_url=test_server_url, scope=scope)
+    yield client
+    client.close()
 
 
 @pytest.fixture(scope="session", autouse=True)

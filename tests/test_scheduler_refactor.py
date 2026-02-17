@@ -3,12 +3,12 @@
 This test suite verifies the scheduler's pipeline architecture introduced in the refactor.
 Tests cover:
 - AgentContext dataclass
-- All 6 guard functions (enabled, not_running, interval, backpressure, pre_check, claim_task)
+- All guard functions (enabled, pool_capacity, interval, backpressure, pre_check)
 - evaluate_agent guard chain
 - get_spawn_strategy dispatch
 - run_housekeeping fault isolation
 
-The refactor was purely structural - no behavior changes.
+The pool model replaces named agent instances with blueprint-based ephemeral spawning.
 """
 
 import json
@@ -28,6 +28,7 @@ from orchestrator.scheduler import (
     guard_enabled,
     guard_interval,
     guard_not_running,
+    guard_pool_capacity,
     guard_pre_check,
     run_housekeeping,
     spawn_implementer,
@@ -223,6 +224,111 @@ class TestGuardNotRunning:
         mock_save_state.assert_called_once()
 
 
+class TestGuardPoolCapacity:
+    """Test guard_pool_capacity function."""
+
+    @patch("orchestrator.scheduler.count_running_instances")
+    def test_at_capacity_returns_false(self, mock_count, tmp_path):
+        """Test that a blueprint at max_instances is blocked."""
+        mock_count.return_value = 3
+
+        state_path = tmp_path / "state.json"
+        ctx = AgentContext(
+            agent_config={"blueprint_name": "implementer", "max_instances": 3},
+            agent_name="implementer",
+            role="implement",
+            interval=60,
+            state=AgentState(),
+            state_path=state_path,
+        )
+
+        proceed, reason = guard_pool_capacity(ctx)
+
+        assert proceed is False
+        assert "at capacity" in reason
+        assert "3/3" in reason
+
+    @patch("orchestrator.scheduler.count_running_instances")
+    def test_below_capacity_returns_true(self, mock_count, tmp_path):
+        """Test that a blueprint below max_instances passes."""
+        mock_count.return_value = 1
+
+        state_path = tmp_path / "state.json"
+        ctx = AgentContext(
+            agent_config={"blueprint_name": "implementer", "max_instances": 3},
+            agent_name="implementer",
+            role="implement",
+            interval=60,
+            state=AgentState(),
+            state_path=state_path,
+        )
+
+        proceed, reason = guard_pool_capacity(ctx)
+
+        assert proceed is True
+        assert reason == ""
+
+    @patch("orchestrator.scheduler.count_running_instances")
+    def test_zero_instances_returns_true(self, mock_count, tmp_path):
+        """Test that a blueprint with no running instances passes."""
+        mock_count.return_value = 0
+
+        state_path = tmp_path / "state.json"
+        ctx = AgentContext(
+            agent_config={"blueprint_name": "implementer", "max_instances": 1},
+            agent_name="implementer",
+            role="implement",
+            interval=60,
+            state=AgentState(),
+            state_path=state_path,
+        )
+
+        proceed, reason = guard_pool_capacity(ctx)
+
+        assert proceed is True
+        assert reason == ""
+
+    @patch("orchestrator.scheduler.count_running_instances")
+    def test_defaults_max_instances_to_1(self, mock_count, tmp_path):
+        """Test that max_instances defaults to 1 when not specified."""
+        mock_count.return_value = 1
+
+        state_path = tmp_path / "state.json"
+        ctx = AgentContext(
+            agent_config={"blueprint_name": "implementer"},  # No max_instances
+            agent_name="implementer",
+            role="implement",
+            interval=60,
+            state=AgentState(),
+            state_path=state_path,
+        )
+
+        proceed, reason = guard_pool_capacity(ctx)
+
+        assert proceed is False
+        assert "at capacity" in reason
+
+    @patch("orchestrator.scheduler.count_running_instances")
+    def test_uses_agent_name_as_fallback_blueprint_name(self, mock_count, tmp_path):
+        """Test that agent_name is used when blueprint_name is not in config."""
+        mock_count.return_value = 0
+
+        state_path = tmp_path / "state.json"
+        ctx = AgentContext(
+            agent_config={"max_instances": 2},  # No blueprint_name
+            agent_name="implementer",
+            role="implement",
+            interval=60,
+            state=AgentState(),
+            state_path=state_path,
+        )
+
+        proceed, reason = guard_pool_capacity(ctx)
+
+        assert proceed is True
+        mock_count.assert_called_once_with("implementer")
+
+
 class TestGuardInterval:
     """Test guard_interval function."""
 
@@ -378,6 +484,39 @@ class TestGuardPreCheck:
 
         assert proceed is False
         assert reason == "pre-check: no work"
+
+
+# =============================================================================
+# AGENT_GUARDS composition tests
+# =============================================================================
+
+
+class TestAgentGuardsComposition:
+    """Test that AGENT_GUARDS contains the expected guards."""
+
+    def test_guard_pool_capacity_in_agent_guards(self):
+        """guard_pool_capacity should be in AGENT_GUARDS (pool model)."""
+        assert guard_pool_capacity in AGENT_GUARDS
+
+    def test_guard_not_running_not_in_agent_guards(self):
+        """guard_not_running should NOT be in AGENT_GUARDS (replaced by pool model)."""
+        assert guard_not_running not in AGENT_GUARDS
+
+    def test_guard_enabled_in_agent_guards(self):
+        """guard_enabled should be in AGENT_GUARDS."""
+        assert guard_enabled in AGENT_GUARDS
+
+    def test_guard_interval_in_agent_guards(self):
+        """guard_interval should be in AGENT_GUARDS."""
+        assert guard_interval in AGENT_GUARDS
+
+    def test_guard_backpressure_in_agent_guards(self):
+        """guard_backpressure should be in AGENT_GUARDS."""
+        assert guard_backpressure in AGENT_GUARDS
+
+    def test_guard_pre_check_in_agent_guards(self):
+        """guard_pre_check should be in AGENT_GUARDS."""
+        assert guard_pre_check in AGENT_GUARDS
 
 
 # =============================================================================

@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Agent pool model: blueprints instead of named instances** ([TASK-3ca8857a])
+  - `agents.yaml` now uses a blueprint map format (`agents: {name: {config}}`) instead of a fleet list
+  - `get_agents()` returns blueprints with `blueprint_name`, `max_instances`, and `agent_dir` fields
+  - Scheduler spawns ephemeral instances on demand up to `max_instances` per blueprint
+  - PID tracking via `running_pids.json` per blueprint (`load_blueprint_pids`, `save_blueprint_pids`, `count_running_instances`, `register_instance_pid`)
+  - `guard_pool_capacity` replaces `guard_not_running` in `AGENT_GUARDS` — blocks spawn when blueprint is at capacity
+  - Spawn functions (`spawn_implementer`, `spawn_lightweight`, `spawn_worktree`) use `register_instance_pid` instead of `mark_started`/`save_state`
+  - `check_and_update_finished_agents()` reads PIDs per blueprint, handles results, cleans up ephemeral instance directories
+  - Reports (`_gather_agents`, `_gather_health`) show pool metrics: `running_instances`, `max_instances`, `idle_capacity`
+  - Integration flow test verifies `claimed_by` uses blueprint name (not ephemeral instance name)
+
 ### Fixed
 
 - **Detect and fix worktree branch mismatches in scheduler** ([TASK-a4d02a1c])

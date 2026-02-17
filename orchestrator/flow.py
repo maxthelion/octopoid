@@ -143,7 +143,8 @@ class Transition:
         if self.agent:
             try:
                 agents = get_agents()
-                agent_names = [a["name"] for a in agents]
+                # Support both blueprint_name (pool model) and legacy name field
+                agent_names = [a.get("blueprint_name") or a.get("name") for a in agents]
                 agent_roles = [a.get("role") for a in agents]
                 if self.agent not in agent_names and self.agent not in agent_roles:
                     errors.append(
