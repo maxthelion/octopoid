@@ -54,7 +54,7 @@ def claim_task(
     limits = get_queue_limits()
 
     # 1-hour lease (agents take 5-30 min, no renewal mechanism yet)
-    task = sdk.tasks.claim(
+    claim_kwargs: dict[str, Any] = dict(
         orchestrator_id=orchestrator_id,
         agent_name=agent_name or "unknown",
         role_filter=role_filter,
@@ -62,6 +62,9 @@ def claim_task(
         max_claimed=limits.get("max_claimed"),
         lease_duration_seconds=3600,
     )
+    if from_queue != "incoming":
+        claim_kwargs["queue"] = from_queue
+    task = sdk.tasks.claim(**claim_kwargs)
 
     if task is None:
         return None
