@@ -188,8 +188,8 @@ def guard_claim_task(ctx: AgentContext) -> tuple[bool, str]:
     """Claim a task for scripts-mode agents (sets ctx.claimed_task).
 
     Only active for agents with spawn_mode=scripts.
-    Reads claim_from from agent config (default: 'incoming').
-    For gatekeeper agents, claim_from should be 'provisional'.
+    Reads claim queue from the flow definition based on agent role.
+    Falls back to 'incoming' if flow is not found.
 
     Args:
         ctx: AgentContext containing agent config
@@ -202,7 +202,7 @@ def guard_claim_task(ctx: AgentContext) -> tuple[bool, str]:
         # Not a scripts-mode agent — skip claim, let the role module claim
         return (True, "")
 
-    claim_from = ctx.agent_config.get("claim_from", "incoming")
+    claim_from = get_claim_queue_for_role(ctx.role)
     type_filter = ctx.agent_config.get("type_filter")
 
     task = claim_and_prepare_task(
@@ -1106,44 +1106,76 @@ def _handle_continuation_outcome(sdk, task_id: str, agent_name: str, current_que
         debug_log(f"Task {task_id}: unexpected queue {current_queue} for continuation outcome")
 
 
-def handle_gatekeeper_result(task_id: str, agent_name: str, task_dir: Path) -> None:
-    """Handle the result of a gatekeeper agent run.
+def read_result_json(task_dir: Path) -> dict:
+    """Read and parse result.json from a task directory.
 
-    The gatekeeper writes result.json with:
+    Args:
+        task_dir: Path to the task directory
+
+    Returns:
+        Parsed result dict, or an error dict if missing/invalid
+    """
+    import json
+
+    result_path = task_dir / "result.json"
+    if not result_path.exists():
+        return {"status": "failure", "message": "No result.json produced"}
+
+    try:
+        return json.loads(result_path.read_text())
+    except json.JSONDecodeError:
+        return {"status": "failure", "message": "Invalid result.json"}
+
+
+def get_claim_queue_for_role(role: str, flow_name: str = "default") -> str:
+    """Determine which queue an agent role should claim from, based on the flow.
+
+    Args:
+        role: Agent role name (e.g. 'gatekeeper', 'implementer')
+        flow_name: Name of the flow to look up (default: 'default')
+
+    Returns:
+        Queue name to claim from
+    """
+    try:
+        from .flow import load_flow
+        flow = load_flow(flow_name)
+        for transition in flow.transitions:
+            # Check if this role is an agent condition on this transition
+            for condition in transition.conditions:
+                if condition.type == "agent" and condition.agent == role:
+                    return transition.from_state
+            # Also check transition.agent (shorthand for "agent handles this state")
+            if transition.agent == role:
+                return transition.from_state
+    except (FileNotFoundError, Exception) as e:
+        debug_log(f"get_claim_queue_for_role: could not load flow '{flow_name}': {e}")
+
+    return "incoming"
+
+
+def handle_agent_result_via_flow(task_id: str, agent_name: str, task_dir: Path) -> None:
+    """Handle agent result using the task's flow definition.
+
+    Replaces the hardcoded if/else dispatch for agent roles. Reads the flow,
+    finds the current transition, and executes steps accordingly.
+
+    The gatekeeper result format:
       {"status": "success", "decision": "approve"/"reject", "comment": "<markdown>"}
     or on failure:
       {"status": "failure", "message": "<reason>"}
 
     Args:
         task_id: Task identifier
-        agent_name: Name of the gatekeeper agent
+        agent_name: Name of the agent
         task_dir: Path to the task directory containing result.json
     """
-    import json
+    from .flow import load_flow
+    from .steps import execute_steps, reject_with_feedback
 
-    result_path = task_dir / "result.json"
-    if not result_path.exists():
-        debug_log(f"Gatekeeper {agent_name}: no result.json for {task_id}, returning to incoming")
-        try:
-            sdk = queue_utils.get_sdk()
-            task = sdk.tasks.get(task_id)
-            if task and task.get("queue") == "provisional":
-                sdk.tasks.reject(task_id, reason="Gatekeeper produced no result", rejected_by="gatekeeper")
-        except Exception as e:
-            debug_log(f"Gatekeeper reject failed for {task_id}: {e}")
-        return
+    result = read_result_json(task_dir)
 
-    try:
-        result = json.loads(result_path.read_text())
-    except json.JSONDecodeError:
-        debug_log(f"Gatekeeper {agent_name}: invalid result.json for {task_id}")
-        result = {"status": "failure", "message": "Invalid result.json"}
-
-    status = result.get("status")
-    decision = result.get("decision")
-    comment = result.get("comment", "")
-
-    debug_log(f"Gatekeeper {agent_name}: task={task_id} status={status} decision={decision}")
+    debug_log(f"handle_agent_result_via_flow: task={task_id} agent={agent_name} status={result.get('status')} decision={result.get('decision')}")
 
     try:
         sdk = queue_utils.get_sdk()
@@ -1151,61 +1183,55 @@ def handle_gatekeeper_result(task_id: str, agent_name: str, task_dir: Path) -> N
         # Fetch current task state
         task = sdk.tasks.get(task_id)
         if not task:
-            debug_log(f"Gatekeeper: task {task_id} not found on server, skipping")
+            debug_log(f"Flow dispatch: task {task_id} not found on server, skipping")
             return
 
         current_queue = task.get("queue", "unknown")
-        pr_number = task.get("pr_number")
+        flow_name = task.get("flow", "default")
 
-        if status == "failure":
-            # Agent couldn't complete review — return task to incoming for retry
-            debug_log(f"Gatekeeper: review failed for {task_id}, returning to incoming")
-            message = result.get("message", "Gatekeeper could not complete review")
-            if current_queue == "provisional":
-                sdk.tasks.reject(task_id, reason=message, rejected_by="gatekeeper")
+        flow = load_flow(flow_name)
+        transitions = flow.get_transitions_from(current_queue)
+
+        if not transitions:
+            debug_log(f"Flow dispatch: no transition from '{current_queue}' in flow '{flow_name}' for task {task_id}")
             return
 
-        # Post review comment to PR if we have one
-        if pr_number and comment:
-            try:
-                from .pr_utils import add_pr_comment
-                add_pr_comment(int(pr_number), comment)
-                debug_log(f"Gatekeeper: posted review comment to PR #{pr_number}")
-            except Exception as e:
-                debug_log(f"Gatekeeper: failed to post PR comment: {e}")
+        transition = transitions[0]  # Take first matching transition
 
-        if decision == "approve":
-            debug_log(f"Gatekeeper: approving task {task_id}")
-            try:
-                queue_utils.approve_and_merge(task_id)
-                print(f"[{datetime.now().isoformat()}] Gatekeeper approved task {task_id}")
-            except Exception as e:
-                debug_log(f"Gatekeeper: approve_and_merge failed for {task_id}: {e}")
-                # Fallback: accept via SDK directly
-                sdk.tasks.accept(task_id, accepted_by="gatekeeper")
+        status = result.get("status")
+        decision = result.get("decision")
 
-        elif decision == "reject":
-            debug_log(f"Gatekeeper: rejecting task {task_id}")
-            if current_queue == "provisional":
-                reason = comment or "Rejected by gatekeeper"
-                sdk.tasks.reject(
-                    task_id,
-                    reason=reason,
-                    rejected_by="gatekeeper",
-                )
-                print(f"[{datetime.now().isoformat()}] Gatekeeper rejected task {task_id}")
+        if status == "failure":
+            # Agent couldn't complete — find on_fail state from agent condition
+            message = result.get("message", "Agent could not complete review")
+            debug_log(f"Flow dispatch: agent failure for {task_id}: {message}")
+            for condition in transition.conditions:
+                if condition.type == "agent" and condition.on_fail:
+                    debug_log(f"Flow dispatch: rejecting {task_id} back to {condition.on_fail}")
+                    sdk.tasks.reject(task_id, reason=message, rejected_by=agent_name)
+                    return
+            # Default: reject back to incoming
+            sdk.tasks.reject(task_id, reason=message, rejected_by=agent_name)
+            return
 
+        # Agent-specific decision handling (approve/reject for gatekeeper)
+        if decision == "reject":
+            debug_log(f"Flow dispatch: agent rejected task {task_id}")
+            reject_with_feedback(task, result, task_dir)
+            print(f"[{datetime.now().isoformat()}] Agent {agent_name} rejected task {task_id}")
+            return
+
+        # Execute the transition's runs (approve path)
+        if transition.runs:
+            debug_log(f"Flow dispatch: executing steps {transition.runs} for task {task_id}")
+            execute_steps(transition.runs, task, result, task_dir)
+            print(f"[{datetime.now().isoformat()}] Agent {agent_name} completed task {task_id} (steps: {transition.runs})")
         else:
-            debug_log(f"Gatekeeper: unknown decision '{decision}' for {task_id}, rejecting back to incoming")
-            if current_queue == "provisional":
-                sdk.tasks.reject(
-                    task_id,
-                    reason=f"Gatekeeper produced unknown decision: {decision}",
-                    rejected_by="gatekeeper",
-                )
+            # No runs defined — just log
+            debug_log(f"Flow dispatch: no runs defined for transition from '{current_queue}', task {task_id}")
 
     except Exception as e:
-        debug_log(f"Error handling gatekeeper result for {task_id}: {e}")
+        debug_log(f"Error in handle_agent_result_via_flow for {task_id}: {e}")
 
 
 def handle_agent_result(task_id: str, agent_name: str, task_dir: Path) -> None:
@@ -1358,7 +1384,8 @@ def check_and_update_finished_agents() -> None:
                     agent_role = state.extra.get("agent_role", "")
                     if current_task:
                         if agent_role == "gatekeeper":
-                            handle_gatekeeper_result(
+                            # Flow-driven dispatch for gatekeeper
+                            handle_agent_result_via_flow(
                                 current_task, agent_name, Path(task_dir_str)
                             )
                         else:
