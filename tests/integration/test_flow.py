@@ -15,7 +15,7 @@ import pytest
 class TestTaskLifecycleFlow:
     """Test task state machine transitions against real server."""
 
-    def test_full_happy_path(self, scoped_sdk):
+    def test_full_happy_path(self, scoped_sdk, orchestrator_id):
         """incoming → claimed → provisional → done"""
         task_id = f"TEST-{uuid.uuid4().hex[:8]}"
         task = scoped_sdk.tasks.create(
@@ -29,7 +29,7 @@ class TestTaskLifecycleFlow:
 
         # Claim
         claimed = scoped_sdk.tasks.claim(
-            orchestrator_id="test-orch",
+            orchestrator_id=orchestrator_id,
             agent_name="test-agent",
             role_filter="implement",
         )
@@ -44,7 +44,7 @@ class TestTaskLifecycleFlow:
         accepted = scoped_sdk.tasks.accept(task_id, accepted_by="test-gatekeeper")
         assert accepted["queue"] == "done"
 
-    def test_reject_returns_to_incoming(self, scoped_sdk):
+    def test_reject_returns_to_incoming(self, scoped_sdk, orchestrator_id):
         """provisional → incoming on reject"""
         task_id = f"TEST-{uuid.uuid4().hex[:8]}"
         scoped_sdk.tasks.create(
@@ -55,7 +55,7 @@ class TestTaskLifecycleFlow:
             branch="main",
         )
         scoped_sdk.tasks.claim(
-            orchestrator_id="test-orch",
+            orchestrator_id=orchestrator_id,
             agent_name="test-agent",
             role_filter="implement",
         )
