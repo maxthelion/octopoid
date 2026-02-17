@@ -195,12 +195,65 @@ def get_task_branch(task: dict) -> str:
         return f"agent/{task_id}"
 
 
+def _worktree_branch_matches(parent_repo: Path, worktree_path: Path, branch: str) -> bool:
+    """Check if an existing worktree is based on the expected branch.
+
+    Returns True if origin/<branch> is an ancestor of (or equal to) the
+    worktree's HEAD, meaning the worktree was created from the correct branch.
+    Returns False on any error (treated as mismatch to be safe).
+
+    Args:
+        parent_repo: Path to the parent repository
+        worktree_path: Path to the existing worktree
+        branch: Expected base branch name (without 'origin/' prefix)
+
+    Returns:
+        True if the worktree appears to be based on origin/<branch>
+    """
+    target_ref = f"origin/{branch}"
+
+    # Verify the target ref exists at all
+    verify = run_git(
+        ["rev-parse", "--verify", target_ref],
+        cwd=parent_repo,
+        check=False,
+    )
+    if verify.returncode != 0:
+        # Target branch doesn't exist on origin — can't check, treat as match
+        # to avoid deleting the worktree spuriously
+        return True
+
+    # Get worktree HEAD commit
+    head_result = run_git(
+        ["rev-parse", "HEAD"],
+        cwd=worktree_path,
+        check=False,
+    )
+    if head_result.returncode != 0:
+        return False
+
+    worktree_head = head_result.stdout.strip()
+
+    # Check if origin/<branch> is an ancestor of the worktree HEAD
+    # (i.e., the worktree was created from that branch and may have commits on top)
+    ancestor_check = run_git(
+        ["merge-base", "--is-ancestor", target_ref, worktree_head],
+        cwd=parent_repo,
+        check=False,
+    )
+    return ancestor_check.returncode == 0
+
+
 def create_task_worktree(task: dict) -> Path:
     """Ensure a worktree exists for a task, reusing any existing one.
 
-    If a valid worktree already exists for this task, returns it as-is
-    so that partial work (commits, uncommitted changes) is preserved.
-    Only creates a new worktree if one doesn't exist.
+    If a valid worktree already exists for this task and is based on the
+    correct branch, returns it as-is so that partial work (commits,
+    uncommitted changes) is preserved.
+
+    If the worktree exists but is based on the wrong branch (e.g. from a
+    previous attempt using a different branch), it is deleted and recreated
+    from the correct branch.
 
     Args:
         task: Task dictionary (must include 'id' and optionally project_id, breakdown_id, role)
@@ -215,9 +268,17 @@ def create_task_worktree(task: dict) -> Path:
     task_id = task["id"]
     worktree_path = get_task_worktree_path(task_id)
 
-    # Reuse existing valid worktree
+    # Reuse existing valid worktree — but only if it's based on the right branch
     if worktree_path.exists() and (worktree_path / ".git").exists():
-        return worktree_path
+        base_branch = task.get("branch") or get_main_branch()
+        if _worktree_branch_matches(parent_repo, worktree_path, base_branch):
+            return worktree_path
+        # Branch mismatch — delete and recreate from the correct branch
+        print(
+            f"[git_utils] Worktree branch mismatch for task {task_id}: "
+            f"worktree is not based on origin/{base_branch}. Recreating."
+        )
+        _remove_worktree(parent_repo, worktree_path)
 
     # Clean up broken directory (no .git — not a valid worktree)
     if worktree_path.exists():

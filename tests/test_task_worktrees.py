@@ -198,19 +198,27 @@ class TestCreateTaskWorktree:
         assert add_args[-1] == "origin/main"
 
     def test_existing_worktree_is_reused(self, temp_dir):
-        """Existing worktree with .git is returned immediately."""
+        """Existing worktree with .git is returned when branch matches."""
         task = {"id": "TASK-abc123", "role": "implement", "branch": "feature/xyz"}
         worktree_path = temp_dir / "worktree"
         worktree_path.mkdir(parents=True)
         (worktree_path / ".git").write_text("gitdir: ...")
 
+        def mock_run_git(args, cwd=None, check=True):
+            result = MagicMock()
+            result.returncode = 0
+            result.stdout = "abc123\n"
+            return result
+
         with patch('orchestrator.git_utils.find_parent_project', return_value=temp_dir), \
              patch('orchestrator.git_utils.get_task_worktree_path', return_value=worktree_path), \
-             patch('orchestrator.git_utils.run_git') as mock_run:
+             patch('orchestrator.git_utils.run_git', side_effect=mock_run_git) as mock_run:
             result = create_task_worktree(task)
 
         assert result == worktree_path
-        mock_run.assert_not_called()
+        # Branch check should have been performed but no worktree add
+        add_calls = [c for c in mock_run.call_args_list if c[0][0][:2] == ["worktree", "add"]]
+        assert len(add_calls) == 0
 
 
 class TestCleanupTaskWorktree:
