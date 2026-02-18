@@ -414,6 +414,50 @@ class TestHandleInput:
         d.handle_input(ord('k'))
         assert d.state.pr_cursor == 0
 
+    def test_f_switches_to_drafts_tab(self):
+        d = self._make_dashboard()
+        d.handle_input(ord('f'))
+        assert d.state.active_tab == dash.TAB_DRAFTS
+
+    def test_F_switches_to_drafts_tab(self):
+        d = self._make_dashboard()
+        d.handle_input(ord('F'))
+        assert d.state.active_tab == dash.TAB_DRAFTS
+
+    def test_6_switches_to_drafts_tab(self):
+        d = self._make_dashboard()
+        d.handle_input(ord('6'))
+        assert d.state.active_tab == dash.TAB_DRAFTS
+
+    def test_j_moves_drafts_cursor_down(self):
+        d = self._make_dashboard()
+        d.state.active_tab = dash.TAB_DRAFTS
+        d.state.drafts_cursor = 0
+        d.handle_input(ord('j'))
+        assert d.state.drafts_cursor == 1
+
+    def test_k_moves_drafts_cursor_up(self):
+        d = self._make_dashboard()
+        d.state.active_tab = dash.TAB_DRAFTS
+        d.state.drafts_cursor = 2
+        d.handle_input(ord('k'))
+        assert d.state.drafts_cursor == 1
+
+    def test_drafts_cursor_clamps_at_top(self):
+        d = self._make_dashboard()
+        d.state.active_tab = dash.TAB_DRAFTS
+        d.state.drafts_cursor = 0
+        d.handle_input(ord('k'))
+        assert d.state.drafts_cursor == 0
+
+    def test_drafts_cursor_clamps_at_bottom(self):
+        d = self._make_dashboard()
+        d.state.active_tab = dash.TAB_DRAFTS
+        drafts = d.state.last_drafts
+        d.state.drafts_cursor = len(drafts) - 1
+        d.handle_input(ord('j'))
+        assert d.state.drafts_cursor == len(drafts) - 1
+
 
 # ---------------------------------------------------------------------------
 # Constants tests
@@ -429,13 +473,14 @@ class TestConstants:
         assert dash.TAB_INBOX == 2
         assert dash.TAB_AGENTS == 3
         assert dash.TAB_DONE == 4
+        assert dash.TAB_DRAFTS == 5
 
     def test_tab_names_match_count(self):
-        assert len(dash.TAB_NAMES) == 5
-        assert len(dash.TAB_KEYS) == 5
+        assert len(dash.TAB_NAMES) == 6
+        assert len(dash.TAB_KEYS) == 6
 
     def test_tab_keys(self):
-        assert dash.TAB_KEYS == ["W", "P", "I", "A", "D"]
+        assert dash.TAB_KEYS == ["W", "P", "I", "A", "D", "F"]
 
     def test_max_turns(self):
         assert dash.MAX_TURNS > 0
@@ -546,6 +591,39 @@ class TestRenderingSmokeTests:
         state = dash.DashboardState()
         state.agent_cursor = len(report["agents"]) - 1
         dash.render_agents_tab(win, report, state)
+
+    def test_drafts_tab_renders_with_drafts(self):
+        win = self._mock_win()
+        drafts = dash._generate_demo_drafts()
+        state = dash.DashboardState()
+        state.drafts_content = "# Draft Title\n\nSome content here."
+        dash.render_drafts_tab(win, drafts, state)
+        assert win.addnstr.called
+
+    def test_drafts_tab_renders_empty(self):
+        win = self._mock_win()
+        state = dash.DashboardState()
+        dash.render_drafts_tab(win, [], state)
+        # Should not crash on empty drafts list
+        assert win.addnstr.called
+
+    def test_drafts_tab_cursor_selection(self):
+        win = self._mock_win()
+        drafts = dash._generate_demo_drafts()
+        state = dash.DashboardState()
+        state.drafts_cursor = len(drafts) - 1
+        state.drafts_content = "# Last Draft\n\nContent."
+        dash.render_drafts_tab(win, drafts, state)
+        assert win.addnstr.called
+
+    def test_drafts_tab_no_content_loaded(self):
+        win = self._mock_win()
+        drafts = dash._generate_demo_drafts()
+        state = dash.DashboardState()
+        state.drafts_content = None
+        dash.render_drafts_tab(win, drafts, state)
+        # Should not crash when no content is cached
+        assert win.addnstr.called
 
 
 # ---------------------------------------------------------------------------

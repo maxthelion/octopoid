@@ -38,9 +38,10 @@ TAB_PRS = 1
 TAB_INBOX = 2
 TAB_AGENTS = 3
 TAB_DONE = 4
+TAB_DRAFTS = 5
 
-TAB_NAMES = ["Work", "PRs", "Inbox", "Agents", "Done"]
-TAB_KEYS = ["W", "P", "I", "A", "D"]
+TAB_NAMES = ["Work", "PRs", "Inbox", "Agents", "Done", "Drafts"]
+TAB_KEYS = ["W", "P", "I", "A", "D", "F"]
 
 MAX_TURNS = 200  # default max turns for progress bar
 
@@ -1469,6 +1470,75 @@ def render_done_tab(win, report: dict[str, Any], state: "DashboardState"):
                 curses.color_pair(Colors.DIM))
 
 
+def render_drafts_tab(win, drafts: list[dict[str, Any]], state: "DashboardState"):
+    """Render Tab 6: Drafts (master-detail)."""
+    max_y, max_x = win.getmaxyx()
+
+    # Master-detail split: left ~30%, right ~70%
+    list_width = max(20, max_x * 30 // 100)
+    detail_x = list_width + 1
+    detail_width = max_x - detail_x - 1
+
+    # -- LEFT: Draft list --
+    safe_addstr(win, 0, 1, " DRAFTS ",
+                curses.color_pair(Colors.HEADER) | curses.A_BOLD)
+    safe_hline(win, 1, 0, curses.ACS_HLINE, list_width,
+               curses.color_pair(Colors.BORDER))
+
+    # Vertical separator
+    for row in range(0, max_y - 2):
+        safe_addstr(win, row, list_width, "\u2502",
+                    curses.color_pair(Colors.BORDER))
+
+    if not drafts:
+        safe_addstr(win, 2, 1, "No drafts found.",
+                    curses.color_pair(Colors.DIM))
+    else:
+        for i, draft in enumerate(drafts):
+            y = 2 + i
+            if y >= max_y - 2:
+                break
+
+            selected = i == state.drafts_cursor
+            title = draft.get("title", draft.get("filename", "?"))
+            num_label = f"{i + 1}. "
+            prefix = "\u25b6 " if selected else "  "
+            row_attr = curses.color_pair(Colors.HIGHLIGHT) if selected else 0
+
+            full_prefix = prefix + num_label
+            title_max = list_width - len(full_prefix) - 2
+            safe_addstr(win, y, 1, full_prefix + title[:title_max], row_attr)
+
+    # -- RIGHT: Detail pane --
+    safe_addstr(win, 0, detail_x + 1, " CONTENT ",
+                curses.color_pair(Colors.HEADER) | curses.A_BOLD)
+    safe_hline(win, 1, detail_x, curses.ACS_HLINE, detail_width,
+               curses.color_pair(Colors.BORDER))
+
+    if not drafts:
+        safe_addstr(win, 2, detail_x + 1, "No draft selected.",
+                    curses.color_pair(Colors.DIM))
+    else:
+        content = state.drafts_content
+        if content is None:
+            safe_addstr(win, 2, detail_x + 1, "Loading...",
+                        curses.color_pair(Colors.DIM))
+        else:
+            lines = content.splitlines()
+            for row_offset, line in enumerate(lines):
+                y = 2 + row_offset
+                if y >= max_y - 2:
+                    break
+                safe_addstr(win, y, detail_x + 1, line, 0, detail_x + detail_width)
+
+    # Action hints
+    hint_y = max_y - 2
+    safe_hline(win, hint_y - 1, 0, curses.ACS_HLINE, max_x - 1,
+               curses.color_pair(Colors.BORDER))
+    safe_addstr(win, hint_y, 2, "[j/k] select draft",
+                curses.color_pair(Colors.DIM))
+
+
 # ---------------------------------------------------------------------------
 # Dashboard state
 # ---------------------------------------------------------------------------
@@ -1486,6 +1556,8 @@ class DashboardState:
     last_report: Optional[dict[str, Any]] = None
     last_drafts: Optional[list[dict[str, Any]]] = None
     demo_mode: bool = False
+    drafts_cursor: int = 0
+    drafts_content: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -1511,6 +1583,8 @@ class Dashboard:
         """Load fresh data."""
         self.state.last_report = load_report(self.state.demo_mode, sdk=self.sdk)
         self.state.last_drafts = load_drafts(self.state.demo_mode)
+        if self.state.active_tab == TAB_DRAFTS:
+            self._load_draft_content()
 
     def handle_input(self, key: int) -> bool:
         """Handle keyboard input. Returns False to quit."""
@@ -1536,6 +1610,9 @@ class Dashboard:
             self.state.active_tab = TAB_AGENTS
         elif key == ord('d') or key == ord('5'):
             self.state.active_tab = TAB_DONE
+        elif key == ord('f') or key == ord('F') or key == ord('6'):
+            self.state.active_tab = TAB_DRAFTS
+            self._load_draft_content()
 
         # Navigation: j/k
         elif key == ord('j') or key == curses.KEY_DOWN:
@@ -1577,6 +1654,31 @@ class Dashboard:
             if done_tasks:
                 self.state.done_cursor = max(0, min(
                     len(done_tasks) - 1, self.state.done_cursor + delta))
+        elif self.state.active_tab == TAB_DRAFTS:
+            drafts = self.state.last_drafts or []
+            if drafts:
+                self.state.drafts_cursor = max(0, min(
+                    len(drafts) - 1, self.state.drafts_cursor + delta))
+                self._load_draft_content()
+
+    def _load_draft_content(self):
+        """Load the markdown content for the currently selected draft."""
+        drafts = self.state.last_drafts or []
+        if not drafts:
+            self.state.drafts_content = None
+            return
+        idx = min(self.state.drafts_cursor, len(drafts) - 1)
+        draft = drafts[idx]
+        filename = draft.get("filename", "")
+        if not filename:
+            self.state.drafts_content = None
+            return
+        drafts_dir = Path.cwd() / "project-management" / "drafts"
+        filepath = drafts_dir / filename
+        try:
+            self.state.drafts_content = filepath.read_text()
+        except OSError:
+            self.state.drafts_content = f"(Could not read {filename})"
 
     def render(self):
         """Render the entire dashboard."""
@@ -1647,6 +1749,8 @@ class Dashboard:
             render_agents_tab(content_win, report, self.state)
         elif self.state.active_tab == TAB_DONE:
             render_done_tab(content_win, report, self.state)
+        elif self.state.active_tab == TAB_DRAFTS:
+            render_drafts_tab(content_win, drafts, self.state)
 
         # -- Status bar (bottom) --
         status_y = max_y - 1
