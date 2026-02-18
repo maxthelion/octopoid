@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Log server error response bodies in scheduler** ([TASK-27adf598])
+  - `_register_orchestrator` now logs the HTTP response body (up to 500 chars) when registration fails, making it easier to identify missing fields or server errors
+  - `guard_claim_task` now catches exceptions from `claim_and_prepare_task` and logs the response body, instead of letting the exception propagate silently
+  - `evaluate_agent` now wraps each guard call in a try/except, logging guard crashes with the response body before returning `False`
+
 - **Gatekeeper claim bug** ([TASK-b0a63d8b])
   - `guard_claim_task` now passes `role_filter=None` when claiming from non-incoming queues (e.g. `provisional`), so the gatekeeper can claim tasks whose original `role` is `"implement"` rather than `"gatekeeper"`
   - Added `role_filter` parameter to `claim_and_prepare_task` with a sentinel default so callers can explicitly pass `None` to disable role filtering

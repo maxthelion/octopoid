@@ -208,13 +208,23 @@ def guard_claim_task(ctx: AgentContext) -> tuple[bool, str]:
     # by the agent's own role — the tasks there may have a different original role.
     role_filter = ctx.role if claim_from == "incoming" else None
 
-    task = claim_and_prepare_task(
-        agent_name=ctx.agent_name,
-        role=ctx.role,
-        role_filter=role_filter,
-        type_filter=type_filter,
-        claim_from=claim_from,
-    )
+    try:
+        task = claim_and_prepare_task(
+            agent_name=ctx.agent_name,
+            role=ctx.role,
+            role_filter=role_filter,
+            type_filter=type_filter,
+            claim_from=claim_from,
+        )
+    except Exception as e:
+        detail = ""
+        if hasattr(e, "response") and e.response is not None:
+            try:
+                detail = e.response.text[:500]
+            except Exception:
+                pass
+        debug_log(f"Claim failed for {ctx.agent_name}: {e} | {detail}")
+        return (False, f"claim_error: {e}")
 
     if task is None:
         return (False, "no_task_to_claim")
@@ -244,7 +254,17 @@ def evaluate_agent(ctx: AgentContext) -> bool:
         bool: True if all guards pass and agent should spawn, False otherwise
     """
     for guard in AGENT_GUARDS:
-        proceed, reason = guard(ctx)
+        try:
+            proceed, reason = guard(ctx)
+        except Exception as e:
+            detail = ""
+            if hasattr(e, "response") and e.response is not None:
+                try:
+                    detail = e.response.text[:500]
+                except Exception:
+                    pass
+            debug_log(f"Agent {ctx.agent_name}: guard {guard.__name__} crashed: {e} | {detail}")
+            return False
         if not proceed:
             debug_log(f"Agent {ctx.agent_name}: blocked by {guard.__name__}: {reason}")
             return False
@@ -1552,7 +1572,13 @@ def _register_orchestrator() -> None:
         })
         debug_log(f"Registered orchestrator: {orch_id}")
     except Exception as e:
-        debug_log(f"Orchestrator registration failed (non-fatal): {e}")
+        detail = ""
+        if hasattr(e, "response") and e.response is not None:
+            try:
+                detail = e.response.text[:500]
+            except Exception:
+                pass
+        debug_log(f"Orchestrator registration failed (non-fatal): {e} | {detail}")
 
 
 # =============================================================================
