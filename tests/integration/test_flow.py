@@ -342,3 +342,33 @@ class TestTaskLifecycleFlow:
         )
         assert reclaimed is not None
         assert reclaimed["id"] == task_id
+
+    def test_flow_driven_gatekeeper_claim_queue(self, scoped_sdk, orchestrator_id):
+        """Flow defines that gatekeeper claims from provisional."""
+        import os
+        from pathlib import Path
+
+        # Set up ORCHESTRATOR_DIR to point to the worktree's .octopoid dir
+        # so load_flow can find the flows directory
+        worktree_root = Path(__file__).parent.parent.parent
+        octopoid_dir = worktree_root / ".octopoid"
+        if not (octopoid_dir / "flows" / "default.yaml").exists():
+            pytest.skip("default.yaml flow not found — skipping flow integration test")
+
+        original_env = os.environ.get("ORCHESTRATOR_DIR")
+        try:
+            os.environ["ORCHESTRATOR_DIR"] = str(octopoid_dir)
+            from orchestrator.flow import load_flow
+            flow = load_flow("default")
+            transitions = flow.get_transitions_from("provisional")
+            assert len(transitions) > 0, "No transitions from 'provisional' in default flow"
+            assert any(
+                c.type == "agent" and c.agent == "gatekeeper"
+                for t in transitions
+                for c in t.conditions
+            ), "No gatekeeper agent condition on provisional → done transition"
+        finally:
+            if original_env is None:
+                os.environ.pop("ORCHESTRATOR_DIR", None)
+            else:
+                os.environ["ORCHESTRATOR_DIR"] = original_env
