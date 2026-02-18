@@ -12,6 +12,8 @@ Use the `/pause-system` and `/pause-agent` skills to pause/unpause the orchestra
 
 For upgrading the local octopoid installation after code changes, see `docs/local-upgrade-guide.md`.
 
+Read `docs/flows.md` for how the declarative flow system works — this is the core architecture for task transitions. All task state changes go through flows, not hardcoded logic.
+
 ## Scheduler and Python caching
 
 The scheduler runs via launchd using `/opt/homebrew/bin/python3`. Python caches compiled bytecode in `__pycache__/` directories. After editing or replacing Python files in `orchestrator/`, clear the cache so the scheduler picks up changes:
@@ -31,6 +33,26 @@ If you skip this, the scheduler may keep running old code from stale `.pyc` file
 - **Do NOT set BRANCH in task files** unless the task specifically needs a different branch. The system defaults to `repo.base_branch` from `.octopoid/config.yaml` (currently `feature/client-server-architecture`). Hardcoding a branch in a task file overrides this and can cause agents to miss feature branch work.
 - When rejecting a task, **rewrite the entire task file** to reflect only what remains to be done. Do not just prepend a rejection notice above the old description — the agent will follow the original instructions and ignore the notice. Remove or update any code examples, instructions, or acceptance criteria that contradict the rejection feedback. The task file should read as a clear, self-consistent set of instructions with no ambiguity.
 - When approving a task, post a review summary comment on the PR before merging.
+
+## Fixing merge conflicts on PRs
+
+When a PR has merge conflicts (mergeStateStatus: CONFLICTING or DIRTY), fix it in the task's worktree — not by cloning to /tmp.
+
+1. Find the worktree: `.octopoid/runtime/tasks/<TASK-ID>/worktree`
+2. Check the PR's base branch is correct: `gh pr view <N> --json baseRefName`. If it targets `main` instead of `feature/client-server-architecture`, fix it: `gh pr edit <N> --base feature/client-server-architecture`
+3. Rebase in a subshell (never `cd` into worktrees):
+   ```bash
+   (cd .octopoid/runtime/tasks/<TASK-ID>/worktree && git fetch origin && git rebase origin/feature/client-server-architecture)
+   ```
+4. If conflicts, resolve them, then:
+   ```bash
+   (cd .octopoid/runtime/tasks/<TASK-ID>/worktree && git add <files> && GIT_EDITOR=true git rebase --continue)
+   ```
+5. Push from the worktree (its `origin` points to GitHub):
+   ```bash
+   (cd .octopoid/runtime/tasks/<TASK-ID>/worktree && git push origin HEAD --force-with-lease)
+   ```
+6. Verify: `gh pr view <N> --json mergeStateStatus`
 
 ## Investigating issues
 

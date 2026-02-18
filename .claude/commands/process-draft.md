@@ -45,23 +45,33 @@ Scan for:
 4. Send a summary to the human inbox listing what was found, any open questions that need answers, and any proposed tasks.
 5. **Do not call `create_task()` or `/enqueue`.** A human (or the PM session) decides what to enqueue.
 
-### 3. Extract rules and patterns
+### 3. Extract rules, patterns, and architecture
 
-Look for content that encodes lasting decisions or constraints — things future development should follow. Common types:
+Look for content that encodes lasting decisions, constraints, or system design — things future development should follow. Three categories:
 
+#### Rules and patterns
 - **Architectural rules** — "X should always go through Y", "never do Z directly"
 - **Testing patterns** — "test this kind of feature by doing X"
 - **Process rules** — "when approving orchestrator tasks, do X first"
 - **Naming conventions** — "branches for X should be named Y"
 - **Dependency constraints** — "A must happen before B"
 
-**If running in human-guided mode:** present the extracted rules and ask which to add to:
+#### Architecture documentation
+Look for content that describes **how a subsystem works** — not just rules to follow, but explanations that agents need to understand to work effectively. Signs of architecture content:
+- Describes a data flow or control flow (e.g. "the scheduler reads the flow, finds the transition, runs the steps")
+- Explains the interaction between multiple components
+- Documents a design decision and its rationale (e.g. "agents are pure functions because...")
+- Describes a protocol or contract between parts of the system
+
+If the draft contains architecture-level content, check whether an existing doc in `docs/` already covers it. If so, update that doc. If not, create a new one and reference it from `CLAUDE.md` so agents read it.
+
+**If running in human-guided mode:** present the extracted rules and architecture points, and ask which to add to:
 - `.claude/rules/` — for rules agents should follow
 - `CLAUDE.md` — for project-wide architectural constraints
 - `CLAUDE.local.md` — for interactive session workflow
-- `docs/` — for reference documentation
+- `docs/` — for architecture documentation and reference (add a `CLAUDE.md` reference so agents find it)
 
-**If running in automated mode:** include proposed rules in the inbox message. Do not modify rule files directly — flag them for human review.
+**If running in automated mode:** include proposed rules and architecture docs in the inbox message. Do not modify rule files or docs directly — flag them for human review.
 
 ### 4. Decide whether to archive
 

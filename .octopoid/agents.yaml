@@ -1,4 +1,4 @@
-paused: true
+paused: false
 
 queue_limits:
   max_claimed: 1
