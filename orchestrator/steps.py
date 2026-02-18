@@ -48,9 +48,11 @@ def post_review_comment(task: dict, result: dict, task_dir: Path) -> None:
 
 @register_step("merge_pr")
 def merge_pr(task: dict, result: dict, task_dir: Path) -> None:
-    """Approve and merge the task's PR."""
+    """Approve and merge the task's PR. Raises RuntimeError on failure."""
     from . import queue_utils
-    queue_utils.approve_and_merge(task["id"])
+    outcome = queue_utils.approve_and_merge(task["id"])
+    if outcome and "error" in outcome:
+        raise RuntimeError(f"merge_pr failed: {outcome['error']}")
 
 
 @register_step("reject_with_feedback")

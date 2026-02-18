@@ -188,6 +188,31 @@ class TestSubmitToServerStep:
         assert call_args[0][0] == "TASK-test123" or call_args[1].get("task_id") == "TASK-test123"
 
 
+class TestMergePrStep:
+    """Tests for the merge_pr step."""
+
+    def test_merge_pr_raises_on_error_dict(self, mock_sdk_for_unit_tests):
+        """merge_pr raises RuntimeError when approve_and_merge returns an error dict."""
+        from orchestrator.steps import merge_pr
+
+        error_result = {"error": "BEFORE_MERGE hooks failed", "merged": False}
+
+        with patch("orchestrator.queue_utils.approve_and_merge", return_value=error_result):
+            with pytest.raises(RuntimeError, match="BEFORE_MERGE hooks failed"):
+                merge_pr({"id": "TASK-test"}, {}, Path("/tmp"))
+
+    def test_merge_pr_succeeds_silently_when_merged(self, mock_sdk_for_unit_tests):
+        """merge_pr returns None (silently) when approve_and_merge returns merged=True."""
+        from orchestrator.steps import merge_pr
+
+        success_result = {"merged": True, "task_id": "TASK-test"}
+
+        with patch("orchestrator.queue_utils.approve_and_merge", return_value=success_result):
+            result = merge_pr({"id": "TASK-test"}, {}, Path("/tmp"))
+
+        assert result is None
+
+
 class TestCreatePrStep:
     """Tests for the create_pr step."""
 

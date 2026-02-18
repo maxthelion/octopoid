@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`merge_pr` step now raises on failure** ([TASK-37b6e117])
+  - `merge_pr` in `orchestrator/steps.py` now checks the return value of `approve_and_merge()` and raises `RuntimeError` when the result contains an `"error"` key
+  - Previously, a failed merge (e.g. due to merge conflicts) was silently swallowed, leaving the task in `provisional` queue and causing the gatekeeper to re-claim and re-approve it in an infinite loop
+  - Added `guard_pr_mergeable` guard to the gatekeeper's AGENT_GUARDS chain (runs after `guard_claim_task`)
+  - The guard calls `gh pr view --json mergeable` to check the PR's merge status before spawning; if the PR is `CONFLICTING`, it releases the claim, rejects the task back to `incoming` with rebase instructions, and blocks the spawn
+
 - **`run_tests` flow step PATH for pnpm under launchd** ([TASK-5eb215f6])
   - `run_tests` now builds an augmented PATH before calling the test subprocess, adding nvm's active node bin directory and corepack shims directories so `npm`/`pnpm` are found even when the scheduler runs under launchd with a minimal environment
   - Introduced `_build_node_path()` helper that inspects `NVM_DIR` and well-known corepack shim locations

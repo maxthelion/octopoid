@@ -277,17 +277,14 @@ class TestGuardInterval:
 class TestGuardBackpressure:
     """Test guard_backpressure function."""
 
-    @patch("orchestrator.scheduler.check_backpressure_for_role")
-    @patch("orchestrator.scheduler.save_state")
-    def test_backpressure_blocked_returns_false(self, mock_save_state, mock_check, tmp_path):
-        """Test that a blocked role returns False and updates state."""
-        mock_check.return_value = (False, "queue full")
-
+    @patch("orchestrator.backpressure.count_queue", return_value=0)
+    def test_backpressure_no_tasks_returns_false(self, mock_count, tmp_path):
+        """Test that no tasks in incoming queue returns False."""
         state_path = tmp_path / "state.json"
         state = AgentState()
 
         ctx = AgentContext(
-            agent_config={},
+            agent_config={"claim_from": "incoming"},
             agent_name="test-agent",
             role="implement",
             interval=300,
@@ -298,28 +295,38 @@ class TestGuardBackpressure:
         proceed, reason = guard_backpressure(ctx)
 
         assert proceed is False
-        assert "backpressure: queue full" in reason
-        mock_check.assert_called_once_with("implement")
+        assert "no_tasks" in reason
 
-        # Verify state was updated with blocked reason
-        assert ctx.state.extra["blocked_reason"] == "queue full"
-        assert "blocked_at" in ctx.state.extra
-        mock_save_state.assert_called_once()
-
-    @patch("orchestrator.scheduler.check_backpressure_for_role")
-    @patch("orchestrator.scheduler.save_state")
-    def test_backpressure_clear_returns_true(self, mock_save_state, mock_check, tmp_path):
-        """Test that an unblocked role returns True and clears blocked_reason."""
-        mock_check.return_value = (True, "")
-
+    @patch("orchestrator.backpressure.can_claim_task", return_value=(False, "wip limit reached"))
+    @patch("orchestrator.backpressure.count_queue", return_value=3)
+    def test_backpressure_wip_limit_returns_false(self, mock_count, mock_can_claim, tmp_path):
+        """Test that WIP limit blocks claiming."""
         state_path = tmp_path / "state.json"
         state = AgentState()
-        # Pre-populate with previous block
-        state.extra["blocked_reason"] = "old reason"
-        state.extra["blocked_at"] = "2024-01-01T00:00:00"
 
         ctx = AgentContext(
-            agent_config={},
+            agent_config={"claim_from": "incoming"},
+            agent_name="test-agent",
+            role="implement",
+            interval=300,
+            state=state,
+            state_path=state_path,
+        )
+
+        proceed, reason = guard_backpressure(ctx)
+
+        assert proceed is False
+        assert "backpressure" in reason
+
+    @patch("orchestrator.backpressure.can_claim_task", return_value=(True, ""))
+    @patch("orchestrator.backpressure.count_queue", return_value=2)
+    def test_backpressure_clear_returns_true(self, mock_count, mock_can_claim, tmp_path):
+        """Test that available tasks and no WIP limit returns True."""
+        state_path = tmp_path / "state.json"
+        state = AgentState()
+
+        ctx = AgentContext(
+            agent_config={"claim_from": "incoming"},
             agent_name="test-agent",
             role="implement",
             interval=300,
@@ -332,9 +339,45 @@ class TestGuardBackpressure:
         assert proceed is True
         assert reason == ""
 
-        # Verify blocked state was cleared
-        assert "blocked_reason" not in ctx.state.extra
-        assert "blocked_at" not in ctx.state.extra
+    @patch("orchestrator.backpressure.count_queue", return_value=0)
+    def test_backpressure_non_incoming_no_tasks_returns_false(self, mock_count, tmp_path):
+        """Test that no tasks in non-incoming queue returns False."""
+        state_path = tmp_path / "state.json"
+        state = AgentState()
+
+        ctx = AgentContext(
+            agent_config={"claim_from": "provisional"},
+            agent_name="gatekeeper-1",
+            role="gatekeeper",
+            interval=300,
+            state=state,
+            state_path=state_path,
+        )
+
+        proceed, reason = guard_backpressure(ctx)
+
+        assert proceed is False
+        assert "no_provisional_tasks" in reason
+
+    @patch("orchestrator.backpressure.count_queue", return_value=1)
+    def test_backpressure_non_incoming_with_tasks_returns_true(self, mock_count, tmp_path):
+        """Test that tasks in non-incoming queue returns True."""
+        state_path = tmp_path / "state.json"
+        state = AgentState()
+
+        ctx = AgentContext(
+            agent_config={"claim_from": "provisional"},
+            agent_name="gatekeeper-1",
+            role="gatekeeper",
+            interval=300,
+            state=state,
+            state_path=state_path,
+        )
+
+        proceed, reason = guard_backpressure(ctx)
+
+        assert proceed is True
+        assert reason == ""
 
 
 class TestGuardPreCheck:
@@ -767,4 +810,134 @@ class TestHandleAgentResultViaFlowDecisions:
         log_messages = [c.args[0] for c in mock_log.call_args_list]
         assert any("Failed to move" in m for m in log_messages), (
             f"Expected 'Failed to move' in log messages, got: {log_messages}"
+        )
+
+
+# =============================================================================
+# guard_pr_mergeable Tests
+# =============================================================================
+
+
+class TestGuardPrMergeable:
+    """Test guard_pr_mergeable function."""
+
+    def _make_ctx(self, tmp_path: Path, pr_number: int | None = 42) -> "AgentContext":
+        """Helper to build a gatekeeper AgentContext with a claimed task."""
+        from orchestrator.scheduler import AgentContext
+        from orchestrator.state_utils import AgentState
+
+        task = {"id": "TASK-test", "pr_number": pr_number}
+        return AgentContext(
+            agent_config={"spawn_mode": "scripts", "claim_from": "provisional"},
+            agent_name="gatekeeper-1",
+            role="gatekeeper",
+            interval=300,
+            state=AgentState(),
+            state_path=tmp_path / "state.json",
+            claimed_task=task,
+        )
+
+    def test_blocks_when_pr_is_conflicting(self, tmp_path: Path) -> None:
+        """guard_pr_mergeable returns (False, 'pr_conflicts: ...') when PR has conflicts."""
+        from orchestrator.scheduler import guard_pr_mergeable
+
+        ctx = self._make_ctx(tmp_path)
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = '{"mergeable": "CONFLICTING"}'
+
+        mock_sdk = MagicMock()
+
+        with (
+            patch("orchestrator.scheduler.subprocess.run", return_value=mock_result),
+            patch("orchestrator.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
+        ):
+            proceed, reason = guard_pr_mergeable(ctx)
+
+        assert proceed is False
+        assert "pr_conflicts" in reason
+        assert "42" in reason
+
+    def test_passes_when_pr_is_mergeable(self, tmp_path: Path) -> None:
+        """guard_pr_mergeable returns (True, '') when PR is MERGEABLE."""
+        from orchestrator.scheduler import guard_pr_mergeable
+
+        ctx = self._make_ctx(tmp_path)
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = '{"mergeable": "MERGEABLE"}'
+
+        with patch("orchestrator.scheduler.subprocess.run", return_value=mock_result):
+            proceed, reason = guard_pr_mergeable(ctx)
+
+        assert proceed is True
+        assert reason == ""
+
+    def test_passes_when_no_pr_number(self, tmp_path: Path) -> None:
+        """guard_pr_mergeable passes through when task has no PR yet."""
+        from orchestrator.scheduler import guard_pr_mergeable
+
+        ctx = self._make_ctx(tmp_path, pr_number=None)
+
+        proceed, reason = guard_pr_mergeable(ctx)
+
+        assert proceed is True
+        assert reason == ""
+
+    def test_passes_when_no_claimed_task(self, tmp_path: Path) -> None:
+        """guard_pr_mergeable passes through when no task is claimed."""
+        from orchestrator.scheduler import AgentContext, guard_pr_mergeable
+        from orchestrator.state_utils import AgentState
+
+        ctx = AgentContext(
+            agent_config={"spawn_mode": "scripts", "claim_from": "provisional"},
+            agent_name="gatekeeper-1",
+            role="gatekeeper",
+            interval=300,
+            state=AgentState(),
+            state_path=tmp_path / "state.json",
+            claimed_task=None,
+        )
+
+        proceed, reason = guard_pr_mergeable(ctx)
+
+        assert proceed is True
+        assert reason == ""
+
+    def test_conflicting_releases_claim_and_rejects(self, tmp_path: Path) -> None:
+        """When CONFLICTING, guard releases the task claim and rejects back to incoming."""
+        from orchestrator.scheduler import guard_pr_mergeable
+
+        ctx = self._make_ctx(tmp_path)
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = '{"mergeable": "CONFLICTING"}'
+
+        mock_sdk = MagicMock()
+
+        with (
+            patch("orchestrator.scheduler.subprocess.run", return_value=mock_result),
+            patch("orchestrator.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
+        ):
+            guard_pr_mergeable(ctx)
+
+        # Should have rejected the task
+        mock_sdk.tasks.reject.assert_called_once()
+
+    def test_guard_is_in_agent_guards_chain(self) -> None:
+        """guard_pr_mergeable must be in AGENT_GUARDS after guard_claim_task."""
+        from orchestrator.scheduler import AGENT_GUARDS, guard_claim_task, guard_pr_mergeable
+
+        names = [g.__name__ for g in AGENT_GUARDS]
+        assert "guard_pr_mergeable" in names
+
+        # Must appear after guard_claim_task
+        claim_idx = names.index("guard_claim_task")
+        mergeable_idx = names.index("guard_pr_mergeable")
+        assert mergeable_idx > claim_idx, (
+            f"guard_pr_mergeable (idx {mergeable_idx}) must come after "
+            f"guard_claim_task (idx {claim_idx})"
         )
