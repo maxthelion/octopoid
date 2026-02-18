@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Worktree detached HEAD enforcement** ([TASK-6ee319d0])
+  - `prepare_task_directory` in `scheduler.py` no longer calls `repo.ensure_on_branch()` after creating the worktree. Worktrees must always stay on detached HEAD; agents create a named branch only when ready to push via `create_task_branch`.
+  - Removed the now-unused `RepoManager` import from `scheduler.py`.
+  - Fixed `get_main_branch()` calls in `scheduler.py` and `git_utils.py` — the function was never defined (NameError at runtime); replaced with the correct `get_base_branch()` from `orchestrator.config`.
+  - Added a safety assertion at the end of `create_task_worktree` that verifies the returned worktree is on detached HEAD (`git rev-parse --abbrev-ref HEAD == "HEAD"`). This catches future regressions where the pipeline accidentally checks out a named branch.
+  - Project tasks (with `project_id`) can now be spawned even when the project branch is already checked out in the main working tree — previously this caused a `git exit code 128` crash.
+
 - **`merge_pr` step now raises on failure** ([TASK-37b6e117])
   - `merge_pr` in `orchestrator/steps.py` now checks the return value of `approve_and_merge()` and raises `RuntimeError` when the result contains an `"error"` key
   - Previously, a failed merge (e.g. due to merge conflicts) was silently swallowed, leaving the task in `provisional` queue and causing the gatekeeper to re-claim and re-approve it in an infinite loop

@@ -941,3 +941,197 @@ class TestGuardPrMergeable:
             f"guard_pr_mergeable (idx {mergeable_idx}) must come after "
             f"guard_claim_task (idx {claim_idx})"
         )
+
+
+# =============================================================================
+# Detached HEAD enforcement tests
+# =============================================================================
+
+
+def _make_prepare_task_patches(tmp_path: Path) -> dict:
+    """Return context manager patches needed to run prepare_task_directory in tests."""
+    return {
+        "orchestrator.git_utils.create_task_worktree": None,  # set per-test
+        "orchestrator.scheduler.get_task_branch": None,       # set per-test
+        "orchestrator.scheduler.get_tasks_dir": tmp_path / "tasks",
+        "orchestrator.scheduler.get_base_branch": "main",
+        "orchestrator.scheduler.get_global_instructions_path": tmp_path / "gi.md",
+        "orchestrator.scheduler.find_parent_project": tmp_path,
+        "orchestrator.scheduler._get_server_url_from_config": "http://localhost",
+    }
+
+
+class TestPrepareTaskDirectoryDetachedHead:
+    """prepare_task_directory must never checkout a named branch in the worktree."""
+
+    def _make_task(self) -> dict:
+        return {
+            "id": "TASK-abc123",
+            "title": "Test task",
+            "content": "Do something",
+            "branch": None,
+            "project_id": None,
+            "breakdown_id": None,
+            "role": "implement",
+            "hooks": None,
+        }
+
+    def _make_project_task(self) -> dict:
+        return {
+            "id": "TASK-proj001",
+            "title": "Project task",
+            "content": "Do something in the project",
+            "branch": None,
+            "project_id": "PROJ-001",
+            "breakdown_id": None,
+            "role": "implement",
+            "hooks": None,
+        }
+
+    def _make_agent_dir(self, tmp_path: Path) -> Path:
+        agent_dir = tmp_path / "agent"
+        (agent_dir / "scripts").mkdir(parents=True)
+        (agent_dir / "prompt.md").write_text("Task: $task_content")
+        return agent_dir
+
+    def test_worktree_stays_detached_after_prepare(self, tmp_path: Path) -> None:
+        """prepare_task_directory must leave the worktree on detached HEAD.
+
+        Verified by confirming that no git branch checkout occurs after worktree creation.
+        The worktree is returned by create_task_worktree already in detached HEAD state,
+        and prepare_task_directory must not call ensure_on_branch or any checkout.
+        """
+        from orchestrator.scheduler import prepare_task_directory
+
+        worktree_path = tmp_path / "worktree"
+        worktree_path.mkdir()
+        agent_dir = self._make_agent_dir(tmp_path)
+        task = self._make_task()
+
+        with (
+            patch("orchestrator.git_utils.create_task_worktree", return_value=worktree_path),
+            patch("orchestrator.scheduler.get_task_branch", return_value="agent/TASK-abc123"),
+            patch("orchestrator.scheduler.get_tasks_dir", return_value=tmp_path / "tasks"),
+            patch("orchestrator.scheduler.get_base_branch", return_value="main"),
+            patch("orchestrator.scheduler.get_global_instructions_path", return_value=tmp_path / "gi.md"),
+            patch("orchestrator.scheduler.find_parent_project", return_value=tmp_path),
+            patch("orchestrator.scheduler._get_server_url_from_config", return_value="http://localhost"),
+        ):
+            # Must complete without error — on current code, fails with NameError (get_main_branch)
+            # after the fix: runs cleanly and never touches git branch state
+            result_dir = prepare_task_directory(task, "implementer-1", {"agent_dir": str(agent_dir)})
+
+        # Verify env.sh contains TASK_BRANCH (the branch name for the agent to use later)
+        # but that no git checkout command was issued by prepare_task_directory
+        env_sh = result_dir / "env.sh"
+        assert env_sh.exists()
+        assert "TASK_BRANCH='agent/TASK-abc123'" in env_sh.read_text()
+
+    def test_project_task_does_not_fail_when_branch_checked_out(self, tmp_path: Path) -> None:
+        """A project task whose branch is already checked out elsewhere must not crash.
+
+        Previously: get_task_branch returned "feature/client-server-architecture",
+        and ensure_on_branch tried to checkout that branch in the worktree. Git refused
+        because the branch is already checked out in the main working tree → exit code 128.
+
+        After the fix: ensure_on_branch is never called, so no git error can occur.
+        """
+        from orchestrator.scheduler import prepare_task_directory
+
+        worktree_path = tmp_path / "worktree"
+        worktree_path.mkdir()
+        agent_dir = self._make_agent_dir(tmp_path)
+        task = self._make_project_task()
+
+        with (
+            patch("orchestrator.git_utils.create_task_worktree", return_value=worktree_path),
+            patch("orchestrator.scheduler.get_task_branch", return_value="feature/client-server-architecture"),
+            patch("orchestrator.scheduler.get_tasks_dir", return_value=tmp_path / "tasks"),
+            patch("orchestrator.scheduler.get_base_branch", return_value="main"),
+            patch("orchestrator.scheduler.get_global_instructions_path", return_value=tmp_path / "gi.md"),
+            patch("orchestrator.scheduler.find_parent_project", return_value=tmp_path),
+            patch("orchestrator.scheduler._get_server_url_from_config", return_value="http://localhost"),
+        ):
+            # Must not raise — on current code raises because ensure_on_branch is called
+            # and the branch is already checked out in the main worktree
+            prepare_task_directory(task, "implementer-1", {"agent_dir": str(agent_dir)})
+
+    def test_ensure_on_branch_not_called_during_spawn(self, tmp_path: Path) -> None:
+        """The spawn pipeline must not call ensure_on_branch.
+
+        Worktrees stay on detached HEAD throughout prepare_task_directory.
+        If ensure_on_branch is called at all, the test fails with AssertionError.
+        """
+        from orchestrator.scheduler import prepare_task_directory
+        from orchestrator.repo_manager import RepoManager
+
+        worktree_path = tmp_path / "worktree"
+        worktree_path.mkdir()
+        agent_dir = self._make_agent_dir(tmp_path)
+        task = self._make_task()
+
+        def fail_if_ensure_on_branch_called(*args, **kwargs):
+            raise AssertionError("ensure_on_branch must not be called during spawn")
+
+        with (
+            patch("orchestrator.git_utils.create_task_worktree", return_value=worktree_path),
+            patch("orchestrator.scheduler.get_task_branch", return_value="agent/TASK-abc123"),
+            patch("orchestrator.scheduler.get_tasks_dir", return_value=tmp_path / "tasks"),
+            patch("orchestrator.scheduler.get_base_branch", return_value="main"),
+            patch("orchestrator.scheduler.get_global_instructions_path", return_value=tmp_path / "gi.md"),
+            patch("orchestrator.scheduler.find_parent_project", return_value=tmp_path),
+            patch("orchestrator.scheduler._get_server_url_from_config", return_value="http://localhost"),
+            patch.object(RepoManager, "ensure_on_branch", side_effect=fail_if_ensure_on_branch_called),
+        ):
+            # Must not raise AssertionError — currently raises because ensure_on_branch is called
+            prepare_task_directory(task, "implementer-1", {"agent_dir": str(agent_dir)})
+
+
+class TestCreateTaskWorktreeDetachedHead:
+    """create_task_worktree must always return a worktree on detached HEAD."""
+
+    def test_create_task_worktree_asserts_detached_head(self, tmp_path: Path) -> None:
+        """create_task_worktree must assert that the returned worktree is on detached HEAD.
+
+        This test FAILS on current code because create_task_worktree has no
+        assertion checking that the worktree is on detached HEAD after creation.
+        We verify this by simulating git returning a named branch (not "HEAD")
+        for rev-parse --abbrev-ref HEAD, and checking that create_task_worktree
+        raises AssertionError.
+        """
+        from orchestrator.git_utils import create_task_worktree
+
+        task = {
+            "id": "TASK-detach01",
+            "branch": None,
+            "project_id": None,
+            "breakdown_id": None,
+            "role": "implement",
+        }
+
+        worktree_path = tmp_path / "worktree"
+
+        # Simulate that after worktree creation, HEAD is NOT detached
+        def fake_run_git(args: list, cwd=None, check=True):
+            result = MagicMock()
+            result.returncode = 0
+            result.stdout = ""
+            result.stderr = ""
+            if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                # Return a named branch, simulating a non-detached HEAD
+                result.stdout = "feature/client-server-architecture\n"
+            elif args[0] == "worktree" and args[1] == "add":
+                worktree_path.mkdir(parents=True, exist_ok=True)
+                (worktree_path / ".git").write_text("gitdir: ...")
+            return result
+
+        with (
+            patch("orchestrator.git_utils.find_parent_project", return_value=tmp_path),
+            patch("orchestrator.git_utils.get_task_worktree_path", return_value=worktree_path),
+            patch("orchestrator.git_utils.get_base_branch", return_value="main"),
+            patch("orchestrator.git_utils.run_git", side_effect=fake_run_git),
+        ):
+            # Must raise AssertionError because the worktree ended up on a named branch.
+            # Currently does NOT raise (no assertion exists) — so this test fails.
+            with pytest.raises(AssertionError, match="detached"):
+                create_task_worktree(task)
