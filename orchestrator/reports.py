@@ -27,20 +27,18 @@ def get_project_report(sdk: "OctopoidSDK") -> dict[str, Any]:
     """Generate a comprehensive structured project report from API server.
 
     Aggregates data from: API tasks, agent configs/state, open PRs,
-    inbox proposals, agent messages, and agent notes.
+    agent messages, and agent notes.
 
     Args:
         sdk: Octopoid SDK instance for v2.0 API access (required).
 
     Returns:
-        Structured dict with keys: work, prs, proposals, messages,
-        agents, health.
+        Structured dict with keys: work, prs, messages, agents, health.
     """
     return {
         "work": _gather_work(sdk),
         "done_tasks": _gather_done_tasks(sdk),
         "prs": _gather_prs(sdk),
-        "proposals": _gather_proposals(),
         "messages": _gather_messages(),
         "agents": _gather_agents(),
         "health": _gather_health(sdk),
@@ -239,10 +237,8 @@ _ROLE_TURN_LIMITS: dict[str, int] = {
     "decomposition": 10,
     "reviewer": 20,
     "gatekeeper": 15,
-    "curator": 30,
     "tester": 30,
     "product_manager": 20,
-    "proposer": 20,
     "inbox_poller": 10,
     "recycler": 10,
 }
@@ -384,32 +380,6 @@ def _store_staging_url(pr_number: int, staging_url: str, *, branch_name: str | N
             pass
     except Exception:
         pass  # Best-effort — don't break PR gathering
-
-
-# ---------------------------------------------------------------------------
-# Proposals (inbox items)
-# ---------------------------------------------------------------------------
-
-
-def _gather_proposals() -> list[dict[str, Any]]:
-    """Gather active proposals from the inbox."""
-    try:
-        from .proposal_utils import list_proposals
-
-        active = list_proposals("active")
-        return [
-            {
-                "id": p.get("id"),
-                "title": p.get("title"),
-                "proposer": p.get("proposer"),
-                "category": p.get("category"),
-                "complexity": p.get("complexity"),
-                "created": p.get("created"),
-            }
-            for p in active
-        ]
-    except Exception:
-        return []
 
 
 # ---------------------------------------------------------------------------

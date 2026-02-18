@@ -14,7 +14,6 @@ from orchestrator.reports import (
     _gather_health,
     _gather_messages,
     _gather_prs,
-    _gather_proposals,
     _gather_work,
     _get_agent_notes,
     _get_recent_tasks_for_agent,
@@ -36,7 +35,6 @@ class TestGetProjectReport:
     @patch("orchestrator.reports._gather_work")
     @patch("orchestrator.reports._gather_done_tasks")
     @patch("orchestrator.reports._gather_prs")
-    @patch("orchestrator.reports._gather_proposals")
     @patch("orchestrator.reports._gather_messages")
     @patch("orchestrator.reports._gather_agents")
     @patch("orchestrator.reports._gather_health")
@@ -45,7 +43,6 @@ class TestGetProjectReport:
         mock_health,
         mock_agents,
         mock_messages,
-        mock_proposals,
         mock_prs,
         mock_done,
         mock_work,
@@ -53,7 +50,6 @@ class TestGetProjectReport:
         mock_work.return_value = {"incoming": [], "in_progress": [], "in_review": [], "done_today": []}
         mock_done.return_value = []
         mock_prs.return_value = []
-        mock_proposals.return_value = []
         mock_messages.return_value = []
         mock_agents.return_value = []
         mock_health.return_value = {"scheduler": "unknown", "idle_agents": 0, "queue_depth": 0}
@@ -63,7 +59,6 @@ class TestGetProjectReport:
         assert "work" in report
         assert "done_tasks" in report
         assert "prs" in report
-        assert "proposals" in report
         assert "messages" in report
         assert "agents" in report
         assert "health" in report
@@ -72,7 +67,6 @@ class TestGetProjectReport:
     @patch("orchestrator.reports._gather_work")
     @patch("orchestrator.reports._gather_done_tasks")
     @patch("orchestrator.reports._gather_prs")
-    @patch("orchestrator.reports._gather_proposals")
     @patch("orchestrator.reports._gather_messages")
     @patch("orchestrator.reports._gather_agents")
     @patch("orchestrator.reports._gather_health")
@@ -81,7 +75,6 @@ class TestGetProjectReport:
         mock_health,
         mock_agents,
         mock_messages,
-        mock_proposals,
         mock_prs,
         mock_done,
         mock_work,
@@ -89,7 +82,6 @@ class TestGetProjectReport:
         mock_work.return_value = {"incoming": [], "in_progress": [], "in_review": [], "done_today": []}
         mock_done.return_value = []
         mock_prs.return_value = []
-        mock_proposals.return_value = []
         mock_messages.return_value = []
         mock_agents.return_value = []
         mock_health.return_value = {}
@@ -102,7 +94,6 @@ class TestGetProjectReport:
     @patch("orchestrator.reports._gather_work")
     @patch("orchestrator.reports._gather_done_tasks")
     @patch("orchestrator.reports._gather_prs")
-    @patch("orchestrator.reports._gather_proposals")
     @patch("orchestrator.reports._gather_messages")
     @patch("orchestrator.reports._gather_agents")
     @patch("orchestrator.reports._gather_health")
@@ -111,7 +102,6 @@ class TestGetProjectReport:
         mock_health,
         mock_agents,
         mock_messages,
-        mock_proposals,
         mock_prs,
         mock_done,
         mock_work,
@@ -119,7 +109,6 @@ class TestGetProjectReport:
         mock_work.return_value = {"incoming": [], "in_progress": [], "in_review": [], "done_today": []}
         mock_done.return_value = []
         mock_prs.return_value = []
-        mock_proposals.return_value = []
         mock_messages.return_value = []
         mock_agents.return_value = []
         mock_health.return_value = {}
@@ -303,43 +292,6 @@ class TestGatherPrs:
 
         prs = _gather_prs()
         assert prs[0]["author"] is None
-
-
-# ---------------------------------------------------------------------------
-# Proposals
-# ---------------------------------------------------------------------------
-
-
-class TestGatherProposals:
-    """Tests for _gather_proposals()."""
-
-    @patch("orchestrator.proposal_utils.list_proposals")
-    def test_returns_formatted_proposals(self, mock_list):
-        mock_list.return_value = [
-            {
-                "id": "PROP-001",
-                "title": "Store migration",
-                "proposer": "architect",
-                "category": "refactor",
-                "complexity": "L",
-                "created": "2026-02-07T09:00:00",
-                "content": "full content here",
-            }
-        ]
-
-        proposals = _gather_proposals()
-
-        assert len(proposals) == 1
-        assert proposals[0]["id"] == "PROP-001"
-        assert proposals[0]["title"] == "Store migration"
-        assert proposals[0]["proposer"] == "architect"
-        # Should not include full content
-        assert "content" not in proposals[0]
-
-    @patch("orchestrator.proposal_utils.list_proposals", side_effect=Exception("no proposals dir"))
-    def test_returns_empty_on_error(self, mock_list):
-        proposals = _gather_proposals()
-        assert proposals == []
 
 
 # ---------------------------------------------------------------------------
