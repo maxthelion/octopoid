@@ -25,6 +25,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Dashboard: async background data loading for snappy tab switching** ([TASK-33a56b51])
+  - Data is now fetched in a background thread (`_data_loop`) instead of blocking the main loop
+  - Main input loop uses a 100ms `getch` timeout — tab switching and cursor navigation are instant
+  - `r`/`R` signals the background thread to refresh immediately (no blocking)
+  - Lock (`_data_lock`) protects shared state between the render and data threads
+  - Added tests for the new background thread behavior and `r`/`R` key signalling
+
 - **Integration test: mini 2-task project lifecycle** ([TASK-1597e6f5])
   - Added `tests/test_project_lifecycle.py` with 3 tests verifying the full project lifecycle
   - Tests use a local bare repo as "origin" — no external dependencies required

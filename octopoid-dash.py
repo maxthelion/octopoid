@@ -23,6 +23,7 @@ import os
 import random
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -1573,18 +1574,40 @@ class Dashboard:
         self.state = DashboardState(demo_mode=demo_mode)
         self.sdk = sdk  # Octopoid SDK for v2.0 API mode
 
+        # Background data thread
+        self._data_lock = threading.Lock()
+        self._force_refresh = threading.Event()
+        self._data_thread = threading.Thread(target=self._data_loop, daemon=True)
+
         # Initialize curses
         curses.curs_set(0)
         self.stdscr.nodelay(True)
-        self.stdscr.timeout(int(refresh_interval * 1000))
+        self.stdscr.timeout(100)  # 100ms — responsive input
         init_colors()
 
     def load_data(self):
-        """Load fresh data."""
-        self.state.last_report = load_report(self.state.demo_mode, sdk=self.sdk)
-        self.state.last_drafts = load_drafts(self.state.demo_mode)
+        """Load fresh data (blocking, for initial load only)."""
+        report = load_report(self.state.demo_mode, sdk=self.sdk)
+        drafts = load_drafts(self.state.demo_mode)
+        with self._data_lock:
+            self.state.last_report = report
+            self.state.last_drafts = drafts
         if self.state.active_tab == TAB_DRAFTS:
             self._load_draft_content()
+
+    def _data_loop(self):
+        """Background thread: fetch data on a timer, or immediately on force-refresh signal."""
+        while self.running:
+            # Wait up to refresh_interval seconds, or until force-refreshed
+            self._force_refresh.wait(timeout=self.refresh_interval)
+            self._force_refresh.clear()
+            if not self.running:
+                break
+            report = load_report(self.state.demo_mode, sdk=self.sdk)
+            drafts = load_drafts(self.state.demo_mode)
+            with self._data_lock:
+                self.state.last_report = report
+                self.state.last_drafts = drafts
 
     def handle_input(self, key: int) -> bool:
         """Handle keyboard input. Returns False to quit."""
@@ -1594,9 +1617,9 @@ class Dashboard:
         if key == ord('q') or key == ord('Q'):
             return False
 
-        # Global: refresh
+        # Global: force refresh (signal background thread to fetch immediately)
         if key == ord('r') or key == ord('R'):
-            self.load_data()
+            self._force_refresh.set()
             return True
 
         # Tab switching: W/P/I/A or 1/2/3/4
@@ -1791,20 +1814,21 @@ class Dashboard:
 
     def run(self):
         """Main loop."""
-        self.load_data()
+        self.load_data()  # initial blocking load
+        self._data_thread.start()
         while self.running:
             try:
                 self.render()
                 key = self.stdscr.getch()
                 if key == -1:
-                    # Timeout (no keypress) — refresh data
-                    self.load_data()
+                    continue  # no input, just re-render (data updates in background)
                 else:
                     self.running = self.handle_input(key)
             except KeyboardInterrupt:
                 break
             except curses.error:
                 pass
+        self.running = False  # signal background thread to stop
 
 
 # ---------------------------------------------------------------------------
