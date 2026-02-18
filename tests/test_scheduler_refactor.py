@@ -1135,3 +1135,110 @@ class TestCreateTaskWorktreeDetachedHead:
             # Currently does NOT raise (no assertion exists) — so this test fails.
             with pytest.raises(AssertionError, match="detached"):
                 create_task_worktree(task)
+
+
+# =============================================================================
+# invoke_claude max_turns Tests
+# =============================================================================
+
+
+class TestInvokeClaudeMaxTurns:
+    """Test that invoke_claude respects per-task max_turns override."""
+
+    def _make_task_dir(
+        self,
+        tmp_path: Path,
+        task_max_turns: int | None = None,
+    ) -> Path:
+        """Create a minimal task directory with task.json and prompt.md."""
+        task_dir = tmp_path / "task"
+        task_dir.mkdir()
+        (task_dir / "worktree").mkdir()
+        (task_dir / "prompt.md").write_text("Do the thing")
+
+        task_data: dict = {"id": "TASK-test", "title": "Test"}
+        if task_max_turns is not None:
+            task_data["max_turns"] = task_max_turns
+        import json
+        (task_dir / "task.json").write_text(json.dumps(task_data))
+
+        return task_dir
+
+    def _invoke(
+        self,
+        tmp_path: Path,
+        task_max_turns: int | None,
+        agent_max_turns: int = 200,
+    ) -> list:
+        """Run invoke_claude and return the captured subprocess command."""
+        from orchestrator.scheduler import invoke_claude
+
+        task_dir = self._make_task_dir(tmp_path, task_max_turns)
+        agent_config = {"max_turns": agent_max_turns, "model": "sonnet"}
+
+        captured_cmd: list = []
+
+        def fake_popen(cmd, **kwargs):
+            captured_cmd.extend(cmd)
+            mock_proc = MagicMock()
+            mock_proc.pid = 99
+            return mock_proc
+
+        with (
+            patch("orchestrator.scheduler.subprocess.Popen", side_effect=fake_popen),
+            patch("builtins.open", MagicMock()),
+        ):
+            invoke_claude(task_dir, agent_config)
+
+        return captured_cmd
+
+    def test_task_max_turns_overrides_agent_config(self, tmp_path: Path) -> None:
+        """A task with max_turns=20 spawns claude with --max-turns 20."""
+        cmd = self._invoke(tmp_path, task_max_turns=20, agent_max_turns=150)
+
+        idx = cmd.index("--max-turns")
+        assert cmd[idx + 1] == "20"
+
+    def test_task_without_max_turns_uses_agent_default(self, tmp_path: Path) -> None:
+        """A task without max_turns uses the agent_config default."""
+        cmd = self._invoke(tmp_path, task_max_turns=None, agent_max_turns=150)
+
+        idx = cmd.index("--max-turns")
+        assert cmd[idx + 1] == "150"
+
+    def test_task_max_turns_null_falls_back_to_agent_config(self, tmp_path: Path) -> None:
+        """A task with max_turns=null (None after JSON decode) falls back to agent_config."""
+        from orchestrator.scheduler import invoke_claude
+        import json
+
+        task_dir = tmp_path / "task"
+        task_dir.mkdir()
+        (task_dir / "worktree").mkdir()
+        (task_dir / "prompt.md").write_text("Do the thing")
+        # Explicitly write null for max_turns
+        (task_dir / "task.json").write_text(json.dumps({"id": "TASK-test", "max_turns": None}))
+
+        agent_config = {"max_turns": 150, "model": "sonnet"}
+        captured_cmd: list = []
+
+        def fake_popen(cmd, **kwargs):
+            captured_cmd.extend(cmd)
+            mock_proc = MagicMock()
+            mock_proc.pid = 99
+            return mock_proc
+
+        with (
+            patch("orchestrator.scheduler.subprocess.Popen", side_effect=fake_popen),
+            patch("builtins.open", MagicMock()),
+        ):
+            invoke_claude(task_dir, agent_config)
+
+        idx = captured_cmd.index("--max-turns")
+        assert captured_cmd[idx + 1] == "150"
+
+    def test_task_max_turns_zero_falls_back_to_agent_config(self, tmp_path: Path) -> None:
+        """A task with max_turns=0 (falsy) falls back to agent_config."""
+        cmd = self._invoke(tmp_path, task_max_turns=0, agent_max_turns=150)
+
+        idx = cmd.index("--max-turns")
+        assert cmd[idx + 1] == "150"

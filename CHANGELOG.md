@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Per-task `max_turns` override** ([TASK-19bbcaa6])
+  - `invoke_claude` in `scheduler.py` now reads `max_turns` from `task.json` first; falls back to `agent_config.get("max_turns", 200)` when unset, null, or zero
+  - `max_turns` added as an optional integer field to the TypeScript `Task`, `CreateTaskRequest`, and `UpdateTaskRequest` interfaces in `packages/shared/src/task.ts`
+  - Python SDK `TasksAPI.create()` gains an explicit `max_turns: Optional[int]` parameter; `TasksAPI.update()` already accepts it via `**updates`
+  - Useful for lightweight operations (e.g. rebases) where a low turn budget like `max_turns: 20` avoids burning the full agent limit
+
 ### Changed
 
 - **Scheduler cleanup: remove dead code, flatten `handle_agent_result`** ([TASK-33d1f310])

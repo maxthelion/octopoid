@@ -43,6 +43,7 @@ class TasksAPI:
         priority: Optional[str] = None,
         queue: str = 'incoming',
         branch: Optional[str] = None,
+        max_turns: Optional[int] = None,
         metadata: Optional[Dict[str, Any]] = None,
         **kwargs
     ) -> Dict[str, Any]:
@@ -80,6 +81,8 @@ class TasksAPI:
             data['role'] = role
         if priority:
             data['priority'] = priority
+        if max_turns is not None:
+            data['max_turns'] = max_turns
         if metadata:
             data['metadata'] = metadata
 

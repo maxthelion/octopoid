@@ -932,10 +932,11 @@ def invoke_claude(task_dir: Path, agent_config: dict) -> int:
     """
     import json
 
+    task_data = json.loads((task_dir / "task.json").read_text())
+
     worktree_path = task_dir / "worktree"
     if not worktree_path.exists():
         # Worktree may be at a different location - check task.json
-        task_data = json.loads((task_dir / "task.json").read_text())
         task_id = task_data.get("id", "")
         worktree_path = get_tasks_dir() / task_id / "worktree"
 
@@ -943,7 +944,7 @@ def invoke_claude(task_dir: Path, agent_config: dict) -> int:
     prompt = prompt_path.read_text()
 
     model = agent_config.get("model", "sonnet")
-    max_turns = agent_config.get("max_turns", 200)
+    max_turns = task_data.get("max_turns") or agent_config.get("max_turns", 200)
 
     cmd = [
         "claude",
