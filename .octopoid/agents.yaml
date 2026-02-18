@@ -11,14 +11,14 @@ fleet:
     enabled: true
     interval_seconds: 60
     max_turns: 200
-    model: sonnet
+    model: claude-sonnet-4-5-20250929
 
   - name: implementer-2
     type: implementer
     enabled: true
     interval_seconds: 60
     max_turns: 200
-    model: sonnet
+    model: claude-sonnet-4-5-20250929
 
   - name: sanity-check-gatekeeper
     role: gatekeeper

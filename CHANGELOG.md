@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Implementer agents now use `claude-sonnet-4-5-20250929`** — updated `.octopoid/agents.yaml` to pin the explicit model ID instead of the `sonnet` alias, which currently resolves to `claude-sonnet-4-6`
+
 ### Added
 
 - **Flow-driven scheduler execution** ([TASK-f584b935])
