@@ -19,7 +19,7 @@
     <string>/Users/maxwilliams/dev/octopoid</string>
 
     <key>StartInterval</key>
-    <integer>60</integer>
+    <integer>300</integer>
 
     <key>EnvironmentVariables</key>
     <dict>
@@ -29,6 +29,8 @@
         <string>/Users/maxwilliams/dev/octopoid</string>
         <key>HOME</key>
         <string>/Users/maxwilliams</string>
+        <key>PYTHONDONTWRITEBYTECODE</key>
+        <string>1</string>
     </dict>
 
     <key>StandardOutPath</key>

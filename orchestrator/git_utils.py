@@ -5,7 +5,7 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
-from .config import find_parent_project, get_agents_runtime_dir, get_main_branch, get_tasks_dir
+from .config import find_parent_project, get_agents_runtime_dir, get_tasks_dir
 
 
 def run_git(args: list[str], cwd: Path | str | None = None, check: bool = True) -> subprocess.CompletedProcess:
@@ -284,6 +284,14 @@ def create_task_worktree(task: dict) -> Path:
     if worktree_path.exists():
         import shutil
         shutil.rmtree(worktree_path)
+
+    # Clean up stale worktree refs from previous failed runs
+    run_git(
+        ["worktree", "remove", "--force", str(worktree_path)],
+        cwd=parent_repo,
+        check=False,
+    )
+    run_git(["worktree", "prune"], cwd=parent_repo, check=False)
 
     # Create parent directory
     worktree_path.parent.mkdir(parents=True, exist_ok=True)

@@ -24,7 +24,7 @@ agents:
 # Repository
 repo:
   path: .
-  main_branch: main
+  base_branch: main
 
 # Hooks — lifecycle actions run during task processing
 # Built-in hooks: rebase_on_main, create_pr, run_tests

@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from .config import get_orchestrator_dir, get_main_branch, get_queue_dir
+from .config import get_orchestrator_dir, get_base_branch, get_queue_dir
 from .sdk import get_sdk
 
 
@@ -469,7 +469,7 @@ def recycle_to_breakdown(task_path, reason="too_large") -> dict | None:
             "Include RE_BREAKDOWN_DEPTH in new subtasks",
         ],
         priority="P1",
-        branch=project.get("branch") or db_task.get("branch") or get_main_branch(),
+        branch=project.get("branch") or db_task.get("branch") or get_base_branch(),
         created_by="recycler",
         project_id=project_id,
         queue="breakdown",

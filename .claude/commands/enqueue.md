@@ -4,55 +4,38 @@ Create a new task in the orchestrator queue.
 
 ## Implementation
 
-Use the Python SDK to create tasks on the server. Always write the task file to `.octopoid/tasks/` — the scheduler expects files there.
+Use `orchestrator.tasks.create_task()` which handles branch defaulting, file writing, and server registration.
 
 ```python
-from orchestrator.queue_utils import get_sdk
-import uuid
+from orchestrator.tasks import create_task
 
-sdk = get_sdk()
-
-# Generate task ID and file path
-task_id = f"TASK-{uuid.uuid4().hex[:8]}"
-file_path = f".octopoid/tasks/{task_id}.md"
-
-# Write the task markdown file FIRST
-task_content = f"""# [{task_id}] {title}
-
-ROLE: {role}
-PRIORITY: {priority}
-BRANCH: {branch}
-CREATED: {datetime.now(timezone.utc).isoformat()}
-CREATED_BY: human
-
-## Context
-{context}
-
-## Acceptance Criteria
-{acceptance_criteria}
-"""
-
-# Write to .octopoid/tasks/
-import os
-os.makedirs('.octopoid/tasks', exist_ok=True)
-with open(file_path, 'w') as f:
-    f.write(task_content)
-
-# THEN create on the server — file_path is relative to project root
-result = sdk.tasks.create(
-    id=task_id,
-    file_path=file_path,
+task_path = create_task(
     title=title,
     role=role,
+    context=context,
+    acceptance_criteria=acceptance_criteria,
     priority=priority,
-    queue='incoming',
-    branch=branch,
+    # branch is optional — defaults to get_base_branch() from config.yaml
+    # Only pass branch if the user explicitly specifies one
+)
+```
+
+If the user specifies a branch explicitly, pass it:
+
+```python
+task_path = create_task(
+    title=title,
+    role=role,
+    context=context,
+    acceptance_criteria=acceptance_criteria,
+    priority=priority,
+    branch=branch,  # only if user specified
 )
 ```
 
 ### With an existing task file
 
-If the user provides a path to an existing task file, copy it to `.octopoid/tasks/` first:
+If the user provides a path to an existing task file, copy it to `.octopoid/tasks/` first, then register via SDK:
 
 ```python
 import shutil
@@ -64,16 +47,14 @@ shutil.copy(source_path, f'.octopoid/tasks/{task_id}.md')
 If creating a task for a project, include `project_id`:
 
 ```python
-result = sdk.tasks.create(
-    id=task_id,
-    file_path=file_path,
+task_path = create_task(
     title=title,
     role=role,
+    context=context,
+    acceptance_criteria=acceptance_criteria,
     priority=priority,
     project_id=project_id,
     blocked_by=blocked_by,  # previous task in chain
-    queue='incoming',
-    branch=branch,
 )
 ```
 
@@ -106,14 +87,15 @@ When run without arguments, ask for:
    - `P1` - High (important features)
    - `P2` - Normal (default)
    - `P3` - Low (nice-to-have)
-4. **Branch** - Base branch (default: current working branch)
+4. **Branch** - Base branch (default: `get_base_branch()` from config.yaml). Only ask if the user might want a non-default branch.
 5. **Context** - Background and motivation
 6. **Acceptance Criteria** - Specific requirements
 
 ## Rules
 
+- **Always use `create_task()`** — it handles branch defaulting, file creation, and server registration
+- **Do NOT pass `branch` unless the user explicitly specifies one** — the default comes from `config.yaml`
 - **Always write task files to `.octopoid/tasks/`** — never point at files elsewhere
-- Use the Python SDK, not the CLI (the CLI has a silent fallback bug)
 - The `file_path` field in the API should be relative to the project root (e.g. `.octopoid/tasks/TASK-abc123.md`)
 
 ## After Creation

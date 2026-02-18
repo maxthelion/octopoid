@@ -19,7 +19,7 @@ from .config import (
     get_agents_runtime_dir,
     get_global_instructions_path,
     get_logs_dir,
-    get_main_branch,
+    get_base_branch,
     get_orchestrator_dir,
     get_tasks_dir,
     is_system_paused,
@@ -840,7 +840,7 @@ def prepare_task_directory(
         task_title=task.get("title", "Untitled"),
         task_content=task.get("content", ""),
         task_priority=task.get("priority", "P2"),
-        task_branch=task.get("branch") or get_main_branch(),
+        task_branch=task.get("branch") or get_base_branch(),
         task_type=task.get("type", ""),
         scripts_dir="../scripts",
         global_instructions=global_instructions,
@@ -1485,7 +1485,7 @@ def spawn_lightweight(ctx: AgentContext) -> int:
 def spawn_worktree(ctx: AgentContext) -> int:
     """Spawn an agent with a worktree (general case for non-lightweight, non-implementer)."""
     # Resolve base branch for the worktree
-    base_branch = ctx.agent_config.get("base_branch", get_main_branch())
+    base_branch = ctx.agent_config.get("base_branch", get_base_branch())
 
     if ctx.claimed_task:
         # Use the claimed task's branch for the worktree
