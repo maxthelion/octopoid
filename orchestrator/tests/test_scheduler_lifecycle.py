@@ -157,6 +157,65 @@ class TestHandleAgentResultFlowSteps:
                 tmp_task_dir,
             )
 
+    def test_submitted_outcome_executes_flow_steps(self, tmp_task_dir, mock_sdk, sample_task):
+        """When outcome is 'submitted' and task is claimed, flow steps should execute (same as 'done')."""
+        result_path = tmp_task_dir / "result.json"
+        result_path.write_text(json.dumps({"outcome": "submitted"}))
+
+        mock_sdk.tasks.get.return_value = sample_task
+
+        with patch("orchestrator.scheduler.queue_utils") as mock_qu, \
+             patch("orchestrator.steps.execute_steps") as mock_execute, \
+             patch("orchestrator.flow.load_flow") as mock_load_flow:
+
+            mock_qu.get_sdk.return_value = mock_sdk
+
+            mock_flow = MagicMock()
+            mock_transition = MagicMock()
+            mock_transition.runs = ["push_branch", "create_pr", "submit_to_server"]
+            mock_flow.get_transitions_from.return_value = [mock_transition]
+            mock_load_flow.return_value = mock_flow
+
+            from orchestrator.scheduler import handle_agent_result
+            handle_agent_result("TASK-test123", "agent-1", tmp_task_dir)
+
+            # 'submitted' must trigger the same flow steps as 'done'
+            mock_load_flow.assert_called_once_with("default")
+            mock_flow.get_transitions_from.assert_called_once_with("claimed")
+            mock_execute.assert_called_once_with(
+                ["push_branch", "create_pr", "submit_to_server"],
+                sample_task,
+                {"outcome": "submitted"},
+                tmp_task_dir,
+            )
+            # Must NOT be moved to failed queue
+            mock_sdk.tasks.update.assert_not_called()
+
+    def test_submitted_outcome_non_claimed_queue_skips(self, tmp_task_dir, mock_sdk):
+        """'submitted' outcome when task is already past claimed should not re-execute steps."""
+        result_path = tmp_task_dir / "result.json"
+        result_path.write_text(json.dumps({"outcome": "submitted"}))
+
+        task = {
+            "id": "TASK-test123",
+            "title": "Test task",
+            "queue": "provisional",
+            "flow": "default",
+        }
+        mock_sdk.tasks.get.return_value = task
+
+        with patch("orchestrator.scheduler.queue_utils") as mock_qu, \
+             patch("orchestrator.steps.execute_steps") as mock_execute, \
+             patch("orchestrator.flow.load_flow") as mock_load_flow:
+
+            mock_qu.get_sdk.return_value = mock_sdk
+
+            from orchestrator.scheduler import handle_agent_result
+            handle_agent_result("TASK-test123", "agent-1", tmp_task_dir)
+
+            mock_execute.assert_not_called()
+            mock_sdk.tasks.submit.assert_not_called()
+
     def test_done_outcome_fallback_when_no_flow_steps(self, tmp_task_dir, mock_sdk, sample_task):
         """When outcome is 'done' but flow has no steps, fall back to direct submit."""
         result_path = tmp_task_dir / "result.json"

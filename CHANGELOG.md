@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`handle_agent_result` now recognizes `submitted` outcome** ([TASK-1b306095])
+  - The `"submitted"` outcome (written by scripts-mode agents via `submit-pr`) was falling through to the `else` branch and being treated as failure
+  - Fixed: `submitted` is now handled identically to `done` — it executes the flow steps for the `claimed` transition
+  - Added tests: `test_submitted_outcome_executes_flow_steps` and `test_submitted_outcome_non_claimed_queue_skips`
+
 - **Worktree detached HEAD enforcement** ([TASK-6ee319d0])
   - `prepare_task_directory` in `scheduler.py` no longer calls `repo.ensure_on_branch()` after creating the worktree. Worktrees must always stay on detached HEAD; agents create a named branch only when ready to push via `create_task_branch`.
   - Removed the now-unused `RepoManager` import from `scheduler.py`.
