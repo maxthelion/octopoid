@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Drafts tab in dashboard** ([TASK-451ec77d])
+  - Added `TAB_DRAFTS = 5` constant and updated `TAB_NAMES`/`TAB_KEYS` to include "Drafts" / "F"
+  - New `render_drafts_tab()` with master-detail layout: left pane lists drafts (number + title), right pane shows full markdown content
+  - `DashboardState` gains `drafts_cursor` and `drafts_content` fields
+  - `_load_draft_content()` reads the selected draft's markdown file from `project-management/drafts/`
+  - j/k navigation moves between drafts; content is loaded on selection change
+  - Tab accessible via `F`, `f`, or `6` keys
+  - 16 new tests covering rendering (including empty list), tab switching, and cursor navigation
+
 - **Implementer as pure-function via flow steps** ([TASK-2bf1ad9b])
   - Registered `push_branch`, `run_tests`, `create_pr`, `submit_to_server` steps in `orchestrator/steps.py`
   - Implementer lifecycle (`claimed → provisional`) is now fully flow-driven — no hardcoded handler
