@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **Deleted dead proposal system (~960 lines)** ([TASK-58ae05c9])
+  - Removed `orchestrator/proposal_utils.py` (proposer/curator/specialist workflow)
+  - Removed proposal-related functions from `orchestrator/config.py`: `get_proposals_dir`, `get_proposal_limits`, `get_voice_weight`, `get_voice_weights`, `get_curator_scoring`, `get_proposers`, `get_curators`, `get_prompts_dir`, `get_model_type`, and associated constants
+  - Removed `_gather_proposals` from `orchestrator/reports.py` and `proposals` key from project report
+  - Removed `TestGatherProposals` and related test mocks from `tests/test_reports.py`
+
 ### Changed
 
 - **Scheduler cleanup: remove dead code, flatten `handle_agent_result`** ([TASK-33d1f310])
