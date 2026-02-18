@@ -100,7 +100,7 @@ def _patch_git_utils(main_repo: Path, tasks_dir: Path):
     return patch.multiple(
         "orchestrator.git_utils",
         find_parent_project=lambda: main_repo,
-        get_main_branch=lambda: "main",
+        get_base_branch=lambda: "main",
         get_tasks_dir=lambda: tasks_dir,
     )
 

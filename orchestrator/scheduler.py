@@ -25,7 +25,6 @@ from .config import (
     is_system_paused,
 )
 from .git_utils import ensure_worktree, get_task_branch, get_worktree_path
-from .repo_manager import RepoManager
 from .hook_manager import HookManager
 from .lock_utils import locked_or_skip
 from .port_utils import get_port_env_vars
@@ -788,13 +787,13 @@ def prepare_task_directory(
             stale_path.unlink()
             debug_log(f"Cleaned stale {stale_file} from {task_dir}")
 
-    # Create worktree and put it on the task branch
-    base_branch = task.get("branch") or get_main_branch()
+    # Create worktree in detached HEAD state (worktrees must never checkout a named branch).
+    # The agent creates a task-specific branch via create_task_branch when ready to push.
+    base_branch = task.get("branch") or get_base_branch()
     worktree_path = create_task_worktree(task)
 
+    # Compute task_branch for env.sh only — do NOT checkout the branch in the worktree.
     task_branch = get_task_branch(task)
-    repo = RepoManager(worktree_path)
-    repo.ensure_on_branch(task_branch)
 
     # Write task.json
     import json

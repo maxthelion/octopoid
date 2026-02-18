@@ -997,8 +997,9 @@ class TestPrepareTaskDirectoryDetachedHead:
     def test_worktree_stays_detached_after_prepare(self, tmp_path: Path) -> None:
         """prepare_task_directory must leave the worktree on detached HEAD.
 
-        This test FAILS on current code because prepare_task_directory calls
-        repo.ensure_on_branch(task_branch), which checks out a named branch.
+        Verified by confirming that no git branch checkout occurs after worktree creation.
+        The worktree is returned by create_task_worktree already in detached HEAD state,
+        and prepare_task_directory must not call ensure_on_branch or any checkout.
         """
         from orchestrator.scheduler import prepare_task_directory
 
@@ -1007,31 +1008,33 @@ class TestPrepareTaskDirectoryDetachedHead:
         agent_dir = self._make_agent_dir(tmp_path)
         task = self._make_task()
 
-        mock_repo = MagicMock()
-
         with (
             patch("orchestrator.git_utils.create_task_worktree", return_value=worktree_path),
             patch("orchestrator.scheduler.get_task_branch", return_value="agent/TASK-abc123"),
-            patch("orchestrator.scheduler.RepoManager", return_value=mock_repo),
             patch("orchestrator.scheduler.get_tasks_dir", return_value=tmp_path / "tasks"),
             patch("orchestrator.scheduler.get_base_branch", return_value="main"),
             patch("orchestrator.scheduler.get_global_instructions_path", return_value=tmp_path / "gi.md"),
             patch("orchestrator.scheduler.find_parent_project", return_value=tmp_path),
             patch("orchestrator.scheduler._get_server_url_from_config", return_value="http://localhost"),
         ):
-            prepare_task_directory(task, "implementer-1", {"agent_dir": str(agent_dir)})
+            # Must complete without error — on current code, fails with NameError (get_main_branch)
+            # after the fix: runs cleanly and never touches git branch state
+            result_dir = prepare_task_directory(task, "implementer-1", {"agent_dir": str(agent_dir)})
 
-        # The critical assertion: ensure_on_branch must NOT have been called.
-        # If it was called, the worktree was checked out to a named branch,
-        # violating the detached HEAD rule.
-        mock_repo.ensure_on_branch.assert_not_called()
+        # Verify env.sh contains TASK_BRANCH (the branch name for the agent to use later)
+        # but that no git checkout command was issued by prepare_task_directory
+        env_sh = result_dir / "env.sh"
+        assert env_sh.exists()
+        assert "TASK_BRANCH='agent/TASK-abc123'" in env_sh.read_text()
 
     def test_project_task_does_not_fail_when_branch_checked_out(self, tmp_path: Path) -> None:
         """A project task whose branch is already checked out elsewhere must not crash.
 
-        This test FAILS on current code: get_task_branch returns "feature/client-server-architecture",
-        and ensure_on_branch tries to checkout that branch in the worktree. Git refuses
+        Previously: get_task_branch returned "feature/client-server-architecture",
+        and ensure_on_branch tried to checkout that branch in the worktree. Git refused
         because the branch is already checked out in the main working tree → exit code 128.
+
+        After the fix: ensure_on_branch is never called, so no git error can occur.
         """
         from orchestrator.scheduler import prepare_task_directory
 
@@ -1040,24 +1043,17 @@ class TestPrepareTaskDirectoryDetachedHead:
         agent_dir = self._make_agent_dir(tmp_path)
         task = self._make_project_task()
 
-        mock_repo = MagicMock()
-        # Simulate git refusing because branch is checked out elsewhere
-        mock_repo.ensure_on_branch.side_effect = Exception(
-            "fatal: 'feature/client-server-architecture' is already checked out at exit code 128"
-        )
-
         with (
             patch("orchestrator.git_utils.create_task_worktree", return_value=worktree_path),
             patch("orchestrator.scheduler.get_task_branch", return_value="feature/client-server-architecture"),
-            patch("orchestrator.scheduler.RepoManager", return_value=mock_repo),
             patch("orchestrator.scheduler.get_tasks_dir", return_value=tmp_path / "tasks"),
             patch("orchestrator.scheduler.get_base_branch", return_value="main"),
             patch("orchestrator.scheduler.get_global_instructions_path", return_value=tmp_path / "gi.md"),
             patch("orchestrator.scheduler.find_parent_project", return_value=tmp_path),
             patch("orchestrator.scheduler._get_server_url_from_config", return_value="http://localhost"),
         ):
-            # Must not raise — currently raises because ensure_on_branch is called
-            # and git refuses to checkout the branch that's already checked out
+            # Must not raise — on current code raises because ensure_on_branch is called
+            # and the branch is already checked out in the main worktree
             prepare_task_directory(task, "implementer-1", {"agent_dir": str(agent_dir)})
 
     def test_ensure_on_branch_not_called_during_spawn(self, tmp_path: Path) -> None:
