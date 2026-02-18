@@ -37,29 +37,8 @@ TERMINAL_QUEUES: list[TaskQueue] = ["done", "failed", "rejected", "escalated", "
 
 
 # ---------------------------------------------------------------------------
-# Agent roles (agents.yaml 'role' field) and task roles (task 'role' field)
-# ---------------------------------------------------------------------------
-
-# Agent roles as configured in agents.yaml
-AgentRole = Literal[
-    "implementer",
-    "orchestrator_impl",
-    "breakdown",
-    "gatekeeper",
-    "proposer",
-    "reviewer",
-    "tester",
-    "github_issue_monitor",
-]
-
-# Task roles as stored in task files / API
-TaskRole = Literal[
-    "implement",
-    "orchestrator_impl",
-    "breakdown",
-    "review",
-    "test",
-]
+# Roles are defined in agents.yaml and registered with the server at startup.
+# No hardcoded role lists — the server is the source of truth for valid roles.
 
 
 # Port allocation
@@ -375,11 +354,19 @@ def get_agents() -> list[dict[str, Any]]:
     agents = []
     for entry in fleet:
         agent_type = entry.get("type", "")
-        if not agent_type:
-            continue
+        explicit_agent_dir = entry.get("agent_dir", "")
 
         # Resolve agent directory
-        if agent_type == "custom":
+        if explicit_agent_dir:
+            # Explicit agent_dir takes priority — no type needed
+            agent_dir = Path(explicit_agent_dir)
+            if not agent_dir.is_absolute():
+                agent_dir = find_parent_project() / agent_dir
+            if not agent_dir.exists():
+                continue
+        elif not agent_type:
+            continue
+        elif agent_type == "custom":
             agent_dir_str = entry.get("path", "")
             if not agent_dir_str:
                 continue

@@ -1,4 +1,4 @@
-role: implementer
+role: implement
 model: sonnet
 max_turns: 200
 interval_seconds: 60
