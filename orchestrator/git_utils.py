@@ -5,7 +5,7 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
-from .config import find_parent_project, get_agents_runtime_dir, get_tasks_dir
+from .config import find_parent_project, get_agents_runtime_dir, get_base_branch, get_tasks_dir
 
 
 def run_git(args: list[str], cwd: Path | str | None = None, check: bool = True) -> subprocess.CompletedProcess:
@@ -270,7 +270,7 @@ def create_task_worktree(task: dict) -> Path:
 
     # Reuse existing valid worktree — but only if it's based on the right branch
     if worktree_path.exists() and (worktree_path / ".git").exists():
-        base_branch = task.get("branch") or get_main_branch()
+        base_branch = task.get("branch") or get_base_branch()
         if _worktree_branch_matches(parent_repo, worktree_path, base_branch):
             return worktree_path
         # Branch mismatch — delete and recreate from the correct branch
@@ -300,7 +300,7 @@ def create_task_worktree(task: dict) -> Path:
     run_git(["fetch", "origin"], cwd=parent_repo, check=False)
 
     # Determine the correct base branch for this task
-    base_branch = task.get("branch") or get_main_branch()
+    base_branch = task.get("branch") or get_base_branch()
     start_point = f"origin/{base_branch}"
 
     # Verify start point exists, fall back to origin/main if not
@@ -315,6 +315,21 @@ def create_task_worktree(task: dict) -> Path:
     # Always create worktrees as detached HEADs.
     # Agents will create the branch when they're ready to push.
     _add_detached_worktree(parent_repo, worktree_path, start_point)
+
+    # Safety check: assert the worktree is on detached HEAD.
+    # If this fails, something in the worktree creation pipeline checked out a
+    # named branch, violating the detached HEAD rule.
+    head_ref = run_git(
+        ["rev-parse", "--abbrev-ref", "HEAD"],
+        cwd=worktree_path,
+        check=False,
+    )
+    actual_ref = head_ref.stdout.strip()
+    assert actual_ref == "HEAD", (
+        f"Worktree for task {task_id} must be on detached HEAD, "
+        f"but is on branch '{actual_ref}'. "
+        "Worktrees must never checkout a named branch."
+    )
 
     return worktree_path
 

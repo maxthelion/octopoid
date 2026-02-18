@@ -128,11 +128,12 @@ class TestPrepareTaskDirectoryCleansStaleFiles:
 class TestCreateTaskWorktree:
     """Tests for create_task_worktree() base branch selection."""
 
-    def _make_mock_run_git(self, *, verify_rc=0):
+    def _make_mock_run_git(self, *, verify_rc=0, worktree_path=None):
         """Build a side_effect for run_git that handles branching logic.
 
         Args:
             verify_rc: returncode for rev-parse --verify of start_point
+            worktree_path: Path to create when 'worktree add' is called
         """
         calls = []
 
@@ -144,6 +145,12 @@ class TestCreateTaskWorktree:
 
             if args[:2] == ["rev-parse", "--verify"]:
                 result.returncode = verify_rc
+            elif args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                # Detached HEAD check — always return "HEAD" to pass the assertion
+                result.stdout = "HEAD\n"
+            elif args[:2] == ["worktree", "add"] and worktree_path is not None:
+                # Create the worktree directory so the assertion can run git in it
+                worktree_path.mkdir(parents=True, exist_ok=True)
 
             return result
 
@@ -152,7 +159,7 @@ class TestCreateTaskWorktree:
     def _run(self, task, temp_dir, **kwargs):
         """Run create_task_worktree with standard mocks."""
         worktree_path = temp_dir / "worktree"
-        mock_run_git, calls = self._make_mock_run_git(**kwargs)
+        mock_run_git, calls = self._make_mock_run_git(worktree_path=worktree_path, **kwargs)
 
         with patch('orchestrator.git_utils.find_parent_project', return_value=temp_dir), \
              patch('orchestrator.git_utils.get_task_worktree_path', return_value=worktree_path), \
