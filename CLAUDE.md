@@ -34,6 +34,10 @@ If you skip this, the scheduler may keep running old code from stale `.pyc` file
 - When rejecting a task, **rewrite the entire task file** to reflect only what remains to be done. Do not just prepend a rejection notice above the old description — the agent will follow the original instructions and ignore the notice. Remove or update any code examples, instructions, or acceptance criteria that contradict the rejection feedback. The task file should read as a clear, self-consistent set of instructions with no ambiguity.
 - When approving a task, post a review summary comment on the PR before merging.
 
+## Worktree rules
+
+**Worktrees must always stay on detached HEAD.** Never call `git checkout <branch>` in a worktree. The agent creates a named branch only when it is ready to push (via `create_task_branch`). This prevents git from refusing to checkout a branch that is already checked out in another worktree.
+
 ## Fixing merge conflicts on PRs
 
 When a PR has merge conflicts (mergeStateStatus: CONFLICTING or DIRTY), fix it in the task's worktree — not by cloning to /tmp.
