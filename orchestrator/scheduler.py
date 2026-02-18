@@ -1031,7 +1031,14 @@ def handle_agent_result_via_flow(task_id: str, agent_name: str, task_dir: Path) 
             debug_log(f"Flow dispatch: no runs defined for transition from '{current_queue}', task {task_id}")
 
     except Exception as e:
+        import traceback
         debug_log(f"Error in handle_agent_result_via_flow for {task_id}: {e}")
+        debug_log(traceback.format_exc())
+        try:
+            sdk = queue_utils.get_sdk()
+            sdk.tasks.update(task_id, queue='failed', execution_notes=f'Flow dispatch error: {e}')
+        except Exception:
+            debug_log(f"Failed to move {task_id} to failed queue")
 
 
 def handle_agent_result(task_id: str, agent_name: str, task_dir: Path) -> None:
