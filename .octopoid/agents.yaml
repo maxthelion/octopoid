@@ -3,7 +3,7 @@ paused: false
 queue_limits:
   max_claimed: 1
   max_incoming: 20
-  max_open_prs: 10
+  max_provisional: 10
 
 fleet:
   - name: implementer-1

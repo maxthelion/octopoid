@@ -447,19 +447,17 @@ class TestGetQueueStatus:
         mock_sdk_for_unit_tests.tasks.list.side_effect = mock_list_tasks
         mock_sdk_for_unit_tests.tasks.list.return_value = None  # Clear return_value when using side_effect
 
-        with patch('orchestrator.config.get_queue_limits', return_value={"max_incoming": 20, "max_claimed": 5, "max_open_prs": 10}):
-            with patch('orchestrator.backpressure.count_open_prs', return_value=2):
-                with patch('orchestrator.projects.list_projects', return_value=[]):
-                    from orchestrator.backpressure import get_queue_status
+        with patch('orchestrator.config.get_queue_limits', return_value={"max_incoming": 20, "max_claimed": 5, "max_provisional": 10}):
+            with patch('orchestrator.projects.list_projects', return_value=[]):
+                from orchestrator.backpressure import get_queue_status
 
-                    status = get_queue_status()
+                status = get_queue_status()
 
-                    assert "incoming" in status
-                    assert "claimed" in status
-                    assert "done" in status
-                    assert "limits" in status
-                    assert status["incoming"]["count"] == 1
-                    assert status["open_prs"] == 2
+                assert "incoming" in status
+                assert "claimed" in status
+                assert "done" in status
+                assert "limits" in status
+                assert status["incoming"]["count"] == 1
 
         # Reset side_effect after test
         mock_sdk_for_unit_tests.tasks.list.side_effect = None
@@ -500,7 +498,7 @@ class TestBackpressure:
 
     def test_can_create_task_within_limit(self, mock_config):
         """Test can_create_task when within limits."""
-        with patch('orchestrator.config.get_queue_limits', return_value={"max_incoming": 20, "max_claimed": 5, "max_open_prs": 10}):
+        with patch('orchestrator.config.get_queue_limits', return_value={"max_incoming": 20, "max_claimed": 5, "max_provisional": 10}):
             with patch('orchestrator.queue_utils.count_queue', return_value=5):
                 from orchestrator.queue_utils import can_create_task
 
@@ -513,7 +511,7 @@ class TestBackpressure:
         """Test can_create_task when queue is full."""
         mock_sdk_for_unit_tests.tasks.list.return_value = [{"id": f"task{i}"} for i in range(15)]
 
-        with patch('orchestrator.config.get_queue_limits', return_value={"max_incoming": 20, "max_claimed": 5, "max_open_prs": 10}):
+        with patch('orchestrator.config.get_queue_limits', return_value={"max_incoming": 20, "max_claimed": 5, "max_provisional": 10}):
             from orchestrator.queue_utils import can_create_task
 
             can_create, reason = can_create_task()
@@ -523,7 +521,7 @@ class TestBackpressure:
 
     def test_can_claim_task_no_tasks(self, mock_config):
         """Test can_claim_task when no tasks available."""
-        with patch('orchestrator.config.get_queue_limits', return_value={"max_incoming": 20, "max_claimed": 5, "max_open_prs": 10}):
+        with patch('orchestrator.config.get_queue_limits', return_value={"max_incoming": 20, "max_claimed": 5, "max_provisional": 10}):
             with patch('orchestrator.queue_utils.count_queue', side_effect=[0, 0]):
                 from orchestrator.queue_utils import can_claim_task
 

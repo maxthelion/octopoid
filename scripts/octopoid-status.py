@@ -28,7 +28,8 @@ from orchestrator.config import (
     get_tasks_dir,
     is_system_paused,
 )
-from orchestrator.queue_utils import count_open_prs, get_sdk
+from orchestrator.queue_utils import get_sdk
+from orchestrator.backpressure import count_queue
 from orchestrator.task_logger import get_task_logger
 
 VERBOSE = "--verbose" in sys.argv or "-v" in sys.argv
@@ -200,8 +201,8 @@ def print_queue_status() -> None:
 
     print(f"  {' | '.join(parts) if parts else 'all queues empty'}")
 
-    open_prs = count_open_prs()
-    print(f"  open PRs: {open_prs} (limit: {limits.get('max_open_prs', '?')})")
+    provisional = count_queue("provisional")
+    print(f"  provisional: {provisional} (limit: {limits.get('max_provisional', '?')})")
     print(f"  max claimed: {limits.get('max_claimed', '?')}")
 
     # Task details per active queue

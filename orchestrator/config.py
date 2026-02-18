@@ -49,7 +49,7 @@ PORT_STRIDE = 10
 DEFAULT_QUEUE_LIMITS = {
     "max_incoming": 20,
     "max_claimed": 1,
-    "max_open_prs": 10,
+    "max_provisional": 10,
 }
 
 # Default proposal limits per proposer type
@@ -257,7 +257,7 @@ def get_queue_limits() -> dict[str, int]:
         return {
             "max_incoming": limits.get("max_incoming", DEFAULT_QUEUE_LIMITS["max_incoming"]),
             "max_claimed": limits.get("max_claimed", DEFAULT_QUEUE_LIMITS["max_claimed"]),
-            "max_open_prs": limits.get("max_open_prs", DEFAULT_QUEUE_LIMITS["max_open_prs"]),
+            "max_provisional": limits.get("max_provisional", DEFAULT_QUEUE_LIMITS["max_provisional"]),
         }
     except FileNotFoundError:
         return DEFAULT_QUEUE_LIMITS.copy()
