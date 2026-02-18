@@ -143,11 +143,16 @@ class HookManager:
             target_point: The hook point to check (e.g. "before_submit", "before_merge")
 
         Returns:
-            Tuple of (can_proceed, list of pending hook names).
+            Tuple of (can_proceed, list of blocking hook names).
+            Returns False if any hook has failed or is still pending.
         """
-        pending = self.get_pending_hooks(task, point=target_point)
-        pending_names = [h["name"] for h in pending]
-        return len(pending) == 0, pending_names
+        hooks = self._get_hooks(task)
+        relevant = [h for h in hooks if h.get("point") == target_point]
+        failed = [h for h in relevant if h.get("status") == "failed"]
+        if failed:
+            return False, [h["name"] for h in failed]
+        pending = [h for h in relevant if h.get("status") == "pending"]
+        return len(pending) == 0, [h["name"] for h in pending]
 
     def run_orchestrator_hook(
         self,

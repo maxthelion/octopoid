@@ -128,6 +128,21 @@ class TestPendingAndTransition:
         ok, names = HookManager(_sdk()).can_transition(t, "before_merge")
         assert not ok and names == ["merge_pr"]
 
+    def test_can_transition_false_when_hook_failed(self):
+        # Reproduces bug: a failed hook must block transition, not be silently ignored
+        t = _task(hooks=[{"name": "merge_pr", "point": "before_merge", "type": "orchestrator", "status": "failed"}])
+        ok, names = HookManager(_sdk()).can_transition(t, "before_merge")
+        assert not ok and names == ["merge_pr"]
+
+    def test_can_transition_returns_failed_names_not_pending(self):
+        # Failed hook names are returned (not an empty list)
+        t = _task(hooks=[
+            {"name": "merge_pr", "point": "before_merge", "type": "orchestrator", "status": "failed"},
+            {"name": "notify", "point": "before_merge", "type": "orchestrator", "status": "passed"},
+        ])
+        ok, names = HookManager(_sdk()).can_transition(t, "before_merge")
+        assert not ok and "merge_pr" in names
+
     def test_hooks_as_json_string(self):
         t = _task(hooks=json.dumps([{"name": "a", "point": "before_submit", "type": "agent", "status": "pending"}]))
         assert len(HookManager(_sdk()).get_pending_hooks(t)) == 1
@@ -214,3 +229,67 @@ class TestRecordEvidence:
         sdk = _sdk()
         sdk.tasks.get.side_effect = RuntimeError("boom")
         assert HookManager(sdk).record_evidence("x", "y", HookEvidence(status="passed")) is None
+
+
+class TestProcessOrchestratorHooks:
+    """Tests for the process_orchestrator_hooks scheduler function."""
+
+    def _make_sdk(self, task_hooks_after_run):
+        """Build a mock SDK where tasks.get (re-fetch) returns updated hooks."""
+        sdk = _sdk()
+        task = _task(
+            hooks=[{"name": "merge_pr", "point": "before_merge", "type": "orchestrator", "status": "pending"}],
+            pr_number=42,
+        )
+        sdk.tasks.list.return_value = [task]
+        # Re-fetched task has hooks reflecting the outcome of record_evidence
+        updated = _task(hooks=task_hooks_after_run, pr_number=42)
+        sdk.tasks.get.return_value = updated
+        sdk.tasks.update.return_value = updated
+        return sdk, task
+
+    def test_does_not_accept_when_merge_pr_fails(self):
+        """Reproduces bug: task must NOT be accepted when merge_pr hook fails."""
+        failed_hooks = [{"name": "merge_pr", "point": "before_merge", "type": "orchestrator", "status": "failed"}]
+        sdk, _task_obj = self._make_sdk(failed_hooks)
+
+        repo = MagicMock()
+        repo.merge_pr.return_value = False  # simulate PR merge failure
+
+        with patch("orchestrator.scheduler.queue_utils.get_sdk", return_value=sdk), \
+             patch("orchestrator.scheduler.HookManager") as MockHM:
+            hm_instance = MagicMock()
+            MockHM.return_value = hm_instance
+            hm_instance.get_pending_hooks.return_value = [
+                {"name": "merge_pr", "point": "before_merge", "type": "orchestrator", "status": "pending"}
+            ]
+            hm_instance.run_orchestrator_hook.return_value = HookEvidence(status="failed", message="PR merge failed")
+            hm_instance.record_evidence.return_value = None
+            # can_transition must return False for a failed hook
+            hm_instance.can_transition.return_value = (False, ["merge_pr"])
+
+            from orchestrator.scheduler import process_orchestrator_hooks
+            process_orchestrator_hooks()
+
+        sdk.tasks.accept.assert_not_called()
+
+    def test_accepts_when_all_hooks_pass(self):
+        """Task is accepted when all orchestrator hooks pass."""
+        passed_hooks = [{"name": "merge_pr", "point": "before_merge", "type": "orchestrator", "status": "passed"}]
+        sdk, _task_obj = self._make_sdk(passed_hooks)
+
+        with patch("orchestrator.scheduler.queue_utils.get_sdk", return_value=sdk), \
+             patch("orchestrator.scheduler.HookManager") as MockHM:
+            hm_instance = MagicMock()
+            MockHM.return_value = hm_instance
+            hm_instance.get_pending_hooks.return_value = [
+                {"name": "merge_pr", "point": "before_merge", "type": "orchestrator", "status": "pending"}
+            ]
+            hm_instance.run_orchestrator_hook.return_value = HookEvidence(status="passed", message="Merged PR #42")
+            hm_instance.record_evidence.return_value = None
+            hm_instance.can_transition.return_value = (True, [])
+
+            from orchestrator.scheduler import process_orchestrator_hooks
+            process_orchestrator_hooks()
+
+        sdk.tasks.accept.assert_called_once_with(task_id="test-001", accepted_by="scheduler-hooks")

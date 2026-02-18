@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`can_transition` now blocks on failed hooks** ([TASK-d466ea47])
+  - `can_transition()` in `hook_manager.py` previously only checked for `"pending"` hooks. A hook that ran and failed had `status="failed"`, which is not `"pending"`, so `can_transition` incorrectly returned `True` — allowing a task to be accepted even though `merge_pr` had failed.
+  - Fixed by checking for failed hooks first: if any relevant hook has `status="failed"`, `can_transition` returns `(False, [failed_hook_names])`.
+  - Added regression tests: `can_transition` returns `False` when any hook is `"failed"`, and `process_orchestrator_hooks` does not accept a task when `merge_pr` fails.
+
 - **Worktree detached HEAD enforcement** ([TASK-6ee319d0])
   - `prepare_task_directory` in `scheduler.py` no longer calls `repo.ensure_on_branch()` after creating the worktree. Worktrees must always stay on detached HEAD; agents create a named branch only when ready to push via `create_task_branch`.
   - Removed the now-unused `RepoManager` import from `scheduler.py`.
