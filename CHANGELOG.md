@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Scheduler cleanup: remove dead code, flatten `handle_agent_result`** ([TASK-33d1f310])
+  - Removed unused `agent_role` key from `spawn_implementer` state.extra (replaced by `claim_from` in the role-name refactor)
+  - Extracted result parsing from `handle_agent_result` into `_read_or_infer_result(task_dir)` — handles file existence, JSON validity, and notes.md fallback
+  - Extracted outcome handlers into `_handle_done_outcome`, `_handle_fail_outcome`, and `_handle_continuation_outcome` helpers
+  - `handle_agent_result` is now flat (2 levels of nesting) — one `try` block with an `elif` chain dispatching to helpers
+
 ### Fixed
 
 - **Worktree detached HEAD enforcement** ([TASK-6ee319d0])
