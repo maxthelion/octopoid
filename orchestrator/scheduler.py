@@ -1034,6 +1034,80 @@ def handle_agent_result_via_flow(task_id: str, agent_name: str, task_dir: Path) 
         debug_log(f"Error in handle_agent_result_via_flow for {task_id}: {e}")
 
 
+def _read_or_infer_result(task_dir: Path) -> dict:
+    """Read result.json from a task directory, with fallback heuristics.
+
+    If result.json exists, parses and returns it. If it's missing or invalid,
+    falls back to checking notes.md for a continuation signal, or returns an
+    error result.
+
+    Args:
+        task_dir: Path to the task directory
+
+    Returns:
+        Result dict with at least an "outcome" key.
+    """
+    import json
+
+    result_path = task_dir / "result.json"
+
+    if result_path.exists():
+        try:
+            return json.loads(result_path.read_text())
+        except json.JSONDecodeError:
+            return {"outcome": "error", "reason": "Invalid result.json"}
+
+    # No result.json — check for progress notes as a continuation signal
+    notes_path = task_dir / "notes.md"
+    if notes_path.exists() and notes_path.read_text().strip():
+        return {"outcome": "needs_continuation"}
+
+    return {"outcome": "error", "reason": "No result.json produced"}
+
+
+def _handle_done_outcome(sdk: object, task_id: str, task: dict, result: dict, task_dir: Path) -> None:
+    """Execute flow steps for a successfully-completed task."""
+    from .flow import load_flow
+    from .steps import execute_steps
+
+    current_queue = task.get("queue", "unknown")
+    if current_queue != "claimed":
+        # Task already moved past claimed — skip to avoid double-submitting.
+        debug_log(f"Task {task_id}: outcome=done but queue={current_queue}, skipping")
+        return
+
+    flow_name = task.get("flow", "default")
+    flow = load_flow(flow_name)
+    transitions = flow.get_transitions_from("claimed")
+
+    if transitions and transitions[0].runs:
+        debug_log(f"Task {task_id}: executing flow steps {transitions[0].runs}")
+        execute_steps(transitions[0].runs, task, result, task_dir)
+        print(f"[{datetime.now().isoformat()}] Task {task_id} submitted via flow steps")
+    else:
+        # Fallback: direct submit if flow has no steps
+        sdk.tasks.submit(task_id=task_id, commits_count=0, turns_used=0)
+        debug_log(f"Task {task_id}: no flow steps, used direct submit")
+
+
+def _handle_fail_outcome(sdk: object, task_id: str, reason: str, current_queue: str) -> None:
+    """Move a failed task to the failed queue."""
+    if current_queue == "claimed":
+        sdk.tasks.update(task_id, queue="failed")
+        debug_log(f"Task {task_id}: failed (claimed → failed): {reason}")
+    else:
+        debug_log(f"Task {task_id}: outcome=failed but queue={current_queue}, skipping")
+
+
+def _handle_continuation_outcome(sdk: object, task_id: str, agent_name: str, current_queue: str) -> None:
+    """Move a task to needs_continuation queue."""
+    if current_queue == "claimed":
+        sdk.tasks.update(task_id, queue="needs_continuation")
+        debug_log(f"Task {task_id}: needs continuation by {agent_name}")
+    else:
+        debug_log(f"Task {task_id}: outcome=needs_continuation but queue={current_queue}, skipping")
+
+
 def handle_agent_result(task_id: str, agent_name: str, task_dir: Path) -> None:
     """Handle the result of a script-based agent run.
 
@@ -1052,35 +1126,13 @@ def handle_agent_result(task_id: str, agent_name: str, task_dir: Path) -> None:
         agent_name: Name of the agent
         task_dir: Path to the task directory
     """
-    import json
-
-    from .flow import load_flow
-    from .steps import execute_steps
-
-    result_path = task_dir / "result.json"
-
-    if result_path.exists():
-        try:
-            result = json.loads(result_path.read_text())
-        except json.JSONDecodeError:
-            result = {"outcome": "error", "reason": "Invalid result.json"}
-    else:
-        # No result.json — check for progress
-        notes_path = task_dir / "notes.md"
-        has_notes = notes_path.exists() and notes_path.read_text().strip()
-
-        if has_notes:
-            result = {"outcome": "needs_continuation"}
-        else:
-            result = {"outcome": "error", "reason": "No result.json produced"}
-
+    result = _read_or_infer_result(task_dir)
     outcome = result.get("outcome", "error")
     debug_log(f"Task {task_id} result: {outcome}")
 
     try:
         sdk = queue_utils.get_sdk()
 
-        # Fetch current task state from server (state-first pattern)
         task = sdk.tasks.get(task_id)
         if not task:
             debug_log(f"Task {task_id}: not found on server, skipping result handling")
@@ -1089,45 +1141,14 @@ def handle_agent_result(task_id: str, agent_name: str, task_dir: Path) -> None:
         current_queue = task.get("queue", "unknown")
         debug_log(f"Task {task_id}: current queue = {current_queue}, outcome = {outcome}")
 
-        if outcome == "done" and current_queue == "claimed":
-            # Execute the flow's claimed→provisional steps (push, PR, submit)
-            flow_name = task.get("flow", "default")
-            flow = load_flow(flow_name)
-            transitions = flow.get_transitions_from("claimed")
-
-            if transitions and transitions[0].runs:
-                debug_log(f"Task {task_id}: executing flow steps {transitions[0].runs}")
-                execute_steps(transitions[0].runs, task, result, task_dir)
-                print(f"[{datetime.now().isoformat()}] Task {task_id} submitted via flow steps")
-            else:
-                # Fallback: direct submit if flow has no steps
-                sdk.tasks.submit(task_id=task_id, commits_count=0, turns_used=0)
-                debug_log(f"Task {task_id}: no flow steps, used direct submit")
-
-        elif outcome in ("done", "submitted") and current_queue != "claimed":
-            # Task already moved past claimed (e.g. lease monitor requeued, or
-            # already provisional). Skip to avoid double-submitting.
-            debug_log(f"Task {task_id}: outcome={outcome} but queue={current_queue}, skipping")
-
+        if outcome in ("done", "submitted"):
+            _handle_done_outcome(sdk, task_id, task, result, task_dir)
         elif outcome in ("failed", "error"):
-            reason = result.get("reason", "Agent reported failure")
-            if current_queue == "claimed":
-                sdk.tasks.update(task_id, queue="failed")
-                debug_log(f"Task {task_id}: failed (claimed → failed): {reason}")
-            else:
-                debug_log(f"Task {task_id}: outcome=failed but queue={current_queue}, skipping")
-
+            _handle_fail_outcome(sdk, task_id, result.get("reason", "Agent reported failure"), current_queue)
         elif outcome == "needs_continuation":
-            if current_queue == "claimed":
-                sdk.tasks.update(task_id, queue="needs_continuation")
-                debug_log(f"Task {task_id}: needs continuation by {agent_name}")
-            else:
-                debug_log(f"Task {task_id}: outcome=needs_continuation but queue={current_queue}, skipping")
-
+            _handle_continuation_outcome(sdk, task_id, agent_name, current_queue)
         else:
-            debug_log(f"Task {task_id}: unknown outcome {outcome}, treating as failure")
-            if current_queue == "claimed":
-                sdk.tasks.update(task_id, queue="failed")
+            _handle_fail_outcome(sdk, task_id, f"Unknown outcome: {outcome}", current_queue)
 
     except Exception as e:
         debug_log(f"Error handling result for {task_id}: {e}")
@@ -1457,7 +1478,6 @@ def spawn_implementer(ctx: AgentContext) -> int:
 
     new_state = mark_started(ctx.state, pid)
     new_state.extra["agent_mode"] = "scripts"
-    new_state.extra["agent_role"] = ctx.role
     new_state.extra["claim_from"] = ctx.agent_config.get("claim_from", "incoming")
     new_state.extra["task_dir"] = str(task_dir)
     new_state.extra["current_task_id"] = ctx.claimed_task["id"]
