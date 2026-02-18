@@ -709,3 +709,62 @@ class TestHandleAgentResultViaFlowDecisions:
         assert any("banana" in m for m in log_messages), (
             f"Expected 'banana' in log messages, got: {log_messages}"
         )
+
+    def test_exception_moves_task_to_failed(self, tmp_path: Path) -> None:
+        """When flow dispatch raises, task must be moved to 'failed' queue."""
+        result = {"status": "success", "decision": "approve"}
+        (tmp_path / "result.json").write_text(json.dumps(result))
+
+        mock_sdk = _make_sdk_mock()
+        # Make execute_steps raise to trigger the except branch
+        with (
+            patch("orchestrator.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("orchestrator.flow.load_flow", side_effect=RuntimeError("pnpm not in PATH")),
+        ):
+            handle_agent_result_via_flow("TASK-test", "implementer-1", tmp_path)
+
+        mock_sdk.tasks.update.assert_called_once()
+        call_kwargs = mock_sdk.tasks.update.call_args
+        assert call_kwargs.args[0] == "TASK-test"
+        assert call_kwargs.kwargs.get("queue") == "failed"
+        assert "pnpm not in PATH" in call_kwargs.kwargs.get("execution_notes", "")
+
+    def test_exception_logs_full_traceback(self, tmp_path: Path) -> None:
+        """When flow dispatch raises, full traceback must be logged."""
+        result = {"status": "success", "decision": "approve"}
+        (tmp_path / "result.json").write_text(json.dumps(result))
+
+        mock_sdk = _make_sdk_mock()
+        with (
+            patch("orchestrator.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("orchestrator.flow.load_flow", side_effect=RuntimeError("boom")),
+            patch("orchestrator.scheduler.debug_log") as mock_log,
+        ):
+            handle_agent_result_via_flow("TASK-test", "implementer-1", tmp_path)
+
+        log_messages = [c.args[0] for c in mock_log.call_args_list]
+        # The traceback log should contain the exception type or traceback header
+        assert any("Traceback" in m or "RuntimeError" in m for m in log_messages), (
+            f"Expected traceback in log messages, got: {log_messages}"
+        )
+
+    def test_exception_recovery_failure_is_handled(self, tmp_path: Path) -> None:
+        """If moving to failed queue also fails, it should be caught and logged."""
+        result = {"status": "success", "decision": "approve"}
+        (tmp_path / "result.json").write_text(json.dumps(result))
+
+        mock_sdk = _make_sdk_mock()
+        mock_sdk.tasks.update.side_effect = RuntimeError("SDK unavailable")
+
+        with (
+            patch("orchestrator.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("orchestrator.flow.load_flow", side_effect=RuntimeError("pnpm not in PATH")),
+            patch("orchestrator.scheduler.debug_log") as mock_log,
+        ):
+            # Should not raise even when the recovery itself fails
+            handle_agent_result_via_flow("TASK-test", "implementer-1", tmp_path)
+
+        log_messages = [c.args[0] for c in mock_log.call_args_list]
+        assert any("Failed to move" in m for m in log_messages), (
+            f"Expected 'Failed to move' in log messages, got: {log_messages}"
+        )
