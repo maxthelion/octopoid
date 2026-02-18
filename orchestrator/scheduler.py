@@ -204,10 +204,14 @@ def guard_claim_task(ctx: AgentContext) -> tuple[bool, str]:
 
     claim_from = get_claim_queue_for_role(ctx.role)
     type_filter = ctx.agent_config.get("type_filter")
+    # When claiming from a non-incoming queue (e.g. provisional), do not filter
+    # by the agent's own role — the tasks there may have a different original role.
+    role_filter = ctx.role if claim_from == "incoming" else None
 
     task = claim_and_prepare_task(
         agent_name=ctx.agent_name,
         role=ctx.role,
+        role_filter=role_filter,
         type_filter=type_filter,
         claim_from=claim_from,
     )
@@ -453,11 +457,15 @@ def check_continuation_for_agent(agent_name: str) -> dict | None:
     return None
 
 
+_UNSET = object()
+
+
 def claim_and_prepare_task(
     agent_name: str,
     role: str,
     type_filter: str | None = None,
     claim_from: str = "incoming",
+    role_filter: str | None = _UNSET,  # type: ignore[assignment]
 ) -> dict | None:
     """Claim a task and write it to the agent's runtime dir.
 
@@ -470,6 +478,9 @@ def claim_and_prepare_task(
         role: Agent role (e.g. 'implement')
         type_filter: Only claim tasks with this type (from agent config)
         claim_from: Queue to claim from (default: 'incoming'). Gatekeeper uses 'provisional'.
+        role_filter: Role to filter tasks by. Defaults to `role` when unset.
+            Pass None explicitly to claim tasks regardless of their original
+            role (e.g. gatekeeper reviewing provisional tasks with role='implement').
 
     Returns:
         Task dict if work is available, None otherwise
@@ -481,8 +492,9 @@ def claim_and_prepare_task(
 
     # 2. If no continuation, claim a fresh task
     if task is None:
+        effective_role_filter = role if role_filter is _UNSET else role_filter
         task = queue_utils.claim_task(
-            role_filter=role,
+            role_filter=effective_role_filter,
             agent_name=agent_name,
             type_filter=type_filter,
             from_queue=claim_from,
