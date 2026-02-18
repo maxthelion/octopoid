@@ -23,7 +23,7 @@ fleet:
     spawn_mode: scripts
     claim_from: provisional
     interval_seconds: 120
-    max_turns: 100
+    max_turns: 50
     model: sonnet
     agent_dir: .octopoid/agents/gatekeeper
 
