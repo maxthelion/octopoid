@@ -1221,7 +1221,11 @@ def handle_agent_result_via_flow(task_id: str, agent_name: str, task_dir: Path) 
             print(f"[{datetime.now().isoformat()}] Agent {agent_name} rejected task {task_id}")
             return
 
-        # Execute the transition's runs (approve path)
+        if decision != "approve":
+            debug_log(f"Flow dispatch: unknown decision '{decision}' for {task_id}, leaving in {current_queue} for human review")
+            return
+
+        # Execute the transition's runs (approve path — only reached on explicit "approve")
         if transition.runs:
             debug_log(f"Flow dispatch: executing steps {transition.runs} for task {task_id}")
             execute_steps(transition.runs, task, result, task_dir)
