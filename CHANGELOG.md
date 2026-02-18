@@ -19,6 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Agent pool model step 1: agents dict config format** ([TASK-134eb961])
+  - `.octopoid/agents.yaml` now uses an `agents:` dict where each key is a blueprint name and `max_instances` controls concurrency
+  - `get_agents()` reads the new `agents:` dict format; falls back to legacy `fleet:` list for backwards compatibility
+  - Each returned agent dict now includes `blueprint_name` (the dict key) and `max_instances` (defaults to 1)
+  - `EXAMPLE_AGENTS_YAML` in `orchestrator/init.py` updated to use the new dict format
+
 - **Drafts tab in dashboard** ([TASK-451ec77d])
   - Added `TAB_DRAFTS = 5` constant and updated `TAB_NAMES`/`TAB_KEYS` to include "Drafts" / "F"
   - New `render_drafts_tab()` with master-detail layout: left pane lists drafts (number + title), right pane shows full markdown content

@@ -338,16 +338,37 @@ def get_curator_scoring() -> dict[str, float]:
 def get_agents() -> list[dict[str, Any]]:
     """Get list of configured agents.
 
-    Reads the 'fleet:' key from agents.yaml, which references agent directories.
+    Reads the 'agents:' dict from agents.yaml (new format), falling back to
+    'fleet:' list (legacy format) for backwards compatibility.
+
+    In the new agents dict format, each key is a blueprint name and the value
+    is the agent config. A 'blueprint_name' key is added to each entry.
+    'max_instances' defaults to 1.
 
     Returns:
-        List of agent configs with merged type defaults and fleet overrides.
-        Each entry includes an 'agent_dir' key pointing to the agent directory.
+        List of agent configs with merged type defaults and config overrides.
+        Each entry includes an 'agent_dir' key pointing to the agent directory
+        and a 'blueprint_name' key with the blueprint identifier.
     """
     config = load_agents_config()
 
-    # Fleet format only
-    fleet = config.get("fleet", [])
+    # New agents dict format takes priority; fall back to legacy fleet list
+    agents_dict = config.get("agents")
+    if agents_dict and isinstance(agents_dict, dict):
+        fleet = []
+        for blueprint_name, blueprint_config in agents_dict.items():
+            entry = dict(blueprint_config)
+            entry.setdefault("name", blueprint_name)
+            entry["blueprint_name"] = blueprint_name
+            entry.setdefault("max_instances", 1)
+            fleet.append(entry)
+    else:
+        # Legacy fleet list format
+        fleet = config.get("fleet", [])
+        for entry in fleet:
+            entry.setdefault("blueprint_name", entry.get("name", ""))
+            entry.setdefault("max_instances", 1)
+
     if not fleet:
         return []
 

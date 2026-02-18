@@ -258,20 +258,20 @@ queue_limits:
   max_claimed: 1     # Max tasks being worked on simultaneously
   max_open_prs: 10   # Max open pull requests
 
-# Agent definitions
+# Agent blueprints — each key is a blueprint name.
+# max_instances controls how many can run concurrently (default: 1).
 agents:
-  - name: implementer-1
-    role: implementer
+  implementer:
+    type: implementer
     interval_seconds: 180  # 3 minutes
+    max_instances: 1
 
-  # - name: implementer-2
-  #   role: implementer
-  #   interval_seconds: 180
-
-  # - name: github-issue-monitor
-  #   role: github_issue_monitor
+  # github-issue-monitor:
+  #   type: custom
+  #   path: .octopoid/agents/github-issue-monitor/
   #   interval_seconds: 300
   #   lightweight: true
+  #   max_instances: 1
 """
 
 EXAMPLE_GLOBAL_INSTRUCTIONS = """# Global Agent Instructions
