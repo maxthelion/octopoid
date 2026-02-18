@@ -320,7 +320,7 @@ class TestHandleInput:
         d = self._make_dashboard()
         result = d.handle_input(ord('r'))
         assert result is True
-        d.load_data.assert_called_once()
+        d._force_refresh.set.assert_called_once()
 
     def test_w_switches_to_work_tab(self):
         d = self._make_dashboard()
@@ -457,6 +457,63 @@ class TestHandleInput:
         d.state.drafts_cursor = len(drafts) - 1
         d.handle_input(ord('j'))
         assert d.state.drafts_cursor == len(drafts) - 1
+
+    def test_R_triggers_refresh(self):
+        d = self._make_dashboard()
+        result = d.handle_input(ord('R'))
+        assert result is True
+        d._force_refresh.set.assert_called_once()
+
+    def test_r_does_not_call_load_data(self):
+        """r key should signal background thread, not block on load_data."""
+        d = self._make_dashboard()
+        d.handle_input(ord('r'))
+        d.load_data.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Background data thread tests
+# ---------------------------------------------------------------------------
+
+
+class TestDataLoop:
+    """Tests for Dashboard._data_loop() background thread."""
+
+    def test_data_loop_updates_state(self):
+        """_data_loop should update state.last_report and state.last_drafts."""
+        import threading
+
+        state = dash.DashboardState(demo_mode=True)
+        mock_report = {"work": {}, "health": {}}
+        mock_drafts = [{"filename": "test.md", "title": "Test"}]
+
+        with patch("builtins.__import__", side_effect=ImportError):
+            pass  # just to import patch
+
+        with patch.object(dash, "load_report", return_value=mock_report) as mock_lr, \
+             patch.object(dash, "load_drafts", return_value=mock_drafts) as mock_ld:
+
+            dashboard = MagicMock()
+            dashboard.state = state
+            dashboard.running = True
+            dashboard._data_lock = threading.Lock()
+            dashboard._force_refresh = threading.Event()
+            dashboard.refresh_interval = 0.05
+            dashboard.sdk = None
+            dashboard._data_loop = dash.Dashboard._data_loop.__get__(dashboard)
+
+            # Trigger one iteration via force refresh
+            dashboard._force_refresh.set()
+            t = threading.Thread(target=dashboard._data_loop)
+            t.start()
+            import time as _time
+            _time.sleep(0.1)
+            dashboard.running = False
+            dashboard._force_refresh.set()  # wake loop to exit
+            t.join(timeout=1.0)
+
+            assert dashboard.state.last_report == mock_report
+            assert dashboard.state.last_drafts == mock_drafts
 
 
 # ---------------------------------------------------------------------------
