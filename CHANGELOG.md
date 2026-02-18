@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `run_tests` now builds an augmented PATH before calling the test subprocess, adding nvm's active node bin directory and corepack shims directories so `npm`/`pnpm` are found even when the scheduler runs under launchd with a minimal environment
   - Introduced `_build_node_path()` helper that inspects `NVM_DIR` and well-known corepack shim locations
 
+- **Flow dispatch error recovery** ([TASK-31b1fe65])
+  - When `handle_agent_result_via_flow` throws an exception, the task is now moved to `failed` queue instead of being left in `claimed` forever
+  - Error details (including full traceback) are logged via `debug_log`
+  - The exception message is recorded in the task's `execution_notes` field
+  - If moving to `failed` also fails, that secondary error is caught and logged rather than propagated
+
 - **Gatekeeper claim bug** ([TASK-b0a63d8b])
   - `guard_claim_task` now passes `role_filter=None` when claiming from non-incoming queues (e.g. `provisional`), so the gatekeeper can claim tasks whose original `role` is `"implement"` rather than `"gatekeeper"`
   - Added `role_filter` parameter to `claim_and_prepare_task` with a sentinel default so callers can explicitly pass `None` to disable role filtering
