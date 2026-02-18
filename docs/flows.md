@@ -1,19 +1,20 @@
-# Declarative Flows
+# Declarative Flows — Architecture
 
-Flows define how tasks move through the system as conditional state machines. They replace hardcoded logic with declarative YAML configurations.
+Flows define how tasks move through the system as conditional state machines. They are **the** mechanism for task transitions — there are no hardcoded state transitions in the scheduler.
 
-## Overview
+## How It Works
 
-A flow is a state machine where transitions have:
-- **Conditions** (gates that must pass)
-- **Actions** (scripts that run during the transition)
-- **Agents** (who handles work in each state)
+A flow is a YAML file in `.octopoid/flows/` that declares states, transitions, conditions (gates), and actions (runs). A task is always in exactly one state (mapped to its queue: `incoming`, `claimed`, `provisional`, `done`, `failed`).
 
-## Flow File Format
+```
+incoming ──[agent: implementer]──→ claimed ──[runs: push, test, pr]──→ provisional ──[agent: gatekeeper]──→ done
+               ↑                                                            │
+               └───────────────────[on_fail: incoming]──────────────────────┘
+```
 
-Flows are YAML files stored in `.octopoid/flows/`.
+### Current Default Flow
 
-### Example: Default Flow
+This is the live flow in `.octopoid/flows/default.yaml`:
 
 ```yaml
 name: default
@@ -24,192 +25,82 @@ transitions:
     agent: implementer
 
   "claimed -> provisional":
-    runs: [rebase_on_main, run_tests, create_pr]
+    runs: [push_branch, run_tests, create_pr, submit_to_server]
 
   "provisional -> done":
     conditions:
-      - name: human_approval
-        type: manual
-    runs: [merge_pr]
+      - name: gatekeeper_review
+        type: agent
+        agent: gatekeeper
+        on_fail: incoming
+    runs: [post_review_comment, merge_pr]
 ```
 
-### Example: Project Flow
+### What each part means
 
-For projects that coordinate multiple child tasks on a shared branch:
+**`agent`** — which agent role handles work in the `from_state`. The scheduler checks this when deciding if an agent can claim a task.
 
-```yaml
-name: project
-description: Multi-task project with shared branch
+**`runs`** — step functions (registered in `orchestrator/steps.py`) that execute during the transition. These are Python functions, not shell scripts. Current steps: `push_branch`, `run_tests`, `create_pr`, `submit_to_server`, `post_review_comment`, `merge_pr`.
 
-# Flow applied to child tasks within this project
-child_flow:
-  transitions:
-    "incoming -> claimed":
-      agent: implementer
+**`conditions`** — gates evaluated in order before the transition completes. Three types:
 
-    "claimed -> done":
-      runs: [rebase_on_project_branch, run_tests]
-      # No create_pr — children commit to the shared branch
+| Type | How it works | Example |
+|------|-------------|---------|
+| `script` | Runs a script, exit code 0 = pass | `tests_pass` |
+| `agent` | Spawns an LLM agent that returns approve/reject | `gatekeeper_review` |
+| `manual` | Waits for human approval | `human_approval` |
 
-# Flow for the project itself, after all children complete
-transitions:
-  "children_complete -> provisional":
-    runs: [create_pr]
-    conditions:
-      - name: all_tests_pass
-        type: script
-        script: run-tests
+**`on_fail`** — where to send the task if a condition fails. If the gatekeeper rejects, the task goes back to `incoming` for the implementer to fix.
 
-  "provisional -> done":
-    conditions:
-      - name: human_approval
-        type: manual
-    runs: [merge_pr]
-```
+## How the Scheduler Uses Flows
 
-## Transition Format
+1. **Claiming tasks** (`evaluate_agent` → `guard_task_available`): The scheduler reads the agent's `claim_from` config (default: `incoming`, gatekeeper uses `provisional`) and claims the next matching task.
 
-Each transition is declared as `"state1 -> state2"` with optional configuration:
+2. **Agent finishes** (`check_and_update_finished_agents`): When an agent's process exits, the scheduler reads its `result.json`.
 
-```yaml
-"from_state -> to_state":
-  agent: role_name        # Agent that handles work in from_state
-  runs: [script1, script2]  # Scripts to run during transition
-  conditions:              # Gates that must pass
-    - name: condition_name
-      type: script|agent|manual
-      # ... condition-specific fields
-```
+3. **Flow dispatch** (`handle_agent_result_via_flow`):
+   - Loads the flow for the task
+   - Finds the transition matching the task's current state
+   - If the result is `success` with `decision: approve`, runs the `runs` steps for that transition
+   - If the result is `reject` or `failure`, follows the `on_fail` path
 
-## Condition Types
+4. **Steps execute** (`orchestrator/steps.py`): Each step is a registered function. Steps receive `(task, result, task_dir)` and perform their action (push code, create PR, merge PR, etc).
 
-### Script Conditions
+## Key Files
 
-Deterministic checks implemented as scripts. Fast, cheap, no LLM needed.
+| File | Purpose |
+|------|---------|
+| `.octopoid/flows/default.yaml` | The live flow definition |
+| `orchestrator/flow.py` | Flow/Transition/Condition dataclasses, YAML parsing, validation |
+| `orchestrator/steps.py` | Step functions registered via `@register_step` |
+| `orchestrator/scheduler.py` | `handle_agent_result_via_flow()` — the core dispatch logic |
 
-```yaml
-conditions:
-  - name: tests_pass
-    type: script
-    script: run-tests
-    on_fail: incoming  # Where to go if check fails
-```
+## Agents Are Pure Functions
 
-The script must exit with code 0 to pass.
+Agents don't call the SDK or manage task state. They:
+1. Get spawned by the scheduler with a worktree and task context
+2. Do their work (implement code, review a diff, etc.)
+3. Write `result.json` with `{status, decision, comment}` and exit
 
-### Agent Conditions
+The scheduler reads the result and drives the flow. This means:
+- Agents can't create circular dependencies
+- All state transitions are visible in the flow YAML
+- The scheduler is the single supervisor
 
-An LLM agent evaluates the task against criteria. Slower, costs tokens, but can reason about acceptance criteria.
+## Condition Evaluation Order
 
-```yaml
-conditions:
-  - name: gatekeeper_review
-    type: agent
-    agent: sanity-check-gatekeeper
-    on_fail: incoming
-```
-
-### Manual Conditions
-
-Human approval required. The task waits in the current state until manually approved.
-
-```yaml
-conditions:
-  - name: human_approval
-    type: manual
-```
-
-## Task Overrides
-
-Tasks default to the project's flow (or the installation default). Tasks can override specific transitions:
-
-```yaml
-# In task frontmatter
-id: TASK-abc123
-flow: default
-flow_overrides:
-  "provisional -> done":
-    conditions:
-      - name: human_approval
-        type: manual
-        skip: true  # Auto-merge, no human gate
-```
-
-## Flow Validation
-
-Flows are validated when:
-1. `octopoid init` generates default flows
-2. A task is created (validates the task's flow)
-3. Manually via CLI: `octopoid flow validate <flow-name>`
-
-Validation checks:
-- All referenced agents exist in `agents.yaml`
-- All referenced scripts exist in the agent's `scripts/` directory
-- Condition types are valid (`script`, `agent`, `manual`)
-- Transition targets are valid states
-- `on_fail` targets exist
-- No unreachable states (except terminal states like `done`, `failed`)
-
-## Creating Flows
-
-### Default Flows from `octopoid init`
-
-`octopoid init` generates two flow files:
-
-1. **default.yaml** - Standard implementation flow
-   - incoming → claimed: implementer claims
-   - claimed → provisional: runs rebase, tests, creates PR
-   - provisional → done: human approval, merges PR
-
-2. **project.yaml** - Multi-task project flow
-   - Child tasks skip PR creation, commit to shared branch
-   - Project creates one PR after all children complete
-
-### Custom Flows
-
-Create new flows in `.octopoid/flows/`:
-
-1. Create `my-flow.yaml`
-2. Define transitions
-3. Validate: `octopoid flow validate my-flow`
-4. Use in tasks: set `flow: my-flow` in task frontmatter
-
-## Migration from Previous System
-
-Flows replace the following mechanisms:
-
-| Old | New |
-|-----|-----|
-| `CLAIMABLE_AGENT_ROLES` | Flow declares which agent handles each state |
-| `AGENT_TASK_ROLE` | Flow maps agents to transitions |
-| `hooks` field on tasks | `runs` and `conditions` on transitions |
-| `task_types` in config.yaml | Different flows for different task types |
-| Gatekeeper polling logic | Agent condition on `provisional → done` transition |
-| `before_submit` / `before_merge` hook points | `runs` on specific transitions |
-
-## Architecture Notes
-
-### Condition Evaluation Order
-
-Conditions are evaluated in the order declared. This allows optimization:
-- Put cheap programmatic checks first
-- Put expensive agent checks after
-- Put manual gates last
+Conditions are evaluated in declaration order. Put cheap checks first:
+1. Programmatic checks (fast, free)
+2. Agent checks (slow, costs tokens)
+3. Manual gates (waits for human)
 
 If a programmatic condition fails, agent conditions never run (saves tokens).
 
-### Branch Handling
+## Not Yet Implemented
 
-Projects create a feature branch at activation. Child tasks rebase onto the project branch (not main), so they build on each other's work. The `rebase_on_main` action in child flows actually rebases onto the project's branch (resolved from `project_id`).
+These features are designed but not yet built (tracked in separate drafts):
 
-Standalone tasks (no project) rebase onto main as before.
-
-### State Machine Integration
-
-The scheduler reads the flow to determine:
-1. What agent can claim a task (by checking transitions from current state)
-2. What actions to run during a transition
-3. What conditions must pass before completing a transition
-4. Where to send a task if a condition fails
-
-This replaces all hardcoded state transitions in the scheduler.
+- **Project flows** — `child_flow` for multi-task projects where children skip PR creation (Draft 42)
+- **Task-level flow overrides** — tasks overriding specific transitions via `flow_overrides` (Draft 43)
+- **Condition result persistence** — storing which conditions already passed on the task (Draft 43)
+- **Hook manager removal** — the hook manager still runs alongside flows as a legacy path (Draft 41)
