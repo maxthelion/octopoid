@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Agent pool model: blueprints instead of named instances** ([TASK-3ca8857a])
+  - Replaced `fleet: [{name: ...}]` config format with `agents: {name: {max_instances: N}}` blueprint map
+  - Scheduler spawns ephemeral instances on demand up to `max_instances` per blueprint
+  - Added PID tracking per blueprint via `running_pids.json` (`get_blueprint_pids_path`, `load_blueprint_pids`, `save_blueprint_pids`, `count_running_instances`, `register_instance_pid`)
+  - Added `guard_pool_capacity` replacing `guard_not_running` in the guard chain — blocks spawn when blueprint is at capacity
+  - Updated `run_scheduler()` to iterate blueprints; scripts-mode agents use `guard_claim_task` for claiming, non-scripts agents claim after guards pass
+  - Updated `check_and_update_finished_agents()` to iterate blueprints via `running_pids.json` instead of scanning agent state files
+  - Updated `spawn_implementer`, `spawn_lightweight`, `spawn_worktree` to register PIDs in blueprint tracking file
+  - Updated `reports.py` pool metrics: `running_instances`, `max_instances`, `idle_capacity` per blueprint
+  - Updated `config.py` `get_agents()` to read blueprint dict format with `blueprint_name` key
+  - Updated `flow.py` agent name validation to use `blueprint_name` from config
+  - Updated `init.py` example config to use blueprint format
+  - Preserved `sanity-check-gatekeeper` entry in `agents.yaml` during format conversion
+  - Added `TestGuardPoolCapacity`, `TestBlueprintPidTracking`, `TestAgentGuardsPoolModel` unit tests
+  - Added `test_pool_model_claim_uses_blueprint_name` integration test
+
 - **Flow-driven scheduler execution** ([TASK-f584b935])
   - Added `orchestrator/steps.py` with `STEP_REGISTRY`, `execute_steps()`, and gatekeeper steps (`post_review_comment`, `merge_pr`, `reject_with_feedback`)
   - Added `.octopoid/flows/default.yaml` declaring the standard implementation flow with gatekeeper on the `provisional → done` transition

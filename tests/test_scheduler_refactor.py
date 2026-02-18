@@ -3,12 +3,12 @@
 This test suite verifies the scheduler's pipeline architecture introduced in the refactor.
 Tests cover:
 - AgentContext dataclass
-- All 6 guard functions (enabled, not_running, interval, backpressure, pre_check, claim_task)
+- All 6 guard functions (enabled, pool_capacity, interval, backpressure, pre_check, claim_task)
 - evaluate_agent guard chain
 - get_spawn_strategy dispatch
 - run_housekeeping fault isolation
 
-The refactor was purely structural - no behavior changes.
+The pool model replaces named agent instances with blueprint-based ephemeral spawning.
 """
 
 import json
@@ -22,14 +22,19 @@ from orchestrator.scheduler import (
     AGENT_GUARDS,
     HOUSEKEEPING_JOBS,
     AgentContext,
+    count_running_instances,
     evaluate_agent,
     get_spawn_strategy,
     guard_backpressure,
     guard_enabled,
     guard_interval,
     guard_not_running,
+    guard_pool_capacity,
     guard_pre_check,
+    load_blueprint_pids,
+    register_instance_pid,
     run_housekeeping,
+    save_blueprint_pids,
     spawn_implementer,
     spawn_lightweight,
     spawn_worktree,
@@ -221,6 +226,152 @@ class TestGuardNotRunning:
         mock_is_running.assert_called_once_with(99999)
         mock_mark_finished.assert_called_once()
         mock_save_state.assert_called_once()
+
+
+class TestGuardPoolCapacity:
+    """Test guard_pool_capacity function."""
+
+    @patch("orchestrator.scheduler.count_running_instances")
+    def test_at_max_instances_returns_false(self, mock_count, tmp_path):
+        """Test that a blueprint at max_instances is blocked."""
+        mock_count.return_value = 3
+
+        state_path = tmp_path / "state.json"
+        ctx = AgentContext(
+            agent_config={"blueprint_name": "implementer", "max_instances": 3},
+            agent_name="implementer",
+            role="implementer",
+            interval=60,
+            state=AgentState(),
+            state_path=state_path,
+        )
+
+        proceed, reason = guard_pool_capacity(ctx)
+
+        assert proceed is False
+        assert "at capacity" in reason
+        assert "3/3" in reason
+        mock_count.assert_called_once_with("implementer")
+
+    @patch("orchestrator.scheduler.count_running_instances")
+    def test_below_max_instances_returns_true(self, mock_count, tmp_path):
+        """Test that a blueprint below max_instances passes."""
+        mock_count.return_value = 1
+
+        state_path = tmp_path / "state.json"
+        ctx = AgentContext(
+            agent_config={"blueprint_name": "implementer", "max_instances": 3},
+            agent_name="implementer",
+            role="implementer",
+            interval=60,
+            state=AgentState(),
+            state_path=state_path,
+        )
+
+        proceed, reason = guard_pool_capacity(ctx)
+
+        assert proceed is True
+        assert reason == ""
+        mock_count.assert_called_once_with("implementer")
+
+    @patch("orchestrator.scheduler.count_running_instances")
+    def test_zero_instances_returns_true(self, mock_count, tmp_path):
+        """Test that a blueprint with no running instances passes."""
+        mock_count.return_value = 0
+
+        state_path = tmp_path / "state.json"
+        ctx = AgentContext(
+            agent_config={"blueprint_name": "implementer", "max_instances": 1},
+            agent_name="implementer",
+            role="implementer",
+            interval=60,
+            state=AgentState(),
+            state_path=state_path,
+        )
+
+        proceed, reason = guard_pool_capacity(ctx)
+
+        assert proceed is True
+        assert reason == ""
+
+    @patch("orchestrator.scheduler.count_running_instances")
+    def test_defaults_max_instances_to_1(self, mock_count, tmp_path):
+        """Test that missing max_instances defaults to 1."""
+        mock_count.return_value = 1
+
+        state_path = tmp_path / "state.json"
+        ctx = AgentContext(
+            agent_config={"blueprint_name": "implementer"},  # No max_instances
+            agent_name="implementer",
+            role="implementer",
+            interval=60,
+            state=AgentState(),
+            state_path=state_path,
+        )
+
+        proceed, reason = guard_pool_capacity(ctx)
+
+        assert proceed is False  # 1 running >= 1 max
+
+    @patch("orchestrator.scheduler.count_running_instances")
+    def test_uses_agent_name_as_fallback_blueprint_name(self, mock_count, tmp_path):
+        """Test that agent_name is used when blueprint_name is not in config."""
+        mock_count.return_value = 0
+
+        state_path = tmp_path / "state.json"
+        ctx = AgentContext(
+            agent_config={"max_instances": 2},  # No blueprint_name
+            agent_name="my-blueprint",
+            role="implementer",
+            interval=60,
+            state=AgentState(),
+            state_path=state_path,
+        )
+
+        proceed, reason = guard_pool_capacity(ctx)
+
+        assert proceed is True
+        mock_count.assert_called_once_with("my-blueprint")
+
+
+class TestBlueprintPidTracking:
+    """Test pool model PID tracking functions."""
+
+    def test_load_blueprint_pids_missing_file(self, tmp_path):
+        """Returns empty dict when pids file doesn't exist."""
+        with patch("orchestrator.scheduler.get_agents_runtime_dir", return_value=tmp_path):
+            result = load_blueprint_pids("implementer")
+        assert result == {}
+
+    def test_save_and_load_round_trip(self, tmp_path):
+        """PIDs saved atomically can be loaded back."""
+        with patch("orchestrator.scheduler.get_agents_runtime_dir", return_value=tmp_path):
+            pids = {1234: {"instance_name": "implementer-abc", "task_id": "TASK-abc"}}
+            save_blueprint_pids("implementer", pids)
+            result = load_blueprint_pids("implementer")
+        assert result == pids
+
+    def test_register_instance_pid_adds_entry(self, tmp_path):
+        """register_instance_pid adds a new PID entry."""
+        with patch("orchestrator.scheduler.get_agents_runtime_dir", return_value=tmp_path):
+            register_instance_pid("implementer", 5678, {"instance_name": "implementer-xyz"})
+            result = load_blueprint_pids("implementer")
+        assert 5678 in result
+        assert result[5678]["instance_name"] == "implementer-xyz"
+
+    @patch("orchestrator.scheduler.is_process_running")
+    def test_count_running_instances_filters_dead(self, mock_running, tmp_path):
+        """count_running_instances only counts live PIDs."""
+        mock_running.side_effect = lambda pid: pid == 1111  # Only 1111 is alive
+
+        with patch("orchestrator.scheduler.get_agents_runtime_dir", return_value=tmp_path):
+            save_blueprint_pids("implementer", {
+                1111: {"instance_name": "implementer-a"},
+                2222: {"instance_name": "implementer-b"},
+            })
+            result = count_running_instances("implementer")
+
+        assert result == 1
 
 
 class TestGuardInterval:
@@ -605,3 +756,25 @@ class TestRunHousekeeping:
                 call_args = mock_log.call_args[0][0]
                 assert "test_failing_job" in call_args
                 assert "failed" in call_args.lower()
+
+
+# =============================================================================
+# AGENT_GUARDS Pool Model Tests
+# =============================================================================
+
+
+class TestAgentGuardsPoolModel:
+    """Test that AGENT_GUARDS uses pool model (guard_pool_capacity)."""
+
+    def test_guard_pool_capacity_in_agent_guards(self):
+        """guard_pool_capacity should be in AGENT_GUARDS (pool model)."""
+        assert guard_pool_capacity in AGENT_GUARDS
+
+    def test_guard_not_running_not_in_agent_guards(self):
+        """guard_not_running should NOT be in AGENT_GUARDS (replaced by pool capacity)."""
+        assert guard_not_running not in AGENT_GUARDS
+
+    def test_guard_claim_task_in_agent_guards(self):
+        """guard_claim_task should be in AGENT_GUARDS for scripts-mode agents."""
+        from orchestrator.scheduler import guard_claim_task
+        assert guard_claim_task in AGENT_GUARDS

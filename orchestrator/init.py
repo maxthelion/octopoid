@@ -255,22 +255,24 @@ EXAMPLE_AGENTS_YAML = """# Octopoid Agent Configuration
 # Queue limits for backpressure control
 queue_limits:
   max_incoming: 20   # Max tasks in incoming + claimed
-  max_claimed: 1     # Max tasks being worked on simultaneously
+  max_claimed: 3     # Max tasks being worked on simultaneously
   max_open_prs: 10   # Max open pull requests
 
-# Agent definitions
+# Agent blueprints — ephemeral instances are spawned on demand up to max_instances
 agents:
-  - name: implementer-1
-    role: implementer
-    interval_seconds: 180  # 3 minutes
+  implementer:
+    type: implementer
+    max_instances: 1     # Increase to spawn more concurrent implementers
+    interval_seconds: 60
+    max_turns: 200
+    model: sonnet
 
-  # - name: implementer-2
-  #   role: implementer
-  #   interval_seconds: 180
-
-  # - name: github-issue-monitor
-  #   role: github_issue_monitor
-  #   interval_seconds: 300
+  # github-issue-monitor:
+  #   type: custom
+  #   path: .octopoid/agents/github-issue-monitor/
+  #   enabled: false
+  #   interval_seconds: 900
+  #   max_instances: 1
   #   lightweight: true
 """
 

@@ -437,30 +437,21 @@ class TestGetAgentNotes:
 
 
 class TestGatherAgents:
-    """Tests for _gather_agents()."""
+    """Tests for _gather_agents() using pool model (blueprint_name, running_pids.json)."""
 
     @patch("orchestrator.reports._get_recent_tasks_for_agent", return_value=[])
+    @patch("orchestrator.reports.load_blueprint_pids", return_value={})
     @patch("orchestrator.config.get_agents")
     @patch("orchestrator.config.get_agents_runtime_dir")
     @patch("orchestrator.config.get_notes_dir")
-    def test_returns_agent_entries_with_all_fields(
-        self, mock_notes_dir, mock_runtime_dir, mock_agents, mock_recent, tmp_path
+    def test_returns_agent_entries_with_pool_fields(
+        self, mock_notes_dir, mock_runtime_dir, mock_agents, mock_pids, mock_recent, tmp_path
     ):
         mock_agents.return_value = [
-            {"name": "impl-1", "role": "implementer", "paused": False},
+            {"blueprint_name": "implementer", "role": "implementer", "paused": False, "max_instances": 3},
         ]
         runtime_dir = tmp_path / "agents"
-        (runtime_dir / "impl-1").mkdir(parents=True)
-        state_file = runtime_dir / "impl-1" / "state.json"
-        state_file.write_text(json.dumps({
-            "running": False,
-            "last_started": "2026-02-07T09:00:00",
-            "last_finished": "2026-02-07T09:30:00",
-            "last_exit_code": 0,
-            "consecutive_failures": 0,
-            "total_runs": 10,
-            "current_task": None,
-        }))
+        (runtime_dir / "implementer").mkdir(parents=True)
         mock_runtime_dir.return_value = runtime_dir
         mock_notes_dir.return_value = tmp_path / "notes"
         (tmp_path / "notes").mkdir()
@@ -469,29 +460,30 @@ class TestGatherAgents:
 
         assert len(agents) == 1
         agent = agents[0]
-        assert agent["name"] == "impl-1"
+        assert agent["name"] == "implementer"
         assert agent["role"] == "implementer"
         assert agent["status"] == "idle"
         assert agent["paused"] is False
         assert agent["current_task"] is None
-        assert agent["last_started"] == "2026-02-07T09:00:00"
-        assert agent["last_finished"] == "2026-02-07T09:30:00"
-        assert agent["total_runs"] == 10
+        assert agent["running_instances"] == 0
+        assert agent["max_instances"] == 3
+        assert agent["idle_capacity"] == 3
         assert agent["recent_tasks"] == []
         assert agent["notes"] is None
 
     @patch("orchestrator.reports._get_recent_tasks_for_agent", return_value=[])
+    @patch("orchestrator.reports.load_blueprint_pids", return_value={})
     @patch("orchestrator.config.get_agents")
     @patch("orchestrator.config.get_agents_runtime_dir")
     @patch("orchestrator.config.get_notes_dir")
     def test_paused_agent_shows_paused_status(
-        self, mock_notes_dir, mock_runtime_dir, mock_agents, mock_recent, tmp_path
+        self, mock_notes_dir, mock_runtime_dir, mock_agents, mock_pids, mock_recent, tmp_path
     ):
         mock_agents.return_value = [
-            {"name": "agent-1", "role": "implementer", "paused": True},
+            {"blueprint_name": "implementer", "role": "implementer", "paused": True, "max_instances": 1},
         ]
         runtime_dir = tmp_path / "agents"
-        (runtime_dir / "agent-1").mkdir(parents=True)
+        (runtime_dir / "implementer").mkdir(parents=True)
         mock_runtime_dir.return_value = runtime_dir
         mock_notes_dir.return_value = tmp_path / "notes"
         (tmp_path / "notes").mkdir()
@@ -500,48 +492,44 @@ class TestGatherAgents:
         assert agents[0]["status"] == "paused"
 
     @patch("orchestrator.reports._get_recent_tasks_for_agent", return_value=[])
+    @patch("orchestrator.reports.load_blueprint_pids")
     @patch("orchestrator.config.get_agents")
     @patch("orchestrator.config.get_agents_runtime_dir")
     @patch("orchestrator.config.get_notes_dir")
     @patch("orchestrator.state_utils.is_process_running", return_value=True)
-    def test_running_agent_shows_running_status(
+    def test_running_instances_show_running_status(
         self, mock_pid_check, mock_notes_dir, mock_runtime_dir, mock_agents,
-        mock_recent, tmp_path
+        mock_pids, mock_recent, tmp_path
     ):
+        mock_pids.return_value = {12345: {"instance_name": "implementer-abc", "task_id": "TASK-abc"}}
         mock_agents.return_value = [
-            {"name": "agent-1", "role": "implementer", "paused": False},
+            {"blueprint_name": "implementer", "role": "implementer", "paused": False, "max_instances": 3},
         ]
         runtime_dir = tmp_path / "agents"
-        (runtime_dir / "agent-1").mkdir(parents=True)
-        (runtime_dir / "agent-1" / "state.json").write_text(
-            json.dumps({"running": True, "pid": 12345, "current_task": "task123"})
-        )
+        (runtime_dir / "implementer").mkdir(parents=True)
         mock_runtime_dir.return_value = runtime_dir
         mock_notes_dir.return_value = tmp_path / "notes"
         (tmp_path / "notes").mkdir()
 
         agents = _gather_agents()
-        assert agents[0]["status"] == "running"
-        assert agents[0]["current_task"] == "task123"
+        assert "running(1/3)" in agents[0]["status"]
+        assert agents[0]["current_task"] == "TASK-abc"
+        assert agents[0]["running_instances"] == 1
 
     @patch("orchestrator.reports._get_recent_tasks_for_agent", return_value=[])
+    @patch("orchestrator.reports.load_blueprint_pids", return_value={})
     @patch("orchestrator.config.get_agents")
     @patch("orchestrator.config.get_agents_runtime_dir")
     @patch("orchestrator.config.get_notes_dir")
-    @patch("orchestrator.state_utils.is_process_running", return_value=False)
-    def test_stale_running_flag_shows_idle(
-        self, mock_pid_check, mock_notes_dir, mock_runtime_dir, mock_agents,
-        mock_recent, tmp_path
+    def test_idle_blueprint_shows_idle_status(
+        self, mock_notes_dir, mock_runtime_dir, mock_agents, mock_pids, mock_recent, tmp_path
     ):
-        """Agent with running=True but dead process should show idle."""
+        """Blueprint with no running instances shows idle."""
         mock_agents.return_value = [
-            {"name": "agent-1", "role": "implementer", "paused": False},
+            {"blueprint_name": "implementer", "role": "implementer", "paused": False, "max_instances": 3},
         ]
         runtime_dir = tmp_path / "agents"
-        (runtime_dir / "agent-1").mkdir(parents=True)
-        (runtime_dir / "agent-1" / "state.json").write_text(
-            json.dumps({"running": True, "pid": 99999, "current_task": "task123"})
-        )
+        (runtime_dir / "implementer").mkdir(parents=True)
         mock_runtime_dir.return_value = runtime_dir
         mock_notes_dir.return_value = tmp_path / "notes"
         (tmp_path / "notes").mkdir()

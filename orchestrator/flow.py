@@ -66,8 +66,10 @@ class Condition:
                 # Check agent exists (skip if agents.yaml not found - e.g. in tests)
                 try:
                     agents = get_agents()
-                    agent_names = [a["name"] for a in agents]
-                    if self.agent not in agent_names:
+                    # Blueprint model uses 'blueprint_name' as the primary identifier
+                    agent_names = [a.get("blueprint_name", a.get("name", "")) for a in agents]
+                    agent_roles = [a.get("role") for a in agents]
+                    if self.agent not in agent_names and self.agent not in agent_roles:
                         errors.append(
                             f"Flow '{flow_name}' transition '{transition}' condition '{self.name}': "
                             f"agent '{self.agent}' not found in agents.yaml"
@@ -143,7 +145,8 @@ class Transition:
         if self.agent:
             try:
                 agents = get_agents()
-                agent_names = [a["name"] for a in agents]
+                # Blueprint model uses 'blueprint_name' as the primary identifier
+                agent_names = [a.get("blueprint_name", a.get("name", "")) for a in agents]
                 agent_roles = [a.get("role") for a in agents]
                 if self.agent not in agent_names and self.agent not in agent_roles:
                     errors.append(

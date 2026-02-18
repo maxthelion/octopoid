@@ -372,3 +372,14 @@ class TestTaskLifecycleFlow:
                 os.environ.pop("ORCHESTRATOR_DIR", None)
             else:
                 os.environ["ORCHESTRATOR_DIR"] = original_env
+
+    def test_pool_model_claim_uses_blueprint_name(self, scoped_sdk, orchestrator_id):
+        """Tasks claimed by pool model use blueprint name as claimed_by."""
+        task = create_task(scoped_sdk, role="implement")
+        claimed = scoped_sdk.tasks.claim(
+            orchestrator_id=orchestrator_id,
+            agent_name="implementer",  # blueprint name, not instance name
+            role_filter="implement",
+        )
+        assert claimed is not None
+        assert claimed["claimed_by"] == "implementer"
