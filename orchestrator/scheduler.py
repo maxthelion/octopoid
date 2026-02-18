@@ -25,7 +25,6 @@ from .config import (
     is_system_paused,
 )
 from .git_utils import ensure_worktree, get_task_branch, get_worktree_path
-from .hook_manager import HookManager
 from .lock_utils import locked_or_skip
 from .port_utils import get_port_env_vars
 from . import queue_utils
@@ -993,119 +992,6 @@ def invoke_claude(task_dir: Path, agent_config: dict) -> int:
 
 
 
-def read_result_json(task_dir: Path) -> dict:
-    """Read and parse result.json from a task directory.
-
-    Args:
-        task_dir: Path to the task directory
-
-    Returns:
-        Parsed result dict, or an error dict if missing/invalid
-    """
-    import json
-
-    result_path = task_dir / "result.json"
-    if not result_path.exists():
-        return {"status": "failure", "message": "No result.json produced"}
-
-    try:
-        return json.loads(result_path.read_text())
-    except json.JSONDecodeError:
-        return {"status": "failure", "message": "Invalid result.json"}
-
-
-
-def handle_agent_result_via_flow(task_id: str, agent_name: str, task_dir: Path) -> None:
-    """Handle agent result using the task's flow definition.
-
-    Replaces the hardcoded if/else dispatch for agent roles. Reads the flow,
-    finds the current transition, and executes steps accordingly.
-
-    The gatekeeper result format:
-      {"status": "success", "decision": "approve"/"reject", "comment": "<markdown>"}
-    or on failure:
-      {"status": "failure", "message": "<reason>"}
-
-    Args:
-        task_id: Task identifier
-        agent_name: Name of the agent
-        task_dir: Path to the task directory containing result.json
-    """
-    from .flow import load_flow
-    from .steps import execute_steps, reject_with_feedback
-
-    result = read_result_json(task_dir)
-
-    debug_log(f"handle_agent_result_via_flow: task={task_id} agent={agent_name} status={result.get('status')} decision={result.get('decision')}")
-
-    try:
-        sdk = queue_utils.get_sdk()
-
-        # Fetch current task state
-        task = sdk.tasks.get(task_id)
-        if not task:
-            debug_log(f"Flow dispatch: task {task_id} not found on server, skipping")
-            return
-
-        current_queue = task.get("queue", "unknown")
-        flow_name = task.get("flow", "default")
-
-        flow = load_flow(flow_name)
-        transitions = flow.get_transitions_from(current_queue)
-
-        if not transitions:
-            debug_log(f"Flow dispatch: no transition from '{current_queue}' in flow '{flow_name}' for task {task_id}")
-            return
-
-        transition = transitions[0]  # Take first matching transition
-
-        status = result.get("status")
-        decision = result.get("decision")
-
-        if status == "failure":
-            # Agent couldn't complete — find on_fail state from agent condition
-            message = result.get("message", "Agent could not complete review")
-            debug_log(f"Flow dispatch: agent failure for {task_id}: {message}")
-            for condition in transition.conditions:
-                if condition.type == "agent" and condition.on_fail:
-                    debug_log(f"Flow dispatch: rejecting {task_id} back to {condition.on_fail}")
-                    sdk.tasks.reject(task_id, reason=message, rejected_by=agent_name)
-                    return
-            # Default: reject back to incoming
-            sdk.tasks.reject(task_id, reason=message, rejected_by=agent_name)
-            return
-
-        # Agent-specific decision handling (approve/reject for gatekeeper)
-        if decision == "reject":
-            debug_log(f"Flow dispatch: agent rejected task {task_id}")
-            reject_with_feedback(task, result, task_dir)
-            print(f"[{datetime.now().isoformat()}] Agent {agent_name} rejected task {task_id}")
-            return
-
-        if decision != "approve":
-            debug_log(f"Flow dispatch: unknown decision '{decision}' for {task_id}, leaving in {current_queue} for human review")
-            return
-
-        # Execute the transition's runs (approve path — only reached on explicit "approve")
-        if transition.runs:
-            debug_log(f"Flow dispatch: executing steps {transition.runs} for task {task_id}")
-            execute_steps(transition.runs, task, result, task_dir)
-            print(f"[{datetime.now().isoformat()}] Agent {agent_name} completed task {task_id} (steps: {transition.runs})")
-        else:
-            # No runs defined — just log
-            debug_log(f"Flow dispatch: no runs defined for transition from '{current_queue}', task {task_id}")
-
-    except Exception as e:
-        import traceback
-        debug_log(f"Error in handle_agent_result_via_flow for {task_id}: {e}")
-        debug_log(traceback.format_exc())
-        try:
-            sdk = queue_utils.get_sdk()
-            sdk.tasks.update(task_id, queue='failed', execution_notes=f'Flow dispatch error: {e}')
-        except Exception:
-            debug_log(f"Failed to move {task_id} to failed queue")
-
-
 def _read_or_infer_result(task_dir: Path) -> dict:
     """Read result.json from a task directory, with fallback heuristics.
 
@@ -1117,7 +1003,7 @@ def _read_or_infer_result(task_dir: Path) -> dict:
         task_dir: Path to the task directory
 
     Returns:
-        Result dict with at least an "outcome" key.
+        Result dict (may need normalization via _normalize_result).
     """
     import json
 
@@ -1137,70 +1023,75 @@ def _read_or_infer_result(task_dir: Path) -> dict:
     return {"outcome": "error", "reason": "No result.json produced"}
 
 
-def _handle_done_outcome(sdk: object, task_id: str, task: dict, result: dict, task_dir: Path) -> None:
-    """Execute flow steps for a successfully-completed task."""
-    from .flow import load_flow
-    from .steps import execute_steps
+def _normalize_result(result: dict) -> dict:
+    """Normalize old and new result formats to a unified format.
 
-    current_queue = task.get("queue", "unknown")
-    if current_queue != "claimed":
-        # Task already moved past claimed — skip to avoid double-submitting.
-        debug_log(f"Task {task_id}: outcome=done but queue={current_queue}, skipping")
-        return
+    Agents may write results in one of two formats:
+      New: {"outcome": "success|failure|needs_continuation", ...}
+      Old: {"status": "success|failure", "decision": "approve|reject", ...}
 
-    flow_name = task.get("flow", "default")
-    flow = load_flow(flow_name)
-    transitions = flow.get_transitions_from("claimed")
+    This maps the old format to the new so the unified handler treats all
+    results identically.
 
-    if transitions and transitions[0].runs:
-        debug_log(f"Task {task_id}: executing flow steps {transitions[0].runs}")
-        execute_steps(transitions[0].runs, task, result, task_dir)
-        print(f"[{datetime.now().isoformat()}] Task {task_id} submitted via flow steps")
+    Args:
+        result: Raw result dict read from result.json
+
+    Returns:
+        Result dict with "outcome" key present.
+    """
+    # Already in new format
+    if "outcome" in result:
+        return result
+
+    # Old format: map "status" to "outcome"
+    normalized = dict(result)  # preserve all other fields (decision, comment, message, etc.)
+    status = result.get("status")
+
+    if status == "success":
+        normalized["outcome"] = "success"
+    elif status == "failure":
+        normalized["outcome"] = "failure"
+        # Map "message" to "reason" if "reason" not already present
+        if "reason" not in normalized and "message" in normalized:
+            normalized["reason"] = normalized["message"]
     else:
-        # Fallback: direct submit if flow has no steps
-        sdk.tasks.submit(task_id=task_id, commits_count=0, turns_used=0)
-        debug_log(f"Task {task_id}: no flow steps, used direct submit")
+        normalized["outcome"] = "error"
+        normalized.setdefault("reason", f"Unrecognized result format: status={status!r}")
 
-
-def _handle_fail_outcome(sdk: object, task_id: str, reason: str, current_queue: str) -> None:
-    """Move a failed task to the failed queue."""
-    if current_queue == "claimed":
-        sdk.tasks.update(task_id, queue="failed")
-        debug_log(f"Task {task_id}: failed (claimed → failed): {reason}")
-    else:
-        debug_log(f"Task {task_id}: outcome=failed but queue={current_queue}, skipping")
-
-
-def _handle_continuation_outcome(sdk: object, task_id: str, agent_name: str, current_queue: str) -> None:
-    """Move a task to needs_continuation queue."""
-    if current_queue == "claimed":
-        sdk.tasks.update(task_id, queue="needs_continuation")
-        debug_log(f"Task {task_id}: needs continuation by {agent_name}")
-    else:
-        debug_log(f"Task {task_id}: outcome=needs_continuation but queue={current_queue}, skipping")
+    return normalized
 
 
 def handle_agent_result(task_id: str, agent_name: str, task_dir: Path) -> None:
-    """Handle the result of a script-based agent run.
+    """Handle the result of any agent run — implementer, gatekeeper, or other.
 
-    Reads result.json and transitions the task using flow steps:
-    1. Read result.json to determine outcome
-    2. Fetch current task state from server
-    3. For "done" outcomes in "claimed" queue: execute the flow's claimed→provisional steps
-    4. For "failed"/"error": move to failed queue
-    5. For "needs_continuation": move to needs_continuation queue
+    Reads result.json, normalizes format, and transitions the task using the
+    flow definition. Supports both old gatekeeper format {"status", "decision"}
+    and new unified format {"outcome", "decision"}.
 
-    The scheduler owns the full push/PR/submit lifecycle — agents just commit
-    code and write result.json.
+    Unified result format:
+      {"outcome": "success|failure|needs_continuation",
+       "decision": "approve|reject"  (optional — gatekeeper only),
+       "comment": "..."              (optional — feedback for PR/rejection),
+       "reason": "..."               (optional — failure reason)}
+
+    ALWAYS produces a state transition. On any unhandled exception, requeues
+    the task to incoming so it is never orphaned in the claimed queue.
 
     Args:
         task_id: Task identifier
         agent_name: Name of the agent
         task_dir: Path to the task directory
     """
-    result = _read_or_infer_result(task_dir)
+    import traceback
+    from .flow import load_flow
+    from .steps import execute_steps, reject_with_feedback
+
+    raw_result = _read_or_infer_result(task_dir)
+    result = _normalize_result(raw_result)
     outcome = result.get("outcome", "error")
-    debug_log(f"Task {task_id} result: {outcome}")
+    decision = result.get("decision")
+
+    debug_log(f"handle_agent_result: task={task_id} agent={agent_name} outcome={outcome} decision={decision}")
 
     try:
         sdk = queue_utils.get_sdk()
@@ -1211,68 +1102,73 @@ def handle_agent_result(task_id: str, agent_name: str, task_dir: Path) -> None:
             return
 
         current_queue = task.get("queue", "unknown")
-        debug_log(f"Task {task_id}: current queue = {current_queue}, outcome = {outcome}")
+        flow_name = task.get("flow", "default")
+        debug_log(f"Task {task_id}: queue={current_queue} outcome={outcome} decision={decision}")
 
-        if outcome in ("done", "submitted"):
-            _handle_done_outcome(sdk, task_id, task, result, task_dir)
-        elif outcome in ("failed", "error"):
-            _handle_fail_outcome(sdk, task_id, result.get("reason", "Agent reported failure"), current_queue)
+        if outcome in ("success", "done", "submitted"):
+            if decision == "reject":
+                # Agent explicitly rejected the task (e.g. gatekeeper decision)
+                debug_log(f"Task {task_id}: agent {agent_name} rejected")
+                reject_with_feedback(task, result, task_dir)
+                print(f"[{datetime.now().isoformat()}] Agent {agent_name} rejected task {task_id}")
+            else:
+                # Approve (explicit or implicit) — run flow transition steps
+                flow = load_flow(flow_name)
+                transitions = flow.get_transitions_from(current_queue)
+                if transitions and transitions[0].runs:
+                    debug_log(f"Task {task_id}: executing flow steps {transitions[0].runs}")
+                    execute_steps(transitions[0].runs, task, result, task_dir)
+                    print(f"[{datetime.now().isoformat()}] Agent {agent_name} completed task {task_id} (steps: {transitions[0].runs})")
+                else:
+                    # No steps defined — direct submit fallback
+                    sdk.tasks.submit(task_id=task_id, commits_count=0, turns_used=0)
+                    debug_log(f"Task {task_id}: no flow steps, used direct submit")
+
+        elif outcome in ("failure", "failed", "error"):
+            reason = result.get("reason", result.get("message", "Agent reported failure"))
+            # Check flow for on_fail target on agent conditions
+            on_fail_target = None
+            try:
+                flow = load_flow(flow_name)
+                transitions = flow.get_transitions_from(current_queue)
+                if transitions:
+                    for cond in transitions[0].conditions:
+                        if cond.type == "agent" and cond.on_fail:
+                            on_fail_target = cond.on_fail
+                            break
+            except Exception:
+                pass
+
+            if on_fail_target:
+                # Flow declares an on_fail target — reject back to that queue
+                debug_log(f"Task {task_id}: failed → {on_fail_target} (on_fail): {reason}")
+                sdk.tasks.reject(task_id, reason=reason, rejected_by=agent_name)
+            else:
+                # No on_fail declared — move to failed queue
+                sdk.tasks.update(task_id, queue="failed")
+                debug_log(f"Task {task_id}: failed → failed: {reason}")
+
         elif outcome == "needs_continuation":
-            _handle_continuation_outcome(sdk, task_id, agent_name, current_queue)
+            sdk.tasks.update(task_id, queue="needs_continuation")
+            debug_log(f"Task {task_id}: needs continuation by {agent_name}")
+
         else:
-            _handle_fail_outcome(sdk, task_id, f"Unknown outcome: {outcome}", current_queue)
+            # Unknown outcome — requeue to incoming, never orphan the task
+            debug_log(f"Task {task_id}: unknown outcome {outcome!r}, requeueing to incoming")
+            sdk.tasks.update(task_id, queue="incoming", claimed_by=None)
+            print(f"[{datetime.now().isoformat()}] Task {task_id}: unknown outcome {outcome!r}, requeued to incoming")
 
     except Exception as e:
         debug_log(f"Error handling result for {task_id}: {e}")
-        # Don't try to fail the task here — let lease monitor handle recovery
-
-
-def process_orchestrator_hooks() -> None:
-    """Run orchestrator-side hooks on provisional tasks.
-
-    For each provisional task that has pending orchestrator hooks (e.g. merge_pr):
-    1. Get pending orchestrator hooks
-    2. Run each one via HookManager
-    3. Record evidence
-    4. If all hooks pass, accept the task
-    """
-    try:
-        sdk = queue_utils.get_sdk()
-        hook_manager = HookManager(sdk)
-
-        # List provisional tasks
-        provisional = sdk.tasks.list(queue="provisional")
-        if not provisional:
-            return
-
-        for task in provisional:
-            task_id = task.get("id", "")
-            pending = hook_manager.get_pending_hooks(task, hook_type="orchestrator")
-            if not pending:
-                continue
-
-            debug_log(f"Task {task_id}: {len(pending)} pending orchestrator hooks")
-
-            for hook in pending:
-                evidence = hook_manager.run_orchestrator_hook(task, hook)
-                hook_manager.record_evidence(task_id, hook["name"], evidence)
-                debug_log(f"  Hook {hook['name']}: {evidence.status} - {evidence.message}")
-
-                if evidence.status == "failed":
-                    debug_log(f"  Orchestrator hook {hook['name']} failed for {task_id}")
-                    break
-
-            # Re-fetch task to get updated hooks
-            updated_task = sdk.tasks.get(task_id)
-            if updated_task:
-                can_accept, still_pending = hook_manager.can_transition(updated_task, "before_merge")
-                if can_accept:
-                    debug_log(f"All orchestrator hooks passed for {task_id}, accepting")
-                    sdk.tasks.accept(task_id=task_id, accepted_by="scheduler-hooks")
-                    print(f"[{datetime.now().isoformat()}] Accepted task {task_id} (all hooks passed)")
-
-    except Exception as e:
-        debug_log(f"Error processing orchestrator hooks: {e}")
+        debug_log(traceback.format_exc())
+        # CRITICAL: Never leave a task stranded in claimed. Requeue to incoming.
+        try:
+            sdk = queue_utils.get_sdk()
+            sdk.tasks.update(task_id, queue="incoming", claimed_by=None,
+                             execution_notes=f"Handler error: {e}")
+            debug_log(f"Requeued {task_id} to incoming after handler error")
+        except Exception as inner_e:
+            debug_log(f"Failed to requeue {task_id} after handler error: {inner_e}")
 
 def check_and_update_finished_agents() -> None:
     """Check for agents that have finished and update their state."""
@@ -1306,20 +1202,72 @@ def check_and_update_finished_agents() -> None:
                 if state.extra.get("agent_mode") == "scripts" and state.extra.get("task_dir"):
                     task_dir_str = state.extra["task_dir"]
                     current_task = state.extra.get("current_task_id", "")
-                    claim_from = state.extra.get("claim_from", "incoming")
                     if current_task:
-                        if claim_from != "incoming":
-                            # Review agents (claim from provisional, etc.) use flow dispatch
-                            handle_agent_result_via_flow(
-                                current_task, agent_name, Path(task_dir_str)
-                            )
-                        else:
-                            # Implementers (claim from incoming) use outcome dispatch
-                            handle_agent_result(
-                                current_task, agent_name, Path(task_dir_str)
-                            )
+                        handle_agent_result(
+                            current_task, agent_name, Path(task_dir_str)
+                        )
 
                 print(f"[{datetime.now().isoformat()}] Agent {agent_name} finished (exit code: {exit_code})")
+
+
+def sweep_orphaned_claimed_tasks() -> None:
+    """Requeue claimed tasks whose agents are no longer running.
+
+    Each scheduler tick, find claimed tasks where the agent's state.running is
+    False (agent has finished) but the task is still in the claimed queue.
+    This is a safety net for cases where handle_agent_result failed to
+    transition the task.
+
+    A task is considered orphaned if:
+    1. An agent's state.running == False (agent has finished)
+    2. The agent's last claimed task is still in the claimed queue
+    """
+    agents_dir = get_agents_runtime_dir()
+    if not agents_dir.exists():
+        return
+
+    for agent_dir in agents_dir.iterdir():
+        if not agent_dir.is_dir():
+            continue
+
+        agent_name = agent_dir.name
+        state_path = get_agent_state_path(agent_name)
+        state = load_state(state_path)
+
+        # Only check agents that are NOT currently running
+        if state.running:
+            continue
+
+        # Only check script-mode agents (they claim tasks)
+        if state.extra.get("agent_mode") != "scripts":
+            continue
+
+        current_task_id = state.extra.get("current_task_id")
+        if not current_task_id:
+            continue
+
+        # Check if this agent's last task is still stuck in claimed
+        try:
+            sdk = queue_utils.get_sdk()
+            task = sdk.tasks.get(current_task_id)
+            if not task:
+                continue
+
+            if task.get("queue") != "claimed":
+                continue
+
+            # Task is still claimed but agent is not running — requeue
+            debug_log(
+                f"Orphan sweep: task {current_task_id} stuck in claimed "
+                f"but agent {agent_name} not running, requeueing to incoming"
+            )
+            sdk.tasks.update(current_task_id, queue="incoming", claimed_by=None)
+            print(
+                f"[{datetime.now().isoformat()}] Orphan sweep: "
+                f"requeued {current_task_id} (agent {agent_name} not running)"
+            )
+        except Exception as e:
+            debug_log(f"Orphan sweep error for agent {agent_name} / task {current_task_id}: {e}")
 
 
 # =============================================================================
@@ -1490,13 +1438,13 @@ def _register_orchestrator() -> None:
 # - check_branch_freshness(): Dead code — branch freshness checks not implemented
 #   (function body was just `return` in pre-refactor code; rebase logic was stubbed)
 #
-# Note: process_orchestrator_hooks() is still active and listed below.
+# Note: process_orchestrator_hooks() was removed — its work is handled by flows.
 
 HOUSEKEEPING_JOBS = [
     _register_orchestrator,
     check_and_update_finished_agents,
+    sweep_orphaned_claimed_tasks,
     _check_queue_health_throttled,
-    process_orchestrator_hooks,
 ]
 
 

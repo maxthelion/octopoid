@@ -30,11 +30,12 @@ from orchestrator.scheduler import (
     guard_interval,
     guard_not_running,
     guard_pre_check,
-    handle_agent_result_via_flow,
+    handle_agent_result,
     run_housekeeping,
     spawn_implementer,
     spawn_lightweight,
     spawn_worktree,
+    sweep_orphaned_claimed_tasks,
 )
 from orchestrator.state_utils import AgentState
 
@@ -653,15 +654,15 @@ class TestRunHousekeeping:
 
 
 # =============================================================================
-# handle_agent_result_via_flow Decision Tests
+# handle_agent_result (unified handler) Tests
 # =============================================================================
 
 
-def _make_flow_mock(runs: list | None = None) -> MagicMock:
+def _make_flow_mock(runs: list | None = None, conditions: list | None = None) -> MagicMock:
     """Build a minimal flow mock with one transition from 'provisional'."""
     transition = MagicMock()
     transition.runs = runs or ["merge_pr"]
-    transition.conditions = []
+    transition.conditions = conditions or []
 
     flow = MagicMock()
     flow.get_transitions_from.return_value = [transition]
@@ -675,23 +676,28 @@ def _make_sdk_mock(queue: str = "provisional") -> MagicMock:
     return sdk
 
 
-class TestHandleAgentResultViaFlowDecisions:
-    """Test decision dispatch in handle_agent_result_via_flow."""
+class TestHandleAgentResultDecisions:
+    """Test unified handle_agent_result dispatch for both old and new result formats."""
 
     def _run(
         self,
         task_dir: Path,
-        decision: str | None,
-        status: str = "success",
+        outcome: str = "success",
+        decision: str | None = None,
+        use_old_format: bool = False,
         runs: list | None = None,
+        queue: str = "provisional",
     ) -> tuple[MagicMock, MagicMock]:
-        """Helper: write result.json and invoke the function with mocked dependencies."""
-        result = {"status": status}
+        """Helper: write result.json and invoke the unified handler with mocked deps."""
+        if use_old_format:
+            result: dict = {"status": "success" if outcome == "success" else "failure"}
+        else:
+            result = {"outcome": outcome}
         if decision is not None:
             result["decision"] = decision
         (task_dir / "result.json").write_text(json.dumps(result))
 
-        mock_sdk = _make_sdk_mock()
+        mock_sdk = _make_sdk_mock(queue=queue)
         mock_flow = _make_flow_mock(runs=runs)
 
         with (
@@ -700,81 +706,162 @@ class TestHandleAgentResultViaFlowDecisions:
             patch("orchestrator.steps.execute_steps") as mock_execute,
             patch("orchestrator.steps.reject_with_feedback") as mock_reject,
         ):
-            handle_agent_result_via_flow("TASK-test", "gatekeeper-1", task_dir)
+            handle_agent_result("TASK-test", "gatekeeper-1", task_dir)
             return mock_execute, mock_reject
 
-    def test_approve_executes_steps(self, tmp_path: Path) -> None:
-        """Explicit 'approve' decision must execute transition steps."""
-        mock_execute, mock_reject = self._run(tmp_path, decision="approve")
+    # --- New format tests ---
+
+    def test_success_no_decision_executes_steps(self, tmp_path: Path) -> None:
+        """outcome=success with no decision (implementer) must execute transition steps."""
+        mock_execute, mock_reject = self._run(tmp_path, outcome="success", queue="claimed")
 
         mock_execute.assert_called_once()
         mock_reject.assert_not_called()
 
-    def test_reject_calls_reject_with_feedback(self, tmp_path: Path) -> None:
-        """Explicit 'reject' decision must call reject_with_feedback and not execute steps."""
-        mock_execute, mock_reject = self._run(tmp_path, decision="reject")
+    def test_success_approve_executes_steps(self, tmp_path: Path) -> None:
+        """outcome=success with decision=approve (gatekeeper) must execute transition steps."""
+        mock_execute, mock_reject = self._run(tmp_path, outcome="success", decision="approve")
+
+        mock_execute.assert_called_once()
+        mock_reject.assert_not_called()
+
+    def test_success_reject_calls_reject_with_feedback(self, tmp_path: Path) -> None:
+        """outcome=success with decision=reject must call reject_with_feedback."""
+        mock_execute, mock_reject = self._run(tmp_path, outcome="success", decision="reject")
 
         mock_reject.assert_called_once()
         mock_execute.assert_not_called()
 
-    def test_none_decision_does_nothing(self, tmp_path: Path) -> None:
-        """Missing 'decision' field must not execute steps and not reject."""
-        mock_execute, mock_reject = self._run(tmp_path, decision=None)
+    def test_done_outcome_executes_steps(self, tmp_path: Path) -> None:
+        """outcome=done (implementer legacy) must execute transition steps."""
+        mock_execute, mock_reject = self._run(tmp_path, outcome="done", queue="claimed")
 
-        mock_execute.assert_not_called()
+        mock_execute.assert_called_once()
         mock_reject.assert_not_called()
 
-    def test_unknown_decision_does_nothing(self, tmp_path: Path) -> None:
-        """Unknown 'decision' value (e.g. 'banana') must not execute steps or reject."""
-        mock_execute, mock_reject = self._run(tmp_path, decision="banana")
-
-        mock_execute.assert_not_called()
-        mock_reject.assert_not_called()
-
-    def test_unknown_decision_logs_warning(self, tmp_path: Path) -> None:
-        """Unknown 'decision' value should log a warning mentioning the value."""
-        result = {"status": "success", "decision": "banana"}
+    def test_unknown_outcome_requeues_to_incoming(self, tmp_path: Path) -> None:
+        """Unknown outcome must requeue to incoming — never orphan the task."""
+        result = {"outcome": "bananas"}
         (tmp_path / "result.json").write_text(json.dumps(result))
 
-        mock_sdk = _make_sdk_mock()
+        mock_sdk = _make_sdk_mock(queue="claimed")
         mock_flow = _make_flow_mock()
 
         with (
             patch("orchestrator.queue_utils.get_sdk", return_value=mock_sdk),
             patch("orchestrator.flow.load_flow", return_value=mock_flow),
-            patch("orchestrator.steps.execute_steps"),
-            patch("orchestrator.steps.reject_with_feedback"),
-            patch("orchestrator.scheduler.debug_log") as mock_log,
         ):
-            handle_agent_result_via_flow("TASK-test", "gatekeeper-1", tmp_path)
+            handle_agent_result("TASK-test", "implementer-1", tmp_path)
 
-        log_messages = [c.args[0] for c in mock_log.call_args_list]
-        assert any("banana" in m for m in log_messages), (
-            f"Expected 'banana' in log messages, got: {log_messages}"
-        )
+        mock_sdk.tasks.update.assert_called_once()
+        call_kwargs = mock_sdk.tasks.update.call_args
+        assert call_kwargs.args[0] == "TASK-test"
+        assert call_kwargs.kwargs.get("queue") == "incoming"
 
-    def test_exception_moves_task_to_failed(self, tmp_path: Path) -> None:
-        """When flow dispatch raises, task must be moved to 'failed' queue."""
-        result = {"status": "success", "decision": "approve"}
+    def test_failure_outcome_moves_to_failed(self, tmp_path: Path) -> None:
+        """outcome=failure with no on_fail in flow must move to failed queue."""
+        result = {"outcome": "failure", "reason": "tests failed"}
         (tmp_path / "result.json").write_text(json.dumps(result))
 
-        mock_sdk = _make_sdk_mock()
-        # Make execute_steps raise to trigger the except branch
+        mock_sdk = _make_sdk_mock(queue="claimed")
+        # Flow has no agent conditions → no on_fail
+        mock_flow = _make_flow_mock(conditions=[])
+
         with (
             patch("orchestrator.queue_utils.get_sdk", return_value=mock_sdk),
-            patch("orchestrator.flow.load_flow", side_effect=RuntimeError("pnpm not in PATH")),
+            patch("orchestrator.flow.load_flow", return_value=mock_flow),
         ):
-            handle_agent_result_via_flow("TASK-test", "implementer-1", tmp_path)
+            handle_agent_result("TASK-test", "implementer-1", tmp_path)
 
         mock_sdk.tasks.update.assert_called_once()
         call_kwargs = mock_sdk.tasks.update.call_args
         assert call_kwargs.args[0] == "TASK-test"
         assert call_kwargs.kwargs.get("queue") == "failed"
+
+    def test_failure_with_on_fail_rejects_to_on_fail_queue(self, tmp_path: Path) -> None:
+        """outcome=failure with on_fail in flow must reject (not move to failed)."""
+        result = {"outcome": "failure", "reason": "review failed"}
+        (tmp_path / "result.json").write_text(json.dumps(result))
+
+        mock_sdk = _make_sdk_mock(queue="provisional")
+
+        # Build a condition with on_fail
+        cond = MagicMock()
+        cond.type = "agent"
+        cond.on_fail = "incoming"
+        mock_flow = _make_flow_mock(conditions=[cond])
+
+        with (
+            patch("orchestrator.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("orchestrator.flow.load_flow", return_value=mock_flow),
+        ):
+            handle_agent_result("TASK-test", "gatekeeper-1", tmp_path)
+
+        mock_sdk.tasks.reject.assert_called_once()
+        mock_sdk.tasks.update.assert_not_called()
+
+    def test_needs_continuation_outcome(self, tmp_path: Path) -> None:
+        """outcome=needs_continuation must move task to needs_continuation queue."""
+        result = {"outcome": "needs_continuation"}
+        (tmp_path / "result.json").write_text(json.dumps(result))
+
+        mock_sdk = _make_sdk_mock(queue="claimed")
+        mock_flow = _make_flow_mock()
+
+        with (
+            patch("orchestrator.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("orchestrator.flow.load_flow", return_value=mock_flow),
+        ):
+            handle_agent_result("TASK-test", "implementer-1", tmp_path)
+
+        mock_sdk.tasks.update.assert_called_once()
+        call_kwargs = mock_sdk.tasks.update.call_args
+        assert call_kwargs.kwargs.get("queue") == "needs_continuation"
+
+    # --- Old format compatibility tests ---
+
+    def test_old_format_success_approve_executes_steps(self, tmp_path: Path) -> None:
+        """Old format {"status":"success","decision":"approve"} must execute steps."""
+        mock_execute, mock_reject = self._run(
+            tmp_path, outcome="success", decision="approve", use_old_format=True
+        )
+
+        mock_execute.assert_called_once()
+        mock_reject.assert_not_called()
+
+    def test_old_format_success_reject_calls_reject_with_feedback(self, tmp_path: Path) -> None:
+        """Old format {"status":"success","decision":"reject"} must reject."""
+        mock_execute, mock_reject = self._run(
+            tmp_path, outcome="success", decision="reject", use_old_format=True
+        )
+
+        mock_reject.assert_called_once()
+        mock_execute.assert_not_called()
+
+    # --- Exception handling tests ---
+
+    def test_exception_requeues_to_incoming_not_fails(self, tmp_path: Path) -> None:
+        """When handler raises, task must be requeued to incoming — never to failed."""
+        result = {"outcome": "success", "decision": "approve"}
+        (tmp_path / "result.json").write_text(json.dumps(result))
+
+        mock_sdk = _make_sdk_mock()
+        with (
+            patch("orchestrator.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("orchestrator.flow.load_flow", side_effect=RuntimeError("pnpm not in PATH")),
+        ):
+            handle_agent_result("TASK-test", "implementer-1", tmp_path)
+
+        # Must requeue to incoming, not failed
+        mock_sdk.tasks.update.assert_called_once()
+        call_kwargs = mock_sdk.tasks.update.call_args
+        assert call_kwargs.args[0] == "TASK-test"
+        assert call_kwargs.kwargs.get("queue") == "incoming"
         assert "pnpm not in PATH" in call_kwargs.kwargs.get("execution_notes", "")
 
     def test_exception_logs_full_traceback(self, tmp_path: Path) -> None:
-        """When flow dispatch raises, full traceback must be logged."""
-        result = {"status": "success", "decision": "approve"}
+        """When handler raises, full traceback must be logged."""
+        result = {"outcome": "success", "decision": "approve"}
         (tmp_path / "result.json").write_text(json.dumps(result))
 
         mock_sdk = _make_sdk_mock()
@@ -783,17 +870,16 @@ class TestHandleAgentResultViaFlowDecisions:
             patch("orchestrator.flow.load_flow", side_effect=RuntimeError("boom")),
             patch("orchestrator.scheduler.debug_log") as mock_log,
         ):
-            handle_agent_result_via_flow("TASK-test", "implementer-1", tmp_path)
+            handle_agent_result("TASK-test", "implementer-1", tmp_path)
 
         log_messages = [c.args[0] for c in mock_log.call_args_list]
-        # The traceback log should contain the exception type or traceback header
         assert any("Traceback" in m or "RuntimeError" in m for m in log_messages), (
             f"Expected traceback in log messages, got: {log_messages}"
         )
 
     def test_exception_recovery_failure_is_handled(self, tmp_path: Path) -> None:
-        """If moving to failed queue also fails, it should be caught and logged."""
-        result = {"status": "success", "decision": "approve"}
+        """If requeue-to-incoming also fails, it should be caught and logged."""
+        result = {"outcome": "success", "decision": "approve"}
         (tmp_path / "result.json").write_text(json.dumps(result))
 
         mock_sdk = _make_sdk_mock()
@@ -805,12 +891,126 @@ class TestHandleAgentResultViaFlowDecisions:
             patch("orchestrator.scheduler.debug_log") as mock_log,
         ):
             # Should not raise even when the recovery itself fails
-            handle_agent_result_via_flow("TASK-test", "implementer-1", tmp_path)
+            handle_agent_result("TASK-test", "implementer-1", tmp_path)
 
         log_messages = [c.args[0] for c in mock_log.call_args_list]
-        assert any("Failed to move" in m for m in log_messages), (
-            f"Expected 'Failed to move' in log messages, got: {log_messages}"
+        assert any("Failed to requeue" in m for m in log_messages), (
+            f"Expected 'Failed to requeue' in log messages, got: {log_messages}"
         )
+
+
+# =============================================================================
+# sweep_orphaned_claimed_tasks Tests
+# =============================================================================
+
+
+class TestSweepOrphanedClaimedTasks:
+    """Test that the orphan sweep requeues claimed tasks with dead agents."""
+
+    def _make_agent_state(
+        self,
+        running: bool,
+        agent_mode: str = "scripts",
+        current_task_id: str | None = None,
+    ):
+        """Build an AgentState with the given properties."""
+        from orchestrator.state_utils import AgentState
+        state = AgentState(running=running)
+        if agent_mode:
+            state.extra["agent_mode"] = agent_mode
+        if current_task_id:
+            state.extra["current_task_id"] = current_task_id
+        return state
+
+    def test_requeues_claimed_task_when_agent_not_running(self, tmp_path: Path) -> None:
+        """Orphan sweep must requeue a claimed task whose agent is not running."""
+        agent_dir = tmp_path / "agent-1"
+        agent_dir.mkdir()
+
+        state = self._make_agent_state(running=False, current_task_id="TASK-orphan")
+        mock_sdk = MagicMock()
+        mock_sdk.tasks.get.return_value = {"id": "TASK-orphan", "queue": "claimed"}
+
+        with (
+            patch("orchestrator.scheduler.get_agents_runtime_dir", return_value=tmp_path),
+            patch("orchestrator.scheduler.get_agent_state_path", return_value=tmp_path / "agent-1" / "state.json"),
+            patch("orchestrator.scheduler.load_state", return_value=state),
+            patch("orchestrator.queue_utils.get_sdk", return_value=mock_sdk),
+        ):
+            sweep_orphaned_claimed_tasks()
+
+        mock_sdk.tasks.update.assert_called_once()
+        call_kwargs = mock_sdk.tasks.update.call_args
+        assert call_kwargs.args[0] == "TASK-orphan"
+        assert call_kwargs.kwargs.get("queue") == "incoming"
+        assert call_kwargs.kwargs.get("claimed_by") is None
+
+    def test_does_not_requeue_when_agent_still_running(self, tmp_path: Path) -> None:
+        """Orphan sweep must NOT touch tasks whose agent is still running."""
+        agent_dir = tmp_path / "agent-1"
+        agent_dir.mkdir()
+
+        state = self._make_agent_state(running=True, current_task_id="TASK-active")
+        mock_sdk = MagicMock()
+
+        with (
+            patch("orchestrator.scheduler.get_agents_runtime_dir", return_value=tmp_path),
+            patch("orchestrator.scheduler.get_agent_state_path", return_value=tmp_path / "agent-1" / "state.json"),
+            patch("orchestrator.scheduler.load_state", return_value=state),
+            patch("orchestrator.queue_utils.get_sdk", return_value=mock_sdk),
+        ):
+            sweep_orphaned_claimed_tasks()
+
+        mock_sdk.tasks.update.assert_not_called()
+
+    def test_does_not_requeue_task_not_in_claimed(self, tmp_path: Path) -> None:
+        """Orphan sweep must NOT touch a task that is not in claimed queue."""
+        agent_dir = tmp_path / "agent-1"
+        agent_dir.mkdir()
+
+        state = self._make_agent_state(running=False, current_task_id="TASK-provisional")
+        mock_sdk = MagicMock()
+        # Task is in provisional, not claimed
+        mock_sdk.tasks.get.return_value = {"id": "TASK-provisional", "queue": "provisional"}
+
+        with (
+            patch("orchestrator.scheduler.get_agents_runtime_dir", return_value=tmp_path),
+            patch("orchestrator.scheduler.get_agent_state_path", return_value=tmp_path / "agent-1" / "state.json"),
+            patch("orchestrator.scheduler.load_state", return_value=state),
+            patch("orchestrator.queue_utils.get_sdk", return_value=mock_sdk),
+        ):
+            sweep_orphaned_claimed_tasks()
+
+        mock_sdk.tasks.update.assert_not_called()
+
+    def test_does_not_requeue_non_scripts_agent(self, tmp_path: Path) -> None:
+        """Orphan sweep must skip agents that don't use scripts mode."""
+        agent_dir = tmp_path / "agent-1"
+        agent_dir.mkdir()
+
+        state = self._make_agent_state(running=False, agent_mode="worktree", current_task_id="TASK-1")
+        mock_sdk = MagicMock()
+
+        with (
+            patch("orchestrator.scheduler.get_agents_runtime_dir", return_value=tmp_path),
+            patch("orchestrator.scheduler.get_agent_state_path", return_value=tmp_path / "agent-1" / "state.json"),
+            patch("orchestrator.scheduler.load_state", return_value=state),
+            patch("orchestrator.queue_utils.get_sdk", return_value=mock_sdk),
+        ):
+            sweep_orphaned_claimed_tasks()
+
+        mock_sdk.tasks.get.assert_not_called()
+        mock_sdk.tasks.update.assert_not_called()
+
+    def test_sweep_is_in_housekeeping_jobs(self) -> None:
+        """sweep_orphaned_claimed_tasks must be in HOUSEKEEPING_JOBS."""
+        names = [j.__name__ for j in HOUSEKEEPING_JOBS]
+        assert "sweep_orphaned_claimed_tasks" in names
+
+    def test_process_orchestrator_hooks_not_in_housekeeping(self) -> None:
+        """process_orchestrator_hooks must have been removed from HOUSEKEEPING_JOBS."""
+        names = [j.__name__ for j in HOUSEKEEPING_JOBS]
+        assert "process_orchestrator_hooks" not in names
 
 
 # =============================================================================
