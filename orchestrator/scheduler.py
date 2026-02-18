@@ -110,64 +110,37 @@ def guard_interval(ctx: AgentContext) -> tuple[bool, str]:
 # =============================================================================
 
 
-def check_backpressure_for_role(role: str) -> tuple[bool, str]:
-    """Get the appropriate backpressure check for a role."""
-    from .backpressure import count_queue
-
-    # Implementer, tester, reviewer
-    if role in ("implementer", "orchestrator_impl", "tester", "reviewer"):
-        incoming = count_queue("incoming")
-        if incoming == 0:
-            return False, "no_tasks"
-        from .backpressure import can_claim_task
-        return can_claim_task()
-
-    # Breakdown
-    if role == "breakdown":
-        count = count_queue("breakdown")
-        if count == 0:
-            return False, "no_breakdown_tasks"
-        return True, ""
-
-    # Recycler
-    if role == "recycler":
-        count = count_queue("provisional")
-        if count == 0:
-            return False, "no_provisional_tasks"
-        return True, ""
-
-    # Gatekeeper — checks provisional queue
-    if role == "gatekeeper":
-        count = count_queue("provisional")
-        if count == 0:
-            return False, "no_provisional_tasks"
-        return True, ""
-
-    # No check defined for this role, allow
-    return True, ""
-
-
 def guard_backpressure(ctx: AgentContext) -> tuple[bool, str]:
-    """Check role-based backpressure.
+    """Check backpressure based on agent's claim_from queue.
+
+    Uses the agent's claim_from config to determine which queue to check,
+    rather than hardcoding role names.
 
     Args:
-        ctx: AgentContext containing agent role and state
+        ctx: AgentContext containing agent config and state
 
     Returns:
         (should_proceed, reason_if_blocked)
     """
-    can_proceed, reason = check_backpressure_for_role(ctx.role)
-    if not can_proceed:
-        # Update state to track blocked status
-        ctx.state.extra["blocked_reason"] = reason
-        ctx.state.extra["blocked_at"] = datetime.now().isoformat()
-        save_state(ctx.state, ctx.state_path)
-        return (False, f"backpressure: {reason}")
+    from .backpressure import count_queue
 
-    # Clear any previous blocked status
-    ctx.state.extra.pop("blocked_reason", None)
-    ctx.state.extra.pop("blocked_at", None)
-    return (True, "")
+    claim_from = ctx.agent_config.get("claim_from", "incoming")
+
+    if claim_from == "incoming":
+        incoming = count_queue("incoming")
+        if incoming == 0:
+            return (False, "backpressure: no_tasks")
+        from .backpressure import can_claim_task
+        can_proceed, reason = can_claim_task()
+        if not can_proceed:
+            return (False, f"backpressure: {reason}")
+        return (True, "")
+    else:
+        # Non-incoming queues (provisional, breakdown, etc.)
+        count = count_queue(claim_from)
+        if count == 0:
+            return (False, f"backpressure: no_{claim_from}_tasks")
+        return (True, "")
 
 
 def guard_pre_check(ctx: AgentContext) -> tuple[bool, str]:
@@ -202,7 +175,7 @@ def guard_claim_task(ctx: AgentContext) -> tuple[bool, str]:
         # Not a scripts-mode agent — skip claim, let the role module claim
         return (True, "")
 
-    claim_from = get_claim_queue_for_role(ctx.role)
+    claim_from = ctx.agent_config.get("claim_from", "incoming")
     type_filter = ctx.agent_config.get("type_filter")
     # When claiming from a non-incoming queue (e.g. provisional), do not filter
     # by the agent's own role — the tasks there may have a different original role.
@@ -571,8 +544,8 @@ def write_agent_env(agent_name: str, agent_id: int, role: str, agent_config: dic
     if agent_config and "model" in agent_config:
         lines.append(f"export AGENT_MODEL='{agent_config['model']}'")
 
-    # Add focus for proposers and gatekeepers (specialists)
-    if agent_config and role in ("proposer", "gatekeeper") and "focus" in agent_config:
+    # Add focus for specialist agents (configured in agents.yaml)
+    if agent_config and "focus" in agent_config:
         lines.append(f"export AGENT_FOCUS='{agent_config['focus']}'")
 
     # Pass debug mode
@@ -631,16 +604,15 @@ def spawn_agent(agent_name: str, agent_id: int, role: str, agent_config: dict) -
     if "model" in agent_config:
         env["AGENT_MODEL"] = agent_config["model"]
 
-    # Pass focus for proposers and gatekeepers (specialists)
-    if role in ("proposer", "gatekeeper") and "focus" in agent_config:
+    # Pass focus for specialist agents (configured in agents.yaml)
+    if "focus" in agent_config:
         env["AGENT_FOCUS"] = agent_config["focus"]
 
-    # Pass gatekeeper review context
-    if role == "gatekeeper":
-        if "review_task_id" in agent_config:
-            env["REVIEW_TASK_ID"] = agent_config["review_task_id"]
-        if "review_check_name" in agent_config:
-            env["REVIEW_CHECK_NAME"] = agent_config["review_check_name"]
+    # Pass review context if configured
+    if "review_task_id" in agent_config:
+        env["REVIEW_TASK_ID"] = agent_config["review_task_id"]
+    if "review_check_name" in agent_config:
+        env["REVIEW_CHECK_NAME"] = agent_config["review_check_name"]
 
     # Pass debug mode to agents
     if DEBUG:
@@ -1397,14 +1369,15 @@ def check_and_update_finished_agents() -> None:
                 if state.extra.get("agent_mode") == "scripts" and state.extra.get("task_dir"):
                     task_dir_str = state.extra["task_dir"]
                     current_task = state.extra.get("current_task_id", "")
-                    agent_role = state.extra.get("agent_role", "")
+                    claim_from = state.extra.get("claim_from", "incoming")
                     if current_task:
-                        if agent_role in ("gatekeeper", "implementer"):
-                            # Flow-driven dispatch for flow-aware agents
+                        if claim_from != "incoming":
+                            # Review agents (claim from provisional, etc.) use flow dispatch
                             handle_agent_result_via_flow(
                                 current_task, agent_name, Path(task_dir_str)
                             )
                         else:
+                            # Implementers (claim from incoming) use outcome dispatch
                             handle_agent_result(
                                 current_task, agent_name, Path(task_dir_str)
                             )
@@ -1641,6 +1614,7 @@ def spawn_implementer(ctx: AgentContext) -> int:
     new_state = mark_started(ctx.state, pid)
     new_state.extra["agent_mode"] = "scripts"
     new_state.extra["agent_role"] = ctx.role
+    new_state.extra["claim_from"] = ctx.agent_config.get("claim_from", "incoming")
     new_state.extra["task_dir"] = str(task_dir)
     new_state.extra["current_task_id"] = ctx.claimed_task["id"]
     save_state(new_state, ctx.state_path)
