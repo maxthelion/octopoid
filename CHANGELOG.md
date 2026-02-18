@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Implementer as pure-function via flow steps** ([TASK-2bf1ad9b])
+  - Registered `push_branch`, `run_tests`, `create_pr`, `submit_to_server` steps in `orchestrator/steps.py`
+  - Implementer lifecycle (`claimed → provisional`) is now fully flow-driven — no hardcoded handler
+  - Scheduler dispatches implementer results via `handle_agent_result_via_flow()` (same path as gatekeeper)
+  - Implementer prompt updated: agent writes `result.json` (`{"status": "success"}` or `{"status": "failure", ...}`) instead of calling `submit-pr` / `finish` / `fail`
+  - Removed `submit-pr`, `finish`, and `fail` scripts from implementer agent; kept `run-tests` and `record-progress`
+  - Updated `global-instructions.md` to reflect pure-function model (no direct git push / PR creation)
+  - Added `tests/test_steps.py` with 8 unit tests for the step registry and implementer steps
+  - Added `TestImplementerFlow` class in integration tests covering success, failure, step registration, and flow YAML validation
+
 - **Flow-driven scheduler execution** ([TASK-f584b935])
   - Added `orchestrator/steps.py` with `STEP_REGISTRY`, `execute_steps()`, and gatekeeper steps (`post_review_comment`, `merge_pr`, `reject_with_feedback`)
   - Added `.octopoid/flows/default.yaml` declaring the standard implementation flow with gatekeeper on the `provisional → done` transition
