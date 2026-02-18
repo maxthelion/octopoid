@@ -496,16 +496,17 @@ class TestGetTaskById:
 class TestBackpressure:
     """Tests for backpressure functions."""
 
-    def test_can_create_task_within_limit(self, mock_config):
+    def test_can_create_task_within_limit(self, mock_config, mock_sdk_for_unit_tests):
         """Test can_create_task when within limits."""
+        mock_sdk_for_unit_tests.tasks.list.return_value = [{"id": f"task{i}"} for i in range(5)]
+
         with patch('orchestrator.config.get_queue_limits', return_value={"max_incoming": 20, "max_claimed": 5, "max_provisional": 10}):
-            with patch('orchestrator.queue_utils.count_queue', return_value=5):
-                from orchestrator.queue_utils import can_create_task
+            from orchestrator.queue_utils import can_create_task
 
-                can_create, reason = can_create_task()
+            can_create, reason = can_create_task()
 
-                assert can_create is True
-                assert reason == ""
+            assert can_create is True
+            assert reason == ""
 
     def test_can_create_task_queue_full(self, mock_config, mock_sdk_for_unit_tests):
         """Test can_create_task when queue is full."""
@@ -519,16 +520,17 @@ class TestBackpressure:
             assert can_create is False
             assert "Queue full" in reason
 
-    def test_can_claim_task_no_tasks(self, mock_config):
+    def test_can_claim_task_no_tasks(self, mock_config, mock_sdk_for_unit_tests):
         """Test can_claim_task when no tasks available."""
+        mock_sdk_for_unit_tests.tasks.list.return_value = []
+
         with patch('orchestrator.config.get_queue_limits', return_value={"max_incoming": 20, "max_claimed": 5, "max_provisional": 10}):
-            with patch('orchestrator.queue_utils.count_queue', side_effect=[0, 0]):
-                from orchestrator.queue_utils import can_claim_task
+            from orchestrator.queue_utils import can_claim_task
 
-                can_claim, reason = can_claim_task()
+            can_claim, reason = can_claim_task()
 
-                assert can_claim is False
-                assert "No tasks" in reason
+            assert can_claim is False
+            assert "No tasks" in reason
 
 
 class TestCreateTaskBlockedByNormalization:

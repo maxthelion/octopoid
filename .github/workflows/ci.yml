@@ -57,6 +57,37 @@ jobs:
       - name: Run server unit tests
         run: pnpm --filter @octopoid/server vitest run tests/state-machine.test.ts tests/routes-tasks.test.ts
 
+  test-orchestrator-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 8
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: |
+          pnpm install
+          pip install pytest requests pyyaml
+          pip install -e .
+          cd packages/python-sdk && pip install -e .
+
+      - name: Run orchestrator unit tests
+        # Exclude integration tests — they require a live local server
+        run: pytest tests/ --ignore=tests/integration -v
+
   integration-tests:
     runs-on: ubuntu-latest
     steps:
@@ -80,19 +111,15 @@ jobs:
       - name: Install dependencies
         run: |
           pnpm install
-          pip install pytest requests
-
-      - name: Build Python SDK
-        run: |
-          cd packages/python-sdk
+          pip install pytest requests pyyaml
           pip install -e .
+          cd packages/python-sdk && pip install -e .
 
       - name: Start test server and run integration tests
         run: |
-          cd tests/integration
-          ./bin/start-test-server.sh
-          pytest -v
-          ./bin/stop-test-server.sh
+          tests/integration/bin/start-test-server.sh
+          pytest tests/integration/ -v
+          tests/integration/bin/stop-test-server.sh
 
   build:
     runs-on: ubuntu-latest

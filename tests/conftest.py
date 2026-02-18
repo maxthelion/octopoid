@@ -129,18 +129,19 @@ Second task that depends on first.
     yield {"task1": task1_path, "task2": task2_path}
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def mock_sdk_for_unit_tests(request):
-    """Auto-mock get_sdk() for all unit tests to prevent production side effects.
+    """Mock get_sdk() for unit tests that need to prevent real HTTP calls.
 
-    This fixture prevents unit tests from making real HTTP calls to the production
-    server. Integration tests in tests/integration/ are excluded - they set
-    OCTOPOID_SERVER_URL and test against a real local server.
+    Opt-in: tests must explicitly request this fixture by name. Tests that
+    exercise real SDK interactions should use scoped_sdk from
+    tests/integration/conftest.py instead.
 
     The mock SDK returns a MagicMock that simulates SDK responses without making
     HTTP requests.
     """
-    # Skip this fixture for integration tests
+    # Skip this fixture for integration tests (safety net, though integration
+    # tests should never request this fixture directly)
     if "integration" in request.node.nodeid:
         yield
         return
