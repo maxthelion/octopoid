@@ -256,7 +256,7 @@ EXAMPLE_AGENTS_YAML = """# Octopoid Agent Configuration
 queue_limits:
   max_incoming: 20   # Max tasks in incoming + claimed
   max_claimed: 1     # Max tasks being worked on simultaneously
-  max_open_prs: 10   # Max open pull requests
+  max_provisional: 10   # Max tasks awaiting review
 
 # Agent definitions
 agents:

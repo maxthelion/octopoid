@@ -35,7 +35,7 @@ from .task_notes import (
     NOTES_STDOUT_LIMIT, cleanup_task_notes, get_task_notes, save_task_notes,
 )
 from .backpressure import (
-    can_claim_task, can_create_task, count_open_prs, count_queue, get_queue_status,
+    can_claim_task, can_create_task, count_queue, get_queue_status,
 )
 from .config import get_queue_dir, get_queue_limits
 from .git_utils import cleanup_task_worktree
