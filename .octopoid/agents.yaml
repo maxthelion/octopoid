@@ -1,7 +1,7 @@
 paused: false
 
 queue_limits:
-  max_claimed: 1
+  max_claimed: 3
   max_incoming: 20
   max_provisional: 10
 
@@ -9,13 +9,13 @@ fleet:
   - name: implementer-1
     type: implementer
     interval_seconds: 60
-    max_turns: 200
+    max_turns: 150
     model: sonnet
 
   - name: implementer-2
     type: implementer
     interval_seconds: 60
-    max_turns: 200
+    max_turns: 150
     model: sonnet
 
   - name: sanity-check-gatekeeper
