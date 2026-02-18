@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Guard chain and spawn strategy tests** ([TASK-c3c6c9e5])
+  - `tests/test_guard_chain.py` asserts `AGENT_GUARDS` contains all required guards (`guard_not_running`, `guard_backpressure`, `guard_claim_task`, `guard_enabled`, `guard_interval`) in the correct order (cheap before expensive)
+  - Tests for `get_spawn_strategy()` routing: `spawn_mode=scripts` + claimed task → `spawn_implementer`; `spawn_mode=scripts` + no task → `spawn_worktree`; `lightweight=True` → `spawn_lightweight`
+  - Unit tests for `guard_not_running` (idle, alive PID, crashed PID cleanup), `guard_claim_task` (non-scripts skip, no task, success, role filter for incoming vs non-incoming queues), and `guard_backpressure` (blocked, clear, stale-state cleanup)
+
 - **Drafts tab in dashboard** ([TASK-451ec77d])
   - Added `TAB_DRAFTS = 5` constant and updated `TAB_NAMES`/`TAB_KEYS` to include "Drafts" / "F"
   - New `render_drafts_tab()` with master-detail layout: left pane lists drafts (number + title), right pane shows full markdown content
