@@ -7,6 +7,7 @@ Tests cover:
 - evaluate_agent guard chain
 - get_spawn_strategy dispatch
 - run_housekeeping fault isolation
+- handle_agent_result_via_flow decision dispatch
 
 The refactor was purely structural - no behavior changes.
 """
@@ -14,7 +15,7 @@ The refactor was purely structural - no behavior changes.
 import json
 from datetime import datetime, timedelta
 from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, Mock, patch, call
 
 import pytest
 
@@ -29,6 +30,7 @@ from orchestrator.scheduler import (
     guard_interval,
     guard_not_running,
     guard_pre_check,
+    handle_agent_result_via_flow,
     run_housekeeping,
     spawn_implementer,
     spawn_lightweight,
@@ -605,3 +607,105 @@ class TestRunHousekeeping:
                 call_args = mock_log.call_args[0][0]
                 assert "test_failing_job" in call_args
                 assert "failed" in call_args.lower()
+
+
+# =============================================================================
+# handle_agent_result_via_flow Decision Tests
+# =============================================================================
+
+
+def _make_flow_mock(runs: list | None = None) -> MagicMock:
+    """Build a minimal flow mock with one transition from 'provisional'."""
+    transition = MagicMock()
+    transition.runs = runs or ["merge_pr"]
+    transition.conditions = []
+
+    flow = MagicMock()
+    flow.get_transitions_from.return_value = [transition]
+    return flow
+
+
+def _make_sdk_mock(queue: str = "provisional") -> MagicMock:
+    """Build a minimal SDK mock."""
+    sdk = MagicMock()
+    sdk.tasks.get.return_value = {"id": "TASK-test", "queue": queue, "flow": "default"}
+    return sdk
+
+
+class TestHandleAgentResultViaFlowDecisions:
+    """Test decision dispatch in handle_agent_result_via_flow."""
+
+    def _run(
+        self,
+        task_dir: Path,
+        decision: str | None,
+        status: str = "success",
+        runs: list | None = None,
+    ) -> tuple[MagicMock, MagicMock]:
+        """Helper: write result.json and invoke the function with mocked dependencies."""
+        result = {"status": status}
+        if decision is not None:
+            result["decision"] = decision
+        (task_dir / "result.json").write_text(json.dumps(result))
+
+        mock_sdk = _make_sdk_mock()
+        mock_flow = _make_flow_mock(runs=runs)
+
+        with (
+            patch("orchestrator.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("orchestrator.flow.load_flow", return_value=mock_flow),
+            patch("orchestrator.steps.execute_steps") as mock_execute,
+            patch("orchestrator.steps.reject_with_feedback") as mock_reject,
+        ):
+            handle_agent_result_via_flow("TASK-test", "gatekeeper-1", task_dir)
+            return mock_execute, mock_reject
+
+    def test_approve_executes_steps(self, tmp_path: Path) -> None:
+        """Explicit 'approve' decision must execute transition steps."""
+        mock_execute, mock_reject = self._run(tmp_path, decision="approve")
+
+        mock_execute.assert_called_once()
+        mock_reject.assert_not_called()
+
+    def test_reject_calls_reject_with_feedback(self, tmp_path: Path) -> None:
+        """Explicit 'reject' decision must call reject_with_feedback and not execute steps."""
+        mock_execute, mock_reject = self._run(tmp_path, decision="reject")
+
+        mock_reject.assert_called_once()
+        mock_execute.assert_not_called()
+
+    def test_none_decision_does_nothing(self, tmp_path: Path) -> None:
+        """Missing 'decision' field must not execute steps and not reject."""
+        mock_execute, mock_reject = self._run(tmp_path, decision=None)
+
+        mock_execute.assert_not_called()
+        mock_reject.assert_not_called()
+
+    def test_unknown_decision_does_nothing(self, tmp_path: Path) -> None:
+        """Unknown 'decision' value (e.g. 'banana') must not execute steps or reject."""
+        mock_execute, mock_reject = self._run(tmp_path, decision="banana")
+
+        mock_execute.assert_not_called()
+        mock_reject.assert_not_called()
+
+    def test_unknown_decision_logs_warning(self, tmp_path: Path) -> None:
+        """Unknown 'decision' value should log a warning mentioning the value."""
+        result = {"status": "success", "decision": "banana"}
+        (tmp_path / "result.json").write_text(json.dumps(result))
+
+        mock_sdk = _make_sdk_mock()
+        mock_flow = _make_flow_mock()
+
+        with (
+            patch("orchestrator.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("orchestrator.flow.load_flow", return_value=mock_flow),
+            patch("orchestrator.steps.execute_steps"),
+            patch("orchestrator.steps.reject_with_feedback"),
+            patch("orchestrator.scheduler.debug_log") as mock_log,
+        ):
+            handle_agent_result_via_flow("TASK-test", "gatekeeper-1", tmp_path)
+
+        log_messages = [c.args[0] for c in mock_log.call_args_list]
+        assert any("banana" in m for m in log_messages), (
+            f"Expected 'banana' in log messages, got: {log_messages}"
+        )

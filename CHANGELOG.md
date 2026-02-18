@@ -38,6 +38,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Guard flow dispatch against unknown decision values** ([TASK-46eb663d])
+  - `handle_agent_result_via_flow()` now only executes `transition.runs` (including `merge_pr`) on an explicit `decision == "approve"`
+  - Unknown or missing `decision` values (e.g. `None`, `"banana"`) log a warning and return without action, leaving the task in its current queue for human review
+  - Added 5 unit tests in `tests/test_scheduler_refactor.py` covering approve, reject, `None`, and unknown decision cases
+
 - **Detect and fix worktree branch mismatches in scheduler** ([TASK-a4d02a1c])
   - `create_task_worktree()` now checks if an existing worktree is based on the correct branch before reusing it
   - If `origin/<branch>` is not an ancestor of the worktree HEAD, the worktree is deleted and recreated from the correct branch
