@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Agent pool model step 1: `agents:` dict config format** ([TASK-134eb961])
+  - `.octopoid/agents.yaml` now uses an `agents:` dict where each key is a blueprint name
+  - `max_instances` field on each blueprint controls max concurrent instances (default: 1)
+  - `get_agents()` in `orchestrator/config.py` reads the new dict format and sets `blueprint_name` on each entry
+  - Backwards-compatible: `fleet:` list format still works if `agents:` dict is absent
+  - `EXAMPLE_AGENTS_YAML` in `orchestrator/init.py` updated to the new dict format
+  - Added `tests/test_config_get_agents.py` with 11 unit tests covering both formats
+
 - **Implementer as pure-function via flow steps** ([TASK-2bf1ad9b])
   - Registered `push_branch`, `run_tests`, `create_pr`, `submit_to_server` steps in `orchestrator/steps.py`
   - Implementer lifecycle (`claimed → provisional`) is now fully flow-driven — no hardcoded handler
