@@ -19,6 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Integration test: mini 2-task project lifecycle** ([TASK-1597e6f5])
+  - Added `tests/test_project_lifecycle.py` with 3 tests verifying the full project lifecycle
+  - Tests use a local bare repo as "origin" — no external dependencies required
+  - Verifies: worktrees created as detached HEADs from the project branch, task 1 commits visible in task 2 worktree, cleanup preserves worktree with detached HEAD
+  - Matches the current `create_task_worktree` / `cleanup_task_worktree` API (detached HEAD model)
+
 - **Drafts tab in dashboard** ([TASK-451ec77d])
   - Added `TAB_DRAFTS = 5` constant and updated `TAB_NAMES`/`TAB_KEYS` to include "Drafts" / "F"
   - New `render_drafts_tab()` with master-detail layout: left pane lists drafts (number + title), right pane shows full markdown content

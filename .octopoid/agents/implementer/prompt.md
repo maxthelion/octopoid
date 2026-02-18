@@ -44,12 +44,12 @@ When you have finished your implementation, write `result.json` in the task dire
 
 **On success:**
 ```json
-{"status": "success"}
+{"outcome": "done"}
 ```
 
 **If you cannot complete the task:**
 ```json
-{"status": "failure", "message": "<specific reason why you could not complete it>"}
+{"outcome": "failed", "reason": "<specific reason why you could not complete it>"}
 ```
 
 Do NOT create PRs, push branches, or call any scripts to submit your work.
