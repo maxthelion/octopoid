@@ -131,17 +131,18 @@ def get_global_instructions_path() -> Path:
     return get_orchestrator_dir() / "global-instructions.md"
 
 
-def get_main_branch() -> str:
-    """Get the configured main branch from .octopoid/config.yaml.
+def get_base_branch() -> str:
+    """Get the configured base branch from .octopoid/config.yaml.
 
-    Reads ``repo.main_branch``. Defaults to ``"main"`` if not set.
+    Reads ``repo.base_branch``. Defaults to ``"main"`` if not set.
+    This is the branch that tasks branch from and rebase onto.
     """
     try:
         config_path = find_parent_project() / ".octopoid" / "config.yaml"
         if config_path.exists():
             with open(config_path) as f:
                 config = yaml.safe_load(f) or {}
-            return config.get("repo", {}).get("main_branch", "main")
+            return config.get("repo", {}).get("base_branch", "main")
     except Exception:
         pass
     return "main"

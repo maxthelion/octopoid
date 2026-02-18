@@ -41,8 +41,6 @@ class TasksAPI:
         title: Optional[str] = None,
         role: Optional[str] = None,
         priority: Optional[str] = None,
-        context: Optional[str] = None,
-        acceptance_criteria: Optional[str] = None,
         queue: str = 'incoming',
         branch: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
@@ -56,8 +54,6 @@ class TasksAPI:
             title: Task title
             role: Agent role (e.g., 'implement', 'test')
             priority: Priority level (P0, P1, P2)
-            context: Task context/description
-            acceptance_criteria: Success criteria
             queue: Initial queue (default: 'incoming')
             branch: Base branch (default: None, server/scheduler resolves)
             metadata: Additional metadata
@@ -65,6 +61,10 @@ class TasksAPI:
 
         Returns:
             Created task dictionary
+
+        Note:
+            Task content (context, acceptance criteria, etc.) should be written
+            to the file_path. The local file is the canonical source of truth.
         """
         data = {
             'id': id,
@@ -301,6 +301,30 @@ class ProjectsAPI:
         response = self.client._request('GET', '/api/v1/projects', params=params)
         if isinstance(response, dict) and 'projects' in response:
             return response['projects']
+        return response if isinstance(response, list) else []
+
+    def get(self, project_id: str) -> Optional[Dict[str, Any]]:
+        """Get a single project by ID"""
+        try:
+            return self.client._request('GET', f'/api/v1/projects/{project_id}')
+        except requests.HTTPError as e:
+            if e.response.status_code == 404:
+                return None
+            raise
+
+    def create(self, **fields) -> Dict[str, Any]:
+        """Create a new project"""
+        return self.client._request('POST', '/api/v1/projects', json=fields)
+
+    def update(self, project_id: str, **updates) -> Dict[str, Any]:
+        """Update project fields"""
+        return self.client._request('PATCH', f'/api/v1/projects/{project_id}', json=updates)
+
+    def get_tasks(self, project_id: str) -> List[Dict[str, Any]]:
+        """Get all tasks belonging to a project"""
+        response = self.client._request('GET', f'/api/v1/projects/{project_id}/tasks')
+        if isinstance(response, dict) and 'tasks' in response:
+            return response['tasks']
         return response if isinstance(response, list) else []
 
 

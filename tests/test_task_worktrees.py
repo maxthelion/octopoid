@@ -156,7 +156,7 @@ class TestCreateTaskWorktree:
 
         with patch('orchestrator.git_utils.find_parent_project', return_value=temp_dir), \
              patch('orchestrator.git_utils.get_task_worktree_path', return_value=worktree_path), \
-             patch('orchestrator.git_utils.get_main_branch', return_value="main"), \
+             patch('orchestrator.git_utils.get_base_branch', return_value="main"), \
              patch('orchestrator.git_utils.run_git', side_effect=mock_run_git):
             result = create_task_worktree(task)
 

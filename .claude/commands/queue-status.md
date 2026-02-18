@@ -43,11 +43,11 @@ agent_pids = {}
 try:
     agents_dir = os.path.expanduser('.octopoid/runtime/agents')
     if os.path.isdir(agents_dir):
-        for fname in os.listdir(agents_dir):
-            if fname.endswith('.json'):
-                with open(os.path.join(agents_dir, fname)) as f:
+        for agent_name in os.listdir(agents_dir):
+            state_path = os.path.join(agents_dir, agent_name, 'state.json')
+            if os.path.isfile(state_path):
+                with open(state_path) as f:
                     st = json.load(f)
-                    agent_name = fname.replace('.json', '')
                     pid = st.get('pid')
                     task_id = st.get('extra', {}).get('current_task_id')
                     if task_id and pid:

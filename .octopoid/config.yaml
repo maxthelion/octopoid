@@ -11,7 +11,7 @@ server:
 # Repository settings
 repo:
   path: /Users/maxwilliams/dev/octopoid
-  main_branch: feature/client-server-architecture
+  base_branch: feature/client-server-architecture
 
 # Agent configuration
 agents:

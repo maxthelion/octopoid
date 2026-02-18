@@ -1,21 +1,19 @@
-paused: false
+paused: true
 
 queue_limits:
-  max_claimed: 3
+  max_claimed: 1
   max_incoming: 20
   max_open_prs: 10
 
 fleet:
   - name: implementer-1
     type: implementer
-    enabled: true
     interval_seconds: 60
     max_turns: 200
     model: sonnet
 
   - name: implementer-2
     type: implementer
-    enabled: true
     interval_seconds: 60
     max_turns: 200
     model: sonnet
@@ -32,6 +30,6 @@ fleet:
   - name: github-issue-monitor
     type: custom
     path: .octopoid/agents/github-issue-monitor/
-    enabled: false
     interval_seconds: 900
     lightweight: true
+    paused: true

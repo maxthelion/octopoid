@@ -236,7 +236,7 @@ github_url: {url}
 
             # Register task with API server — store just the filename
             task_title = f"[GH-{issue_number}] {title}"
-            from ..config import get_main_branch
+            from ..config import get_base_branch
             task = self.sdk.tasks.create(
                 id=task_id,
                 file_path=filename,
@@ -244,7 +244,7 @@ github_url: {url}
                 role=role,
                 priority=priority,
                 queue="incoming",
-                branch=get_main_branch(),
+                branch=get_base_branch(),
                 metadata={
                     "created_by": self.agent_name,
                     "github_issue": issue_number,

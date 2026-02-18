@@ -13,6 +13,7 @@ from uuid import uuid4
 
 from .config import (
     ACTIVE_QUEUES,
+    get_base_branch,
     get_tasks_file_dir,
 )
 from .sdk import get_sdk, get_orchestrator_id
@@ -484,7 +485,7 @@ def create_task(
     context: str,
     acceptance_criteria: list[str] | str,
     priority: str = "P1",
-    branch: str = "main",
+    branch: str | None = None,
     created_by: str = "human",
     blocked_by: str | None = None,
     project_id: str | None = None,
@@ -493,6 +494,8 @@ def create_task(
     breakdown_depth: int = 0,
 ) -> Path:
     """Create a new task file in the specified queue."""
+    if not branch:
+        branch = get_base_branch()
     task_id = uuid4().hex[:8]
     filename = f"TASK-{task_id}.md"
 
@@ -556,8 +559,6 @@ CREATED_BY: {created_by}
             title=title,
             role=role,
             priority=priority,
-            context=context,
-            acceptance_criteria="\n".join(criteria_lines),
             queue=queue,
             branch=branch,
             hooks=hooks_json,

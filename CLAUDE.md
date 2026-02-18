@@ -10,9 +10,29 @@ Never `cd` into a directory that might be deleted (e.g. worktrees, temp dirs). U
 
 Use the `/pause-system` and `/pause-agent` skills to pause/unpause the orchestrator. Don't manually touch the PAUSE file.
 
+For upgrading the local octopoid installation after code changes, see `docs/local-upgrade-guide.md`.
+
+## Scheduler and Python caching
+
+The scheduler runs via launchd using `/opt/homebrew/bin/python3`. Python caches compiled bytecode in `__pycache__/` directories. After editing or replacing Python files in `orchestrator/`, clear the cache so the scheduler picks up changes:
+
+```bash
+find orchestrator -name '__pycache__' -type d -exec rm -rf {} +
+```
+
+If you skip this, the scheduler may keep running old code from stale `.pyc` files — even if the source file has been completely rewritten.
+
 ## Task & PR lifecycle rules
 
 - When manually approving a task, use `approve_and_merge(task_id)` from `orchestrator.queue_utils` — not raw `sdk.tasks.update(queue='done')`. This runs the `before_merge` hooks (merges PR, etc).
 - When closing or merging PRs, never use `--delete-branch`. We may need to go back and check the branch later.
 - When rejecting a task, post the rejection feedback as a comment on the PR (not just in the task body).
+- **Always write the task file BEFORE changing task state** (reject, requeue, enqueue). The scheduler runs every 60s and agents claim tasks immediately. If you reject/requeue first, an agent may claim the task and read the old file before you've rewritten it.
+- **Do NOT set BRANCH in task files** unless the task specifically needs a different branch. The system defaults to `repo.base_branch` from `.octopoid/config.yaml` (currently `feature/client-server-architecture`). Hardcoding a branch in a task file overrides this and can cause agents to miss feature branch work.
+- When rejecting a task, **rewrite the entire task file** to reflect only what remains to be done. Do not just prepend a rejection notice above the old description — the agent will follow the original instructions and ignore the notice. Remove or update any code examples, instructions, or acceptance criteria that contradict the rejection feedback. The task file should read as a clear, self-consistent set of instructions with no ambiguity.
 - When approving a task, post a review summary comment on the PR before merging.
+
+## Investigating issues
+
+- Don't assume problems are known. When you encounter a systemic issue (e.g. a silent failure, a missing transition, a broken pipeline), always note it — either write a quick draft via `/draft-idea` or flag it to the user explicitly.
+- Don't hand-wave with "the server didn't get the update" — investigate *why* and document the root cause or at least the symptoms.
