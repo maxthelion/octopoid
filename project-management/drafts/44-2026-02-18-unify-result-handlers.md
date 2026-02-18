@@ -161,6 +161,8 @@ Messages don't change the flow format. They change the *transport* — how the r
 - Standardize on one result format (`outcome` + optional `decision`)
 - Handler reads `on_fail` from flow instead of hardcoding
 - Delete `process_orchestrator_hooks` (Draft 41)
+- **Critical: never silently abandon a claimed task.** If the handler throws an exception or encounters an unrecognized result, it must requeue the task (not leave it in `claimed`). The current `except` block at line 1225 logs and returns — orphaning the task permanently. There is no lease monitor despite the comment claiming one exists.
+- **Add orphan sweep as safety net.** Each scheduler tick: find claimed tasks where the claiming agent's PID is dead and `state.running == false`. If `handle_agent_result` already ran (or failed), requeue the task to incoming. This catches any case where the primary handler silently drops a task.
 
 ### Phase 2: Return effects instead of executing them
 - Handler returns `list[Effect]` instead of calling SDK directly

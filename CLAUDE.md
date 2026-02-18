@@ -8,7 +8,6 @@ Save plans to the filesystem in project-management/drafts
 
 Never `cd` into a directory that might be deleted (e.g. worktrees, temp dirs). Use absolute paths or subshells instead. The Bash tool persists CWD between commands, so if the directory is removed, every subsequent command will silently fail.
 
-<<<<<<< Updated upstream
 Use the `/pause-system` and `/pause-agent` skills to pause/unpause the orchestrator. Don't manually touch the PAUSE file.
 
 For upgrading the local octopoid installation after code changes, see `docs/local-upgrade-guide.md`.
@@ -63,3 +62,16 @@ When a PR has merge conflicts (mergeStateStatus: CONFLICTING or DIRTY), fix it i
 
 - Don't assume problems are known. When you encounter a systemic issue (e.g. a silent failure, a missing transition, a broken pipeline), always note it — either write a quick draft via `/draft-idea` or flag it to the user explicitly.
 - Don't hand-wave with "the server didn't get the update" — investigate *why* and document the root cause or at least the symptoms.
+
+## Testing philosophy: outside-in
+
+Prefer end-to-end tests with a real local server over mocked unit tests. The testing pyramid:
+
+1. **Priority 1 — End-to-end:** Scheduler + real local server + real SDK. Test full lifecycles (create → claim → spawn → submit → accept). Use the `scoped_sdk` fixture for isolation.
+2. **Priority 2 — Integration:** Real server, mocked spawn. API contract tests, flow transitions, migration correctness.
+3. **Priority 3 — Unit:** Mocked dependencies. Only for pure logic (parsing, config merging, formatting) and edge cases that are hard to trigger end-to-end.
+
+**Rules:**
+- Use `scoped_sdk` (from `tests/integration/conftest.py`) for test isolation — each test gets its own scope on the local server.
+- Only mock `get_sdk()` when you genuinely need to test behavior with specific return values (error paths, edge cases). Never mock just to avoid running the server.
+- Integration tests run against `localhost:9787` (start with `tests/integration/bin/start-test-server.sh`). Never hit production from tests.
