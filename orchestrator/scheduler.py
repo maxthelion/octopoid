@@ -1383,8 +1383,8 @@ def check_and_update_finished_agents() -> None:
                     current_task = state.extra.get("current_task_id", "")
                     agent_role = state.extra.get("agent_role", "")
                     if current_task:
-                        if agent_role == "gatekeeper":
-                            # Flow-driven dispatch for gatekeeper
+                        if agent_role in ("gatekeeper", "implementer"):
+                            # Flow-driven dispatch for flow-aware agents
                             handle_agent_result_via_flow(
                                 current_task, agent_name, Path(task_dir_str)
                             )

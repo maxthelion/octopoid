@@ -372,3 +372,71 @@ class TestTaskLifecycleFlow:
                 os.environ.pop("ORCHESTRATOR_DIR", None)
             else:
                 os.environ["ORCHESTRATOR_DIR"] = original_env
+
+
+class TestImplementerFlow:
+    """Test implementer flow: claimed → provisional via flow steps."""
+
+    def test_implementer_success_flow(self, scoped_sdk, orchestrator_id):
+        """Implementer success: claimed → provisional via submit."""
+        task_id, claimed = create_and_claim(scoped_sdk, orchestrator_id)
+        assert claimed is not None
+        assert claimed["queue"] == "claimed"
+
+        # Simulate the submit_to_server flow step
+        submitted = scoped_sdk.tasks.submit(task_id, commits_count=1, turns_used=5)
+        assert submitted["queue"] == "provisional"
+
+        task = scoped_sdk.tasks.get(task_id)
+        assert task is not None
+        assert task["queue"] == "provisional"
+
+    def test_implementer_failure_requeues(self, scoped_sdk, orchestrator_id):
+        """Implementer failure: claimed → incoming via requeue."""
+        task_id, claimed = create_and_claim(scoped_sdk, orchestrator_id)
+        assert claimed is not None
+        assert claimed["queue"] == "claimed"
+
+        # Simulate the failure path: requeue back to incoming
+        requeued = scoped_sdk.tasks.requeue(task_id)
+        assert requeued["queue"] == "incoming"
+
+        task = scoped_sdk.tasks.get(task_id)
+        assert task is not None
+        assert task["queue"] == "incoming"
+
+    def test_implementer_flow_steps_registered(self):
+        """All implementer flow steps are registered in STEP_REGISTRY."""
+        from orchestrator.steps import STEP_REGISTRY
+
+        expected_steps = ["push_branch", "run_tests", "create_pr", "submit_to_server"]
+        for step in expected_steps:
+            assert step in STEP_REGISTRY, f"Step '{step}' not registered in STEP_REGISTRY"
+
+    def test_flow_claimed_to_provisional_runs(self):
+        """Default flow defines push_branch, run_tests, create_pr, submit_to_server for claimed→provisional."""
+        import os
+        from pathlib import Path
+
+        worktree_root = Path(__file__).parent.parent.parent
+        octopoid_dir = worktree_root / ".octopoid"
+        if not (octopoid_dir / "flows" / "default.yaml").exists():
+            pytest.skip("default.yaml flow not found")
+
+        original_env = os.environ.get("ORCHESTRATOR_DIR")
+        try:
+            os.environ["ORCHESTRATOR_DIR"] = str(octopoid_dir)
+            from orchestrator.flow import load_flow
+            flow = load_flow("default")
+            transitions = flow.get_transitions_from("claimed")
+            assert len(transitions) > 0, "No transitions from 'claimed' in default flow"
+            transition = transitions[0]
+            expected = ["push_branch", "run_tests", "create_pr", "submit_to_server"]
+            assert transition.runs == expected, (
+                f"Expected runs {expected}, got {transition.runs}"
+            )
+        finally:
+            if original_env is None:
+                os.environ.pop("ORCHESTRATOR_DIR", None)
+            else:
+                os.environ["ORCHESTRATOR_DIR"] = original_env
