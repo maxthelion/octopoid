@@ -1,5 +1,6 @@
 """Tests for orchestrator.steps — step registry and implementer steps."""
 
+import os
 import subprocess
 import tempfile
 from pathlib import Path
@@ -57,6 +58,53 @@ class TestStepRegistry:
                 STEP_REGISTRY["run_tests"] = original_run
 
 
+class TestBuildNodePath:
+    """Tests for _build_node_path."""
+
+    def test_includes_existing_path(self):
+        """_build_node_path includes the existing PATH."""
+        from orchestrator.steps import _build_node_path
+
+        with patch.dict(os.environ, {"PATH": "/usr/bin:/bin"}, clear=False):
+            result = _build_node_path()
+        assert "/usr/bin:/bin" in result
+
+    def test_includes_nvm_bin_when_present(self, tmp_path):
+        """_build_node_path adds nvm node bin directory when nvm is installed."""
+        from orchestrator.steps import _build_node_path
+
+        # Create a fake nvm directory structure
+        nvm_bin = tmp_path / "versions" / "node" / "v20.0.0" / "bin"
+        nvm_bin.mkdir(parents=True)
+
+        with patch.dict(os.environ, {"NVM_DIR": str(tmp_path), "PATH": "/usr/bin"}, clear=False):
+            result = _build_node_path()
+
+        assert str(nvm_bin) in result
+        # nvm bin should come before the existing PATH
+        assert result.index(str(nvm_bin)) < result.index("/usr/bin")
+
+    def test_corepack_shims_included_when_on_disk(self):
+        """_build_node_path includes /usr/local corepack shims when they exist on disk."""
+        from orchestrator.steps import _build_node_path
+
+        shims_path = Path("/usr/local/lib/node_modules/corepack/shims")
+        result = _build_node_path()
+
+        if shims_path.is_dir():
+            assert str(shims_path) in result
+        else:
+            # shims not installed — just verify the function still returns a string
+            assert isinstance(result, str)
+
+    def test_returns_string(self):
+        """_build_node_path always returns a string."""
+        from orchestrator.steps import _build_node_path
+
+        result = _build_node_path()
+        assert isinstance(result, str)
+
+
 class TestRunTestsStep:
     """Tests for the run_tests step."""
 
@@ -91,6 +139,32 @@ class TestRunTestsStep:
         with patch("orchestrator.steps.subprocess.run", return_value=mock_result):
             with pytest.raises(RuntimeError, match="Tests failed"):
                 run_tests({}, {}, task_dir)
+
+    def test_run_tests_passes_augmented_path_env(self, tmp_path):
+        """run_tests passes an env with augmented PATH to subprocess."""
+        from orchestrator.steps import run_tests
+
+        task_dir = tmp_path
+        worktree = task_dir / "worktree"
+        worktree.mkdir()
+        (worktree / "pytest.ini").write_text("[pytest]\n")
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = ""
+        mock_result.stderr = ""
+
+        captured_env = {}
+
+        def capture_env(*args, **kwargs):
+            captured_env.update(kwargs.get("env", {}))
+            return mock_result
+
+        with patch("orchestrator.steps.subprocess.run", side_effect=capture_env):
+            run_tests({}, {}, task_dir)
+
+        assert "PATH" in captured_env
+        assert captured_env["PATH"]  # not empty
 
 
 class TestSubmitToServerStep:

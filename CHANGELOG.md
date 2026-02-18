@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`run_tests` flow step PATH for pnpm under launchd** ([TASK-5eb215f6])
+  - `run_tests` now builds an augmented PATH before calling the test subprocess, adding nvm's active node bin directory and corepack shims directories so `npm`/`pnpm` are found even when the scheduler runs under launchd with a minimal environment
+  - Introduced `_build_node_path()` helper that inspects `NVM_DIR` and well-known corepack shim locations
+
 - **Gatekeeper claim bug** ([TASK-b0a63d8b])
   - `guard_claim_task` now passes `role_filter=None` when claiming from non-incoming queues (e.g. `provisional`), so the gatekeeper can claim tasks whose original `role` is `"implement"` rather than `"gatekeeper"`
   - Added `role_filter` parameter to `claim_and_prepare_task` with a sentinel default so callers can explicitly pass `None` to disable role filtering
