@@ -4,6 +4,7 @@ Each step is a function: (task: dict, result: dict, task_dir: Path) -> None
 Steps are referenced by name in flow YAML `runs:` lists.
 """
 
+import os
 import subprocess
 from pathlib import Path
 from typing import Callable
@@ -79,6 +80,37 @@ def push_branch(task: dict, result: dict, task_dir: Path) -> None:
     repo.push_branch()
 
 
+def _build_node_path() -> str:
+    """Build a PATH string that includes common node/pnpm locations.
+
+    The scheduler runs under launchd with a minimal PATH that often omits
+    nvm-managed node versions and pnpm. This ensures subprocesses can find
+    npm, pnpm, and node regardless of how the scheduler was launched.
+    """
+    extra_paths: list[str] = []
+
+    # Include nvm's currently-active node version bin directory
+    home = Path.home()
+    nvm_dir = Path(os.environ.get("NVM_DIR", home / ".nvm"))
+    nvm_versions = nvm_dir / "versions" / "node"
+    if nvm_versions.is_dir():
+        # Pick the highest-versioned node (sorted lexicographically — good enough for vX.Y.Z)
+        versions = sorted(nvm_versions.iterdir(), reverse=True)
+        if versions:
+            extra_paths.append(str(versions[0] / "bin"))
+
+    # corepack shims live alongside npm in the global node installation
+    for node_prefix in ("/usr/local", str(home / ".local")):
+        shims = Path(node_prefix) / "lib" / "node_modules" / "corepack" / "shims"
+        if shims.is_dir():
+            extra_paths.append(str(shims))
+
+    # Existing PATH (may already have some useful entries)
+    existing = os.environ.get("PATH", "")
+    all_paths = extra_paths + ([existing] if existing else [])
+    return ":".join(all_paths)
+
+
 @register_step("run_tests")
 def run_tests(task: dict, result: dict, task_dir: Path) -> None:
     """Run the project test suite. Raises RuntimeError on failure."""
@@ -97,11 +129,16 @@ def run_tests(task: dict, result: dict, task_dir: Path) -> None:
         print("run_tests step: no test runner detected, skipping")
         return
 
+    # Build an environment with augmented PATH so npm/pnpm are findable even
+    # when the scheduler runs under launchd with a minimal environment.
+    env = os.environ.copy()
+    env["PATH"] = _build_node_path()
+
     cmd = test_commands[0]
     print(f"run_tests step: running {' '.join(cmd)}")
     try:
         proc = subprocess.run(
-            cmd, cwd=worktree, capture_output=True, text=True, timeout=300,
+            cmd, cwd=worktree, capture_output=True, text=True, timeout=300, env=env,
         )
     except subprocess.TimeoutExpired:
         raise RuntimeError("Tests timed out after 300s")
