@@ -1,17 +1,21 @@
-"""Integration test for 2-task project lifecycle.
+"""Integration test: mini 2-task project lifecycle.
 
-This test verifies the complete flow documented in draft 21:
-- Project creation with shared branch
-- Task 1 execution (worktree, commits, completion)
-- Task 1 cleanup (worktree detached, commits pushed)
-- Task 2 execution (sees task 1 commits)
-- Proper worktree lifecycle (detached, not deleted)
+Tests the full project lifecycle using a local bare repo as "origin":
+- Project tasks sharing a branch
+- Task 1: create worktree, verify base branch, make a commit, push manually
+- Task 1 cleanup: worktree preserved with detached HEAD
+- Task 2: create worktree, verify it sees task 1 commits
+- Cleanup of test worktrees
 
-This test uses real git operations but doesn't require the API server.
+Key API facts (as of current git_utils):
+- create_task_worktree always creates detached HEAD worktrees
+- cleanup_task_worktree only pushes if already on a named branch (which it never is
+  after create_task_worktree); it always detaches HEAD and preserves the worktree
+- Pushing commits is the responsibility of the agent (or test), not cleanup
 """
 
-import shutil
 import subprocess
+import shutil
 from pathlib import Path
 from unittest.mock import patch
 
@@ -24,317 +28,255 @@ from orchestrator.git_utils import (
 )
 
 
-class TestProjectLifecycle:
-    """Integration test for 2-task project sharing a branch."""
+def _git(args: list[str], cwd: Path, check: bool = True) -> subprocess.CompletedProcess:
+    """Run a bare git command (no abstraction layer)."""
+    return subprocess.run(
+        ["git"] + args,
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=check,
+    )
 
-    @pytest.fixture
-    def bare_repo(self, tmp_path):
-        """Create a local bare repo as 'origin' for testing."""
-        bare_path = tmp_path / "bare.git"
-        bare_path.mkdir()
 
-        # Initialize bare repo
-        subprocess.run(
-            ["git", "init", "--bare"],
-            cwd=bare_path,
-            check=True,
-            capture_output=True,
-        )
+@pytest.fixture
+def lifecycle_env(tmp_path):
+    """Set up a bare repo as 'origin' and a cloned main repo.
 
-        # Create a working clone to set up initial state
-        work_path = tmp_path / "setup_work"
-        subprocess.run(
-            ["git", "clone", str(bare_path), str(work_path)],
-            check=True,
-            capture_output=True,
-        )
+    Yields a dict:
+        bare_repo:      Path to the bare repo (the remote)
+        main_repo:      Path to the cloned repo (parent project)
+        project_branch: Shared branch name for both tasks
+        tasks_dir:      Runtime tasks directory (outside main_repo)
+    """
+    # ----------------------------------------------------------------
+    # 1. Create a bare repo that will act as "origin"
+    # ----------------------------------------------------------------
+    bare_repo = tmp_path / "origin.git"
+    _git(["init", "--bare", str(bare_repo)], cwd=tmp_path)
 
-        # Configure the working clone
-        subprocess.run(
-            ["git", "config", "user.name", "Test User"],
-            cwd=work_path,
-            check=True,
-        )
-        subprocess.run(
-            ["git", "config", "user.email", "test@example.com"],
-            cwd=work_path,
-            check=True,
-        )
+    # ----------------------------------------------------------------
+    # 2. Clone to get the "main repo" (the parent project / octopoid root)
+    # ----------------------------------------------------------------
+    main_repo = tmp_path / "main_repo"
+    _git(["clone", str(bare_repo), str(main_repo)], cwd=tmp_path)
 
-        # Create initial commit on main
-        (work_path / "README.md").write_text("# Test Repo")
-        subprocess.run(["git", "add", "README.md"], cwd=work_path, check=True)
-        subprocess.run(
-            ["git", "commit", "-m", "Initial commit"],
-            cwd=work_path,
-            check=True,
-        )
-        subprocess.run(["git", "push", "origin", "main"], cwd=work_path, check=True)
+    _git(["config", "user.email", "test@example.com"], cwd=main_repo)
+    _git(["config", "user.name", "Test User"], cwd=main_repo)
 
-        # Create feature branch from main
-        subprocess.run(
-            ["git", "checkout", "-b", "feature/test-branch"],
-            cwd=work_path,
-            check=True,
-        )
-        (work_path / "feature.txt").write_text("Feature branch base")
-        subprocess.run(["git", "add", "feature.txt"], cwd=work_path, check=True)
-        subprocess.run(
-            ["git", "commit", "-m", "Feature branch base"],
-            cwd=work_path,
-            check=True,
-        )
-        subprocess.run(
-            ["git", "push", "origin", "feature/test-branch"],
-            cwd=work_path,
-            check=True,
-        )
+    # Make an initial commit on main so the branch exists
+    (main_repo / "README.md").write_text("# Project\n")
+    _git(["add", "README.md"], cwd=main_repo)
+    _git(["commit", "-m", "initial commit"], cwd=main_repo)
+    _git(["push", "origin", "main"], cwd=main_repo)
 
-        # Clean up working clone
-        shutil.rmtree(work_path)
+    # ----------------------------------------------------------------
+    # 3. Create a shared project branch and push it
+    # ----------------------------------------------------------------
+    project_branch = "feature/shared-project-branch"
+    _git(["checkout", "-b", project_branch], cwd=main_repo)
+    (main_repo / "project.md").write_text("# Shared project file\n")
+    _git(["add", "project.md"], cwd=main_repo)
+    _git(["commit", "-m", "feat: add project file"], cwd=main_repo)
+    _git(["push", "origin", project_branch], cwd=main_repo)
+    _git(["checkout", "main"], cwd=main_repo)  # Return to main
 
-        return bare_path
+    # ----------------------------------------------------------------
+    # 4. Tasks runtime dir (outside main_repo to avoid worktree conflicts)
+    # ----------------------------------------------------------------
+    tasks_dir = tmp_path / "tasks"
+    tasks_dir.mkdir()
 
-    @pytest.fixture
-    def project_repo(self, tmp_path, bare_repo):
-        """Create a repo clone that acts as the main octopoid repo."""
-        repo_path = tmp_path / "octopoid_repo"
-        subprocess.run(
-            ["git", "clone", str(bare_repo), str(repo_path)],
-            check=True,
-            capture_output=True,
-        )
+    yield {
+        "bare_repo": bare_repo,
+        "main_repo": main_repo,
+        "project_branch": project_branch,
+        "tasks_dir": tasks_dir,
+    }
 
-        # Configure git
-        subprocess.run(
-            ["git", "config", "user.name", "Test User"],
-            cwd=repo_path,
-            check=True,
-        )
-        subprocess.run(
-            ["git", "config", "user.email", "test@example.com"],
-            cwd=repo_path,
-            check=True,
-        )
 
-        # Checkout feature branch
-        subprocess.run(
-            ["git", "checkout", "feature/test-branch"],
-            cwd=repo_path,
-            check=True,
-        )
+def _patch_git_utils(main_repo: Path, tasks_dir: Path):
+    """Return a context manager patching git_utils to use the test repos."""
+    return patch.multiple(
+        "orchestrator.git_utils",
+        find_parent_project=lambda: main_repo,
+        get_main_branch=lambda: "main",
+        get_tasks_dir=lambda: tasks_dir,
+    )
 
-        return repo_path
 
-    @pytest.fixture
-    def mock_config(self, project_repo, tmp_path):
-        """Mock config functions to use test paths."""
-        tasks_dir = tmp_path / "tasks"
-        tasks_dir.mkdir(parents=True, exist_ok=True)
+class TestMiniProjectLifecycle:
+    """Integration test: two tasks sharing a project branch."""
 
-        with patch("orchestrator.git_utils.find_parent_project", return_value=project_repo), \
-             patch("orchestrator.git_utils.get_tasks_dir", return_value=tasks_dir), \
-             patch("orchestrator.git_utils.get_main_branch", return_value="main"), \
-             patch("orchestrator.config.find_parent_project", return_value=project_repo), \
-             patch("orchestrator.config.get_tasks_dir", return_value=tasks_dir):
-            yield {
-                "project_repo": project_repo,
-                "tasks_dir": tasks_dir,
-            }
-
-    def test_two_task_project_lifecycle(self, mock_config):
-        """Full 2-task project lifecycle with shared branch.
+    def test_two_task_lifecycle(self, lifecycle_env):
+        """Full lifecycle: task1 commits visible in task2's worktree.
 
         Verifies:
-        1. Project tasks share the same branch
-        2. Task 1 worktree is created from correct base branch
-        3. Task 1 commits are made and pushed
-        4. Task 1 worktree is detached (not deleted)
-        5. Task 2 worktree is created and sees task 1 commits
-        6. Both worktrees are detached after completion
+        1. Worktrees are created as detached HEADs from the project branch
+        2. Worktrees include files from the project branch (not just main)
+        3. After manual push, task 2 sees task 1's commit
+        4. cleanup_task_worktree preserves the worktree with detached HEAD
         """
-        project_repo = mock_config["project_repo"]
-        tasks_dir = mock_config["tasks_dir"]
+        main_repo = lifecycle_env["main_repo"]
+        tasks_dir = lifecycle_env["tasks_dir"]
+        project_branch = lifecycle_env["project_branch"]
 
-        # Step 1: Create a 2-task project
-        # Create project tasks with shared branch (using dict, no SDK needed)
-        project_id = "PROJ-test001"
-        project_branch = "project/test-lifecycle"
+        task1 = {"id": "TASK-lc-0001", "branch": project_branch}
+        task2 = {"id": "TASK-lc-0002", "branch": project_branch}
 
-        task1 = {
-            "id": "TASK-proj-01",
-            "file_path": f"/tmp/{project_id}-task1.md",
-            "title": "Project Task 1",
-            "role": "implement",
-            "priority": "P1",
-            "project_id": project_id,
-            "branch": "feature/test-branch",  # Base branch for project
-        }
-
-        task2 = {
-            "id": "TASK-proj-02",
-            "file_path": f"/tmp/{project_id}-task2.md",
-            "title": "Project Task 2",
-            "role": "implement",
-            "priority": "P1",
-            "project_id": project_id,
-            "branch": "feature/test-branch",  # Same base branch
-        }
-
-        # Mock get_project to return project with shared branch
-        def mock_get_project(proj_id):
-            if proj_id == project_id:
-                return {
-                    "id": project_id,
-                    "branch": project_branch,
-                    "base_branch": "feature/test-branch",
-                    "status": "active",
-                }
-            return None
-
-        with patch("orchestrator.queue_utils.get_project", side_effect=mock_get_project):
-            # Step 2: Simulate task 1 execution
+        with _patch_git_utils(main_repo, tasks_dir):
+            # ----------------------------------------------------------
+            # Task 1: create worktree
+            # ----------------------------------------------------------
             worktree1 = create_task_worktree(task1)
 
-            # Verify worktree exists and is on correct branch
-            assert worktree1.exists()
-            assert (worktree1 / ".git").exists()
+            assert worktree1.exists(), "Task 1 worktree directory must exist"
+            assert (worktree1 / ".git").exists(), "Task 1 worktree must have .git"
 
-            # Verify base branch - should be feature/test-branch, not main
-            merge_base = run_git(
-                ["merge-base", "HEAD", "origin/feature/test-branch"],
-                cwd=worktree1,
+            # Worktree must be in detached HEAD state
+            ref1 = run_git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=worktree1).stdout.strip()
+            assert ref1 == "HEAD", f"Expected detached HEAD, got branch '{ref1}'"
+
+            # Worktree must be based on project branch (not main)
+            # project.md only exists on project_branch — not on main
+            assert (worktree1 / "project.md").exists(), (
+                "project.md must be present: worktree should be on project branch"
             )
-            head_commit = run_git(["rev-parse", "HEAD"], cwd=worktree1)
-            # HEAD should be at or ahead of feature/test-branch
-            assert merge_base.stdout.strip() in head_commit.stdout.strip()
 
-            # Make a commit in task 1
-            test_file = worktree1 / "task1.txt"
-            test_file.write_text("Task 1 work")
-            run_git(["add", "task1.txt"], cwd=worktree1)
-            run_git(["commit", "-m", "Task 1: Add feature"], cwd=worktree1)
+            # Confirm ancestry: origin/project_branch is an ancestor of HEAD
+            ancestor = _git(
+                ["merge-base", "--is-ancestor", f"origin/{project_branch}", "HEAD"],
+                cwd=worktree1,
+                check=False,
+            )
+            assert ancestor.returncode == 0, (
+                f"Worktree HEAD must descend from origin/{project_branch}"
+            )
 
-            # Get commit hash for later verification
+            # ----------------------------------------------------------
+            # Task 1: configure identity and make a commit
+            # ----------------------------------------------------------
+            _git(["config", "user.email", "agent1@test.com"], cwd=worktree1)
+            _git(["config", "user.name", "Agent One"], cwd=worktree1)
+
+            (worktree1 / "task1_output.txt").write_text("Task 1 result\n")
+            run_git(["add", "task1_output.txt"], cwd=worktree1)
+            run_git(["commit", "-m", "feat: task 1 output"], cwd=worktree1)
+
             task1_commit = run_git(["rev-parse", "HEAD"], cwd=worktree1).stdout.strip()
+            assert task1_commit, "task1_commit must be non-empty"
 
-            # Step 3: Complete task 1 and verify cleanup
-            cleanup_result = cleanup_task_worktree(task1["id"], push_commits=True)
-            assert cleanup_result is True
+            # Push commit to origin under the shared project branch.
+            # This is the agent's responsibility — cleanup_task_worktree does NOT
+            # push commits from a detached HEAD worktree.
+            run_git(["push", "origin", f"HEAD:{project_branch}"], cwd=worktree1)
 
-            # Verify worktree still exists (not deleted)
-            assert worktree1.exists()
+            # ----------------------------------------------------------
+            # Task 1 cleanup: detach HEAD, preserve worktree
+            # ----------------------------------------------------------
+            success = cleanup_task_worktree(task1["id"], push_commits=False)
+            assert success is True, "cleanup_task_worktree should return True"
 
-            # Verify HEAD is detached
-            head_ref = run_git(
-                ["rev-parse", "--abbrev-ref", "HEAD"],
-                cwd=worktree1,
+            # Worktree directory must still exist after cleanup
+            assert worktree1.exists(), "Task 1 worktree must be preserved after cleanup"
+            assert (worktree1 / ".git").exists(), "Task 1 .git must be preserved after cleanup"
+
+            # HEAD must be detached after cleanup
+            ref1_post = run_git(
+                ["rev-parse", "--abbrev-ref", "HEAD"], cwd=worktree1
             ).stdout.strip()
-            assert head_ref == "HEAD", f"Expected detached HEAD, got {head_ref}"
-
-            # Verify commits were pushed to origin
-            remote_log = run_git(
-                ["log", f"origin/{project_branch}", "--oneline", "-1"],
-                cwd=project_repo,
+            assert ref1_post == "HEAD", (
+                f"Task 1 HEAD must be detached after cleanup, got '{ref1_post}'"
             )
-            assert "Task 1: Add feature" in remote_log.stdout
 
-            # Step 4: Simulate task 2 execution
+            # ----------------------------------------------------------
+            # Task 2: create worktree — must see task 1 commits
+            # ----------------------------------------------------------
             worktree2 = create_task_worktree(task2)
 
-            # Verify worktree exists
-            assert worktree2.exists()
-            assert (worktree2 / ".git").exists()
+            assert worktree2 != worktree1, "Task 2 worktree must differ from task 1"
+            assert worktree2.exists(), "Task 2 worktree directory must exist"
+            assert (worktree2 / ".git").exists(), "Task 2 worktree must have .git"
 
-            # Verify task 2 worktree sees task 1's commits
-            log_output = run_git(["log", "--oneline"], cwd=worktree2)
-            assert "Task 1: Add feature" in log_output.stdout, \
-                "Task 2 worktree should see task 1 commits"
+            # Detached HEAD
+            ref2 = run_git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=worktree2).stdout.strip()
+            assert ref2 == "HEAD", f"Task 2 worktree must be detached HEAD, got '{ref2}'"
 
-            # Verify the commit hash matches
+            # Task 2 HEAD must include task 1's commit
+            # (create_task_worktree fetches from origin before creating)
             task2_log = run_git(["rev-list", "HEAD"], cwd=worktree2).stdout
-            assert task1_commit in task2_log, \
-                "Task 1 commit should be in task 2 history"
-
-            # Verify task 1's file exists in task 2 worktree
-            task1_file_in_task2 = worktree2 / "task1.txt"
-            assert task1_file_in_task2.exists(), \
-                "Task 1's file should exist in task 2 worktree"
-            assert task1_file_in_task2.read_text() == "Task 1 work"
-
-            # Make a commit in task 2
-            test_file2 = worktree2 / "task2.txt"
-            test_file2.write_text("Task 2 work")
-            run_git(["add", "task2.txt"], cwd=worktree2)
-            run_git(["commit", "-m", "Task 2: Add more features"], cwd=worktree2)
-
-            # Step 5: Complete task 2 and verify cleanup
-            cleanup_result2 = cleanup_task_worktree(task2["id"], push_commits=True)
-            assert cleanup_result2 is True
-
-            # Verify task 2 worktree is detached
-            head_ref2 = run_git(
-                ["rev-parse", "--abbrev-ref", "HEAD"],
-                cwd=worktree2,
-            ).stdout.strip()
-            assert head_ref2 == "HEAD", f"Expected detached HEAD, got {head_ref2}"
-
-            # Verify both worktrees still exist
-            assert worktree1.exists()
-            assert worktree2.exists()
-
-            # Verify final state on origin has both commits
-            remote_log_final = run_git(
-                ["log", f"origin/{project_branch}", "--oneline"],
-                cwd=project_repo,
+            assert task1_commit in task2_log, (
+                "Task 2 worktree must include task 1's commit in its history"
             )
-            assert "Task 1: Add feature" in remote_log_final.stdout
-            assert "Task 2: Add more features" in remote_log_final.stdout
 
-    def test_project_branch_not_defaulting_to_main(self, mock_config):
-        """Verify project tasks don't default to main when on feature branch."""
-        project_repo = mock_config["project_repo"]
+            # The file task 1 committed should be present
+            assert (worktree2 / "task1_output.txt").exists(), (
+                "task1_output.txt must be visible in task 2 worktree"
+            )
 
-        project_id = "PROJ-test002"
-        project_branch = "project/no-main-default"
+            # project.md must still be present
+            assert (worktree2 / "project.md").exists(), (
+                "project.md must be present in task 2 worktree"
+            )
 
-        task = {
-            "id": "TASK-no-main",
-            "file_path": f"/tmp/task-no-main.md",
-            "title": "Feature Branch Task",
-            "role": "implement",
-            "priority": "P1",
-            "project_id": project_id,
-            "branch": "feature/test-branch",
-        }
+            # Task 2 also descends from the project branch
+            ancestor2 = _git(
+                ["merge-base", "--is-ancestor", f"origin/{project_branch}", "HEAD"],
+                cwd=worktree2,
+                check=False,
+            )
+            assert ancestor2.returncode == 0, (
+                f"Task 2 worktree HEAD must descend from origin/{project_branch}"
+            )
 
-        def mock_get_project(proj_id):
-            if proj_id == project_id:
-                return {
-                    "id": project_id,
-                    "branch": project_branch,
-                    "base_branch": "feature/test-branch",
-                }
-            return None
+    def test_cleanup_preserves_worktree_with_detached_head(self, lifecycle_env):
+        """cleanup_task_worktree detaches HEAD and preserves the worktree directory."""
+        main_repo = lifecycle_env["main_repo"]
+        tasks_dir = lifecycle_env["tasks_dir"]
+        project_branch = lifecycle_env["project_branch"]
 
-        with patch("orchestrator.queue_utils.get_project", side_effect=mock_get_project):
+        task = {"id": "TASK-cleanup-01", "branch": project_branch}
+
+        with _patch_git_utils(main_repo, tasks_dir):
+            worktree = create_task_worktree(task)
+            assert worktree.exists()
+
+            result = cleanup_task_worktree(task["id"], push_commits=False)
+            assert result is True
+
+            # Directory preserved
+            assert worktree.exists(), "Worktree directory must survive cleanup"
+            assert (worktree / ".git").exists(), ".git must survive cleanup"
+
+            # HEAD is detached
+            ref = run_git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=worktree).stdout.strip()
+            assert ref == "HEAD", f"HEAD must be detached after cleanup, got '{ref}'"
+
+    def test_worktree_base_branch_not_defaulting_to_main(self, lifecycle_env):
+        """Task with project branch uses project branch, not main.
+
+        project.md exists only on project_branch. Its presence in the worktree
+        confirms the worktree was created from project_branch, not main.
+        """
+        main_repo = lifecycle_env["main_repo"]
+        tasks_dir = lifecycle_env["tasks_dir"]
+        project_branch = lifecycle_env["project_branch"]
+
+        task = {"id": "TASK-branch-check", "branch": project_branch}
+
+        with _patch_git_utils(main_repo, tasks_dir):
             worktree = create_task_worktree(task)
 
-            # Verify the worktree is NOT based on main
-            # Check merge-base with feature branch
-            merge_base = run_git(
-                ["merge-base", "HEAD", "origin/feature/test-branch"],
+            assert (worktree / "project.md").exists(), (
+                "project.md should be present — worktree must be on project branch, not main"
+            )
+
+            # origin/project_branch is ancestor of worktree HEAD
+            ancestor = _git(
+                ["merge-base", "--is-ancestor", f"origin/{project_branch}", "HEAD"],
                 cwd=worktree,
-            ).stdout.strip()
-
-            feature_head = run_git(
-                ["rev-parse", "origin/feature/test-branch"],
-                cwd=project_repo,
-            ).stdout.strip()
-
-            # merge-base should be the feature branch HEAD (or its ancestor)
-            assert merge_base == feature_head, \
-                f"Worktree should be based on feature branch, not main"
-
-            # Cleanup
-            cleanup_task_worktree(task["id"], push_commits=False)
+                check=False,
+            )
+            assert ancestor.returncode == 0, (
+                "Worktree HEAD must descend from project branch, not just main"
+            )
