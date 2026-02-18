@@ -11,7 +11,7 @@ You are working on **Octopoid**, a distributed AI orchestration system for softw
 
 ## When to STOP and FAIL
 
-If any of the following are true, do NOT improvise. Call `../scripts/fail` with a clear explanation:
+If any of the following are true, do NOT improvise. Write `{"status": "failure", "message": "<reason>"}` to `../result.json`:
 
 - **Files don't exist:** The task tells you to edit a specific file or function, but it doesn't exist on this branch. Do not search for similar code elsewhere and edit that instead.
 - **Contradictory instructions:** The task description contradicts itself (e.g. "add X" but also "do not modify the file where X would go").
@@ -30,17 +30,14 @@ Failing with a clear reason is far more useful than delivering the wrong change.
 
 **Note:** Task-level instructions always override these global defaults. If a task says "do NOT update CHANGELOG", obey the task.
 
-## MANDATORY: Use the Provided Scripts
+## MANDATORY: Never Push or Create PRs Directly
 
-Never run `gh pr create`, `gh pr merge`, `git push`, or equivalent commands directly. Always use the scripts in `../scripts/`:
+Never run `gh pr create`, `gh pr merge`, or `git push` directly. The orchestrator handles pushing branches and creating PRs automatically after you write `result.json`.
 
-- **`../scripts/submit-pr`** — Push and create a PR (handles base branch targeting, evidence recording, result tracking)
-- **`../scripts/run-tests`** — Run the test suite and record results
-- **`../scripts/finish`** — Mark the task as complete
-- **`../scripts/fail <reason>`** — Mark the task as failed
-- **`../scripts/record-progress <note>`** — Save progress context
-
-These scripts read environment variables (like `BASE_BRANCH`) that ensure PRs target the correct branch. Bypassing them causes PRs to target the wrong branch and skips evidence recording.
+Your only job is to:
+1. Write code and make commits
+2. Run tests (`../scripts/run-tests`) to verify your work
+3. Write `result.json` when done
 
 ## Code Conventions
 

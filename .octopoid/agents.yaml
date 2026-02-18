@@ -20,6 +20,15 @@ fleet:
     max_turns: 200
     model: sonnet
 
+  - name: sanity-check-gatekeeper
+    role: gatekeeper
+    spawn_mode: scripts
+    claim_from: provisional
+    interval_seconds: 120
+    max_turns: 100
+    model: sonnet
+    agent_dir: .octopoid/agents/gatekeeper
+
   - name: github-issue-monitor
     type: custom
     path: .octopoid/agents/github-issue-monitor/

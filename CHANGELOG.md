@@ -7,13 +7,82 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Gatekeeper claim bug** ([TASK-b0a63d8b])
+  - `guard_claim_task` now passes `role_filter=None` when claiming from non-incoming queues (e.g. `provisional`), so the gatekeeper can claim tasks whose original `role` is `"implement"` rather than `"gatekeeper"`
+  - Added `role_filter` parameter to `claim_and_prepare_task` with a sentinel default so callers can explicitly pass `None` to disable role filtering
+
 ### Added
-- **Integration test for 2-task project lifecycle** ([TASK-1597e6f5])
-  - Tests full lifecycle: project creation, sequential task execution, worktree detachment
-  - Verifies task 1 worktree is based on correct branch (not defaulting to main)
-  - Verifies task 1 commits are pushed and visible to task 2
-  - Verifies worktrees are detached (not deleted) after task completion
-  - Uses local bare repo as origin to avoid polluting remote
+
+- **Drafts tab in dashboard** ([TASK-451ec77d])
+  - Added `TAB_DRAFTS = 5` constant and updated `TAB_NAMES`/`TAB_KEYS` to include "Drafts" / "F"
+  - New `render_drafts_tab()` with master-detail layout: left pane lists drafts (number + title), right pane shows full markdown content
+  - `DashboardState` gains `drafts_cursor` and `drafts_content` fields
+  - `_load_draft_content()` reads the selected draft's markdown file from `project-management/drafts/`
+  - j/k navigation moves between drafts; content is loaded on selection change
+  - Tab accessible via `F`, `f`, or `6` keys
+  - 16 new tests covering rendering (including empty list), tab switching, and cursor navigation
+
+- **Implementer as pure-function via flow steps** ([TASK-2bf1ad9b])
+  - Registered `push_branch`, `run_tests`, `create_pr`, `submit_to_server` steps in `orchestrator/steps.py`
+  - Implementer lifecycle (`claimed → provisional`) is now fully flow-driven — no hardcoded handler
+  - Scheduler dispatches implementer results via `handle_agent_result_via_flow()` (same path as gatekeeper)
+  - Implementer prompt updated: agent writes `result.json` (`{"status": "success"}` or `{"status": "failure", ...}`) instead of calling `submit-pr` / `finish` / `fail`
+  - Removed `submit-pr`, `finish`, and `fail` scripts from implementer agent; kept `run-tests` and `record-progress`
+  - Updated `global-instructions.md` to reflect pure-function model (no direct git push / PR creation)
+  - Added `tests/test_steps.py` with 8 unit tests for the step registry and implementer steps
+  - Added `TestImplementerFlow` class in integration tests covering success, failure, step registration, and flow YAML validation
+
+- **Flow-driven scheduler execution** ([TASK-f584b935])
+  - Added `orchestrator/steps.py` with `STEP_REGISTRY`, `execute_steps()`, and gatekeeper steps (`post_review_comment`, `merge_pr`, `reject_with_feedback`)
+  - Added `.octopoid/flows/default.yaml` declaring the standard implementation flow with gatekeeper on the `provisional → done` transition
+  - Added `handle_agent_result_via_flow()` in scheduler replacing the hardcoded `if agent_role == "gatekeeper"` dispatch
+  - Added `get_claim_queue_for_role()` to derive claim queue from flow definition rather than agent config
+  - Updated `guard_claim_task()` to use flow-driven claim queue lookup
+  - Updated `generate_default_flow()` to match new gatekeeper-based flow structure
+  - Added `test_flow_driven_gatekeeper_claim_queue` integration test
+  - Future agent types register steps and add flow YAML without modifying the scheduler
+
+- **Flow tests for task lifecycle using scoped SDK** ([TASK-848f426f])
+  - Added `tests/integration/test_flow.py` with 11 tests covering full state machine paths
+  - Tests: claim with role filter, claim with type filter, requeue to incoming, double claim fails, submit without claim fails, reject preserves metadata, blocked task not claimable, unblock on accept, scope claim isolation, full happy path, reject returns to incoming
+  - Added `tests/integration/flow_helpers.py` with reusable `create_task`, `create_and_claim`, `create_provisional` helpers
+  - All tests use `scoped_sdk` fixture for complete per-test isolation
+  - All tests skip gracefully when local server is not running
+
+### Fixed
+
+- **Guard flow dispatch against unknown decision values** ([TASK-46eb663d])
+  - `handle_agent_result_via_flow()` now only executes `transition.runs` (including `merge_pr`) on an explicit `decision == "approve"`
+  - Unknown or missing `decision` values (e.g. `None`, `"banana"`) log a warning and return without action, leaving the task in its current queue for human review
+  - Added 5 unit tests in `tests/test_scheduler_refactor.py` covering approve, reject, `None`, and unknown decision cases
+
+- **Detect and fix worktree branch mismatches in scheduler** ([TASK-a4d02a1c])
+  - `create_task_worktree()` now checks if an existing worktree is based on the correct branch before reusing it
+  - If `origin/<branch>` is not an ancestor of the worktree HEAD, the worktree is deleted and recreated from the correct branch
+  - Branch mismatch is logged clearly via `print()` for debug visibility
+  - Added `_worktree_branch_matches()` helper that uses `git merge-base --is-ancestor`
+  - Treats missing remote branches as a match to avoid spurious deletions
+  - Added 5 new unit tests covering match, mismatch, logging, new worktree, and missing origin cases
+
+- **Simplify create_task_worktree: remove dead ancestry logic** ([TASK-3288d983])
+  - Removed obsolete branch ancestry checking (ls-remote, merge-base --is-ancestor)
+  - Removed remote and local branch deletion logic (git push origin --delete, git branch -D)
+  - Reduced create_task_worktree() from ~60 lines to ~20 lines
+  - Worktrees now always created as detached HEADs from the correct base branch
+  - Tests updated to reflect simplified implementation
+
+- **Fix worktree creation: detached HEADs + branch lifecycle** ([TASK-8f741bbf])
+  - Worktrees now always created as detached HEADs (no branch conflicts)
+  - Added `_add_detached_worktree()` and `_remove_worktree()` helper functions
+  - Added `RepoManager.ensure_on_branch()` to create branch from detached HEAD
+  - Updated `push_branch()` to raise clear error on detached HEAD
+  - Updated `create_pr()` to accept `task_branch` param and handle detached HEAD
+  - Added `TASK_BRANCH` env var to scheduler's env.sh
+  - Updated submit-pr script to pass TASK_BRANCH to create_pr
+  - Fixed `cleanup_task_worktree()` to handle detached HEAD gracefully
+  - Resolves issue where agents couldn't start work due to "branch already exists" errors
 
 ### Refactored
 

@@ -136,6 +136,13 @@ def check_backpressure_for_role(role: str) -> tuple[bool, str]:
             return False, "no_provisional_tasks"
         return True, ""
 
+    # Gatekeeper — checks provisional queue
+    if role == "gatekeeper":
+        count = count_queue("provisional")
+        if count == 0:
+            return False, "no_provisional_tasks"
+        return True, ""
+
     # No check defined for this role, allow
     return True, ""
 
@@ -177,6 +184,45 @@ def guard_pre_check(ctx: AgentContext) -> tuple[bool, str]:
     return (True, "")
 
 
+def guard_claim_task(ctx: AgentContext) -> tuple[bool, str]:
+    """Claim a task for scripts-mode agents (sets ctx.claimed_task).
+
+    Only active for agents with spawn_mode=scripts.
+    Reads claim queue from the flow definition based on agent role.
+    Falls back to 'incoming' if flow is not found.
+
+    Args:
+        ctx: AgentContext containing agent config
+
+    Returns:
+        (should_proceed, reason_if_blocked)
+    """
+    spawn_mode = ctx.agent_config.get("spawn_mode", "worktree")
+    if spawn_mode != "scripts":
+        # Not a scripts-mode agent — skip claim, let the role module claim
+        return (True, "")
+
+    claim_from = get_claim_queue_for_role(ctx.role)
+    type_filter = ctx.agent_config.get("type_filter")
+    # When claiming from a non-incoming queue (e.g. provisional), do not filter
+    # by the agent's own role — the tasks there may have a different original role.
+    role_filter = ctx.role if claim_from == "incoming" else None
+
+    task = claim_and_prepare_task(
+        agent_name=ctx.agent_name,
+        role=ctx.role,
+        role_filter=role_filter,
+        type_filter=type_filter,
+        claim_from=claim_from,
+    )
+
+    if task is None:
+        return (False, "no_task_to_claim")
+
+    ctx.claimed_task = task
+    return (True, "")
+
+
 # Guard chain: cheapest checks first, expensive checks last
 AGENT_GUARDS = [
     guard_enabled,
@@ -184,6 +230,7 @@ AGENT_GUARDS = [
     guard_interval,
     guard_backpressure,
     guard_pre_check,
+    guard_claim_task,
 ]
 
 
@@ -410,7 +457,16 @@ def check_continuation_for_agent(agent_name: str) -> dict | None:
     return None
 
 
-def claim_and_prepare_task(agent_name: str, role: str, type_filter: str | None = None) -> dict | None:
+_UNSET = object()
+
+
+def claim_and_prepare_task(
+    agent_name: str,
+    role: str,
+    type_filter: str | None = None,
+    claim_from: str = "incoming",
+    role_filter: str | None = _UNSET,  # type: ignore[assignment]
+) -> dict | None:
     """Claim a task and write it to the agent's runtime dir.
 
     Checks for continuation work first, then tries to claim a fresh task.
@@ -421,16 +477,28 @@ def claim_and_prepare_task(agent_name: str, role: str, type_filter: str | None =
         agent_name: Name of the agent
         role: Agent role (e.g. 'implement')
         type_filter: Only claim tasks with this type (from agent config)
+        claim_from: Queue to claim from (default: 'incoming'). Gatekeeper uses 'provisional'.
+        role_filter: Role to filter tasks by. Defaults to `role` when unset.
+            Pass None explicitly to claim tasks regardless of their original
+            role (e.g. gatekeeper reviewing provisional tasks with role='implement').
 
     Returns:
         Task dict if work is available, None otherwise
     """
-    # 1. Check for continuation work
-    task = check_continuation_for_agent(agent_name)
+    # 1. Check for continuation work (only for incoming queue claims)
+    task = None
+    if claim_from == "incoming":
+        task = check_continuation_for_agent(agent_name)
 
     # 2. If no continuation, claim a fresh task
     if task is None:
-        task = queue_utils.claim_task(role_filter=role, agent_name=agent_name, type_filter=type_filter)
+        effective_role_filter = role if role_filter is _UNSET else role_filter
+        task = queue_utils.claim_task(
+            role_filter=effective_role_filter,
+            agent_name=agent_name,
+            type_filter=type_filter,
+            from_queue=claim_from,
+        )
 
     if task is None:
         return None
@@ -714,12 +782,16 @@ def prepare_task_directory(
         dest.chmod(0o755)
 
     # Write env.sh
+    from .git_utils import get_task_branch
+    task_branch = get_task_branch(task)
+
     orchestrator_submodule = find_parent_project() / "orchestrator"
     env_lines = [
         "#!/bin/bash",
         f"export TASK_ID='{task_id}'",
         f"export TASK_TITLE='{task.get('title', '')}'",
         f"export BASE_BRANCH='{base_branch}'",
+        f"export TASK_BRANCH='{task_branch}'",
         f"export OCTOPOID_SERVER_URL='{os.environ.get('OCTOPOID_SERVER_URL') or _get_server_url_from_config()}'",
         f"export AGENT_NAME='{agent_name}'",
         f"export WORKTREE='{worktree_path}'",
@@ -1046,6 +1118,138 @@ def _handle_continuation_outcome(sdk, task_id: str, agent_name: str, current_que
         debug_log(f"Task {task_id}: unexpected queue {current_queue} for continuation outcome")
 
 
+def read_result_json(task_dir: Path) -> dict:
+    """Read and parse result.json from a task directory.
+
+    Args:
+        task_dir: Path to the task directory
+
+    Returns:
+        Parsed result dict, or an error dict if missing/invalid
+    """
+    import json
+
+    result_path = task_dir / "result.json"
+    if not result_path.exists():
+        return {"status": "failure", "message": "No result.json produced"}
+
+    try:
+        return json.loads(result_path.read_text())
+    except json.JSONDecodeError:
+        return {"status": "failure", "message": "Invalid result.json"}
+
+
+def get_claim_queue_for_role(role: str, flow_name: str = "default") -> str:
+    """Determine which queue an agent role should claim from, based on the flow.
+
+    Args:
+        role: Agent role name (e.g. 'gatekeeper', 'implementer')
+        flow_name: Name of the flow to look up (default: 'default')
+
+    Returns:
+        Queue name to claim from
+    """
+    try:
+        from .flow import load_flow
+        flow = load_flow(flow_name)
+        for transition in flow.transitions:
+            # Check if this role is an agent condition on this transition
+            for condition in transition.conditions:
+                if condition.type == "agent" and condition.agent == role:
+                    return transition.from_state
+            # Also check transition.agent (shorthand for "agent handles this state")
+            if transition.agent == role:
+                return transition.from_state
+    except (FileNotFoundError, Exception) as e:
+        debug_log(f"get_claim_queue_for_role: could not load flow '{flow_name}': {e}")
+
+    return "incoming"
+
+
+def handle_agent_result_via_flow(task_id: str, agent_name: str, task_dir: Path) -> None:
+    """Handle agent result using the task's flow definition.
+
+    Replaces the hardcoded if/else dispatch for agent roles. Reads the flow,
+    finds the current transition, and executes steps accordingly.
+
+    The gatekeeper result format:
+      {"status": "success", "decision": "approve"/"reject", "comment": "<markdown>"}
+    or on failure:
+      {"status": "failure", "message": "<reason>"}
+
+    Args:
+        task_id: Task identifier
+        agent_name: Name of the agent
+        task_dir: Path to the task directory containing result.json
+    """
+    from .flow import load_flow
+    from .steps import execute_steps, reject_with_feedback
+
+    result = read_result_json(task_dir)
+
+    debug_log(f"handle_agent_result_via_flow: task={task_id} agent={agent_name} status={result.get('status')} decision={result.get('decision')}")
+
+    try:
+        sdk = queue_utils.get_sdk()
+
+        # Fetch current task state
+        task = sdk.tasks.get(task_id)
+        if not task:
+            debug_log(f"Flow dispatch: task {task_id} not found on server, skipping")
+            return
+
+        current_queue = task.get("queue", "unknown")
+        flow_name = task.get("flow", "default")
+
+        flow = load_flow(flow_name)
+        transitions = flow.get_transitions_from(current_queue)
+
+        if not transitions:
+            debug_log(f"Flow dispatch: no transition from '{current_queue}' in flow '{flow_name}' for task {task_id}")
+            return
+
+        transition = transitions[0]  # Take first matching transition
+
+        status = result.get("status")
+        decision = result.get("decision")
+
+        if status == "failure":
+            # Agent couldn't complete — find on_fail state from agent condition
+            message = result.get("message", "Agent could not complete review")
+            debug_log(f"Flow dispatch: agent failure for {task_id}: {message}")
+            for condition in transition.conditions:
+                if condition.type == "agent" and condition.on_fail:
+                    debug_log(f"Flow dispatch: rejecting {task_id} back to {condition.on_fail}")
+                    sdk.tasks.reject(task_id, reason=message, rejected_by=agent_name)
+                    return
+            # Default: reject back to incoming
+            sdk.tasks.reject(task_id, reason=message, rejected_by=agent_name)
+            return
+
+        # Agent-specific decision handling (approve/reject for gatekeeper)
+        if decision == "reject":
+            debug_log(f"Flow dispatch: agent rejected task {task_id}")
+            reject_with_feedback(task, result, task_dir)
+            print(f"[{datetime.now().isoformat()}] Agent {agent_name} rejected task {task_id}")
+            return
+
+        if decision != "approve":
+            debug_log(f"Flow dispatch: unknown decision '{decision}' for {task_id}, leaving in {current_queue} for human review")
+            return
+
+        # Execute the transition's runs (approve path — only reached on explicit "approve")
+        if transition.runs:
+            debug_log(f"Flow dispatch: executing steps {transition.runs} for task {task_id}")
+            execute_steps(transition.runs, task, result, task_dir)
+            print(f"[{datetime.now().isoformat()}] Agent {agent_name} completed task {task_id} (steps: {transition.runs})")
+        else:
+            # No runs defined — just log
+            debug_log(f"Flow dispatch: no runs defined for transition from '{current_queue}', task {task_id}")
+
+    except Exception as e:
+        debug_log(f"Error in handle_agent_result_via_flow for {task_id}: {e}")
+
+
 def handle_agent_result(task_id: str, agent_name: str, task_dir: Path) -> None:
     """Handle the result of a script-based agent run.
 
@@ -1193,10 +1397,17 @@ def check_and_update_finished_agents() -> None:
                 if state.extra.get("agent_mode") == "scripts" and state.extra.get("task_dir"):
                     task_dir_str = state.extra["task_dir"]
                     current_task = state.extra.get("current_task_id", "")
+                    agent_role = state.extra.get("agent_role", "")
                     if current_task:
-                        handle_agent_result(
-                            current_task, agent_name, Path(task_dir_str)
-                        )
+                        if agent_role in ("gatekeeper", "implementer"):
+                            # Flow-driven dispatch for flow-aware agents
+                            handle_agent_result_via_flow(
+                                current_task, agent_name, Path(task_dir_str)
+                            )
+                        else:
+                            handle_agent_result(
+                                current_task, agent_name, Path(task_dir_str)
+                            )
 
                 print(f"[{datetime.now().isoformat()}] Agent {agent_name} finished (exit code: {exit_code})")
 
@@ -1429,6 +1640,7 @@ def spawn_implementer(ctx: AgentContext) -> int:
 
     new_state = mark_started(ctx.state, pid)
     new_state.extra["agent_mode"] = "scripts"
+    new_state.extra["agent_role"] = ctx.role
     new_state.extra["task_dir"] = str(task_dir)
     new_state.extra["current_task_id"] = ctx.claimed_task["id"]
     save_state(new_state, ctx.state_path)

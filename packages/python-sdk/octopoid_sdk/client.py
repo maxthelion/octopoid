@@ -95,7 +95,8 @@ class TasksAPI:
         role_filter: Optional[str] = None,
         type_filter: Optional[str] = None,
         lease_duration_seconds: Optional[int] = None,
-        max_claimed: Optional[int] = None
+        max_claimed: Optional[int] = None,
+        queue: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Claim an available task
 
@@ -106,6 +107,8 @@ class TasksAPI:
             type_filter: Filter by task type (e.g., 'product')
             lease_duration_seconds: Lease duration in seconds
             max_claimed: Max claimed tasks for this orchestrator (server enforced)
+            queue: Queue to claim from (default: 'incoming'). Use 'provisional'
+                   for gatekeeper review claims.
 
         Returns:
             Claimed task dictionary, or None if no tasks available
@@ -123,6 +126,8 @@ class TasksAPI:
             data['lease_duration_seconds'] = lease_duration_seconds
         if max_claimed is not None:
             data['max_claimed'] = max_claimed
+        if queue is not None:
+            data['queue'] = queue
 
         try:
             return self.client._request('POST', '/api/v1/tasks/claim', json=data)
@@ -328,11 +333,13 @@ class OctopoidSDK:
         self,
         server_url: str,
         api_key: Optional[str] = None,
-        timeout: int = 30
+        timeout: int = 30,
+        scope: Optional[str] = None
     ):
         self.server_url = server_url.rstrip('/')
         self.api_key = api_key
         self.timeout = timeout
+        self.scope = scope
         self.session = requests.Session()
 
         if api_key:
@@ -352,6 +359,15 @@ class OctopoidSDK:
         json: Optional[Dict] = None
     ) -> Any:
         """Make HTTP request to API"""
+        # Auto-inject scope into requests when set
+        if self.scope:
+            if method == 'GET':
+                if params is None:
+                    params = {}
+                params.setdefault('scope', self.scope)
+            elif json is not None:
+                json.setdefault('scope', self.scope)
+
         url = f'{self.server_url}{path}'
 
         try:
