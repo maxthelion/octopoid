@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Mock agent test infrastructure — step 4** ([TASK-mock-4])
+  - `tests/integration/test_git_failure_scenarios.py`: 6 integration tests covering git failure error paths. Tests: `test_pr_merge_conflict_blocks_acceptance` (guard_pr_mergeable rejects CONFLICTING PR back to incoming), `test_merge_fails_at_merge_time` (gh pr merge failure → task moves to failed), `test_push_branch_failure` (deleted remote → task stays in claimed), `test_push_branch_no_diff` (already-pushed branch → graceful "up-to-date" success → provisional), `test_rejected_task_gets_rebase_instructions` (rejection reason includes git rebase with correct base branch), `test_conflict_after_rejection` (reject cycle → re-claim → still conflicting → back to incoming, no stuck state).
+
 - **Mock agent test infrastructure — step 3** ([TASK-mock-3])
   - `tests/integration/test_scheduler_mock.py`: 7 integration tests exercising full scheduler lifecycles using mock agents against the real local test server. No Claude API calls, no real GitHub API (uses fake `gh`). Tests cover: happy-path full cycle (implementer → provisional → gatekeeper approve → done), agent failure/crash → failed queue, gatekeeper reject → incoming, multiple rejections, edge cases (minimal commits, needs_continuation).
   - Uses `clean_tasks` fixture to avoid stale-task interference (claim endpoint does not filter by scope, so tasks from previous tests must be deleted before each test).
