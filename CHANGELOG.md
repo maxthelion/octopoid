@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Updated `/enqueue` skill for v2.0 API-only architecture** ([TASK-fix-enqueue-skill])
+  - Replaced manual file-writing instructions with `create_task()` from `orchestrator.tasks`
+  - Updated task file location from `.octopoid/runtime/shared/queue/incoming/` to `.octopoid/tasks/`
+  - Removed hardcoded `BRANCH: main` default (branch now comes from config via `get_base_branch()`)
+  - Removed obsolete `EXPEDITE` and `SKIP_PR` fields
+  - Updated examples to reflect current task field set
+
 ### Added
 
 - **Scheduler poll endpoint integration + per-job intervals** ([TASK-cd01c12d])

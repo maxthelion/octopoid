@@ -24,40 +24,49 @@ When run without arguments, I'll ask for:
    - `P1` - High (important features)
    - `P2` - Normal (default)
    - `P3` - Low (nice-to-have)
-4. **Branch** - Base branch (usually `main`)
-5. **Context** - Background and motivation
-6. **Acceptance Criteria** - Specific requirements
+4. **Context** - Background and motivation
+5. **Acceptance Criteria** - Specific requirements
 
-### Optional Fields (I'll infer these or ask if needed)
+## Implementation
 
-7. **Expedite** - Should this task jump the queue?
-   - Use for urgent tasks that need immediate attention
-   - Expedited tasks are processed before all non-expedited tasks
-   - Best guess: Set `true` if title contains "urgent", "fix", "broken", "critical"
+Use `create_task()` from `orchestrator.tasks` to create tasks. This function writes the task file to `.octopoid/tasks/` **and** registers it on the server in one step:
 
-8. **Skip PR** - Should this skip PR creation and merge directly?
-   - Use for: docs/plans, submodule updates, low-risk changes
-   - Best guess: Set `true` if task modifies only docs/plans/configs
+```python
+from orchestrator.tasks import create_task
+
+create_task(
+    title="Add rate limiting to API",
+    role="implement",
+    priority="P1",
+    context="Our API endpoints have no rate limiting...",
+    acceptance_criteria=[
+        "Rate limiting middleware added to all API routes",
+        "Default limit: 100 requests per minute per IP",
+        "Returns 429 Too Many Requests when exceeded",
+    ],
+    # branch is optional — defaults to repo.base_branch from config
+)
+```
+
+Do **not** write task files manually or place them in any queue directory. Always use `create_task()`.
 
 ## Task File Location
 
-Tasks are created in:
+Tasks are written to:
 ```
-.octopoid/runtime/shared/queue/incoming/TASK-{uuid}.md
+.octopoid/tasks/TASK-{uuid}.md
 ```
 
-## Example
+## Example Task File
 
 ```markdown
 # [TASK-f8e7d6c5] Add rate limiting to API
 
 ROLE: implement
 PRIORITY: P1
-BRANCH: main
+BRANCH: feature/client-server-architecture
 CREATED: 2024-01-15T14:30:00Z
 CREATED_BY: human
-EXPEDITE: false
-SKIP_PR: false
 
 ## Context
 Our API endpoints have no rate limiting, making them vulnerable
@@ -72,33 +81,11 @@ the service.
 - [ ] Configuration via environment variables
 ```
 
-### Example: Expedited Task (jumps queue)
-
-```markdown
-# [TASK-abc123] Fix broken login flow
-
-ROLE: implement
-PRIORITY: P1
-EXPEDITE: true
-...
-```
-
-### Example: Skip PR (merge directly)
-
-```markdown
-# [TASK-def456] Update architecture diagram
-
-ROLE: implement
-PRIORITY: P3
-SKIP_PR: true
-...
-```
-
 ## After Creation
 
 The task will be:
-1. Picked up by the scheduler on next tick
-2. Claimed by an agent with matching role
+1. Registered on the server and visible in the queue immediately
+2. Claimed by an agent with matching role on next scheduler tick
 3. Worked on and moved to done/failed
 
 Check status with `/queue-status`.
