@@ -698,8 +698,119 @@ def _render_task_card(win, y: int, x: int, width: int, task: dict[str, Any],
         row += 1
 
 
+# ---------------------------------------------------------------------------
+# Task detail view — content loading helpers
+# ---------------------------------------------------------------------------
+
+DETAIL_MENU_ITEMS = ["Diff", "Desc", "Result", "Logs"]
+
+# Cache: (task_id, menu_index) -> list[str]
+_detail_content_cache: dict[tuple[str, int], list[str]] = {}
+
+
+def _get_base_branch_for_diff() -> str:
+    """Get repo base branch from orchestrator config."""
+    try:
+        pkg_dir = Path(__file__).resolve().parent / "orchestrator"
+        if pkg_dir.exists():
+            parent = str(pkg_dir.parent)
+            if parent not in sys.path:
+                sys.path.insert(0, parent)
+        from orchestrator.config import get_base_branch
+        return get_base_branch()
+    except Exception:
+        pass
+    return "feature/client-server-architecture"
+
+
+def _fetch_detail_content(task_id: str, menu_index: int) -> list[str]:
+    """Fetch content lines for the given detail view. May block briefly."""
+    repo_root = Path(__file__).resolve().parent
+    runtime_dir = repo_root / ".octopoid" / "runtime" / "tasks" / task_id
+
+    if menu_index == 0:  # Diff
+        worktree = runtime_dir / "worktree"
+        if not worktree.exists():
+            return ["(no diff available — worktree not found)"]
+        try:
+            base_branch = _get_base_branch_for_diff()
+            result = subprocess.run(
+                ["git", "diff", "--stat", f"origin/{base_branch}...HEAD"],
+                capture_output=True, text=True, timeout=10,
+                cwd=worktree,
+            )
+            output = result.stdout.strip()
+            if not output:
+                return ["(no diff available — no commits yet)"]
+            return output.splitlines()
+        except subprocess.TimeoutExpired:
+            return ["(git diff timed out)"]
+        except Exception as e:
+            return [f"(error running git diff: {e})"]
+
+    elif menu_index == 1:  # Desc
+        task_file = repo_root / ".octopoid" / "tasks" / f"{task_id}.md"
+        if task_file.exists():
+            try:
+                return task_file.read_text().splitlines()
+            except OSError:
+                pass
+        # Fallback: extract ## Task Description section from prompt.md
+        prompt_file = runtime_dir / "prompt.md"
+        if prompt_file.exists():
+            try:
+                lines = prompt_file.read_text().splitlines()
+                in_section = False
+                section_lines: list[str] = []
+                for line in lines:
+                    if "## Task Description" in line:
+                        in_section = True
+                    elif in_section and line.startswith("## "):
+                        break
+                    elif in_section:
+                        section_lines.append(line)
+                if section_lines:
+                    return section_lines
+                return lines
+            except OSError:
+                pass
+        return ["(task description not found)"]
+
+    elif menu_index == 2:  # Result
+        result_file = runtime_dir / "result.json"
+        if not result_file.exists():
+            return ["(no result yet)"]
+        try:
+            data = json.loads(result_file.read_text())
+            return json.dumps(data, indent=2).splitlines()
+        except Exception as e:
+            return [f"(error reading result.json: {e})"]
+
+    elif menu_index == 3:  # Logs
+        for log_name in ("stdout.log", "stderr.log"):
+            log_file = runtime_dir / log_name
+            if log_file.exists():
+                try:
+                    content = log_file.read_text()
+                    if content.strip():
+                        return content.splitlines()
+                except OSError:
+                    pass
+        return ["(no logs available)"]
+
+    return []
+
+
+def _get_detail_content(task_id: str, menu_index: int) -> list[str]:
+    """Return cached content lines for the given detail view, fetching if needed."""
+    key = (task_id, menu_index)
+    if key not in _detail_content_cache:
+        _detail_content_cache[key] = _fetch_detail_content(task_id, menu_index)
+    return _detail_content_cache[key]
+
+
 def _render_work_detail(win, report: dict[str, Any], state: "DashboardState"):
-    """Render a full-width task detail overlay for the Work Board."""
+    """Render the task detail overlay with split sidebar/content layout."""
     max_y, max_x = win.getmaxyx()
     task_id = state.work_detail_task_id
 
@@ -728,198 +839,158 @@ def _render_work_detail(win, report: dict[str, Any], state: "DashboardState"):
                     curses.color_pair(Colors.FAILURE))
         return
 
-    x = 2
-    row = 0
-    width = max_x - 4
-
-    # Header: TASK DETAIL
-    safe_addstr(win, row, x, "TASK DETAIL",
-                curses.color_pair(Colors.HEADER) | curses.A_BOLD)
-    safe_hline(win, row + 1, x, curses.ACS_HLINE, min(width, 40),
-               curses.color_pair(Colors.BORDER))
-    row += 2
-
-    title = task.get("title", "untitled")
     full_id = task.get("id", "")
+    title = task.get("title", "untitled")
+    role = task.get("role", "?")
+    priority = task.get("priority", "?")
+    agent = task.get("agent")
+    turns = task.get("turns", 0) or 0
+    turn_limit = task.get("turn_limit", MAX_TURNS) or MAX_TURNS
+    commits = task.get("commits", 0) or 0
+    pr_number = task.get("pr_number")
 
-    # Title (prominent)
-    safe_addstr(win, row, x, title[:width],
+    # ── TOP PANEL (rows 0-2): compact summary ────────────────────────────────
+    row = 0
+    width = max_x - 2
+
+    # Row 0: ID + title
+    id_part = f"{full_id}  "
+    safe_addstr(win, row, 1, id_part, curses.color_pair(Colors.DIM))
+    safe_addstr(win, row, 1 + len(id_part), title[: width - len(id_part)],
                 curses.color_pair(Colors.DEFAULT) | curses.A_BOLD)
-    row += 2
-
-    # Two-column layout for metadata
-    col2_x = x + 30  # second column starts here
-
-    # -- Left column --
-    # ID
-    safe_addstr(win, row, x, "ID:", curses.color_pair(Colors.DIM))
-    safe_addstr(win, row, x + 12, full_id, curses.color_pair(Colors.DEFAULT))
-    # Status/Queue
-    safe_addstr(win, row, col2_x, "Status:", curses.color_pair(Colors.DIM))
-    safe_addstr(win, row, col2_x + 12, queue_name or "?",
-                curses.color_pair(Colors.WARNING))
     row += 1
 
-    # Role
-    role = task.get("role", "?")
-    safe_addstr(win, row, x, "Role:", curses.color_pair(Colors.DIM))
+    # Row 1: Role / Priority / Agent / Status
     is_orch = role in ("orchestrator_impl", "breakdown", "recycler", "inbox_poller")
     role_color = Colors.PAUSED if is_orch else Colors.DEFAULT
-    safe_addstr(win, row, x + 12, role, curses.color_pair(role_color))
-    # Priority
-    priority = task.get("priority", "?")
-    safe_addstr(win, row, col2_x, "Priority:", curses.color_pair(Colors.DIM))
     p_color = Colors.P0 if priority == "P0" else (
         Colors.P1 if priority == "P1" else Colors.P2)
-    safe_addstr(win, row, col2_x + 12, str(priority),
-                curses.color_pair(p_color) | curses.A_BOLD)
+    meta_parts = [
+        ("Role: ", Colors.DIM),
+        (role, role_color),
+        ("  Priority: ", Colors.DIM),
+        (str(priority), p_color),
+        ("  Agent: ", Colors.DIM),
+        (agent or "(none)", Colors.DEFAULT if agent else Colors.DIM),
+        ("  Status: ", Colors.DIM),
+        (queue_name or "?", Colors.WARNING),
+    ]
+    col = 1
+    for text, color in meta_parts:
+        if col >= max_x - 2:
+            break
+        safe_addstr(win, row, col, text[: max_x - 2 - col],
+                    curses.color_pair(color))
+        col += len(text)
     row += 1
 
-    # Branch
-    branch = task.get("branch", "")
-    if branch:
-        safe_addstr(win, row, x, "Branch:", curses.color_pair(Colors.DIM))
-        safe_addstr(win, row, x + 12, branch[:width - 14],
-                    curses.color_pair(Colors.DEFAULT))
-        row += 1
-
-    # Agent
-    agent = task.get("agent")
-    safe_addstr(win, row, x, "Agent:", curses.color_pair(Colors.DIM))
-    safe_addstr(win, row, x + 12, agent or "(unassigned)",
-                curses.color_pair(Colors.DEFAULT if agent else Colors.DIM))
+    # Row 2: Turns progress / Commits / PR
+    turn_text = f"Turns: {turns}/{turn_limit}"
+    safe_addstr(win, row, 1, turn_text, curses.color_pair(Colors.DIM))
+    bar_x = 1 + len(turn_text) + 1
+    bar_width = min(20, max_x - bar_x - 20)
+    if bar_width >= 5 and turn_limit > 0:
+        draw_progress_bar(win, row, bar_x, bar_width,
+                          min(1.0, turns / turn_limit), Colors.RUNNING)
+    commits_x = bar_x + (bar_width if bar_width >= 5 else 0) + 2
+    safe_addstr(win, row, commits_x, f"Commits: {commits}",
+                curses.color_pair(Colors.DIM))
+    if pr_number:
+        pr_x = commits_x + len(f"Commits: {commits}") + 2
+        safe_addstr(win, row, pr_x, f"PR: #{pr_number}",
+                    curses.color_pair(Colors.P1))
     row += 1
 
-    row += 1  # spacer
-    if row >= max_y - 3:
+    # Row 3: horizontal separator with sidebar divider
+    SIDEBAR_W = 10  # 9 chars content + column 9 is │
+    safe_hline(win, row, 0, curses.ACS_HLINE, SIDEBAR_W - 1,
+               curses.color_pair(Colors.BORDER))
+    try:
+        win.addch(row, SIDEBAR_W - 1, curses.ACS_PLUS,
+                  curses.color_pair(Colors.BORDER))
+    except curses.error:
+        pass
+    safe_hline(win, row, SIDEBAR_W, curses.ACS_HLINE, max_x - SIDEBAR_W - 1,
+               curses.color_pair(Colors.BORDER))
+    row += 1
+
+    # ── SPLIT LAYOUT ─────────────────────────────────────────────────────────
+    content_top = row          # first row of split area
+    hint_rows = 2              # separator + hint line at bottom
+    content_bot = max_y - hint_rows  # exclusive upper bound
+    visible_height = content_bot - content_top
+
+    if visible_height < 1:
         return
 
-    # -- Progress section --
-    safe_addstr(win, row, x, "PROGRESS",
-                curses.color_pair(Colors.HEADER) | curses.A_BOLD)
-    safe_hline(win, row + 1, x, curses.ACS_HLINE, 8,
-               curses.color_pair(Colors.BORDER))
-    row += 2
+    # --- Left sidebar: menu ---
+    menu_focused = (state.detail_focus == "menu")
+    for i, item in enumerate(DETAIL_MENU_ITEMS):
+        r = content_top + i
+        if r >= content_bot:
+            break
+        is_selected = (i == state.detail_menu_index)
 
-    turns = task.get("turns", 0) or 0
-    turn_limit = task.get("turn_limit", MAX_TURNS)
-    safe_addstr(win, row, x, "Turns:", curses.color_pair(Colors.DIM))
-    safe_addstr(win, row, x + 12, f"{turns} / {turn_limit}",
-                curses.color_pair(Colors.DEFAULT))
-    # Progress bar
-    if turn_limit > 0:
-        bar_x = x + 26
-        bar_width = min(25, width - 28)
-        if bar_width >= 5:
-            draw_progress_bar(win, row, bar_x, bar_width,
-                              min(1.0, turns / turn_limit), Colors.RUNNING)
-    row += 1
+        if is_selected and menu_focused:
+            raw = f"[{item}]"
+            label = raw.center(SIDEBAR_W - 1)
+            attr = curses.color_pair(Colors.HIGHLIGHT) | curses.A_BOLD
+        elif is_selected:
+            raw = item
+            label = raw.center(SIDEBAR_W - 1)
+            attr = curses.color_pair(Colors.WARNING) | curses.A_BOLD
+        else:
+            raw = item
+            label = raw.center(SIDEBAR_W - 1)
+            attr = curses.color_pair(Colors.DIM)
 
-    commits = task.get("commits", 0) or 0
-    safe_addstr(win, row, x, "Commits:", curses.color_pair(Colors.DIM))
-    safe_addstr(win, row, x + 12, str(commits),
-                curses.color_pair(Colors.DEFAULT))
-    row += 1
+        safe_addstr(win, r, 0, label[: SIDEBAR_W - 1], attr)
 
-    # Created / Age
-    created = task.get("created")
-    safe_addstr(win, row, x, "Created:", curses.color_pair(Colors.DIM))
-    if created:
-        age = format_age(created)
-        safe_addstr(win, row, x + 12, f"{created[:19]}  ({age} ago)",
+    # Draw vertical │ separator for all split rows
+    for r in range(content_top, content_bot):
+        try:
+            win.addch(r, SIDEBAR_W - 1, curses.ACS_VLINE,
+                      curses.color_pair(Colors.BORDER))
+        except curses.error:
+            pass
+
+    # --- Right content area ---
+    content_x = SIDEBAR_W
+    content_width = max_x - content_x - 1
+    if content_width < 4:
+        content_width = 4
+
+    content_lines = _get_detail_content(task_id, state.detail_menu_index)
+    offset = state.detail_scroll_offset
+
+    if not content_lines:
+        safe_addstr(win, content_top, content_x + 1, "(no content)",
                     curses.color_pair(Colors.DIM))
     else:
-        safe_addstr(win, row, x + 12, "?", curses.color_pair(Colors.DIM))
-    row += 1
-
-    # Attempt count
-    attempt_count = task.get("attempt_count", 0) or 0
-    if attempt_count > 1:
-        safe_addstr(win, row, x, "Attempts:", curses.color_pair(Colors.DIM))
-        safe_addstr(win, row, x + 12, str(attempt_count),
-                    curses.color_pair(Colors.WARNING))
-        row += 1
-
-    # Rejection count
-    rejection_count = task.get("rejection_count", 0) or 0
-    if rejection_count > 0:
-        safe_addstr(win, row, x, "Rejections:", curses.color_pair(Colors.DIM))
-        safe_addstr(win, row, x + 12, str(rejection_count),
-                    curses.color_pair(Colors.FAILURE))
-        row += 1
-
-    # Blocked by
-    blocked_by = task.get("blocked_by")
-    if blocked_by:
-        safe_addstr(win, row, x, "Blocked by:", curses.color_pair(Colors.DIM))
-        safe_addstr(win, row, x + 12, str(blocked_by)[:width - 14],
-                    curses.color_pair(Colors.BLOCKED))
-        row += 1
-
-    row += 1  # spacer
-    if row >= max_y - 3:
-        return
-
-    # -- PR / Staging section --
-    pr_number = task.get("pr_number")
-    staging_url = task.get("staging_url")
-    if pr_number or staging_url:
-        safe_addstr(win, row, x, "REVIEW",
-                    curses.color_pair(Colors.HEADER) | curses.A_BOLD)
-        safe_hline(win, row + 1, x, curses.ACS_HLINE, 6,
-                   curses.color_pair(Colors.BORDER))
-        row += 2
-
-        if pr_number:
-            safe_addstr(win, row, x, "PR:", curses.color_pair(Colors.DIM))
-            safe_addstr(win, row, x + 12, f"#{pr_number}",
-                        curses.color_pair(Colors.P1))
-            row += 1
-
-        if staging_url:
-            safe_addstr(win, row, x, "Staging:", curses.color_pair(Colors.DIM))
-            safe_addstr(win, row, x + 12, str(staging_url)[:width - 14],
-                        curses.color_pair(Colors.DIM))
-            row += 1
-
-        row += 1
-
-    if row >= max_y - 3:
-        return
-
-    # -- Checks section --
-    checks = task.get("checks", [])
-    check_results = task.get("check_results", {})
-    if checks:
-        safe_addstr(win, row, x, "CHECKS",
-                    curses.color_pair(Colors.HEADER) | curses.A_BOLD)
-        safe_hline(win, row + 1, x, curses.ACS_HLINE, 6,
-                   curses.color_pair(Colors.BORDER))
-        row += 2
-
-        for check_name in checks:
-            if row >= max_y - 3:
+        visible = content_lines[offset: offset + visible_height]
+        for i, line in enumerate(visible):
+            r = content_top + i
+            if r >= content_bot:
                 break
-            result = check_results.get(check_name, {})
-            status = result.get("status", "pending")
-            if status == "pass":
-                icon = "\u2713"
-                color = Colors.SUCCESS
-            elif status == "fail":
-                icon = "\u2717"
-                color = Colors.FAILURE
-            else:
-                icon = "\u25cb"
-                color = Colors.DIM
-            safe_addstr(win, row, x, f"  {icon} {check_name}",
-                        curses.color_pair(color))
-            row += 1
+            safe_addstr(win, r, content_x + 1, line[: content_width],
+                        curses.color_pair(Colors.DEFAULT))
 
-    # Action hints at bottom
-    hint_y = max_y - 2
+        # Scroll indicator in sidebar if content is scrollable
+        if len(content_lines) > visible_height:
+            scroll_pct = int(offset / max(1, len(content_lines) - visible_height) * 100)
+            scroll_text = f"{scroll_pct}%"
+            indicator_row = content_bot - 1
+            if indicator_row >= content_top:
+                safe_addstr(win, indicator_row, 0,
+                            scroll_text.center(SIDEBAR_W - 1),
+                            curses.color_pair(Colors.DIM))
+
+    # ── HINT LINE ────────────────────────────────────────────────────────────
+    hint_y = max_y - 1
     safe_hline(win, hint_y - 1, 0, curses.ACS_HLINE, max_x - 1,
                curses.color_pair(Colors.BORDER))
-    safe_addstr(win, hint_y, 2, "[Esc] back to board",
+    hint = "[h/l] focus  [j/k] navigate  [r] refresh  [Esc/q] back to board"
+    safe_addstr(win, hint_y, 1, hint[: max_x - 2],
                 curses.color_pair(Colors.DIM))
 
 
@@ -1559,6 +1630,9 @@ class DashboardState:
     demo_mode: bool = False
     drafts_cursor: int = 0
     drafts_content: Optional[str] = None
+    detail_menu_index: int = 0      # which content view is selected (0-3)
+    detail_scroll_offset: int = 0   # scroll position in content area
+    detail_focus: str = "menu"      # "menu" or "content"
 
 
 # ---------------------------------------------------------------------------
@@ -1613,6 +1687,10 @@ class Dashboard:
         """Handle keyboard input. Returns False to quit."""
         report = self.state.last_report or {}
 
+        # When detail view is open, all navigation is handled there
+        if self.state.work_detail_task_id:
+            return self._handle_detail_input(key)
+
         # Global: quit
         if key == ord('q') or key == ord('Q'):
             return False
@@ -1654,6 +1732,65 @@ class Dashboard:
         elif key == 27:
             if self.state.work_detail_task_id:
                 self.state.work_detail_task_id = None
+
+        return True
+
+    def _handle_detail_input(self, key: int) -> bool:
+        """Handle keyboard input while the task detail overlay is open."""
+        task_id = self.state.work_detail_task_id
+
+        # q / Esc: close detail, return to board
+        if key == ord('q') or key == ord('Q') or key == 27:
+            self.state.work_detail_task_id = None
+            self.state.detail_menu_index = 0
+            self.state.detail_scroll_offset = 0
+            self.state.detail_focus = "menu"
+            _detail_content_cache.clear()
+            return True
+
+        # r: force-refresh cached content
+        if key == ord('r') or key == ord('R'):
+            _detail_content_cache.clear()
+            self._force_refresh.set()
+            return True
+
+        # h / left arrow: focus sidebar menu
+        if key == ord('h') or key == curses.KEY_LEFT:
+            self.state.detail_focus = "menu"
+            return True
+
+        # l / right arrow: focus content area
+        if key == ord('l') or key == curses.KEY_RIGHT:
+            self.state.detail_focus = "content"
+            return True
+
+        # j / down: navigate down in focused panel
+        if key == ord('j') or key == curses.KEY_DOWN:
+            if self.state.detail_focus == "menu":
+                old = self.state.detail_menu_index
+                self.state.detail_menu_index = min(
+                    len(DETAIL_MENU_ITEMS) - 1, self.state.detail_menu_index + 1)
+                if self.state.detail_menu_index != old:
+                    self.state.detail_scroll_offset = 0
+            else:
+                content = _get_detail_content(task_id, self.state.detail_menu_index)
+                self.state.detail_scroll_offset = min(
+                    max(0, len(content) - 1),
+                    self.state.detail_scroll_offset + 1,
+                )
+            return True
+
+        # k / up: navigate up in focused panel
+        if key == ord('k') or key == curses.KEY_UP:
+            if self.state.detail_focus == "menu":
+                old = self.state.detail_menu_index
+                self.state.detail_menu_index = max(0, self.state.detail_menu_index - 1)
+                if self.state.detail_menu_index != old:
+                    self.state.detail_scroll_offset = 0
+            else:
+                self.state.detail_scroll_offset = max(
+                    0, self.state.detail_scroll_offset - 1)
+            return True
 
         return True
 

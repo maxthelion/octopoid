@@ -22,6 +22,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added `_run_agent_evaluation_loop()` helper that accepts `queue_counts` from poll.
   - Added 27 unit tests in `tests/test_scheduler_poll.py` covering poll-based backpressure, interval management, register skip, and pre-fetched hooks.
 
+- **Rich task detail view in dashboard** ([TASK-rich-detail])
+  - `_render_work_detail()` in `octopoid-dash.py` redesigned with a split layout: compact top summary panel (ID, title, role, priority, agent, status, turns, commits), a navigable left sidebar menu, and a scrollable right content area.
+  - Four content views: **Diff** (runs `git diff --stat` in the task's worktree against the base branch), **Desc** (reads `.octopoid/tasks/<ID>.md`, falling back to the `## Task Description` section of `prompt.md`), **Result** (pretty-prints `result.json`), and **Logs** (shows `stdout.log` or `stderr.log`).
+  - Navigation: `h`/`l` or left/right arrows switch focus between sidebar and content; `j`/`k` or up/down arrows navigate the focused panel; `r` clears the content cache and force-refreshes; `Esc`/`q` return to the board.
+  - Added `detail_menu_index`, `detail_scroll_offset`, and `detail_focus` fields to `DashboardState`.
+  - Added `_get_detail_content()` with a module-level cache to avoid re-running subprocesses on every render frame.
+  - Graceful fallbacks when worktrees, task files, or log files don't exist.
+
 - **Lease expiry housekeeping job** ([TASK-96a53880])
   - Added `check_and_requeue_expired_leases()` to `orchestrator/scheduler.py` as an orchestrator-side fallback for tasks stuck in "claimed" when the server's lease-monitor doesn't run.
   - On each scheduler tick, lists all claimed tasks, checks `lease_expires_at`, and moves expired tasks back to the "incoming" queue with `claimed_by=None` and `lease_expires_at=None`.
