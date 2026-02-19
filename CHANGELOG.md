@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Mock agent test infrastructure — step 1** ([TASK-mock-1])
+  - `tests/fixtures/mock-agent.sh`: configurable shell script that simulates agent behavior (implementer and gatekeeper modes) without calling Claude. Controlled via `MOCK_OUTCOME`, `MOCK_DECISION`, `MOCK_COMMENT`, `MOCK_REASON`, `MOCK_COMMITS`, `MOCK_CRASH`, and `MOCK_SLEEP` env vars.
+  - `tests/fixtures/bin/gh`: fake `gh` CLI that returns controlled responses for `pr create`, `pr view`, `pr merge`, and `pr list`. Logs all calls to `GH_MOCK_LOG` when set.
+  - `tests/test_mock_fixtures.py`: 15 smoke tests covering all outcome/decision combinations, commit counts, crash mode, and all fake gh commands.
+
 ### Fixed
 
 - **Pool model: prevent duplicate instances working the same task** ([TASK-pool-dedup-claim])
