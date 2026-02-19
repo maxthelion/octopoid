@@ -80,9 +80,11 @@ class OctopoidDashboard(App):
     @work(thread=True)
     def _fetch_data(self) -> None:
         """Fetch the project report in a background thread."""
+        import logging
         try:
             report = self._data_manager.fetch_sync()
         except Exception as exc:
+            logging.getLogger("dashboard").exception("Data refresh failed")
             self.call_from_thread(
                 self.notify,
                 f"Data refresh failed: {exc}",
