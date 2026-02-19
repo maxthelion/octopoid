@@ -441,10 +441,10 @@ def _gather_messages() -> list[dict[str, Any]]:
 
 
 def _gather_agents() -> list[dict[str, Any]]:
-    """Gather agent status from config and state files."""
+    """Gather agent blueprint status using the pool model."""
     try:
-        from .config import get_agents, get_agents_runtime_dir, get_notes_dir
-        from .state_utils import is_process_running
+        from .config import get_agents, get_notes_dir
+        from .pool import cleanup_dead_pids, load_blueprint_pids
 
         agents = get_agents()
     except FileNotFoundError:
@@ -453,52 +453,51 @@ def _gather_agents() -> list[dict[str, Any]]:
     except Exception:
         # Other errors - return empty list gracefully
         return []
-    runtime_dir = get_agents_runtime_dir()
     notes_dir = get_notes_dir()
 
     result = []
     for agent in agents:
+        blueprint_name = agent.get("blueprint_name", agent["name"])
         name = agent["name"]
         role = agent.get("role", "unknown")
         paused = agent.get("paused", False)
+        max_instances = agent.get("max_instances", 1)
 
-        # Load state.json
-        state = _load_agent_state(runtime_dir / name / "state.json")
+        # Clean up dead PIDs, then load current live PIDs
+        cleanup_dead_pids(blueprint_name)
+        pids = load_blueprint_pids(blueprint_name)
+        running_instances = len(pids)  # all remaining PIDs are alive after cleanup
+        idle_capacity = max(0, max_instances - running_instances)
 
-        # Determine status — verify PID is actually alive when state says running
-        state_says_running = state.get("running", False)
-        pid = state.get("pid")
-        actually_running = state_says_running and is_process_running(pid)
+        # Aggregate current tasks from live PIDs
+        current_tasks = [
+            info.get("task_id")
+            for info in pids.values()
+            if info.get("task_id")
+        ]
 
+        # Determine overall status
         if paused:
             status = "paused"
-        elif actually_running:
+        elif running_instances > 0:
             status = "running"
         else:
-            blocked = (state.get("extra") or {}).get("blocked_reason", "")
-            status = f"idle({blocked[:20]})" if blocked else "idle"
+            status = "idle"
 
-        # Current task — only valid if agent is actually running
-        current_task = state.get("current_task") if actually_running else None
-
-        # Recent tasks: query DB for tasks previously claimed by this agent
-        recent_tasks = _get_recent_tasks_for_agent(name)
-
-        # Notes: look for task notes for current task
+        # Notes: look for task notes for first current task
+        current_task = current_tasks[0] if current_tasks else None
         agent_notes = _get_agent_notes(notes_dir, current_task)
 
         result.append({
             "name": name,
+            "blueprint_name": blueprint_name,
             "role": role,
             "status": status,
             "paused": paused,
-            "current_task": current_task,
-            "last_started": state.get("last_started"),
-            "last_finished": state.get("last_finished"),
-            "last_exit_code": state.get("last_exit_code"),
-            "consecutive_failures": state.get("consecutive_failures", 0),
-            "total_runs": state.get("total_runs", 0),
-            "recent_tasks": recent_tasks,
+            "max_instances": max_instances,
+            "running_instances": running_instances,
+            "idle_capacity": idle_capacity,
+            "current_tasks": current_tasks,
             "notes": agent_notes,
         })
 
@@ -576,37 +575,33 @@ def _get_agent_notes(notes_dir: Path, current_task: str | None) -> str | None:
 
 def _gather_health(sdk: Optional["OctopoidSDK"] = None) -> dict[str, Any]:
     """Gather system health information."""
-    from .state_utils import is_process_running
-
     # Try to load agent config, but gracefully handle API-only mode
     try:
-        from .config import get_agents, get_orchestrator_dir, is_system_paused
+        from .config import get_agents, is_system_paused
+        from .pool import count_running_instances
         agents = get_agents()
         scheduler_status = _get_scheduler_status()
-        runtime_dir = get_orchestrator_dir() / "agents"
         system_paused = is_system_paused()
     except (FileNotFoundError, Exception):
         # API-only mode or config not found - use defaults
         agents = []
         scheduler_status = "api-only"
-        runtime_dir = None
         system_paused = False
 
-    # Count idle agents (non-paused, not running)
+    # Count capacity across all blueprints using pool model
     idle_count = 0
     running_count = 0
     paused_count = 0
 
-    if runtime_dir:
-        for agent in agents:
-            if agent.get("paused"):
-                paused_count += 1
-                continue
-            state = _load_agent_state(runtime_dir / agent["name"] / "state.json")
-            if state.get("running") and is_process_running(state.get("pid")):
-                running_count += 1
-            else:
-                idle_count += 1
+    for agent in agents:
+        if agent.get("paused"):
+            paused_count += 1
+            continue
+        blueprint_name = agent.get("blueprint_name", agent["name"])
+        max_instances = agent.get("max_instances", 1)
+        running = count_running_instances(blueprint_name)
+        running_count += running
+        idle_count += max(0, max_instances - running)
 
     # Queue depth = incoming + claimed + breakdown
     if sdk:

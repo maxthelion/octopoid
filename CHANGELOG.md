@@ -18,6 +18,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Pool model step 4: reports and flow validation** ([TASK-7ac764e6])
+  - `_gather_agents()` in `reports.py` updated to use pool model: iterates blueprints, calls `cleanup_dead_pids` + `load_blueprint_pids`, and reports `running_instances`, `max_instances`, `idle_capacity`, and `current_tasks` per blueprint.
+  - `_gather_health()` in `reports.py` updated to count capacity via `count_running_instances()` summed across all blueprints instead of reading `state.json` per agent.
+  - `Condition.validate()` and `Transition.validate()` in `flow.py` now accept agent references by `name`, `blueprint_name`, or `role` (previously only by `name` in conditions, by `name` or `role` in transitions).
+  - Removed dead `guard_not_running` function from `scheduler.py` (superseded by `guard_pool_capacity` in step 3).
+
+- **Pool model step 3: scheduler blueprint iteration and pool guard** ([TASK-6b1d5556])
+  - Added `guard_pool_capacity` to replace `guard_not_running` in `AGENT_GUARDS`. Calls `cleanup_dead_pids` then checks `count_running_instances < max_instances`.
+  - Added `_next_instance_name` helper that generates `{blueprint_name}-{N}` names for spawned instances.
+  - `spawn_implementer`, `spawn_lightweight`, `spawn_worktree` now call `register_instance_pid` after spawning to track the new process in `running_pids.json`.
+  - `check_and_update_finished_agents` rewritten to iterate blueprint dirs via `load_blueprint_pids()` instead of scanning agent state files. Dead PIDs trigger result handling and are removed from pool tracking.
+
+- **Pool model step 2: PID tracking per blueprint** ([TASK-5e5eebd1])
+  - Added `orchestrator/pool.py` with 6 functions for per-blueprint PID tracking: `get_blueprint_pids_path`, `load_blueprint_pids`, `save_blueprint_pids`, `count_running_instances`, `register_instance_pid`, `cleanup_dead_pids`.
+  - `running_pids.json` lives at `.octopoid/runtime/agents/<blueprint_name>/running_pids.json` and tracks `{pid: {task_id, started_at, instance_name}}`.
+  - Writes are atomic via tempfile + rename to prevent corruption under concurrent access.
+  - `count_running_instances` uses `os.kill(pid, 0)` to count only live processes.
+  - `cleanup_dead_pids` removes stale entries and returns the count removed.
+  - Added `tests/test_pool_tracking.py` with unit tests covering all 6 functions.
+
 - **Scheduler poll endpoint integration + per-job intervals** ([TASK-cd01c12d])
   - Added `sdk.poll(orchestrator_id)` to `packages/python-sdk/octopoid_sdk/client.py` — single `GET /api/v1/scheduler/poll` call returns `queue_counts`, `provisional_tasks`, and `orchestrator_registered` in one request.
   - Added `queue_counts: dict | None` field to `AgentContext`; `guard_backpressure()` uses pre-fetched counts when available, eliminating per-agent `count_queue()` API calls.
@@ -50,6 +70,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Gatekeeper rejections now include explicit rebase instructions** ([TASK-12056c21])
   - Updated gatekeeper `instructions.md` and `prompt.md` (both runtime `.octopoid/` and template `packages/client/`) to require a "Before Retrying" section with `git fetch origin && git rebase origin/<base_branch>` in every rejection comment
   - `reject_with_feedback` step in `orchestrator/steps.py` now posts the review comment to the PR on rejection (previously only done on approval), and automatically appends rebase instructions to the rejection reason if none are already present
+
+- **Pool model step 1: convert `fleet:` list to `agents:` dict format** ([TASK-861f0682])
+  - `.octopoid/agents.yaml` now uses an `agents:` dict where each key is a blueprint name; `max_instances` controls how many concurrent instances are allowed
+  - `get_agents()` in `orchestrator/config.py` reads the new dict format and injects `blueprint_name` and `max_instances` (default 1) into each returned entry
+  - Full backwards compatibility: if `agents:` is not a dict, falls back to reading the legacy `fleet:` list
+  - `EXAMPLE_AGENTS_YAML` template in `orchestrator/init.py` updated to use the new dict format
+  - 15 unit tests added in `tests/test_config_agents.py`
 
 - **Scheduler cleanup: remove dead code, flatten `handle_agent_result`** ([TASK-33d1f310])
   - Removed unused `agent_role` key from `spawn_implementer` state.extra (replaced by `claim_from` in the role-name refactor)

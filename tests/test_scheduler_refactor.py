@@ -3,7 +3,7 @@
 This test suite verifies the scheduler's pipeline architecture introduced in the refactor.
 Tests cover:
 - AgentContext dataclass
-- All 6 guard functions (enabled, not_running, interval, backpressure, pre_check, claim_task)
+- Guard functions (enabled, pool_capacity, interval, backpressure, pre_check, claim_task)
 - evaluate_agent guard chain
 - get_spawn_strategy dispatch
 - run_housekeeping fault isolation
@@ -28,7 +28,7 @@ from orchestrator.scheduler import (
     guard_backpressure,
     guard_enabled,
     guard_interval,
-    guard_not_running,
+    guard_pool_capacity,
     guard_pre_check,
     handle_agent_result_via_flow,
     run_housekeeping,
@@ -147,82 +147,125 @@ class TestGuardEnabled:
         assert reason == ""
 
 
-class TestGuardNotRunning:
-    """Test guard_not_running function."""
 
-    def test_not_running_idle_returns_true(self, tmp_path):
-        """Test that an idle agent (not running) passes."""
+class TestGuardPoolCapacity:
+    """Test guard_pool_capacity function."""
+
+    @patch("orchestrator.scheduler.cleanup_dead_pids")
+    @patch("orchestrator.scheduler.count_running_instances", return_value=0)
+    def test_under_capacity_returns_true(self, mock_count, mock_cleanup, tmp_path):
+        """Test that under capacity (0 of 1) returns True."""
         state_path = tmp_path / "state.json"
-        state = AgentState(running=False, pid=None)
-
         ctx = AgentContext(
-            agent_config={},
-            agent_name="test-agent",
+            agent_config={"blueprint_name": "implementer", "max_instances": 1},
+            agent_name="implementer",
             role="implement",
             interval=300,
-            state=state,
+            state=AgentState(),
             state_path=state_path,
         )
 
-        proceed, reason = guard_not_running(ctx)
+        proceed, reason = guard_pool_capacity(ctx)
 
         assert proceed is True
         assert reason == ""
+        mock_cleanup.assert_called_once_with("implementer")
+        mock_count.assert_called_once_with("implementer")
 
-    @patch("orchestrator.scheduler.is_process_running")
-    def test_not_running_alive_returns_false(self, mock_is_running, tmp_path):
-        """Test that an agent with a running PID is blocked."""
-        mock_is_running.return_value = True
-
+    @patch("orchestrator.scheduler.cleanup_dead_pids")
+    @patch("orchestrator.scheduler.count_running_instances", return_value=2)
+    def test_at_capacity_returns_false(self, mock_count, mock_cleanup, tmp_path):
+        """Test that at capacity (2 of 2) returns False."""
         state_path = tmp_path / "state.json"
-        state = AgentState(running=True, pid=12345)
-
         ctx = AgentContext(
-            agent_config={},
-            agent_name="test-agent",
+            agent_config={"blueprint_name": "implementer", "max_instances": 2},
+            agent_name="implementer",
             role="implement",
             interval=300,
-            state=state,
+            state=AgentState(),
             state_path=state_path,
         )
 
-        proceed, reason = guard_not_running(ctx)
+        proceed, reason = guard_pool_capacity(ctx)
 
         assert proceed is False
-        assert "still running" in reason
-        assert "12345" in reason
-        mock_is_running.assert_called_once_with(12345)
+        assert "at_capacity" in reason
+        assert "2/2" in reason
 
-    @patch("orchestrator.scheduler.is_process_running")
-    @patch("orchestrator.scheduler.save_state")
-    @patch("orchestrator.scheduler.mark_finished")
-    def test_not_running_crashed_returns_true_and_updates_state(
-        self, mock_mark_finished, mock_save_state, mock_is_running, tmp_path
-    ):
-        """Test that an agent marked running but with dead PID is cleaned up."""
-        mock_is_running.return_value = False
-        finished_state = AgentState(running=False, pid=None, last_exit_code=1)
-        mock_mark_finished.return_value = finished_state
-
+    @patch("orchestrator.scheduler.cleanup_dead_pids")
+    @patch("orchestrator.scheduler.count_running_instances", return_value=0)
+    def test_dead_pids_cleaned_before_count(self, mock_count, mock_cleanup, tmp_path):
+        """Test that cleanup_dead_pids is called before count_running_instances."""
         state_path = tmp_path / "state.json"
-        state = AgentState(running=True, pid=99999)
-
         ctx = AgentContext(
-            agent_config={},
-            agent_name="test-agent",
-            role="implement",
+            agent_config={"blueprint_name": "proposer", "max_instances": 1},
+            agent_name="proposer",
+            role="propose",
             interval=300,
-            state=state,
+            state=AgentState(),
             state_path=state_path,
         )
 
-        proceed, reason = guard_not_running(ctx)
+        call_order = []
+        mock_cleanup.side_effect = lambda name: call_order.append("cleanup")
+        mock_count.side_effect = lambda name: call_order.append("count") or 0
+
+        proceed, reason = guard_pool_capacity(ctx)
+
+        assert call_order == ["cleanup", "count"], (
+            f"Expected cleanup before count, got: {call_order}"
+        )
+        assert proceed is True
+
+    @patch("orchestrator.scheduler.cleanup_dead_pids")
+    @patch("orchestrator.scheduler.count_running_instances", return_value=1)
+    def test_uses_agent_name_as_fallback_blueprint(self, mock_count, mock_cleanup, tmp_path):
+        """Test that agent_name is used as blueprint_name when blueprint_name is absent."""
+        state_path = tmp_path / "state.json"
+        ctx = AgentContext(
+            agent_config={"max_instances": 2},  # no blueprint_name key
+            agent_name="gatekeeper",
+            role="gatekeeper",
+            interval=300,
+            state=AgentState(),
+            state_path=state_path,
+        )
+
+        proceed, reason = guard_pool_capacity(ctx)
 
         assert proceed is True
-        assert reason == ""
-        mock_is_running.assert_called_once_with(99999)
-        mock_mark_finished.assert_called_once()
-        mock_save_state.assert_called_once()
+        mock_cleanup.assert_called_once_with("gatekeeper")
+        mock_count.assert_called_once_with("gatekeeper")
+
+    @patch("orchestrator.scheduler.cleanup_dead_pids")
+    @patch("orchestrator.scheduler.count_running_instances", return_value=0)
+    def test_max_instances_defaults_to_1(self, mock_count, mock_cleanup, tmp_path):
+        """Test that max_instances defaults to 1 when not specified."""
+        state_path = tmp_path / "state.json"
+        # count returns 0, max_instances defaults to 1 → should proceed
+        ctx = AgentContext(
+            agent_config={"blueprint_name": "implementer"},
+            agent_name="implementer",
+            role="implement",
+            interval=300,
+            state=AgentState(),
+            state_path=state_path,
+        )
+
+        proceed, reason = guard_pool_capacity(ctx)
+
+        assert proceed is True
+
+    def test_guard_pool_capacity_in_agent_guards_chain(self) -> None:
+        """guard_pool_capacity must be in AGENT_GUARDS, replacing guard_not_running."""
+        names = [g.__name__ for g in AGENT_GUARDS]
+
+        assert "guard_pool_capacity" in names, (
+            f"guard_pool_capacity not found in AGENT_GUARDS: {names}"
+        )
+        assert "guard_not_running" not in names, (
+            f"guard_not_running should not be in AGENT_GUARDS: {names}"
+        )
 
 
 class TestGuardInterval:
