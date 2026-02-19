@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Textual dashboard — swap-in and launch script update** ([TASK-dash-4])
+  - Deleted `octopoid-dash.py` (2 050-line curses implementation) — fully replaced by `packages/dashboard/`.
+  - Added `octopoid-dash` shell wrapper script: `./octopoid-dash` is now the recommended entry point and delegates to `python -m packages.dashboard`.
+  - Updated `README.md` dashboard section to reference the new entry point.
+  - Updated `docs/architecture.md` dashboard reference from `octopoid-dash.py` to `packages/dashboard/`.
+  - Rewrote `tests/test_dashboard.py` for the Textual package: package importability, `DataManager.fetch_sync()`, `_format_age()`, tab `update_data()` interface, `TaskSelected` message, and wrapper script existence (32 tests, 0 skipped).
+
 - **Textual dashboard — Done and Drafts tabs + task detail modal** ([TASK-dash-3])
   - `packages/dashboard/tabs/done.py`: Done tab with a DataTable showing completed, failed, and recycled tasks from the last 7 days. Columns: status icon (✓/✗/♻), ID, title, age, turns, commits, merge method, agent. j/k navigation; Enter opens task detail modal.
   - `packages/dashboard/tabs/drafts.py`: Drafts tab with master-detail layout — file list on the left (30%), full content on the right. Loads `project-management/drafts/*.md`; j/k navigates draft selection.
