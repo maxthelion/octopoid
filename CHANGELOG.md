@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Dashboard live turn counter for in-progress tasks** ([TASK-eb8c55a5])
+  - `_read_live_turns()` in `reports.py` reads `.octopoid/agents/<instance_name>/tool_counter` file sizes to get live turn counts for all running agent instances.
+  - `_gather_work()` now overlays live turn counts onto in-progress (claimed) task cards, replacing the always-zero `turns_used` value from the server.
+  - Progress bar on task cards (e.g. `[████░░░░░░] 40/100t`) now fills proportionally as agents work, updating every 5 seconds with the dashboard poll.
+  - No errors when tool_counter file doesn't exist (agent just started or not yet created).
+
 ### Fixed
 
 - **Textual dashboard — kanban task card selection and navigation** ([TASK-ca13d073])

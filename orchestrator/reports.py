@@ -53,11 +53,60 @@ def get_project_report(sdk: "OctopoidSDK") -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def _read_live_turns() -> dict[str, int]:
+    """Read live turn counts from tool_counter files for all running agent instances.
+
+    Each running agent has a tool_counter file at
+    .octopoid/agents/<instance_name>/tool_counter. A PostToolUse hook appends
+    one byte per tool call, so file size in bytes = number of turns used.
+
+    Returns:
+        Mapping of {task_id: turn_count} for currently running agent instances.
+        Tasks without a counter file (agent just started) are omitted.
+    """
+    try:
+        from .config import get_agents, get_orchestrator_dir
+        from .pool import load_blueprint_pids
+
+        agents_dir = get_orchestrator_dir() / "agents"
+        agents = get_agents()
+        result: dict[str, int] = {}
+
+        for agent in agents:
+            blueprint_name = agent.get("blueprint_name", agent["name"])
+            pids = load_blueprint_pids(blueprint_name)
+
+            for pid_info in pids.values():
+                task_id = pid_info.get("task_id")
+                instance_name = pid_info.get("instance_name")
+                if not task_id or not instance_name:
+                    continue
+
+                counter_path = agents_dir / instance_name / "tool_counter"
+                try:
+                    result[task_id] = counter_path.stat().st_size
+                except FileNotFoundError:
+                    pass  # Agent just started, counter not yet created
+
+        return result
+    except Exception:
+        return {}
+
+
 def _gather_work(sdk: "OctopoidSDK") -> dict[str, list[dict[str, Any]]]:
     """Gather task work items from all relevant queues via API."""
     # Fetch tasks from API server
     incoming = [_format_task(t) for t in sdk.tasks.list(queue='incoming')]
-    claimed = [_format_task(t) for t in sdk.tasks.list(queue='claimed')]
+
+    # For in-progress tasks, overlay live turn counts from tool_counter files
+    live_turns = _read_live_turns()
+    claimed = []
+    for t in sdk.tasks.list(queue='claimed'):
+        formatted = _format_task(t)
+        task_id = formatted.get("id")
+        if task_id and task_id in live_turns:
+            formatted["turns"] = live_turns[task_id]
+        claimed.append(formatted)
     provisional = [_format_task(t) for t in sdk.tasks.list(queue='provisional')]
 
     # Split provisional into "checking" (has pending checks) and "in_review" (ready for human)
