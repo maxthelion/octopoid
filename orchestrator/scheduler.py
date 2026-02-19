@@ -54,6 +54,7 @@ class AgentContext:
     state: AgentState
     state_path: Path
     claimed_task: dict | None = None
+    queue_counts: dict | None = None  # Pre-fetched from poll endpoint; None → individual API calls
 
 
 def guard_enabled(ctx: AgentContext) -> tuple[bool, str]:
@@ -130,31 +131,37 @@ def guard_interval(ctx: AgentContext) -> tuple[bool, str]:
 def guard_backpressure(ctx: AgentContext) -> tuple[bool, str]:
     """Check backpressure based on agent's claim_from queue.
 
-    Uses the agent's claim_from config to determine which queue to check,
-    rather than hardcoding role names.
+    Uses pre-fetched queue_counts from ctx when available (poll-based path),
+    falling back to individual API calls when not.
 
     Args:
-        ctx: AgentContext containing agent config and state
+        ctx: AgentContext containing agent config, state, and optional queue_counts
 
     Returns:
         (should_proceed, reason_if_blocked)
     """
-    from .backpressure import count_queue
+    from .backpressure import count_queue, can_claim_task
 
     claim_from = ctx.agent_config.get("claim_from", "incoming")
 
     if claim_from == "incoming":
-        incoming = count_queue("incoming")
+        # Get incoming count from pre-fetched data or via API
+        if ctx.queue_counts is not None:
+            incoming = ctx.queue_counts.get("incoming", 0)
+        else:
+            incoming = count_queue("incoming")
         if incoming == 0:
             return (False, "backpressure: no_tasks")
-        from .backpressure import can_claim_task
-        can_proceed, reason = can_claim_task()
+        can_proceed, reason = can_claim_task(ctx.queue_counts)
         if not can_proceed:
             return (False, f"backpressure: {reason}")
         return (True, "")
     else:
         # Non-incoming queues (provisional, breakdown, etc.)
-        count = count_queue(claim_from)
+        if ctx.queue_counts is not None:
+            count = ctx.queue_counts.get(claim_from, 0)
+        else:
+            count = count_queue(claim_from)
         if count == 0:
             return (False, f"backpressure: no_{claim_from}_tasks")
         return (True, "")
@@ -567,6 +574,83 @@ def claim_and_prepare_task(
         json.dump(task, f, indent=2)
 
     return task
+
+
+# =============================================================================
+# Per-job interval management
+# =============================================================================
+
+# Interval in seconds for each housekeeping / evaluation job.
+# The launchd tick is 10s; jobs only run when their interval has elapsed.
+HOUSEKEEPING_JOB_INTERVALS: dict[str, int] = {
+    "check_and_update_finished_agents": 10,       # Local PID checks only — fast
+    "_register_orchestrator": 300,                # Rarely changes
+    "check_and_requeue_expired_leases": 60,       # API call, keep at 60s
+    "process_orchestrator_hooks": 60,             # API call via poll
+    "_check_queue_health_throttled": 1800,        # Already self-throttled
+    "agent_evaluation_loop": 60,                  # Main remote poll + claim loop
+}
+
+
+def get_scheduler_state_path() -> Path:
+    """Get path to the per-job scheduler state file."""
+    from .config import get_runtime_dir
+    return get_runtime_dir() / "scheduler_state.json"
+
+
+def load_scheduler_state() -> dict:
+    """Load per-job last-run timestamps from disk.
+
+    Returns:
+        Dict with structure {"jobs": {"job_name": "2026-01-01T00:00:00", ...}}
+        Returns empty structure if file is missing or unreadable.
+    """
+    path = get_scheduler_state_path()
+    if path.exists():
+        try:
+            return json.loads(path.read_text())
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {"jobs": {}}
+
+
+def save_scheduler_state(state: dict) -> None:
+    """Persist per-job last-run timestamps to disk."""
+    path = get_scheduler_state_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(state, indent=2))
+
+
+def is_job_due(scheduler_state: dict, job_name: str, interval_seconds: int) -> bool:
+    """Check whether a named job is due to run.
+
+    A job is due if it has never run, or if more than interval_seconds have
+    elapsed since its last run.
+
+    Args:
+        scheduler_state: Loaded state dict from load_scheduler_state()
+        job_name: Canonical name of the job (usually the function name)
+        interval_seconds: Minimum seconds between runs
+
+    Returns:
+        True if the job should run now
+    """
+    last_run_str = scheduler_state.get("jobs", {}).get(job_name)
+    if not last_run_str:
+        return True
+    try:
+        last_run = datetime.fromisoformat(last_run_str)
+        elapsed = (datetime.now() - last_run).total_seconds()
+        return elapsed >= interval_seconds
+    except (ValueError, TypeError):
+        return True
+
+
+def record_job_run(scheduler_state: dict, job_name: str) -> None:
+    """Record that a job ran right now."""
+    if "jobs" not in scheduler_state:
+        scheduler_state["jobs"] = {}
+    scheduler_state["jobs"][job_name] = datetime.now().isoformat()
 
 
 def get_scheduler_lock_path() -> Path:
@@ -1244,7 +1328,7 @@ def handle_agent_result(task_id: str, agent_name: str, task_dir: Path) -> None:
         # Don't try to fail the task here — let lease monitor handle recovery
 
 
-def process_orchestrator_hooks() -> None:
+def process_orchestrator_hooks(provisional_tasks: list | None = None) -> None:
     """Run orchestrator-side hooks on provisional tasks.
 
     For each provisional task that has pending orchestrator hooks (e.g. merge_pr):
@@ -1252,13 +1336,21 @@ def process_orchestrator_hooks() -> None:
     2. Run each one via HookManager
     3. Record evidence
     4. If all hooks pass, accept the task
+
+    Args:
+        provisional_tasks: Pre-fetched list of provisional tasks from the poll endpoint.
+            If provided, skips the sdk.tasks.list(queue="provisional") call.
+            If None, fetches from the API.
     """
     try:
         sdk = queue_utils.get_sdk()
         hook_manager = HookManager(sdk)
 
-        # List provisional tasks
-        provisional = sdk.tasks.list(queue="provisional")
+        # Use pre-fetched list if provided, otherwise fetch from API
+        if provisional_tasks is not None:
+            provisional = provisional_tasks
+        else:
+            provisional = sdk.tasks.list(queue="provisional")
         if not provisional:
             return
 
@@ -1493,8 +1585,20 @@ def check_and_requeue_expired_leases() -> None:
         debug_log(f"Lease expiry check failed: {e}")
 
 
-def _register_orchestrator() -> None:
-    """Register this orchestrator with the API server (idempotent)."""
+def _register_orchestrator(orchestrator_registered: bool = False) -> None:
+    """Register this orchestrator with the API server (idempotent).
+
+    Skips the POST if the poll response already reports orchestrator_registered: true.
+    Only sends the registration request on the first tick or when the server
+    reports the orchestrator is not registered.
+
+    Args:
+        orchestrator_registered: Whether the poll endpoint reported this
+            orchestrator as already registered. If True, skip the POST.
+    """
+    if orchestrator_registered:
+        debug_log("Orchestrator already registered (poll confirmed), skipping registration POST")
+        return
     try:
         from .queue_utils import get_sdk, get_orchestrator_id
         sdk = get_sdk()
@@ -1668,31 +1772,40 @@ def get_spawn_strategy(ctx: AgentContext) -> Callable:
     return spawn_worktree
 
 
-def run_scheduler() -> None:
-    """Main scheduler loop - evaluate and spawn agents."""
-    print(f"[{datetime.now().isoformat()}] Scheduler starting")
-    debug_log("Scheduler tick starting")
+def _fetch_poll_data() -> dict | None:
+    """Fetch combined scheduler state from the poll endpoint.
 
-    # Check global pause flag
-    if is_system_paused():
-        print("System is paused (rm .octopoid/PAUSE or set 'paused: false' in agents.yaml)")
-        debug_log("System is paused globally")
-        return
+    Returns the poll response dict, or None if the call failed.
+    Logs a debug warning on failure so callers can fall back gracefully.
+    """
+    try:
+        orch_id = queue_utils.get_orchestrator_id()
+        sdk = queue_utils.get_sdk()
+        poll_data = sdk.poll(orch_id)
+        debug_log(f"Poll response: queue_counts={poll_data.get('queue_counts')}, "
+                  f"provisional_tasks={len(poll_data.get('provisional_tasks') or [])}, "
+                  f"orchestrator_registered={poll_data.get('orchestrator_registered')}")
+        return poll_data
+    except Exception as e:
+        debug_log(f"Poll endpoint unavailable, falling back to individual API calls: {e}")
+        return None
 
-    # Phase 1: Housekeeping
-    run_housekeeping()
 
-    # Phase 2 + 3: Evaluate and spawn agents
+def _run_agent_evaluation_loop(queue_counts: dict | None) -> None:
+    """Evaluate and spawn agents for one tick.
+
+    Args:
+        queue_counts: Pre-fetched queue counts from poll (or None to use individual calls).
+    """
     try:
         agents = get_agents()
         debug_log(f"Loaded {len(agents)} agents from config")
     except FileNotFoundError as e:
         print(f"Error: {e}")
         debug_log(f"Failed to load agents config: {e}")
-        sys.exit(1)
+        return
 
     if not agents:
-        print("No agents configured in agents.yaml")
         debug_log("No agents configured")
         return
 
@@ -1714,7 +1827,7 @@ def run_scheduler() -> None:
                 debug_log(f"Agent {agent_name} lock not acquired")
                 continue
 
-            # Build context
+            # Build context — pass poll-fetched queue_counts so guards skip per-agent API calls
             state_path = get_agent_state_path(agent_name)
             ctx = AgentContext(
                 agent_config=agent_config,
@@ -1723,6 +1836,7 @@ def run_scheduler() -> None:
                 interval=agent_config.get("interval_seconds", 300),
                 state=load_state(state_path),
                 state_path=state_path,
+                queue_counts=queue_counts,
             )
 
             # Evaluate guards
@@ -1742,6 +1856,103 @@ def run_scheduler() -> None:
                 debug_log(f"Spawn failed for {agent_name}: {e}")
                 if ctx.claimed_task:
                     _requeue_task(ctx.claimed_task["id"])
+
+
+def run_scheduler() -> None:
+    """Main scheduler loop - evaluate and spawn agents.
+
+    Runs with per-job intervals so individual jobs can run at different rates:
+    - check_and_update_finished_agents: every 10s (local PID checks, no API)
+    - _register_orchestrator: every 300s (uses poll to skip if already registered)
+    - check_and_requeue_expired_leases: every 60s
+    - process_orchestrator_hooks: every 60s (uses poll provisional_tasks list)
+    - _check_queue_health_throttled: every 1800s
+    - agent_evaluation_loop: every 60s (uses poll queue_counts for backpressure)
+
+    One poll() call per 60s tick replaces ~14 individual API calls.
+    """
+    print(f"[{datetime.now().isoformat()}] Scheduler starting")
+    debug_log("Scheduler tick starting")
+
+    # Check global pause flag
+    if is_system_paused():
+        print("System is paused (rm .octopoid/PAUSE or set 'paused: false' in agents.yaml)")
+        debug_log("System is paused globally")
+        return
+
+    # Load per-job scheduler state (persists last_run across launchd invocations)
+    scheduler_state = load_scheduler_state()
+
+    # --- Fast local job (10s): check if any spawned agents have finished ---
+    if is_job_due(scheduler_state, "check_and_update_finished_agents",
+                  HOUSEKEEPING_JOB_INTERVALS["check_and_update_finished_agents"]):
+        try:
+            check_and_update_finished_agents()
+        except Exception as e:
+            debug_log(f"check_and_update_finished_agents failed: {e}")
+        record_job_run(scheduler_state, "check_and_update_finished_agents")
+
+    # --- Determine which remote jobs are due ---
+    needs_register = is_job_due(scheduler_state, "_register_orchestrator",
+                                HOUSEKEEPING_JOB_INTERVALS["_register_orchestrator"])
+    needs_requeue = is_job_due(scheduler_state, "check_and_requeue_expired_leases",
+                               HOUSEKEEPING_JOB_INTERVALS["check_and_requeue_expired_leases"])
+    needs_hooks = is_job_due(scheduler_state, "process_orchestrator_hooks",
+                             HOUSEKEEPING_JOB_INTERVALS["process_orchestrator_hooks"])
+    needs_health = is_job_due(scheduler_state, "_check_queue_health_throttled",
+                              HOUSEKEEPING_JOB_INTERVALS["_check_queue_health_throttled"])
+    needs_agents = is_job_due(scheduler_state, "agent_evaluation_loop",
+                              HOUSEKEEPING_JOB_INTERVALS["agent_evaluation_loop"])
+
+    needs_remote = needs_register or needs_requeue or needs_hooks or needs_health or needs_agents
+
+    # --- Fetch poll data once for all remote jobs ---
+    poll_data: dict | None = None
+    if needs_remote:
+        poll_data = _fetch_poll_data()
+
+    # --- Register orchestrator (300s) ---
+    if needs_register:
+        orchestrator_registered = (poll_data or {}).get("orchestrator_registered", False)
+        try:
+            _register_orchestrator(orchestrator_registered=orchestrator_registered)
+        except Exception as e:
+            debug_log(f"_register_orchestrator failed: {e}")
+        record_job_run(scheduler_state, "_register_orchestrator")
+
+    # --- Requeue expired leases (60s) ---
+    if needs_requeue:
+        try:
+            check_and_requeue_expired_leases()
+        except Exception as e:
+            debug_log(f"check_and_requeue_expired_leases failed: {e}")
+        record_job_run(scheduler_state, "check_and_requeue_expired_leases")
+
+    # --- Process orchestrator hooks on provisional tasks (60s) ---
+    if needs_hooks:
+        provisional_tasks = (poll_data or {}).get("provisional_tasks")
+        try:
+            process_orchestrator_hooks(provisional_tasks=provisional_tasks)
+        except Exception as e:
+            debug_log(f"process_orchestrator_hooks failed: {e}")
+        record_job_run(scheduler_state, "process_orchestrator_hooks")
+
+    # --- Queue health check (1800s, already self-throttled) ---
+    if needs_health:
+        try:
+            _check_queue_health_throttled()
+        except Exception as e:
+            debug_log(f"_check_queue_health_throttled failed: {e}")
+        record_job_run(scheduler_state, "_check_queue_health_throttled")
+
+    # --- Agent evaluation loop (60s): use poll queue_counts for backpressure ---
+    if needs_agents:
+        queue_counts = (poll_data or {}).get("queue_counts")
+        _run_agent_evaluation_loop(queue_counts=queue_counts)
+        record_job_run(scheduler_state, "agent_evaluation_loop")
+
+    # Persist updated last_run timestamps
+    save_scheduler_state(scheduler_state)
 
     print(f"[{datetime.now().isoformat()}] Scheduler tick complete")
     debug_log("Scheduler tick complete")

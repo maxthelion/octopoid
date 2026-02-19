@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Pool model step 2: PID tracking per blueprint** ([TASK-5e5eebd1])
+  - Added `orchestrator/pool.py` with 6 functions for per-blueprint PID tracking: `get_blueprint_pids_path`, `load_blueprint_pids`, `save_blueprint_pids`, `count_running_instances`, `register_instance_pid`, `cleanup_dead_pids`.
+  - `running_pids.json` lives at `.octopoid/runtime/agents/<blueprint_name>/running_pids.json` and tracks `{pid: {task_id, started_at, instance_name}}`.
+  - Writes are atomic via tempfile + rename to prevent corruption under concurrent access.
+  - `count_running_instances` uses `os.kill(pid, 0)` to count only live processes.
+  - `cleanup_dead_pids` removes stale entries and returns the count removed.
+  - Added `tests/test_pool_tracking.py` with unit tests covering all 6 functions.
+
+- **Scheduler poll endpoint integration + per-job intervals** ([TASK-cd01c12d])
+  - Added `sdk.poll(orchestrator_id)` to `packages/python-sdk/octopoid_sdk/client.py` — single `GET /api/v1/scheduler/poll` call returns `queue_counts`, `provisional_tasks`, and `orchestrator_registered` in one request.
+  - Added `queue_counts: dict | None` field to `AgentContext`; `guard_backpressure()` uses pre-fetched counts when available, eliminating per-agent `count_queue()` API calls.
+  - `can_claim_task()` in `backpressure.py` accepts an optional `queue_counts` dict to skip individual API calls.
+  - `_register_orchestrator()` now accepts `orchestrator_registered: bool` and skips the POST when the poll response confirms registration.
+  - `process_orchestrator_hooks()` accepts `provisional_tasks: list | None`; when provided, skips `sdk.tasks.list(queue="provisional")`.
+  - Added `scheduler_state.json` persistence for per-job `last_run` timestamps; helper functions `load_scheduler_state()`, `save_scheduler_state()`, `is_job_due()`, `record_job_run()` in `scheduler.py`.
+  - Added `HOUSEKEEPING_JOB_INTERVALS` dict with per-job intervals: `check_and_update_finished_agents=10s`, `agent_evaluation_loop=60s`, `process_orchestrator_hooks=60s`, `check_and_requeue_expired_leases=60s`, `_register_orchestrator=300s`, `_check_queue_health_throttled=1800s`.
+  - `run_scheduler()` now calls jobs directly with interval checks; fetches poll data once per 60s tick shared across all remote jobs.
+  - Reduced launchd `StartInterval` from 300s to 10s in `com.octopoid.scheduler.plist`.
+  - Added `_run_agent_evaluation_loop()` helper that accepts `queue_counts` from poll.
+  - Added 27 unit tests in `tests/test_scheduler_poll.py` covering poll-based backpressure, interval management, register skip, and pre-fetched hooks.
+
 - **Lease expiry housekeeping job** ([TASK-96a53880])
   - Added `check_and_requeue_expired_leases()` to `orchestrator/scheduler.py` as an orchestrator-side fallback for tasks stuck in "claimed" when the server's lease-monitor doesn't run.
   - On each scheduler tick, lists all claimed tasks, checks `lease_expires_at`, and moves expired tasks back to the "incoming" queue with `claimed_by=None` and `lease_expires_at=None`.
