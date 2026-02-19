@@ -181,7 +181,7 @@ def create_pr(task: dict, result: dict, task_dir: Path) -> None:
         f"## Changes\n\n```\n{commits_summary}\n```\n"
     )
 
-    repo = RepoManager(worktree)
+    repo = RepoManager(worktree, base_branch=task.get("branch", "main"))
     pr = repo.create_pr(title=f"[{task_id}] {task_title}", body=pr_body)
     print(f"create_pr step: PR {pr.url} (new={pr.created})")
 

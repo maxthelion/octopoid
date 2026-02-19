@@ -242,3 +242,49 @@ class TestCreatePrStep:
             pr_url="https://github.com/test/repo/pull/42",
             pr_number=42,
         )
+
+    def test_create_pr_passes_task_branch_to_repo_manager(self, tmp_path, mock_sdk_for_unit_tests):
+        """create_pr passes task branch to RepoManager as base_branch."""
+        from orchestrator.repo_manager import PrInfo
+        from orchestrator.steps import create_pr
+
+        task_dir = tmp_path
+        worktree = task_dir / "worktree"
+        worktree.mkdir()
+
+        mock_repo = MagicMock()
+        mock_repo.create_pr.return_value = PrInfo(
+            url="https://github.com/test/repo/pull/99",
+            number=99,
+            created=True,
+        )
+        mock_repo_cls = MagicMock(return_value=mock_repo)
+
+        task = {"id": "TASK-branch-test", "title": "Branch test", "branch": "feature/foo"}
+        with patch("orchestrator.repo_manager.RepoManager", mock_repo_cls):
+            create_pr(task, {}, task_dir)
+
+        mock_repo_cls.assert_called_once_with(worktree, base_branch="feature/foo")
+
+    def test_create_pr_defaults_to_main_when_no_branch(self, tmp_path, mock_sdk_for_unit_tests):
+        """create_pr defaults to main when task has no branch field."""
+        from orchestrator.repo_manager import PrInfo
+        from orchestrator.steps import create_pr
+
+        task_dir = tmp_path
+        worktree = task_dir / "worktree"
+        worktree.mkdir()
+
+        mock_repo = MagicMock()
+        mock_repo.create_pr.return_value = PrInfo(
+            url="https://github.com/test/repo/pull/100",
+            number=100,
+            created=True,
+        )
+        mock_repo_cls = MagicMock(return_value=mock_repo)
+
+        task = {"id": "TASK-no-branch", "title": "No branch field"}
+        with patch("orchestrator.repo_manager.RepoManager", mock_repo_cls):
+            create_pr(task, {}, task_dir)
+
+        mock_repo_cls.assert_called_once_with(worktree, base_branch="main")
