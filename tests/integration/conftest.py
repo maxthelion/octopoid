@@ -11,6 +11,8 @@ Safety layers:
 """
 
 import os
+import subprocess
+from pathlib import Path
 
 # ── STEP 0: Set env var at module level ─────────────────────────────
 # This runs at import time (before any session fixture), so get_sdk()
@@ -161,3 +163,95 @@ def scoped_sdk(test_server_url):
     client = OctopoidSDK(server_url=test_server_url, scope=scope)
     yield client
     client.close()
+
+
+# ── Mock agent fixtures (from tests/fixtures/) ──────────────────────
+
+# Absolute path to the shared fixtures directory
+_FIXTURES_DIR = Path(__file__).parent.parent / "fixtures"
+
+
+@pytest.fixture
+def test_repo(tmp_path):
+    """Create a bare remote git repo and a working clone, seeded with an initial commit.
+
+    Returns a dict with:
+        remote: Path to the bare repository (acts as the remote)
+        work:   Path to the working clone (has origin pointing at remote)
+    """
+    remote = tmp_path / "remote.git"
+    remote.mkdir()
+    subprocess.run(["git", "init", "--bare", str(remote)], check=True, capture_output=True)
+
+    work = tmp_path / "repo"
+    subprocess.run(
+        ["git", "clone", str(remote), str(work)],
+        check=True,
+        capture_output=True,
+    )
+
+    subprocess.run(
+        ["git", "config", "user.email", "test@test.local"],
+        cwd=work, check=True, capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test User"],
+        cwd=work, check=True, capture_output=True,
+    )
+
+    (work / "README.md").write_text("# Test repo\n")
+    subprocess.run(["git", "add", "README.md"], cwd=work, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "initial commit"],
+        cwd=work, check=True, capture_output=True,
+    )
+    subprocess.run(
+        ["git", "push", "origin", "HEAD:main"],
+        cwd=work, check=True, capture_output=True,
+    )
+
+    return {"remote": remote, "work": work}
+
+
+@pytest.fixture
+def run_mock_agent():
+    """Return a callable that runs mock-agent.sh with controlled environment.
+
+    The callable signature is::
+
+        run_mock_agent(task_dir, agent_env=None, gh_env=None) -> CompletedProcess
+
+    Args:
+        task_dir:   Directory containing a ``worktree/`` subdirectory.
+                    ``result.json`` will be written here.
+        agent_env:  MOCK_* env vars to pass to mock-agent.sh.
+        gh_env:     GH_MOCK_* env vars to pass (used when tests call gh indirectly).
+
+    Returns:
+        subprocess.CompletedProcess from running mock-agent.sh.
+    """
+    mock_agent = _FIXTURES_DIR / "mock-agent.sh"
+    mock_bin = _FIXTURES_DIR / "bin"
+
+    def _run(
+        task_dir: Path,
+        agent_env: dict | None = None,
+        gh_env: dict | None = None,
+    ) -> subprocess.CompletedProcess:
+        env = os.environ.copy()
+        env["RESULT_FILE"] = str(task_dir / "result.json")
+        env["PATH"] = f"{mock_bin}:{env.get('PATH', '')}"
+        if agent_env:
+            env.update(agent_env)
+        if gh_env:
+            env.update(gh_env)
+
+        return subprocess.run(
+            [str(mock_agent)],
+            cwd=str(task_dir / "worktree"),
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+
+    return _run
