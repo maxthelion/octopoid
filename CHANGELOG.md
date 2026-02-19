@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Project flow system step 1** ([TASK-projfix-1])
+  - Added `rebase_on_project_branch` step to `orchestrator/steps.py`: fetches project's shared branch via SDK and rebases worktree, ensuring each child task sees previous children's work
+  - Created `.octopoid/flows/project.yaml` with `child_flow` definition for multi-task projects (children skip `create_pr`, commit to shared branch)
+  - `create_flows_directory()` in `flow.py` now generates both `default.yaml` and `project.yaml`
+
 - **Scheduler poll endpoint integration + per-job intervals** ([TASK-cd01c12d])
   - Added `sdk.poll(orchestrator_id)` to `packages/python-sdk/octopoid_sdk/client.py` — single `GET /api/v1/scheduler/poll` call returns `queue_counts`, `provisional_tasks`, and `orchestrator_registered` in one request.
   - Added `queue_counts: dict | None` field to `AgentContext`; `guard_backpressure()` uses pre-fetched counts when available, eliminating per-agent `count_queue()` API calls.
