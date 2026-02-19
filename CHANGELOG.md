@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Mock agent test infrastructure — step 2** ([TASK-mock-2])
+  - `tests/fixtures/conftest_mock.py`: pytest fixtures for local git repos — `test_repo` (bare remote + working clone), `conflicting_repo` (diverging branches on same file), `task_dir` (full scheduler task directory structure).
+  - `tests/fixtures/mock_helpers.py`: `run_mock_agent()` helper that runs `mock-agent.sh` with configurable `MOCK_*` and `GH_MOCK_*` env vars and fake `gh` on PATH.
+  - `tests/test_mock_fixtures.py`: expanded to 20 smoke tests covering all fixture combinations.
+
 - **Mock agent test infrastructure — step 1** ([TASK-mock-1])
   - `tests/fixtures/mock-agent.sh`: configurable shell script that simulates agent behavior (implementer and gatekeeper modes) without calling Claude. Controlled via `MOCK_OUTCOME`, `MOCK_DECISION`, `MOCK_COMMENT`, `MOCK_REASON`, `MOCK_COMMITS`, `MOCK_CRASH`, and `MOCK_SLEEP` env vars.
   - `tests/fixtures/bin/gh`: fake `gh` CLI that returns controlled responses for `pr create`, `pr view`, `pr merge`, and `pr list`. Logs all calls to `GH_MOCK_LOG` when set.
