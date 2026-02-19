@@ -160,136 +160,162 @@ class TestGuardNotRunningNoPid:
 
 
 class TestCheckAndUpdateFinishedAgents:
-    """check_and_update_finished_agents must use result.json when no exit_code file exists."""
+    """check_and_update_finished_agents uses blueprint PID tracking via running_pids.json."""
 
-    def _make_state(self, task_dir: Path | None = None) -> AgentState:
-        extra: dict = {}
-        if task_dir is not None:
-            extra = {"task_dir": str(task_dir), "agent_mode": "scripts", "current_task_id": ""}
-        return AgentState(
-            running=True,
-            pid=12345,
-            total_runs=1,
-            total_successes=0,
-            total_failures=0,
-            consecutive_failures=0,
-            extra=extra,
-        )
+    def _make_pids_dict(
+        self, pid: int, task_id: str, instance_name: str
+    ) -> dict:
+        """Return a {pid: info} dict representing one tracked instance."""
+        return {
+            pid: {
+                "task_id": task_id,
+                "started_at": "2026-01-01T00:00:00+00:00",
+                "instance_name": instance_name,
+            }
+        }
 
-    def _run_check(
-        self,
-        tmp_path: Path,
-        task_dir: Path | None,
-        result_outcome: str | None,
-        read_exit_code: int | None,
-    ) -> list[AgentState]:
-        """Helper: set up mocks, run check_and_update_finished_agents, return saved states.
+    def _make_agents_dir(self, tmp_path: Path, blueprint_name: str) -> tuple[Path, Path]:
+        """Create agents_dir with a blueprint subdir containing running_pids.json."""
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir(exist_ok=True)
+        blueprint_dir = agents_dir / blueprint_name
+        blueprint_dir.mkdir(exist_ok=True)
+        # Write an empty sentinel file — real data is provided via mocked load_blueprint_pids
+        (blueprint_dir / "running_pids.json").write_text("{}")
+        return agents_dir, blueprint_dir
 
-        Agent dirs live in agents_dir. Task dir lives outside agents_dir to avoid
-        it being iterated as an agent.
-        """
+    def test_skips_dir_without_running_pids_json(self, tmp_path):
+        """Directories without running_pids.json are silently skipped."""
         agents_dir = tmp_path / "agents"
         agents_dir.mkdir()
-        agent_dir = agents_dir / "implementer-1"
-        agent_dir.mkdir()
-
-        if task_dir is not None and result_outcome is not None:
-            (task_dir / "result.json").write_text(json.dumps({"outcome": result_outcome}))
-
-        state = self._make_state(task_dir)
-        saved_states: list[AgentState] = []
+        (agents_dir / "implementer").mkdir()  # no running_pids.json
 
         with (
             patch("orchestrator.scheduler.get_agents_runtime_dir", return_value=agents_dir),
-            patch("orchestrator.scheduler.get_agent_state_path", return_value=agent_dir / "state.json"),
-            patch("orchestrator.scheduler.load_state", return_value=state),
-            patch("orchestrator.scheduler.is_process_running", return_value=False),
-            patch("orchestrator.scheduler.read_agent_exit_code", return_value=read_exit_code),
-            patch("orchestrator.scheduler.save_state", side_effect=lambda s, p: saved_states.append(s)),
-            patch("orchestrator.scheduler.handle_agent_result"),
-            patch("orchestrator.scheduler.handle_agent_result_via_flow"),
+            patch("orchestrator.scheduler.get_agents", return_value=[]),
+            patch("orchestrator.scheduler.handle_agent_result") as mock_handle,
         ):
             check_and_update_finished_agents()
 
-        return saved_states
+        mock_handle.assert_not_called()
 
-    def test_success_result_json_gives_exit_code_0(self, tmp_path):
-        """A result.json with outcome='done' must produce exit_code=0 (success)."""
-        task_dir = tmp_path / "task"
-        task_dir.mkdir()
+    def test_dead_pid_triggers_handle_agent_result(self, tmp_path):
+        """Dead PID with task_id triggers handle_agent_result for incoming queue."""
+        agents_dir, _ = self._make_agents_dir(tmp_path, "implementer")
+        tasks_dir = tmp_path / "tasks"
+        task_id = "TASK-abc"
+        (tasks_dir / task_id).mkdir(parents=True)
 
-        saved = self._run_check(tmp_path, task_dir, result_outcome="done", read_exit_code=None)
-
-        assert len(saved) == 1
-        assert saved[0].last_exit_code == 0
-        assert saved[0].total_successes == 1
-        assert saved[0].total_failures == 0
-        assert saved[0].consecutive_failures == 0
-
-    def test_submitted_result_json_gives_exit_code_0(self, tmp_path):
-        """A result.json with outcome='submitted' must produce exit_code=0."""
-        task_dir = tmp_path / "task"
-        task_dir.mkdir()
-
-        saved = self._run_check(tmp_path, task_dir, result_outcome="submitted", read_exit_code=None)
-
-        assert saved[0].last_exit_code == 0
-        assert saved[0].total_successes == 1
-
-    def test_failed_result_json_gives_exit_code_1(self, tmp_path):
-        """A result.json with outcome='failed' must produce exit_code=1 (failure)."""
-        task_dir = tmp_path / "task"
-        task_dir.mkdir()
-
-        saved = self._run_check(tmp_path, task_dir, result_outcome="failed", read_exit_code=None)
-
-        assert saved[0].last_exit_code == 1
-        assert saved[0].total_failures == 1
-        assert saved[0].total_successes == 0
-
-    def test_missing_result_json_gives_exit_code_1(self, tmp_path):
-        """No result.json (and no exit_code file) must produce exit_code=1."""
-        task_dir = tmp_path / "task"
-        task_dir.mkdir()
-        # No result.json created — _run_check only writes result.json when result_outcome is not None
-
-        agents_dir = tmp_path / "agents"
-        agents_dir.mkdir()
-        agent_dir = agents_dir / "implementer-1"
-        agent_dir.mkdir()
-        state = self._make_state(task_dir)
-        saved_states: list[AgentState] = []
+        pids_data = self._make_pids_dict(12345, task_id, "implementer-1")
 
         with (
             patch("orchestrator.scheduler.get_agents_runtime_dir", return_value=agents_dir),
-            patch("orchestrator.scheduler.get_agent_state_path", return_value=agent_dir / "state.json"),
-            patch("orchestrator.scheduler.load_state", return_value=state),
+            patch("orchestrator.scheduler.get_agents", return_value=[
+                {"blueprint_name": "implementer", "claim_from": "incoming"}
+            ]),
+            patch("orchestrator.scheduler.get_tasks_dir", return_value=tasks_dir),
+            patch("orchestrator.scheduler.load_blueprint_pids", return_value=pids_data),
+            patch("orchestrator.scheduler.save_blueprint_pids"),
             patch("orchestrator.scheduler.is_process_running", return_value=False),
-            patch("orchestrator.scheduler.read_agent_exit_code", return_value=None),
-            patch("orchestrator.scheduler.save_state", side_effect=lambda s, p: saved_states.append(s)),
-            patch("orchestrator.scheduler.handle_agent_result"),
-            patch("orchestrator.scheduler.handle_agent_result_via_flow"),
+            patch("orchestrator.scheduler.handle_agent_result") as mock_handle,
+            patch("orchestrator.scheduler.handle_agent_result_via_flow") as mock_flow,
         ):
             check_and_update_finished_agents()
 
-        assert saved_states[0].last_exit_code == 1
-        assert saved_states[0].total_failures == 1
+        mock_handle.assert_called_once_with(task_id, "implementer-1", tasks_dir / task_id)
+        mock_flow.assert_not_called()
 
-    def test_no_task_dir_gives_exit_code_1(self, tmp_path):
-        """When no task_dir in extra and no exit_code file, assume crash (exit_code=1)."""
-        saved = self._run_check(tmp_path, task_dir=None, result_outcome=None, read_exit_code=None)
+    def test_dead_pid_triggers_flow_for_non_incoming_queue(self, tmp_path):
+        """Dead PID with claim_from=provisional uses handle_agent_result_via_flow."""
+        agents_dir, _ = self._make_agents_dir(tmp_path, "gatekeeper")
+        tasks_dir = tmp_path / "tasks"
+        task_id = "TASK-prov"
+        (tasks_dir / task_id).mkdir(parents=True)
 
-        assert saved[0].last_exit_code == 1
+        pids_data = self._make_pids_dict(99999, task_id, "gatekeeper-1")
 
-    def test_explicit_exit_code_file_is_used_when_present(self, tmp_path):
-        """When an exit_code file exists, it takes priority over result.json."""
-        task_dir = tmp_path / "task"
-        task_dir.mkdir()
-        # result.json says failure but exit_code file says 0
-        (task_dir / "result.json").write_text(json.dumps({"outcome": "failed"}))
+        with (
+            patch("orchestrator.scheduler.get_agents_runtime_dir", return_value=agents_dir),
+            patch("orchestrator.scheduler.get_agents", return_value=[
+                {"blueprint_name": "gatekeeper", "claim_from": "provisional"}
+            ]),
+            patch("orchestrator.scheduler.get_tasks_dir", return_value=tasks_dir),
+            patch("orchestrator.scheduler.load_blueprint_pids", return_value=pids_data),
+            patch("orchestrator.scheduler.save_blueprint_pids"),
+            patch("orchestrator.scheduler.is_process_running", return_value=False),
+            patch("orchestrator.scheduler.handle_agent_result") as mock_handle,
+            patch("orchestrator.scheduler.handle_agent_result_via_flow") as mock_flow,
+        ):
+            check_and_update_finished_agents()
 
-        saved = self._run_check(tmp_path, task_dir, result_outcome=None, read_exit_code=0)
+        mock_flow.assert_called_once_with(task_id, "gatekeeper-1", tasks_dir / task_id)
+        mock_handle.assert_not_called()
 
-        # exit_code file wins — we pass read_exit_code=0 so result.json is never read
-        assert saved[0].last_exit_code == 0
-        assert saved[0].total_successes == 1
+    def test_dead_pid_removed_from_tracking(self, tmp_path):
+        """Dead PIDs are removed from pool tracking (save_blueprint_pids called without dead PID)."""
+        agents_dir, _ = self._make_agents_dir(tmp_path, "implementer")
+        tasks_dir = tmp_path / "tasks"
+        task_id = "TASK-abc"
+        (tasks_dir / task_id).mkdir(parents=True)
+
+        pids_data = self._make_pids_dict(12345, task_id, "implementer-1")
+        saved_args: list[tuple] = []
+
+        with (
+            patch("orchestrator.scheduler.get_agents_runtime_dir", return_value=agents_dir),
+            patch("orchestrator.scheduler.get_agents", return_value=[
+                {"blueprint_name": "implementer", "claim_from": "incoming"}
+            ]),
+            patch("orchestrator.scheduler.get_tasks_dir", return_value=tasks_dir),
+            patch("orchestrator.scheduler.load_blueprint_pids", return_value=pids_data),
+            patch("orchestrator.scheduler.save_blueprint_pids",
+                  side_effect=lambda name, p: saved_args.append((name, p))),
+            patch("orchestrator.scheduler.is_process_running", return_value=False),
+            patch("orchestrator.scheduler.handle_agent_result"),
+        ):
+            check_and_update_finished_agents()
+
+        assert len(saved_args) == 1
+        saved_name, saved_pids = saved_args[0]
+        assert saved_name == "implementer"
+        assert 12345 not in saved_pids
+
+    def test_live_pid_not_removed(self, tmp_path):
+        """Live PIDs are NOT removed from pool tracking."""
+        agents_dir, _ = self._make_agents_dir(tmp_path, "implementer")
+        pids_data = self._make_pids_dict(12345, "TASK-alive", "implementer-1")
+
+        with (
+            patch("orchestrator.scheduler.get_agents_runtime_dir", return_value=agents_dir),
+            patch("orchestrator.scheduler.get_agents", return_value=[
+                {"blueprint_name": "implementer", "claim_from": "incoming"}
+            ]),
+            patch("orchestrator.scheduler.load_blueprint_pids", return_value=pids_data),
+            patch("orchestrator.scheduler.save_blueprint_pids") as mock_save,
+            patch("orchestrator.scheduler.is_process_running", return_value=True),
+            patch("orchestrator.scheduler.handle_agent_result") as mock_handle,
+        ):
+            check_and_update_finished_agents()
+
+        mock_handle.assert_not_called()
+        mock_save.assert_not_called()
+
+    def test_no_task_id_skips_result_handling(self, tmp_path):
+        """When PID entry has empty task_id, result handling is skipped."""
+        agents_dir, _ = self._make_agents_dir(tmp_path, "proposer")
+        # PID with empty task_id (e.g. lightweight agents without tasks)
+        pids_data = {12345: {"task_id": "", "started_at": "...", "instance_name": "proposer-1"}}
+
+        with (
+            patch("orchestrator.scheduler.get_agents_runtime_dir", return_value=agents_dir),
+            patch("orchestrator.scheduler.get_agents", return_value=[
+                {"blueprint_name": "proposer", "claim_from": "incoming"}
+            ]),
+            patch("orchestrator.scheduler.load_blueprint_pids", return_value=pids_data),
+            patch("orchestrator.scheduler.save_blueprint_pids"),
+            patch("orchestrator.scheduler.is_process_running", return_value=False),
+            patch("orchestrator.scheduler.handle_agent_result") as mock_handle,
+        ):
+            check_and_update_finished_agents()
+
+        mock_handle.assert_not_called()
