@@ -111,4 +111,9 @@ class OctopoidDashboard(App):
 
     def on_task_selected(self, event: TaskSelected) -> None:
         """Open the task detail modal for the selected task."""
-        self.push_screen(TaskDetailModal(event.task, self._report))
+        import logging
+        try:
+            self.push_screen(TaskDetailModal(event.task, self._report))
+        except Exception:
+            logging.getLogger("dashboard").exception("Failed to open task detail")
+            self.notify("Failed to open task detail", severity="error", timeout=4)

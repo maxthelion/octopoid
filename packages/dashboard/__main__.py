@@ -15,8 +15,13 @@ def main() -> None:
         level=logging.WARNING,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
-    app = OctopoidDashboard()
-    app.run()
+    logger = logging.getLogger("dashboard")
+    try:
+        app = OctopoidDashboard()
+        app.run()
+    except Exception:
+        logger.exception("Dashboard crashed")
+        raise
 
 
 if __name__ == "__main__":
