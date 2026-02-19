@@ -38,6 +38,13 @@ from .state_utils import (
     mark_started,
     save_state,
 )
+from .pool import (
+    cleanup_dead_pids,
+    count_running_instances,
+    load_blueprint_pids,
+    register_instance_pid,
+    save_blueprint_pids,
+)
 
 # Global debug flag
 DEBUG = False
@@ -106,6 +113,27 @@ def guard_not_running(ctx: AgentContext) -> tuple[bool, str]:
         )
         save_state(ctx.state, ctx.state_path)
 
+    return (True, "")
+
+
+def guard_pool_capacity(ctx: AgentContext) -> tuple[bool, str]:
+    """Check if blueprint can spawn another instance (pool capacity guard).
+
+    Replaces guard_not_running for the pool model. Cleans up dead PIDs first,
+    then checks if running instances < max_instances.
+
+    Args:
+        ctx: AgentContext containing agent configuration
+
+    Returns:
+        (should_proceed, reason_if_blocked)
+    """
+    blueprint_name = ctx.agent_config.get("blueprint_name", ctx.agent_name)
+    max_inst = ctx.agent_config.get("max_instances", 1)
+    cleanup_dead_pids(blueprint_name)
+    running = count_running_instances(blueprint_name)
+    if running >= max_inst:
+        return (False, f"at_capacity ({running}/{max_inst})")
     return (True, "")
 
 
@@ -288,7 +316,7 @@ def guard_pr_mergeable(ctx: AgentContext) -> tuple[bool, str]:
 # Guard chain: cheapest checks first, expensive checks last
 AGENT_GUARDS = [
     guard_enabled,
-    guard_not_running,
+    guard_pool_capacity,
     guard_interval,
     guard_backpressure,
     guard_pre_check,
@@ -1384,59 +1412,68 @@ def process_orchestrator_hooks(provisional_tasks: list | None = None) -> None:
         debug_log(f"Error processing orchestrator hooks: {e}")
 
 def check_and_update_finished_agents() -> None:
-    """Check for agents that have finished and update their state."""
+    """Check for agents that have finished and update their state.
+
+    Iterates blueprints via running_pids.json. For each dead PID, processes
+    the agent result and removes the PID from pool tracking.
+    """
     agents_dir = get_agents_runtime_dir()
     if not agents_dir.exists():
         return
+
+    # Pre-fetch agent configs to look up claim_from per blueprint
+    try:
+        agents_list = get_agents()
+        blueprint_configs: dict[str, dict] = {
+            a.get("blueprint_name", a.get("name", "")): a
+            for a in agents_list
+        }
+    except Exception:
+        blueprint_configs = {}
 
     for agent_dir in agents_dir.iterdir():
         if not agent_dir.is_dir():
             continue
 
-        agent_name = agent_dir.name
-        state_path = get_agent_state_path(agent_name)
-        state = load_state(state_path)
+        blueprint_name = agent_dir.name
+        pids_path = agent_dir / "running_pids.json"
+        if not pids_path.exists():
+            continue
 
-        if state.running and state.pid:
-            if not is_process_running(state.pid):
-                # Process has finished, read exit code from file
-                exit_code = read_agent_exit_code(agent_name)
-                if exit_code is None:
-                    # Pure-function agents (invoke_claude) don't write exit_code files.
-                    # Check result.json as the success signal instead.
-                    task_dir_str = state.extra.get("task_dir")
-                    if task_dir_str:
-                        result = _read_or_infer_result(Path(task_dir_str))
-                        outcome = result.get("outcome")
-                        exit_code = 0 if outcome in ("done", "submitted") else 1
-                        debug_log(f"Agent {agent_name} finished without exit code file, result.json outcome={outcome}: exit_code={exit_code}")
+        pids = load_blueprint_pids(blueprint_name)
+        if not pids:
+            continue
+
+        dead_pids = {
+            pid: info
+            for pid, info in pids.items()
+            if not is_process_running(pid)
+        }
+        if not dead_pids:
+            continue
+
+        blueprint_config = blueprint_configs.get(blueprint_name, {})
+        claim_from = blueprint_config.get("claim_from", "incoming")
+
+        for pid, info in dead_pids.items():
+            instance_name = info.get("instance_name", blueprint_name)
+            task_id = info.get("task_id", "")
+            debug_log(f"Instance {instance_name} (PID {pid}) has finished")
+
+            if task_id:
+                task_dir = get_tasks_dir() / task_id
+                if task_dir.exists():
+                    if claim_from != "incoming":
+                        # Review agents (claim from provisional, etc.) use flow dispatch
+                        handle_agent_result_via_flow(task_id, instance_name, task_dir)
                     else:
-                        exit_code = 1
-                        debug_log(f"Agent {agent_name} finished without exit code file, assuming crash")
-                else:
-                    debug_log(f"Agent {agent_name} finished with exit code {exit_code}")
+                        # Implementers (claim from incoming) use outcome dispatch
+                        handle_agent_result(task_id, instance_name, task_dir)
 
-                new_state = mark_finished(state, exit_code)
-                save_state(new_state, state_path)
+            del pids[pid]
+            print(f"[{datetime.now().isoformat()}] Instance {instance_name} (PID {pid}) finished")
 
-                # Handle script-mode agent results
-                if state.extra.get("agent_mode") == "scripts" and state.extra.get("task_dir"):
-                    task_dir_str = state.extra["task_dir"]
-                    current_task = state.extra.get("current_task_id", "")
-                    claim_from = state.extra.get("claim_from", "incoming")
-                    if current_task:
-                        if claim_from != "incoming":
-                            # Review agents (claim from provisional, etc.) use flow dispatch
-                            handle_agent_result_via_flow(
-                                current_task, agent_name, Path(task_dir_str)
-                            )
-                        else:
-                            # Implementers (claim from incoming) use outcome dispatch
-                            handle_agent_result(
-                                current_task, agent_name, Path(task_dir_str)
-                            )
-
-                print(f"[{datetime.now().isoformat()}] Agent {agent_name} finished (exit code: {exit_code})")
+        save_blueprint_pids(blueprint_name, pids)
 
 
 # =============================================================================
@@ -1698,10 +1735,35 @@ def _init_submodule(agent_name: str) -> None:
         debug_log(f"Submodule init failed for {agent_name}: {e}")
 
 
+def _next_instance_name(blueprint_name: str) -> str:
+    """Generate the next available instance name for a blueprint.
+
+    Returns '{blueprint_name}-{N}' where N is the lowest positive integer
+    not already in use by a currently-tracked instance.
+
+    Args:
+        blueprint_name: Blueprint name (e.g. 'implementer')
+
+    Returns:
+        Instance name (e.g. 'implementer-1', 'implementer-2')
+    """
+    pids = load_blueprint_pids(blueprint_name)
+    existing_names = {info.get("instance_name", "") for info in pids.values()}
+    n = 1
+    while f"{blueprint_name}-{n}" in existing_names:
+        n += 1
+    return f"{blueprint_name}-{n}"
+
+
 def spawn_implementer(ctx: AgentContext) -> int:
     """Spawn an implementer: prepare task dir, invoke claude directly."""
-    task_dir = prepare_task_directory(ctx.claimed_task, ctx.agent_name, ctx.agent_config)
+    blueprint_name = ctx.agent_config.get("blueprint_name", ctx.agent_name)
+    instance_name = _next_instance_name(blueprint_name)
+
+    task_dir = prepare_task_directory(ctx.claimed_task, instance_name, ctx.agent_config)
     pid = invoke_claude(task_dir, ctx.agent_config)
+
+    register_instance_pid(blueprint_name, pid, ctx.claimed_task["id"], instance_name)
 
     new_state = mark_started(ctx.state, pid)
     new_state.extra["agent_mode"] = "scripts"
@@ -1714,8 +1776,14 @@ def spawn_implementer(ctx: AgentContext) -> int:
 
 def spawn_lightweight(ctx: AgentContext) -> int:
     """Spawn a lightweight agent (no worktree, runs in parent project)."""
+    blueprint_name = ctx.agent_config.get("blueprint_name", ctx.agent_name)
+    instance_name = _next_instance_name(blueprint_name)
+
     write_agent_env(ctx.agent_name, ctx.agent_config.get("id", 0), ctx.role, ctx.agent_config)
     pid = spawn_agent(ctx.agent_name, ctx.agent_config.get("id", 0), ctx.role, ctx.agent_config)
+
+    task_id = ctx.claimed_task["id"] if ctx.claimed_task else ""
+    register_instance_pid(blueprint_name, pid, task_id, instance_name)
 
     new_state = mark_started(ctx.state, pid)
     save_state(new_state, ctx.state_path)
@@ -1753,6 +1821,11 @@ def spawn_worktree(ctx: AgentContext) -> int:
 
     # Spawn agent
     pid = spawn_agent(ctx.agent_name, ctx.agent_config.get("id", 0), ctx.role, ctx.agent_config)
+
+    blueprint_name = ctx.agent_config.get("blueprint_name", ctx.agent_name)
+    instance_name = _next_instance_name(blueprint_name)
+    task_id = ctx.claimed_task["id"] if ctx.claimed_task else ""
+    register_instance_pid(blueprint_name, pid, task_id, instance_name)
 
     # Update JSON state
     new_state = mark_started(ctx.state, pid)

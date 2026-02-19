@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Pool model step 3: scheduler blueprint iteration and pool guard** ([TASK-6b1d5556])
+  - Added `guard_pool_capacity` to replace `guard_not_running` in `AGENT_GUARDS`. Calls `cleanup_dead_pids` then checks `count_running_instances < max_instances`.
+  - Added `_next_instance_name` helper that generates `{blueprint_name}-{N}` names for spawned instances.
+  - `spawn_implementer`, `spawn_lightweight`, `spawn_worktree` now call `register_instance_pid` after spawning to track the new process in `running_pids.json`.
+  - `check_and_update_finished_agents` rewritten to iterate blueprint dirs via `load_blueprint_pids()` instead of scanning agent state files. Dead PIDs trigger result handling and are removed from pool tracking.
+
 - **Pool model step 2: PID tracking per blueprint** ([TASK-5e5eebd1])
   - Added `orchestrator/pool.py` with 6 functions for per-blueprint PID tracking: `get_blueprint_pids_path`, `load_blueprint_pids`, `save_blueprint_pids`, `count_running_instances`, `register_instance_pid`, `cleanup_dead_pids`.
   - `running_pids.json` lives at `.octopoid/runtime/agents/<blueprint_name>/running_pids.json` and tracks `{pid: {task_id, started_at, instance_name}}`.
