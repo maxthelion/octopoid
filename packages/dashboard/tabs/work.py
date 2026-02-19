@@ -3,17 +3,17 @@
 from __future__ import annotations
 
 from textual.app import ComposeResult
-from textual.binding import Binding
+from textual.events import Key
 from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Label, ListView
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal
 
 from ..widgets.task_card import TaskCard
 
 
 class TaskSelected(Message):
-    """Posted when the user selects a task card (presses Enter)."""
+    """Posted when the user selects a task card (presses Enter or clicks)."""
 
     def __init__(self, task: dict) -> None:
         super().__init__()
@@ -22,10 +22,6 @@ class TaskSelected(Message):
 
 class WorkColumn(Widget):
     """A single kanban column: header + scrollable list of task cards."""
-
-    BINDINGS = [
-        Binding("enter", "select_task", "Details", show=False),
-    ]
 
     DEFAULT_CSS = """
     WorkColumn {
@@ -76,16 +72,28 @@ class WorkColumn(Widget):
                     agent_status=agent_status,
                 )
 
-    def action_select_task(self) -> None:
-        list_view = self.query_one(ListView)
-        highlighted = list_view.highlighted_child
-        if isinstance(highlighted, TaskCard):
-            self.post_message(TaskSelected(highlighted.task_data))
-
     def on_list_view_selected(self, event: ListView.Selected) -> None:
-        """Forward list selection as a TaskSelected message."""
+        """Open detail modal when a task card is selected (Enter or click)."""
         if isinstance(event.item, TaskCard):
             self.post_message(TaskSelected(event.item.task_data))
+
+    def on_key(self, event: Key) -> None:
+        """Navigate between columns with left/right arrow keys."""
+        if event.key not in ("left", "right"):
+            return
+        parent = self.parent
+        if parent is None:
+            return
+        columns = list(parent.query(WorkColumn))
+        try:
+            idx = columns.index(self)
+            direction = 1 if event.key == "right" else -1
+            new_idx = idx + direction
+            if 0 <= new_idx < len(columns):
+                event.stop()
+                columns[new_idx].query_one(ListView).focus()
+        except Exception:
+            pass
 
 
 class WorkTab(Widget):
@@ -133,11 +141,23 @@ class WorkTab(Widget):
                 id="col-in-review",
             )
 
+    def on_mount(self) -> None:
+        """Focus the first column's task list on initial mount."""
+        self._focus_first_column()
+
+    def on_show(self) -> None:
+        """Restore focus to the first column when the tab becomes active."""
+        self._focus_first_column()
+
+    def _focus_first_column(self) -> None:
+        try:
+            columns = list(self.query(WorkColumn))
+            if columns:
+                columns[0].query_one(ListView).focus()
+        except Exception:
+            pass
+
     def update_data(self, report: dict) -> None:
         """Replace the report and recompose the board."""
         self._report = report
         self.refresh(recompose=True)
-
-    def on_task_selected(self, event: TaskSelected) -> None:
-        """Bubble task-selection events up to the app."""
-        self.post_message(event)

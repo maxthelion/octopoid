@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Textual dashboard — kanban task card selection and navigation** ([TASK-ca13d073])
+  - `WorkTab` now focuses the first column's `ListView` on mount and whenever the Work tab becomes active (`on_show`), making keyboard navigation available immediately.
+  - `WorkColumn.on_key` handles `left`/`right` arrow keys to move focus between kanban columns.
+  - Removed the unreachable `BINDINGS`/`action_select_task` from `WorkColumn` (the widget is not focusable; selection is handled via `on_list_view_selected`).
+  - Removed `WorkTab.on_task_selected` which was re-posting `TaskSelected` unnecessarily — the message already bubbles naturally through the DOM to `OctopoidDashboard.on_task_selected`, preventing a double-modal bug.
+
 ### Changed
 
 - **Textual dashboard — drafts list shows real IDs and relative age** ([TASK-c795a5a4])
