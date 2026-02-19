@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Lease expiry housekeeping job** ([TASK-96a53880])
+  - Added `check_and_requeue_expired_leases()` to `orchestrator/scheduler.py` as an orchestrator-side fallback for tasks stuck in "claimed" when the server's lease-monitor doesn't run.
+  - On each scheduler tick, lists all claimed tasks, checks `lease_expires_at`, and moves expired tasks back to the "incoming" queue with `claimed_by=None` and `lease_expires_at=None`.
+  - Logs each requeue via `debug_log` and `print` for visibility.
+  - Registered in `HOUSEKEEPING_JOBS` so it runs automatically on every tick.
+
 ### Changed
 
 - **Scheduler cleanup: remove dead code, flatten `handle_agent_result`** ([TASK-33d1f310])
