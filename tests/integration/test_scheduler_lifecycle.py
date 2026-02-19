@@ -75,6 +75,7 @@ class TestAgentFailure:
             file_path=f"/tmp/{task_id}.md",
             title="Failure Test",
             role="implement",
+            branch="main",
         )
         sdk.tasks.claim(
             orchestrator_id=orchestrator_id,
@@ -108,6 +109,7 @@ class TestAgentCrash:
             file_path=f"/tmp/{task_id}.md",
             title="Crash Test",
             role="implement",
+            branch="main",
         )
         sdk.tasks.claim(
             orchestrator_id=orchestrator_id,
@@ -148,6 +150,7 @@ class TestAgentCrash:
             file_path=f"/tmp/{task_id}.md",
             title="Crash Detect Test",
             role="implement",
+            branch="main",
         )
         sdk.tasks.claim(
             orchestrator_id=orchestrator_id,
@@ -163,8 +166,7 @@ class TestAgentCrash:
         # Use a temp dir for ORCHESTRATOR_DIR so we don't pollute the real agents dir
         with tempfile.TemporaryDirectory() as orch_dir_str:
             orch_dir = Path(orch_dir_str)
-            agents_dir = orch_dir / "agents"
-            agent_dir = agents_dir / "crash-agent"
+            agent_dir = orch_dir / "runtime" / "agents" / "crash-agent"
             agent_dir.mkdir(parents=True)
 
             # Write agent state: running=True, dead PID (99999 — almost certainly not running)
@@ -218,6 +220,7 @@ class TestNeedsContinuation:
             file_path=f"/tmp/{task_id}.md",
             title="Continuation Test",
             role="implement",
+            branch="main",
         )
         sdk.tasks.claim(
             orchestrator_id=orchestrator_id,
@@ -252,6 +255,7 @@ class TestGatekeeperRejects:
             file_path=f"/tmp/{task_id}.md",
             title="Gatekeeper Reject Test",
             role="implement",
+            branch="main",
         )
         # Advance task to provisional (implementer done, ready for gatekeeper review)
         sdk.tasks.claim(
@@ -305,6 +309,7 @@ class TestHappyPathLifecycle:
             file_path=f"/tmp/{task_id}.md",
             title="Happy Path Test",
             role="implement",
+            branch="main",
         )
 
         # ── Phase 1: Implementer claims and succeeds ──────────────────────────
