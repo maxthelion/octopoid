@@ -12,11 +12,11 @@
 
 **Status:** Complete
 **Captured:** 2026-02-16
-**Related:** Draft 17 (Declarative Task Flows), Draft 10 (server-side)
+**Related:** Draft 10 (Declarative Task Flows), Draft 10 (server-side)
 
 ## Raw
 
-> Read 17-2026-02-16-declarative-task-flows. This is the ideal way we want to work. There needs to be at least one flow set up for a local project. This should be populated in the init function. Tasks should be able to override parts of the flow it is attached to, but in most cases we should default to the flows that are defined. I don't know how claimable_agent_roles fits into this. It feels like there are multiple overlapping ways of doing the same thing, when there should be a preferred approach. Additionally, these extra roles should be patched into the core state machine that is used for a task, rather than being separate boltons with different logic.
+> Read 10-2026-02-16-declarative-task-flows. This is the ideal way we want to work. There needs to be at least one flow set up for a local project. This should be populated in the init function. Tasks should be able to override parts of the flow it is attached to, but in most cases we should default to the flows that are defined. I don't know how claimable_agent_roles fits into this. It feels like there are multiple overlapping ways of doing the same thing, when there should be a preferred approach. Additionally, these extra roles should be patched into the core state machine that is used for a task, rather than being separate boltons with different logic.
 
 ## Idea
 
