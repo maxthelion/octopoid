@@ -1,0 +1,150 @@
+#!/usr/bin/env bash
+# Mock gh CLI for scheduler lifecycle tests.
+#
+# Controlled by GH_MOCK_* environment variables. Handles the gh pr subcommands
+# used by repo_manager.py and pr_utils.py — no real GitHub API calls.
+#
+# GH_MOCK_PR_NUMBER:     PR number to return for create/view  (default: 42)
+# GH_MOCK_MERGE_STATUS:  CLEAN|CONFLICTING                    (default: CLEAN)
+# GH_MOCK_MERGE_FAIL:    if "true", gh pr merge exits 1       (default: false)
+# GH_MOCK_PR_EXISTS:     if "true", gh pr view -q returns URL+number (default: false)
+#                        When false, gh pr view with -q exits 1 (PR not found)
+
+GH_MOCK_PR_NUMBER="${GH_MOCK_PR_NUMBER:-42}"
+GH_MOCK_MERGE_STATUS="${GH_MOCK_MERGE_STATUS:-CLEAN}"
+GH_MOCK_MERGE_FAIL="${GH_MOCK_MERGE_FAIL:-false}"
+GH_MOCK_PR_EXISTS="${GH_MOCK_PR_EXISTS:-false}"
+
+GH_MOCK_REPO="test/repo"
+PR_URL="https://github.com/${GH_MOCK_REPO}/pull/${GH_MOCK_PR_NUMBER}"
+
+if [ $# -lt 1 ]; then
+    echo "usage: gh <subcommand> [args...]" >&2
+    exit 1
+fi
+
+SUBCOMMAND="$1"
+shift
+
+case "${SUBCOMMAND}" in
+    pr)
+        if [ $# -lt 1 ]; then
+            echo "mock-gh: missing pr subcommand" >&2
+            exit 1
+        fi
+        PR_CMD="$1"
+        shift
+
+        case "${PR_CMD}" in
+            create)
+                # Accept --base, --head, --title, --body flags (parse but ignore values)
+                # Returns the PR URL
+                echo "${PR_URL}"
+                exit 0
+                ;;
+
+            merge)
+                # First arg may be the PR number; remaining are merge-method flags
+                if [ "${GH_MOCK_MERGE_FAIL}" = "true" ]; then
+                    echo "Error: GraphQL: UNPROCESSABLE: Pull request is not mergeable" >&2
+                    exit 1
+                fi
+                echo "Merged pull request #${GH_MOCK_PR_NUMBER}"
+                exit 0
+                ;;
+
+            view)
+                # PR ref is the first positional arg (branch name or number)
+                [ $# -gt 0 ] && shift || true
+
+                # Parse --json and -q flags
+                JSON_FIELDS=""
+                JQ_QUERY=""
+                while [ $# -gt 0 ]; do
+                    case "$1" in
+                        --json)
+                            JSON_FIELDS="${2:-}"
+                            shift; [ $# -gt 0 ] && shift || true
+                            ;;
+                        -q)
+                            JQ_QUERY="${2:-}"
+                            shift; [ $# -gt 0 ] && shift || true
+                            ;;
+                        *)
+                            shift
+                            ;;
+                    esac
+                done
+
+                FULL_JSON=$(cat <<EOF
+{"number": ${GH_MOCK_PR_NUMBER}, "url": "${PR_URL}", "mergeStateStatus": "${GH_MOCK_MERGE_STATUS}", "state": "OPEN", "title": "Mock PR", "headRefName": "agent/TASK-test", "baseRefName": "main"}
+EOF
+)
+
+                if [ -n "${JQ_QUERY}" ]; then
+                    # -q flag: repo_manager.py uses this to check if PR exists.
+                    # Pattern: .url + " " + (.number|tostring) → "URL NUMBER"
+                    if [ "${GH_MOCK_PR_EXISTS}" != "true" ]; then
+                        # PR not found — non-zero exit so caller creates a new one
+                        exit 1
+                    fi
+                    echo "${PR_URL} ${GH_MOCK_PR_NUMBER}"
+                else
+                    echo "${FULL_JSON}"
+                fi
+                exit 0
+                ;;
+
+            comment)
+                # gh pr comment NUMBER --body "..."  — silently succeed
+                exit 0
+                ;;
+
+            review)
+                # gh pr review NUMBER --request-changes --body "..." — silently succeed
+                exit 0
+                ;;
+
+            list)
+                # gh pr list --state open --json ...  — return empty list
+                echo "[]"
+                exit 0
+                ;;
+
+            diff)
+                # gh pr diff NUMBER — return empty diff
+                echo ""
+                exit 0
+                ;;
+
+            *)
+                echo "mock-gh: unhandled pr subcommand: ${PR_CMD}" >&2
+                # Return non-error so callers that ignore exit code don't break
+                exit 0
+                ;;
+        esac
+        ;;
+
+    issue)
+        # gh issue comment NUMBER --body "..."
+        case "${1:-}" in
+            comment)
+                exit 0
+                ;;
+            *)
+                exit 0
+                ;;
+        esac
+        ;;
+
+    api)
+        # gh api ... — return empty JSON
+        echo "{}"
+        exit 0
+        ;;
+
+    *)
+        echo "mock-gh: unhandled subcommand: ${SUBCOMMAND}" >&2
+        exit 0
+        ;;
+esac
