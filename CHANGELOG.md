@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Project flow system step 4: end-to-end integration test** ([TASK-projfix-4])
+  - Added `tests/integration/test_project_lifecycle.py` with 7 tests covering the full project lifecycle against the real local server
+  - Tests verify: project creation with branch, child task association via top-level `project_id` field, `/projects/{id}/tasks` endpoint returning correct tasks, child tasks completing without individual PRs (child_flow semantics), project transitioning to provisional when all children are done
+  - Uses `clean_tasks` fixture for test isolation; documents that `project_id` must be a top-level field (not inside `metadata`) for the server FK constraint and `/projects/{id}/tasks` to work
+
 - **Project flow system step 3: auto-inherit project branch on task creation** ([TASK-projfix-3])
   - `create_task()` in `orchestrator/tasks.py` now fetches the project via SDK when `project_id` is given but `branch` is not, using `project["branch"]` automatically
   - Explicit `branch=` argument always takes precedence over the project branch
