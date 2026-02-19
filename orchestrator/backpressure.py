@@ -24,16 +24,31 @@ def can_create_task() -> tuple[bool, str]:
         return False, f"Queue full: {total_pending} pending tasks (limit: {limits['max_incoming']})"
     return True, ""
 
-def can_claim_task() -> tuple[bool, str]:
-    """Check if a task can be claimed (backpressure check)."""
+def can_claim_task(queue_counts: dict | None = None) -> tuple[bool, str]:
+    """Check if a task can be claimed (backpressure check).
+
+    Args:
+        queue_counts: Pre-fetched queue counts from the poll endpoint.
+            If provided, uses these counts instead of making individual API calls.
+            Expected keys: 'incoming', 'claimed', 'provisional'.
+            If None, falls back to individual count_queue() calls.
+    """
     limits = get_queue_limits()
-    incoming = count_queue("incoming")
+    if queue_counts is not None:
+        incoming = queue_counts.get("incoming", 0)
+        claimed = queue_counts.get("claimed", 0)
+        provisional = queue_counts.get("provisional", 0)
+    else:
+        incoming = count_queue("incoming")
+        if incoming == 0:
+            return False, "No tasks in incoming queue"
+        claimed = count_queue("claimed")
+        provisional = count_queue("provisional")
+
     if incoming == 0:
         return False, "No tasks in incoming queue"
-    claimed = count_queue("claimed")
     if claimed >= limits["max_claimed"]:
         return False, f"Too many claimed tasks: {claimed} (limit: {limits['max_claimed']})"
-    provisional = count_queue("provisional")
     if provisional >= limits["max_provisional"]:
         return False, f"Too many provisional tasks: {provisional} (limit: {limits['max_provisional']})"
     return True, ""

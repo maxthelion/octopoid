@@ -415,6 +415,27 @@ class OctopoidSDK:
         except requests.Timeout:
             raise TimeoutError(f'Request to {url} timed out after {self.timeout}s')
 
+    def poll(self, orchestrator_id: str) -> Dict[str, Any]:
+        """Get all scheduler state in a single call.
+
+        Returns queue counts, provisional tasks, and orchestrator registration status.
+        Callers should handle exceptions gracefully (poll endpoint may not exist yet on older servers).
+
+        Args:
+            orchestrator_id: Orchestrator identifier (passed as ?orchestrator_id=<id>)
+
+        Returns:
+            Dict with keys:
+              - queue_counts: {incoming: int, claimed: int, provisional: int}
+              - provisional_tasks: list of task dicts with id, hooks, pr_number
+              - orchestrator_registered: bool
+        """
+        return self._request(
+            'GET',
+            '/api/v1/scheduler/poll',
+            params={'orchestrator_id': orchestrator_id},
+        )
+
     def close(self):
         """Close the session"""
         self.session.close()
