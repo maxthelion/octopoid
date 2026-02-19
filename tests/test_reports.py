@@ -441,10 +441,10 @@ class TestGatherAgents:
 
     @patch("orchestrator.config.get_notes_dir")
     @patch("orchestrator.config.get_agents")
-    @patch("orchestrator.pool.load_blueprint_pids", return_value={})
-    @patch("orchestrator.pool.cleanup_dead_pids")
+    @patch("orchestrator.pool.get_active_task_ids", return_value=set())
+    @patch("orchestrator.pool.count_running_instances", return_value=0)
     def test_returns_agent_entries_with_pool_fields(
-        self, mock_cleanup, mock_pids, mock_agents, mock_notes_dir, tmp_path
+        self, mock_count, mock_active, mock_agents, mock_notes_dir, tmp_path
     ):
         mock_agents.return_value = [
             {
@@ -475,10 +475,10 @@ class TestGatherAgents:
 
     @patch("orchestrator.config.get_notes_dir")
     @patch("orchestrator.config.get_agents")
-    @patch("orchestrator.pool.load_blueprint_pids", return_value={})
-    @patch("orchestrator.pool.cleanup_dead_pids")
+    @patch("orchestrator.pool.get_active_task_ids", return_value=set())
+    @patch("orchestrator.pool.count_running_instances", return_value=0)
     def test_paused_agent_shows_paused_status(
-        self, mock_cleanup, mock_pids, mock_agents, mock_notes_dir, tmp_path
+        self, mock_count, mock_active, mock_agents, mock_notes_dir, tmp_path
     ):
         mock_agents.return_value = [
             {
@@ -497,10 +497,10 @@ class TestGatherAgents:
 
     @patch("orchestrator.config.get_notes_dir")
     @patch("orchestrator.config.get_agents")
-    @patch("orchestrator.pool.load_blueprint_pids")
-    @patch("orchestrator.pool.cleanup_dead_pids")
+    @patch("orchestrator.pool.get_active_task_ids")
+    @patch("orchestrator.pool.count_running_instances")
     def test_running_instances_shown_in_status(
-        self, mock_cleanup, mock_pids, mock_agents, mock_notes_dir, tmp_path
+        self, mock_count, mock_active, mock_agents, mock_notes_dir, tmp_path
     ):
         mock_agents.return_value = [
             {
@@ -511,10 +511,8 @@ class TestGatherAgents:
                 "max_instances": 3,
             },
         ]
-        mock_pids.return_value = {
-            12345: {"task_id": "TASK-abc", "started_at": "2026-02-07T10:00:00+00:00", "instance_name": "implementer-1"},
-            12346: {"task_id": "TASK-def", "started_at": "2026-02-07T10:01:00+00:00", "instance_name": "implementer-2"},
-        }
+        mock_count.return_value = 2
+        mock_active.return_value = {"TASK-abc", "TASK-def"}
         mock_notes_dir.return_value = tmp_path / "notes"
         (tmp_path / "notes").mkdir()
 
@@ -526,10 +524,10 @@ class TestGatherAgents:
 
     @patch("orchestrator.config.get_notes_dir")
     @patch("orchestrator.config.get_agents")
-    @patch("orchestrator.pool.load_blueprint_pids", return_value={})
-    @patch("orchestrator.pool.cleanup_dead_pids")
+    @patch("orchestrator.pool.get_active_task_ids", return_value=set())
+    @patch("orchestrator.pool.count_running_instances", return_value=0)
     def test_idle_capacity_is_max_when_no_instances_running(
-        self, mock_cleanup, mock_pids, mock_agents, mock_notes_dir, tmp_path
+        self, mock_count, mock_active, mock_agents, mock_notes_dir, tmp_path
     ):
         mock_agents.return_value = [
             {

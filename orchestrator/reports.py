@@ -517,7 +517,7 @@ def _gather_agents() -> list[dict[str, Any]]:
     """Gather agent blueprint status using the pool model."""
     try:
         from .config import get_agents, get_notes_dir
-        from .pool import cleanup_dead_pids, load_blueprint_pids
+        from .pool import count_running_instances, get_active_task_ids
 
         agents = get_agents()
     except FileNotFoundError:
@@ -536,18 +536,15 @@ def _gather_agents() -> list[dict[str, Any]]:
         paused = agent.get("paused", False)
         max_instances = agent.get("max_instances", 1)
 
-        # Clean up dead PIDs, then load current live PIDs
-        cleanup_dead_pids(blueprint_name)
-        pids = load_blueprint_pids(blueprint_name)
-        running_instances = len(pids)  # all remaining PIDs are alive after cleanup
+        # Count alive PIDs only — do NOT call cleanup_dead_pids() here.
+        # Removing dead PIDs must only happen in check_and_update_finished_agents,
+        # which processes the agent result first. Calling cleanup here races
+        # with result processing and causes orphaned tasks.
+        running_instances = count_running_instances(blueprint_name)
         idle_capacity = max(0, max_instances - running_instances)
 
-        # Aggregate current tasks from live PIDs
-        current_tasks = [
-            info.get("task_id")
-            for info in pids.values()
-            if info.get("task_id")
-        ]
+        # Aggregate current tasks from live PIDs only
+        current_tasks = list(get_active_task_ids(blueprint_name))
 
         # Determine overall status
         if paused:
