@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Textual dashboard — drafts list shows real IDs and relative age** ([TASK-c795a5a4])
+  - `_DraftItem` now renders the server-assigned draft `id` (e.g. "42. Title") instead of a sequential index. Falls back to index+1 for filesystem-only drafts that have no server ID.
+  - Each draft line now shows a compact, dim-styled relative age (e.g. "2h", "3d") derived from the file modification time (or `created_at` when server data is present).
+  - `_load_drafts()` now captures file mtime as `created_at` so the age is always available even without server data.
+  - Reuses `_format_age()` from `packages/dashboard/tabs/done.py` to avoid duplication.
+
 ### Added
 
 - **Textual dashboard — swap-in and launch script update** ([TASK-dash-4])
