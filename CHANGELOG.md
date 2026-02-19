@@ -21,6 +21,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Updated gatekeeper `instructions.md` and `prompt.md` (both runtime `.octopoid/` and template `packages/client/`) to require a "Before Retrying" section with `git fetch origin && git rebase origin/<base_branch>` in every rejection comment
   - `reject_with_feedback` step in `orchestrator/steps.py` now posts the review comment to the PR on rejection (previously only done on approval), and automatically appends rebase instructions to the rejection reason if none are already present
 
+- **Pool model step 1: convert `fleet:` list to `agents:` dict format** ([TASK-861f0682])
+  - `.octopoid/agents.yaml` now uses an `agents:` dict where each key is a blueprint name; `max_instances` controls how many concurrent instances are allowed
+  - `get_agents()` in `orchestrator/config.py` reads the new dict format and injects `blueprint_name` and `max_instances` (default 1) into each returned entry
+  - Full backwards compatibility: if `agents:` is not a dict, falls back to reading the legacy `fleet:` list
+  - `EXAMPLE_AGENTS_YAML` template in `orchestrator/init.py` updated to use the new dict format
+  - 15 unit tests added in `tests/test_config_agents.py`
+
 - **Scheduler cleanup: remove dead code, flatten `handle_agent_result`** ([TASK-33d1f310])
   - Removed unused `agent_role` key from `spawn_implementer` state.extra (replaced by `claim_from` in the role-name refactor)
   - Extracted result parsing from `handle_agent_result` into `_read_or_infer_result(task_dir)` — handles file existence, JSON validity, and notes.md fallback
