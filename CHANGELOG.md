@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Fix orphan bugs: `guard_not_running` state corruption + exit code tracking** ([TASK-ccf602a6])
+  - `guard_not_running` no longer calls `mark_finished` when `state.pid` is `None`. Previously, a `running=True` state with no PID (spawn failed before state was written) triggered an unconditional crash-mark, corrupting `consecutive_failures` and `total_failures`. Now: if `running=True` with a dead PID, it marks crashed; if `running=True` with no PID, it clears the flag without counting as a failure.
+  - `check_and_update_finished_agents` now reads `result.json` when no `exit_code` file is present. Pure-function agents (spawned via `invoke_claude`) never write an `exit_code` file, so the old code always defaulted to `exit_code=1` (crash). Now: when `exit_code` file is absent, the agent's `result.json` is consulted via `_read_or_infer_result`; outcomes `"done"` and `"submitted"` map to exit code 0 (success), all others to 1.
+
 - **Worktree detached HEAD enforcement** ([TASK-6ee319d0])
   - `prepare_task_directory` in `scheduler.py` no longer calls `repo.ensure_on_branch()` after creating the worktree. Worktrees must always stay on detached HEAD; agents create a named branch only when ready to push via `create_task_branch`.
   - Removed the now-unused `RepoManager` import from `scheduler.py`.
