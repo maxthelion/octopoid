@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Pool model step 2: PID tracking per blueprint** ([TASK-5e5eebd1])
+  - Added `orchestrator/pool.py` with 6 functions for per-blueprint PID tracking: `get_blueprint_pids_path`, `load_blueprint_pids`, `save_blueprint_pids`, `count_running_instances`, `register_instance_pid`, `cleanup_dead_pids`.
+  - `running_pids.json` lives at `.octopoid/runtime/agents/<blueprint_name>/running_pids.json` and tracks `{pid: {task_id, started_at, instance_name}}`.
+  - Writes are atomic via tempfile + rename to prevent corruption under concurrent access.
+  - `count_running_instances` uses `os.kill(pid, 0)` to count only live processes.
+  - `cleanup_dead_pids` removes stale entries and returns the count removed.
+  - Added `tests/test_pool_tracking.py` with unit tests covering all 6 functions.
+
 - **Scheduler poll endpoint integration + per-job intervals** ([TASK-cd01c12d])
   - Added `sdk.poll(orchestrator_id)` to `packages/python-sdk/octopoid_sdk/client.py` — single `GET /api/v1/scheduler/poll` call returns `queue_counts`, `provisional_tasks`, and `orchestrator_registered` in one request.
   - Added `queue_counts: dict | None` field to `AgentContext`; `guard_backpressure()` uses pre-fetched counts when available, eliminating per-agent `count_queue()` API calls.
