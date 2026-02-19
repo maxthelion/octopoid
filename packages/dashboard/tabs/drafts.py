@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.widget import Widget
 from textual.widgets import Label, ListItem, ListView
 from textual.containers import Horizontal, Vertical, VerticalScroll
+
+from .done import _format_age
 
 
 def _load_drafts() -> list[dict]:
@@ -25,7 +29,12 @@ def _load_drafts() -> list[dict]:
                 title = first_line[2:].strip()
         except OSError:
             pass
-        result.append({"filename": f.name, "title": title, "path": str(f)})
+        try:
+            mtime = f.stat().st_mtime
+            created_at: str | None = datetime.fromtimestamp(mtime).isoformat()
+        except OSError:
+            created_at = None
+        result.append({"filename": f.name, "title": title, "path": str(f), "created_at": created_at})
     return result
 
 
@@ -53,8 +62,14 @@ class _DraftItem(ListItem):
         return self._draft
 
     def compose(self) -> ComposeResult:
+        draft_num = self._draft.get("id", self._index + 1)
         title = self._draft.get("title", self._draft.get("filename", "?"))
-        yield Label(f"{self._index + 1}. {title}", classes="draft-list-label")
+        age = _format_age(self._draft.get("created_at"))
+        line = Text()
+        line.append(f"{draft_num}. {title}")
+        if age:
+            line.append(f"  {age}", style="dim")
+        yield Label(line, classes="draft-list-label")
 
 
 class DraftsTab(Widget):
