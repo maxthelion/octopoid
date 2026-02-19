@@ -83,9 +83,26 @@ def guard_not_running(ctx: AgentContext) -> tuple[bool, str]:
     if ctx.state.running and ctx.state.pid and is_process_running(ctx.state.pid):
         return (False, f"still running (PID {ctx.state.pid})")
 
-    # If marked running but process is dead, mark as crashed and proceed
-    if ctx.state.running:
+    # If marked running but process is dead, handle appropriately
+    if ctx.state.running and ctx.state.pid:
+        # Dead PID — mark as crashed
         ctx.state = mark_finished(ctx.state, 1)
+        save_state(ctx.state, ctx.state_path)
+    elif ctx.state.running:
+        # running=True but no PID (spawn failed before PID was recorded).
+        # Clear the flag without incrementing failure counters.
+        ctx.state = AgentState(
+            running=False,
+            pid=None,
+            last_started=ctx.state.last_started,
+            last_finished=ctx.state.last_finished,
+            last_exit_code=ctx.state.last_exit_code,
+            consecutive_failures=ctx.state.consecutive_failures,
+            total_runs=ctx.state.total_runs,
+            total_successes=ctx.state.total_successes,
+            total_failures=ctx.state.total_failures,
+            extra=ctx.state.extra,
+        )
         save_state(ctx.state, ctx.state_path)
 
     return (True, "")
@@ -1293,9 +1310,17 @@ def check_and_update_finished_agents() -> None:
                 # Process has finished, read exit code from file
                 exit_code = read_agent_exit_code(agent_name)
                 if exit_code is None:
-                    # No exit code file - assume crashed
-                    exit_code = 1
-                    debug_log(f"Agent {agent_name} finished without exit code file, assuming crash")
+                    # Pure-function agents (invoke_claude) don't write exit_code files.
+                    # Check result.json as the success signal instead.
+                    task_dir_str = state.extra.get("task_dir")
+                    if task_dir_str:
+                        result = _read_or_infer_result(Path(task_dir_str))
+                        outcome = result.get("outcome")
+                        exit_code = 0 if outcome in ("done", "submitted") else 1
+                        debug_log(f"Agent {agent_name} finished without exit code file, result.json outcome={outcome}: exit_code={exit_code}")
+                    else:
+                        exit_code = 1
+                        debug_log(f"Agent {agent_name} finished without exit code file, assuming crash")
                 else:
                     debug_log(f"Agent {agent_name} finished with exit code {exit_code}")
 
