@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Pool model step 4: reports and flow validation** ([TASK-7ac764e6])
+  - `_gather_agents()` in `reports.py` updated to use pool model: iterates blueprints, calls `cleanup_dead_pids` + `load_blueprint_pids`, and reports `running_instances`, `max_instances`, `idle_capacity`, and `current_tasks` per blueprint.
+  - `_gather_health()` in `reports.py` updated to count capacity via `count_running_instances()` summed across all blueprints instead of reading `state.json` per agent.
+  - `Condition.validate()` and `Transition.validate()` in `flow.py` now accept agent references by `name`, `blueprint_name`, or `role` (previously only by `name` in conditions, by `name` or `role` in transitions).
+  - Removed dead `guard_not_running` function from `scheduler.py` (superseded by `guard_pool_capacity` in step 3).
+
 - **Pool model step 3: scheduler blueprint iteration and pool guard** ([TASK-6b1d5556])
   - Added `guard_pool_capacity` to replace `guard_not_running` in `AGENT_GUARDS`. Calls `cleanup_dead_pids` then checks `count_running_instances < max_instances`.
   - Added `_next_instance_name` helper that generates `{blueprint_name}-{N}` names for spawned instances.
