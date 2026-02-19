@@ -332,3 +332,44 @@ DataTable > .datatable--cursor {
 .status--idle {
     color: #66bb6a;
 }
+
+/* ─── Done tab ───────────────────────────────────────────────────────────── */
+
+.done-table {
+    height: 1fr;
+    background: #1a1a2e;
+}
+
+/* ─── Drafts tab ─────────────────────────────────────────────────────────── */
+
+.drafts-layout {
+    height: 100%;
+}
+
+.draft-list-panel {
+    width: 30%;
+    height: 100%;
+    border-right: solid #2a5298;
+}
+
+.draft-listview {
+    height: 1fr;
+    background: transparent;
+    border: none;
+}
+
+.draft-list-label {
+    padding: 0 1;
+    color: #e0e0e0;
+}
+
+.draft-content-panel {
+    width: 1fr;
+    height: 100%;
+    padding: 0 1;
+}
+
+.draft-content-text {
+    color: #e0e0e0;
+    padding: 0 1;
+}
