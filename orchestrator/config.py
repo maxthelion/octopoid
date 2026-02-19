@@ -336,68 +336,111 @@ def get_curator_scoring() -> dict[str, float]:
         return DEFAULT_CURATOR_SCORING.copy()
 
 
+def _resolve_agent_dir(entry: dict[str, Any]) -> "Path | None":
+    """Resolve the agent directory for a given agent config entry.
+
+    Returns the resolved agent directory Path, or None if unresolvable.
+    """
+    agent_type = entry.get("type", "")
+    explicit_agent_dir = entry.get("agent_dir", "")
+
+    if explicit_agent_dir:
+        # Explicit agent_dir takes priority — no type needed
+        agent_dir = Path(explicit_agent_dir)
+        if not agent_dir.is_absolute():
+            agent_dir = find_parent_project() / agent_dir
+        if not agent_dir.exists():
+            return None
+        return agent_dir
+    elif agent_type == "custom":
+        agent_dir_str = entry.get("path", "")
+        if not agent_dir_str:
+            return None
+        agent_dir = Path(agent_dir_str)
+        if not agent_dir.is_absolute():
+            agent_dir = find_parent_project() / agent_dir
+        return agent_dir
+    elif agent_type:
+        # Look in packages/client/agents/<type>/ first (product templates)
+        # Fall back to .octopoid/agents/<type>/ (scaffolded copies)
+        product_dir = find_parent_project() / "packages" / "client" / "agents" / agent_type
+        scaffolded_dir = find_parent_project() / ".octopoid" / "agents" / agent_type
+
+        if product_dir.exists():
+            return product_dir
+        elif scaffolded_dir.exists():
+            return scaffolded_dir
+        else:
+            return None
+    else:
+        return None
+
+
 def get_agents() -> list[dict[str, Any]]:
     """Get list of configured agents.
 
-    Reads the 'fleet:' key from agents.yaml, which references agent directories.
+    Reads the 'agents:' dict key from agents.yaml (new format), falling back
+    to the legacy 'fleet:' list if 'agents:' is absent or not a dict.
+
+    New format (agents dict): each key is a blueprint name; the value is the
+    config. ``blueprint_name`` and ``max_instances`` (default 1) are injected
+    into each returned entry. The ``name`` field is set to ``blueprint_name``
+    if not already present.
+
+    Legacy format (fleet list): read as before. ``blueprint_name`` is set to
+    the entry's ``name`` field and ``max_instances`` defaults to 1.
 
     Returns:
-        List of agent configs with merged type defaults and fleet overrides.
-        Each entry includes an 'agent_dir' key pointing to the agent directory.
+        List of agent configs with merged type defaults.
+        Each entry includes 'blueprint_name' and 'max_instances'.
+        Entries with a resolvable agent directory also include 'agent_dir'.
     """
     config = load_agents_config()
 
-    # Fleet format only
-    fleet = config.get("fleet", [])
-    if not fleet:
+    # Determine source: prefer new 'agents' dict, fall back to 'fleet' list
+    agents_raw = config.get("agents")
+    fleet_raw = config.get("fleet")
+
+    if isinstance(agents_raw, dict):
+        # New format: agents is a dict keyed by blueprint name
+        source_entries: list[dict[str, Any]] = [
+            {"blueprint_name": k, **v}
+            for k, v in agents_raw.items()
+        ]
+    elif fleet_raw:
+        # Legacy format: fleet is a list of named entries
+        source_entries = [
+            {"blueprint_name": entry.get("name", ""), **entry}
+            for entry in fleet_raw
+        ]
+    else:
         return []
 
     agents = []
-    for entry in fleet:
-        agent_type = entry.get("type", "")
-        explicit_agent_dir = entry.get("agent_dir", "")
+    for entry in source_entries:
+        blueprint_name = entry.get("blueprint_name", "")
 
-        # Resolve agent directory
-        if explicit_agent_dir:
-            # Explicit agent_dir takes priority — no type needed
-            agent_dir = Path(explicit_agent_dir)
-            if not agent_dir.is_absolute():
-                agent_dir = find_parent_project() / agent_dir
-            if not agent_dir.exists():
-                continue
-        elif not agent_type:
-            continue
-        elif agent_type == "custom":
-            agent_dir_str = entry.get("path", "")
-            if not agent_dir_str:
-                continue
-            agent_dir = Path(agent_dir_str)
-            if not agent_dir.is_absolute():
-                agent_dir = find_parent_project() / agent_dir
+        # Ensure name is set (fall back to blueprint_name)
+        entry.setdefault("name", blueprint_name)
+
+        # Ensure max_instances defaults to 1
+        entry.setdefault("max_instances", 1)
+
+        agent_dir = _resolve_agent_dir(entry)
+
+        if agent_dir is not None:
+            # Load type defaults from agent.yaml
+            type_defaults: dict[str, Any] = {}
+            agent_yaml = agent_dir / "agent.yaml"
+            if agent_yaml.exists():
+                with open(agent_yaml) as f:
+                    type_defaults = yaml.safe_load(f) or {}
+
+            # Merge: type defaults < entry overrides
+            merged = {**type_defaults, **entry}
+            merged["agent_dir"] = str(agent_dir)
         else:
-            # Look in packages/client/agents/<type>/ first (product templates)
-            # Fall back to .octopoid/agents/<type>/ (scaffolded copies)
-            product_dir = find_parent_project() / "packages" / "client" / "agents" / agent_type
-            scaffolded_dir = find_parent_project() / ".octopoid" / "agents" / agent_type
-
-            if product_dir.exists():
-                agent_dir = product_dir
-            elif scaffolded_dir.exists():
-                agent_dir = scaffolded_dir
-            else:
-                # Agent type not found, skip this entry
-                continue
-
-        # Load type defaults from agent.yaml
-        type_defaults = {}
-        agent_yaml = agent_dir / "agent.yaml"
-        if agent_yaml.exists():
-            with open(agent_yaml) as f:
-                type_defaults = yaml.safe_load(f) or {}
-
-        # Merge: type defaults < fleet overrides
-        merged = {**type_defaults, **entry}
-        merged["agent_dir"] = str(agent_dir)
+            merged = dict(entry)
 
         # Ensure 'enabled' defaults to True if not specified
         merged.setdefault("enabled", True)

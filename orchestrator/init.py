@@ -258,19 +258,18 @@ queue_limits:
   max_claimed: 1     # Max tasks being worked on simultaneously
   max_provisional: 10   # Max tasks awaiting review
 
-# Agent definitions
+# Agent blueprints — each key is a blueprint name
 agents:
-  - name: implementer-1
-    role: implementer
+  implementer:
+    type: implementer
+    max_instances: 1   # How many instances can run concurrently
     interval_seconds: 180  # 3 minutes
 
-  # - name: implementer-2
-  #   role: implementer
-  #   interval_seconds: 180
-
-  # - name: github-issue-monitor
-  #   role: github_issue_monitor
-  #   interval_seconds: 300
+  # github-issue-monitor:
+  #   type: custom
+  #   path: .octopoid/agents/github-issue-monitor/
+  #   interval_seconds: 900
+  #   max_instances: 1
   #   lightweight: true
 """
 
