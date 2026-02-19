@@ -1,9 +1,12 @@
-"""Smoke tests for tests/fixtures/mock-agent.sh and tests/fixtures/bin/gh."""
+"""Smoke tests for tests/fixtures/mock-agent.sh, tests/fixtures/bin/gh,
+and the test_repo / conflicting_repo / task_dir pytest fixtures."""
 
 import json
 import os
 import subprocess
 from pathlib import Path
+
+from tests.fixtures.mock_helpers import run_mock_agent
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 MOCK_AGENT = FIXTURES_DIR / "mock-agent.sh"
@@ -204,3 +207,108 @@ def test_fake_gh_logs_calls(tmp_path):
     log_content = log_file.read_text()
     assert "pr create" in log_content
     assert "pr merge" in log_content
+
+
+# ---------------------------------------------------------------------------
+# Fixture smoke tests: test_repo, conflicting_repo, task_dir, run_mock_agent
+# ---------------------------------------------------------------------------
+
+
+def test_test_repo_has_bare_remote_and_working_copy(test_repo):
+    """test_repo fixture creates a bare remote and a working clone with commits."""
+    bare = test_repo["bare"]
+    work = test_repo["work"]
+
+    # Both paths exist
+    assert bare.is_dir()
+    assert work.is_dir()
+
+    # Bare repo has the expected git structure
+    assert (bare / "HEAD").exists()
+
+    # Working copy has README.md from the initial commit
+    assert (work / "README.md").exists()
+
+    # Working copy has at least one commit
+    log = subprocess.run(
+        ["git", "log", "--oneline"],
+        cwd=work,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert log.stdout.strip() != ""
+
+    # Working copy is connected to the bare remote
+    remote = subprocess.run(
+        ["git", "remote", "get-url", "origin"],
+        cwd=work,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert str(bare) in remote.stdout
+
+
+def test_conflicting_repo_branches_diverge(conflicting_repo):
+    """conflicting_repo fixture produces two branches with different shared-file.txt."""
+    work = conflicting_repo["work"]
+
+    # Base branch has its version of the file
+    base_content = subprocess.run(
+        ["git", "show", "HEAD:shared-file.txt"],
+        cwd=work,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert "base branch content" in base_content.stdout
+
+    # task-branch has the conflicting version
+    task_content = subprocess.run(
+        ["git", "show", "task-branch:shared-file.txt"],
+        cwd=work,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert "task branch content" in task_content.stdout
+
+    # The two branches are different
+    assert base_content.stdout != task_content.stdout
+
+
+def test_task_dir_fixture_creates_proper_structure(task_dir):
+    """task_dir fixture creates worktree/ clone and env.sh; result.json absent."""
+    assert task_dir.is_dir()
+    assert (task_dir / "worktree").is_dir()
+    assert (task_dir / "env.sh").exists()
+    # result.json must not exist — the agent creates it
+    assert not (task_dir / "result.json").exists()
+
+    # worktree is a valid git repo
+    result = subprocess.run(
+        ["git", "rev-parse", "--git-dir"],
+        cwd=task_dir / "worktree",
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert result.returncode == 0
+
+
+def test_run_mock_agent_success_writes_result_json(task_dir):
+    """run_mock_agent with success outcome writes {"outcome": "done"} to result.json."""
+    result = run_mock_agent(task_dir, agent_env={"MOCK_OUTCOME": "success", "MOCK_COMMITS": "1"})
+    assert result.returncode == 0, result.stderr
+    result_json = task_dir / "result.json"
+    assert result_json.exists()
+    data = json.loads(result_json.read_text())
+    assert data == {"outcome": "done"}
+
+
+def test_run_mock_agent_crash_leaves_no_result_json(task_dir):
+    """run_mock_agent with MOCK_CRASH=true exits non-zero and leaves no result.json."""
+    result = run_mock_agent(task_dir, agent_env={"MOCK_CRASH": "true"})
+    assert result.returncode != 0
+    assert not (task_dir / "result.json").exists()
