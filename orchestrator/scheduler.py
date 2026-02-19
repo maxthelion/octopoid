@@ -39,7 +39,6 @@ from .state_utils import (
     save_state,
 )
 from .pool import (
-    cleanup_dead_pids,
     count_running_instances,
     get_active_task_ids,
     load_blueprint_pids,
@@ -94,7 +93,10 @@ def guard_pool_capacity(ctx: AgentContext) -> tuple[bool, str]:
     """
     blueprint_name = ctx.agent_config.get("blueprint_name", ctx.agent_name)
     max_inst = ctx.agent_config.get("max_instances", 1)
-    cleanup_dead_pids(blueprint_name)
+    # NOTE: Do NOT call cleanup_dead_pids() here. count_running_instances
+    # already ignores dead PIDs. Removing dead PIDs must only happen in
+    # check_and_update_finished_agents, which processes the agent result first.
+    # Calling cleanup here races with result processing and causes orphaned tasks.
     running = count_running_instances(blueprint_name)
     if running >= max_inst:
         return (False, f"at_capacity ({running}/{max_inst})")
@@ -211,14 +213,18 @@ def guard_claim_task(ctx: AgentContext) -> tuple[bool, str]:
     # Dedup check: skip if another running instance of this blueprint is already
     # working on the same task. This prevents two pool instances from racing to
     # claim the same task when only one provisional/incoming task exists.
+    #
+    # IMPORTANT: Do NOT requeue to incoming here. The task is already being
+    # handled by a running instance. Requeuing would yank it out from under
+    # the running agent, causing the result to be processed against the wrong
+    # queue state (e.g. gatekeeper approves but task is now in 'claimed').
     blueprint_name = ctx.agent_config.get("blueprint_name", ctx.agent_name)
     active_task_ids = get_active_task_ids(blueprint_name)
     if task["id"] in active_task_ids:
         debug_log(
-            f"guard_claim_task: task {task['id']} already claimed by another "
-            f"{blueprint_name} instance, releasing"
+            f"guard_claim_task: task {task['id']} already being processed by "
+            f"another {blueprint_name} instance, skipping (not requeuing)"
         )
-        _requeue_task(task["id"])
         return (False, f"duplicate_task: {task['id']} already being processed")
 
     ctx.claimed_task = task
@@ -1121,7 +1127,7 @@ def read_result_json(task_dir: Path) -> dict:
 
 
 
-def handle_agent_result_via_flow(task_id: str, agent_name: str, task_dir: Path) -> None:
+def handle_agent_result_via_flow(task_id: str, agent_name: str, task_dir: Path, expected_queue: str | None = None) -> None:
     """Handle agent result using the task's flow definition.
 
     Replaces the hardcoded if/else dispatch for agent roles. Reads the flow,
@@ -1136,6 +1142,9 @@ def handle_agent_result_via_flow(task_id: str, agent_name: str, task_dir: Path) 
         task_id: Task identifier
         agent_name: Name of the agent
         task_dir: Path to the task directory containing result.json
+        expected_queue: Queue the agent was working from (e.g. 'provisional').
+            If set and the task has moved to a different queue, the result is
+            discarded as stale to prevent running wrong transition steps.
     """
     from .flow import load_flow
     from .steps import execute_steps, reject_with_feedback
@@ -1154,10 +1163,25 @@ def handle_agent_result_via_flow(task_id: str, agent_name: str, task_dir: Path) 
             return
 
         current_queue = task.get("queue", "unknown")
+
+        # When expected_queue is set, the agent claimed from that queue (e.g.
+        # "provisional") and the server moved the task to "claimed".  Use the
+        # pre-claim queue for transition lookup so we find the right flow
+        # transition (e.g. "provisional -> done", not "claimed -> provisional").
+        # Only discard as stale if the task moved to something other than the
+        # expected queue or "claimed" (normal claiming behaviour).
+        if expected_queue and current_queue not in (expected_queue, "claimed"):
+            debug_log(
+                f"Flow dispatch: task {task_id} moved from expected '{expected_queue}' "
+                f"to '{current_queue}', discarding stale result from {agent_name}"
+            )
+            return
+
+        lookup_queue = expected_queue if expected_queue else current_queue
         flow_name = task.get("flow", "default")
 
         flow = load_flow(flow_name)
-        transitions = flow.get_transitions_from(current_queue)
+        transitions = flow.get_transitions_from(lookup_queue)
 
         if not transitions:
             debug_log(f"Flow dispatch: no transition from '{current_queue}' in flow '{flow_name}' for task {task_id}")
@@ -1442,7 +1466,7 @@ def check_and_update_finished_agents() -> None:
                 if task_dir.exists():
                     if claim_from != "incoming":
                         # Review agents (claim from provisional, etc.) use flow dispatch
-                        handle_agent_result_via_flow(task_id, instance_name, task_dir)
+                        handle_agent_result_via_flow(task_id, instance_name, task_dir, expected_queue=claim_from)
                     else:
                         # Implementers (claim from incoming) use outcome dispatch
                         handle_agent_result(task_id, instance_name, task_dir)

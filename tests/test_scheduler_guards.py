@@ -113,7 +113,7 @@ class TestCheckAndUpdateFinishedAgents:
         ):
             check_and_update_finished_agents()
 
-        mock_flow.assert_called_once_with(task_id, "gatekeeper-1", tasks_dir / task_id)
+        mock_flow.assert_called_once_with(task_id, "gatekeeper-1", tasks_dir / task_id, expected_queue="provisional")
         mock_handle.assert_not_called()
 
     def test_dead_pid_removed_from_tracking(self, tmp_path):
@@ -211,7 +211,7 @@ class TestGuardClaimTaskDedup:
     """guard_claim_task must not allow two pool instances to work the same task."""
 
     def test_skips_if_task_already_active(self):
-        """If claimed task is already being worked on, release and return False."""
+        """If claimed task is already being worked on, skip without requeuing."""
         task = {"id": "TASK-projfix-2", "queue": "provisional"}
         ctx = _make_scripts_ctx()
 
@@ -219,14 +219,12 @@ class TestGuardClaimTaskDedup:
             patch("orchestrator.scheduler.claim_and_prepare_task", return_value=task),
             patch("orchestrator.scheduler.get_active_task_ids", return_value={"TASK-projfix-2"}),
             patch("orchestrator.scheduler.debug_log"),
-            patch("orchestrator.scheduler._requeue_task") as mock_requeue,
         ):
             proceed, reason = guard_claim_task(ctx)
 
         assert proceed is False
         assert "duplicate_task" in reason
         assert "TASK-projfix-2" in reason
-        mock_requeue.assert_called_once_with("TASK-projfix-2")
         assert ctx.claimed_task is None
 
     def test_proceeds_if_task_not_active(self):

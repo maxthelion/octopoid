@@ -151,9 +151,8 @@ class TestGuardEnabled:
 class TestGuardPoolCapacity:
     """Test guard_pool_capacity function."""
 
-    @patch("orchestrator.scheduler.cleanup_dead_pids")
     @patch("orchestrator.scheduler.count_running_instances", return_value=0)
-    def test_under_capacity_returns_true(self, mock_count, mock_cleanup, tmp_path):
+    def test_under_capacity_returns_true(self, mock_count, tmp_path):
         """Test that under capacity (0 of 1) returns True."""
         state_path = tmp_path / "state.json"
         ctx = AgentContext(
@@ -169,12 +168,10 @@ class TestGuardPoolCapacity:
 
         assert proceed is True
         assert reason == ""
-        mock_cleanup.assert_called_once_with("implementer")
         mock_count.assert_called_once_with("implementer")
 
-    @patch("orchestrator.scheduler.cleanup_dead_pids")
     @patch("orchestrator.scheduler.count_running_instances", return_value=2)
-    def test_at_capacity_returns_false(self, mock_count, mock_cleanup, tmp_path):
+    def test_at_capacity_returns_false(self, mock_count, tmp_path):
         """Test that at capacity (2 of 2) returns False."""
         state_path = tmp_path / "state.json"
         ctx = AgentContext(
@@ -192,10 +189,13 @@ class TestGuardPoolCapacity:
         assert "at_capacity" in reason
         assert "2/2" in reason
 
-    @patch("orchestrator.scheduler.cleanup_dead_pids")
     @patch("orchestrator.scheduler.count_running_instances", return_value=0)
-    def test_dead_pids_cleaned_before_count(self, mock_count, mock_cleanup, tmp_path):
-        """Test that cleanup_dead_pids is called before count_running_instances."""
+    def test_no_cleanup_dead_pids_called(self, mock_count, tmp_path):
+        """guard_pool_capacity must NOT call cleanup_dead_pids (race condition fix).
+
+        count_running_instances already ignores dead PIDs without removing them.
+        Only check_and_update_finished_agents should remove dead PIDs.
+        """
         state_path = tmp_path / "state.json"
         ctx = AgentContext(
             agent_config={"blueprint_name": "proposer", "max_instances": 1},
@@ -206,20 +206,13 @@ class TestGuardPoolCapacity:
             state_path=state_path,
         )
 
-        call_order = []
-        mock_cleanup.side_effect = lambda name: call_order.append("cleanup")
-        mock_count.side_effect = lambda name: call_order.append("count") or 0
-
         proceed, reason = guard_pool_capacity(ctx)
 
-        assert call_order == ["cleanup", "count"], (
-            f"Expected cleanup before count, got: {call_order}"
-        )
         assert proceed is True
+        mock_count.assert_called_once_with("proposer")
 
-    @patch("orchestrator.scheduler.cleanup_dead_pids")
     @patch("orchestrator.scheduler.count_running_instances", return_value=1)
-    def test_uses_agent_name_as_fallback_blueprint(self, mock_count, mock_cleanup, tmp_path):
+    def test_uses_agent_name_as_fallback_blueprint(self, mock_count, tmp_path):
         """Test that agent_name is used as blueprint_name when blueprint_name is absent."""
         state_path = tmp_path / "state.json"
         ctx = AgentContext(
@@ -234,15 +227,12 @@ class TestGuardPoolCapacity:
         proceed, reason = guard_pool_capacity(ctx)
 
         assert proceed is True
-        mock_cleanup.assert_called_once_with("gatekeeper")
         mock_count.assert_called_once_with("gatekeeper")
 
-    @patch("orchestrator.scheduler.cleanup_dead_pids")
     @patch("orchestrator.scheduler.count_running_instances", return_value=0)
-    def test_max_instances_defaults_to_1(self, mock_count, mock_cleanup, tmp_path):
+    def test_max_instances_defaults_to_1(self, mock_count, tmp_path):
         """Test that max_instances defaults to 1 when not specified."""
         state_path = tmp_path / "state.json"
-        # count returns 0, max_instances defaults to 1 → should proceed
         ctx = AgentContext(
             agent_config={"blueprint_name": "implementer"},
             agent_name="implementer",
