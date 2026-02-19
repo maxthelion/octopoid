@@ -1152,7 +1152,11 @@ def handle_agent_result_via_flow(task_id: str, agent_name: str, task_dir: Path) 
         flow_name = task.get("flow", "default")
 
         flow = load_flow(flow_name)
-        transitions = flow.get_transitions_from(current_queue)
+        # Use child_flow transitions if this is a child task in a project
+        if task.get("project_id") and flow.child_flow:
+            transitions = flow.child_flow.get_transitions_from(current_queue)
+        else:
+            transitions = flow.get_transitions_from(current_queue)
 
         if not transitions:
             debug_log(f"Flow dispatch: no transition from '{current_queue}' in flow '{flow_name}' for task {task_id}")
@@ -1251,7 +1255,11 @@ def _handle_done_outcome(sdk: object, task_id: str, task: dict, result: dict, ta
 
     flow_name = task.get("flow", "default")
     flow = load_flow(flow_name)
-    transitions = flow.get_transitions_from("claimed")
+    # Use child_flow transitions if this is a child task in a project
+    if task.get("project_id") and flow.child_flow:
+        transitions = flow.child_flow.get_transitions_from("claimed")
+    else:
+        transitions = flow.get_transitions_from("claimed")
 
     if transitions and transitions[0].runs:
         debug_log(f"Task {task_id}: executing flow steps {transitions[0].runs}")

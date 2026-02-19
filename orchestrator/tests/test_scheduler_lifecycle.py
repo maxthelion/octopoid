@@ -289,3 +289,167 @@ class TestHandleAgentResultNoResult:
             # Should NOT execute steps or submit — task already moved past claimed
             mock_execute.assert_not_called()
             mock_sdk.tasks.submit.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Test: child_flow dispatch for project tasks
+# ---------------------------------------------------------------------------
+
+class TestChildFlowDispatch:
+    """Verify child_flow transitions are used for tasks with project_id."""
+
+    def test_project_task_uses_child_flow_in_handle_done(self, tmp_task_dir, mock_sdk):
+        """When a task has project_id and the flow has child_flow, use child_flow transitions."""
+        result_path = tmp_task_dir / "result.json"
+        result_path.write_text(json.dumps({"outcome": "done"}))
+
+        # Task is a child of a project
+        project_task = {
+            "id": "TASK-test123",
+            "title": "Child task",
+            "role": "implement",
+            "queue": "claimed",
+            "flow": "project",
+            "project_id": "PROJ-abc",
+        }
+        mock_sdk.tasks.get.return_value = project_task
+
+        with patch("orchestrator.scheduler.queue_utils") as mock_qu, \
+             patch("orchestrator.steps.execute_steps") as mock_execute, \
+             patch("orchestrator.flow.load_flow") as mock_load_flow:
+
+            mock_qu.get_sdk.return_value = mock_sdk
+
+            # Set up a parent flow with child_flow
+            child_transition = MagicMock()
+            child_transition.runs = ["rebase_on_project_branch", "run_tests"]
+
+            mock_child_flow = MagicMock()
+            mock_child_flow.get_transitions_from.return_value = [child_transition]
+
+            mock_flow = MagicMock()
+            mock_flow.child_flow = mock_child_flow
+            # Parent flow has no transitions from "claimed"
+            mock_flow.get_transitions_from.return_value = []
+            mock_load_flow.return_value = mock_flow
+
+            from orchestrator.scheduler import handle_agent_result
+            handle_agent_result("TASK-test123", "agent-1", tmp_task_dir)
+
+            # child_flow transitions should be used, not parent flow
+            mock_child_flow.get_transitions_from.assert_called_once_with("claimed")
+            mock_flow.get_transitions_from.assert_not_called()
+            mock_execute.assert_called_once_with(
+                ["rebase_on_project_branch", "run_tests"],
+                project_task,
+                {"outcome": "done"},
+                tmp_task_dir,
+            )
+
+    def test_non_project_task_uses_normal_flow_in_handle_done(self, tmp_task_dir, mock_sdk, sample_task):
+        """When a task has no project_id, use normal top-level flow transitions."""
+        result_path = tmp_task_dir / "result.json"
+        result_path.write_text(json.dumps({"outcome": "done"}))
+
+        mock_sdk.tasks.get.return_value = sample_task
+
+        with patch("orchestrator.scheduler.queue_utils") as mock_qu, \
+             patch("orchestrator.steps.execute_steps") as mock_execute, \
+             patch("orchestrator.flow.load_flow") as mock_load_flow:
+
+            mock_qu.get_sdk.return_value = mock_sdk
+
+            mock_transition = MagicMock()
+            mock_transition.runs = ["push_branch", "create_pr", "submit_to_server"]
+
+            mock_child_flow = MagicMock()
+
+            mock_flow = MagicMock()
+            mock_flow.child_flow = mock_child_flow
+            mock_flow.get_transitions_from.return_value = [mock_transition]
+            mock_load_flow.return_value = mock_flow
+
+            from orchestrator.scheduler import handle_agent_result
+            handle_agent_result("TASK-test123", "agent-1", tmp_task_dir)
+
+            # Top-level flow transitions should be used
+            mock_flow.get_transitions_from.assert_called_once_with("claimed")
+            mock_child_flow.get_transitions_from.assert_not_called()
+            mock_execute.assert_called_once_with(
+                ["push_branch", "create_pr", "submit_to_server"],
+                sample_task,
+                {"outcome": "done"},
+                tmp_task_dir,
+            )
+
+    def test_project_task_uses_child_flow_in_flow_dispatch(self, tmp_task_dir, mock_sdk):
+        """handle_agent_result_via_flow uses child_flow transitions for project tasks."""
+        # Write a "approve" result (gatekeeper-style)
+        result_path = tmp_task_dir / "result.json"
+        result_path.write_text(json.dumps({"status": "success", "decision": "approve"}))
+
+        project_task = {
+            "id": "TASK-test123",
+            "title": "Child task",
+            "role": "implement",
+            "queue": "claimed",
+            "flow": "project",
+            "project_id": "PROJ-abc",
+        }
+        mock_sdk.tasks.get.return_value = project_task
+
+        with patch("orchestrator.scheduler.queue_utils") as mock_qu, \
+             patch("orchestrator.steps.execute_steps") as mock_execute, \
+             patch("orchestrator.flow.load_flow") as mock_load_flow:
+
+            mock_qu.get_sdk.return_value = mock_sdk
+
+            child_transition = MagicMock()
+            child_transition.conditions = []
+            child_transition.runs = ["rebase_on_project_branch", "run_tests"]
+
+            mock_child_flow = MagicMock()
+            mock_child_flow.get_transitions_from.return_value = [child_transition]
+
+            mock_flow = MagicMock()
+            mock_flow.child_flow = mock_child_flow
+            mock_flow.get_transitions_from.return_value = []
+            mock_load_flow.return_value = mock_flow
+
+            from orchestrator.scheduler import handle_agent_result_via_flow
+            handle_agent_result_via_flow("TASK-test123", "agent-1", tmp_task_dir)
+
+            mock_child_flow.get_transitions_from.assert_called_once_with("claimed")
+            mock_flow.get_transitions_from.assert_not_called()
+            mock_execute.assert_called_once()
+
+    def test_non_project_task_uses_normal_flow_in_flow_dispatch(self, tmp_task_dir, mock_sdk, sample_task):
+        """handle_agent_result_via_flow uses top-level flow for tasks without project_id."""
+        result_path = tmp_task_dir / "result.json"
+        result_path.write_text(json.dumps({"status": "success", "decision": "approve"}))
+
+        mock_sdk.tasks.get.return_value = sample_task
+
+        with patch("orchestrator.scheduler.queue_utils") as mock_qu, \
+             patch("orchestrator.steps.execute_steps") as mock_execute, \
+             patch("orchestrator.flow.load_flow") as mock_load_flow:
+
+            mock_qu.get_sdk.return_value = mock_sdk
+
+            mock_transition = MagicMock()
+            mock_transition.conditions = []
+            mock_transition.runs = ["post_review_comment", "merge_pr"]
+
+            mock_child_flow = MagicMock()
+
+            mock_flow = MagicMock()
+            mock_flow.child_flow = mock_child_flow
+            mock_flow.get_transitions_from.return_value = [mock_transition]
+            mock_load_flow.return_value = mock_flow
+
+            from orchestrator.scheduler import handle_agent_result_via_flow
+            handle_agent_result_via_flow("TASK-test123", "agent-1", tmp_task_dir)
+
+            mock_flow.get_transitions_from.assert_called_once_with("claimed")
+            mock_child_flow.get_transitions_from.assert_not_called()
+            mock_execute.assert_called_once()
