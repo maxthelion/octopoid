@@ -133,6 +133,7 @@ When rejecting, provide **actionable feedback** with:
 - **File paths and line numbers** where issues exist
 - **What's wrong** (concrete problem, not vague criticism)
 - **How to fix it** (suggest a solution or point to documentation)
+- **Explicit rebase instructions** — always include a "Before Retrying" section
 
 **Good rejection:**
 ```
@@ -143,6 +144,14 @@ When rejecting, provide **actionable feedback** with:
 The task requires both client and server validation, but only client-side regex validation was added (src/components/EmailField.tsx). Server-side validation is missing from the API endpoint (src/api/users.py:create_user).
 
 To fix: Add email format validation in create_user() before inserting into the database. Use the `validators` library (already a dependency).
+
+**Before Retrying:**
+Rebase your branch onto the base branch before making changes:
+```bash
+git fetch origin
+git rebase origin/<base_branch>
+```
+Then address the issues above and push again.
 ```
 
 **Bad rejection:**
@@ -209,7 +218,7 @@ These rules apply to all gatekeeper reviews:
 
 2. **Never delete branches** — When rejecting or after merging, leave the branch intact. We may need to reference it later.
 
-3. **Post rejection feedback as a PR comment** — Use `$scripts_dir/post-review` to post findings, AND pass the reason to `../scripts/fail`. Two audiences: humans reviewing the PR, and the implementer retrying the task.
+3. **Post rejection feedback as a PR comment** — Use `$scripts_dir/post-review` to post findings, AND pass the reason to `../scripts/fail`. Two audiences: humans reviewing the PR, and the implementer retrying the task. **Always include explicit `git rebase` instructions in the rejection reason** so the implementer knows to rebase before fixing and resubmitting.
 
 4. **Post a review summary comment before approving** — Always use `$scripts_dir/post-review` to post your findings before calling `../scripts/finish`.
 
@@ -252,15 +261,23 @@ echo "## Gatekeeper Review
 # 4. Identify blocking issue
 # (e.g., server-side validation missing)
 
-# 5. Post rejection comment with specific feedback
+# 5. Post rejection comment with specific feedback (always include rebase instructions)
 echo "## Gatekeeper Review
 ...
 **REJECTED** ✗
 
-**Reason:** Server-side validation missing (see above)" | $scripts_dir/post-review
+**Reason:** Server-side validation missing (see above)
 
-# 6. Fail the task with reason
-../scripts/fail "Acceptance criterion #3 not met — server-side validation is missing. Add validation in src/api/users.py:create_user(). See PR comment for details."
+**Before Retrying:**
+Rebase your branch onto the base branch before making changes:
+\`\`\`bash
+git fetch origin
+git rebase origin/<base_branch>
+\`\`\`
+Then fix the issues above and push again." | $scripts_dir/post-review
+
+# 6. Fail the task with reason (include rebase instructions)
+../scripts/fail "Acceptance criterion #3 not met — server-side validation is missing. Add validation in src/api/users.py:create_user(). Before retrying: git fetch origin && git rebase origin/<base_branch>. See PR comment for details."
 ```
 
 ## Remember

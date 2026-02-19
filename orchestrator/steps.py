@@ -57,10 +57,44 @@ def merge_pr(task: dict, result: dict, task_dir: Path) -> None:
 
 @register_step("reject_with_feedback")
 def reject_with_feedback(task: dict, result: dict, task_dir: Path) -> None:
-    """Reject task and return to incoming with feedback."""
+    """Reject task and return to incoming with feedback.
+
+    Posts the review comment to the PR (so it's visible to both humans and
+    the implementer when they check the PR) and rejects the task via the SDK.
+    Appends explicit rebase instructions to the rejection reason if not already
+    present, so the implementer knows to rebase before retrying.
+    """
     from . import queue_utils
+    from .config import get_base_branch
+
     sdk = queue_utils.get_sdk()
-    reason = result.get("comment", "Rejected by gatekeeper")
+    comment = result.get("comment", "Rejected by gatekeeper")
+
+    # Post the review comment to the PR so it's visible to humans and implementers
+    pr_number = task.get("pr_number")
+    if pr_number and comment:
+        from .pr_utils import add_pr_comment
+        try:
+            add_pr_comment(int(pr_number), comment)
+        except Exception as e:
+            print(f"reject_with_feedback: failed to post PR comment: {e}")
+
+    # Append explicit rebase instructions if not already present in the comment
+    base_branch = get_base_branch()
+    rebase_instructions = (
+        f"\n\n**Before Retrying:**\n"
+        f"Rebase your branch onto the base branch before making changes:\n"
+        f"```bash\n"
+        f"git fetch origin\n"
+        f"git rebase origin/{base_branch}\n"
+        f"```\n"
+        f"Then fix the issues above and push again."
+    )
+    if "git rebase" not in comment:
+        reason = comment + rebase_instructions
+    else:
+        reason = comment
+
     sdk.tasks.reject(task["id"], reason=reason, rejected_by="gatekeeper")
 
 
