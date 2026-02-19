@@ -41,6 +41,7 @@ from .state_utils import (
 from .pool import (
     cleanup_dead_pids,
     count_running_instances,
+    get_active_task_ids,
     load_blueprint_pids,
     register_instance_pid,
     save_blueprint_pids,
@@ -206,6 +207,19 @@ def guard_claim_task(ctx: AgentContext) -> tuple[bool, str]:
 
     if task is None:
         return (False, "no_task_to_claim")
+
+    # Dedup check: skip if another running instance of this blueprint is already
+    # working on the same task. This prevents two pool instances from racing to
+    # claim the same task when only one provisional/incoming task exists.
+    blueprint_name = ctx.agent_config.get("blueprint_name", ctx.agent_name)
+    active_task_ids = get_active_task_ids(blueprint_name)
+    if task["id"] in active_task_ids:
+        debug_log(
+            f"guard_claim_task: task {task['id']} already claimed by another "
+            f"{blueprint_name} instance, releasing"
+        )
+        _requeue_task(task["id"])
+        return (False, f"duplicate_task: {task['id']} already being processed")
 
     ctx.claimed_task = task
     return (True, "")

@@ -2,6 +2,7 @@
 
 Covers:
 - check_and_update_finished_agents: reads result.json for pure-function agents
+- guard_claim_task dedup: prevents two pool instances from working the same task
 """
 
 import json
@@ -13,6 +14,7 @@ import pytest
 from orchestrator.scheduler import (
     AgentContext,
     check_and_update_finished_agents,
+    guard_claim_task,
 )
 from orchestrator.state_utils import AgentState
 
@@ -182,3 +184,118 @@ class TestCheckAndUpdateFinishedAgents:
             check_and_update_finished_agents()
 
         mock_handle.assert_not_called()
+
+
+# =============================================================================
+# guard_claim_task dedup: prevent duplicate instances on the same task
+# =============================================================================
+
+
+def _make_scripts_ctx(agent_name: str = "gatekeeper", blueprint_name: str = "gatekeeper") -> AgentContext:
+    """Build a minimal AgentContext for a scripts-mode agent."""
+    return AgentContext(
+        agent_config={
+            "spawn_mode": "scripts",
+            "claim_from": "provisional",
+            "blueprint_name": blueprint_name,
+        },
+        agent_name=agent_name,
+        role="gatekeeper",
+        interval=60,
+        state=AgentState(),
+        state_path=Path("/tmp/fake_state.json"),
+    )
+
+
+class TestGuardClaimTaskDedup:
+    """guard_claim_task must not allow two pool instances to work the same task."""
+
+    def test_skips_if_task_already_active(self):
+        """If claimed task is already being worked on, release and return False."""
+        task = {"id": "TASK-projfix-2", "queue": "provisional"}
+        ctx = _make_scripts_ctx()
+
+        with (
+            patch("orchestrator.scheduler.claim_and_prepare_task", return_value=task),
+            patch("orchestrator.scheduler.get_active_task_ids", return_value={"TASK-projfix-2"}),
+            patch("orchestrator.scheduler.debug_log"),
+            patch("orchestrator.scheduler._requeue_task") as mock_requeue,
+        ):
+            proceed, reason = guard_claim_task(ctx)
+
+        assert proceed is False
+        assert "duplicate_task" in reason
+        assert "TASK-projfix-2" in reason
+        mock_requeue.assert_called_once_with("TASK-projfix-2")
+        assert ctx.claimed_task is None
+
+    def test_proceeds_if_task_not_active(self):
+        """If claimed task is not already active, allow spawn."""
+        task = {"id": "TASK-new", "queue": "provisional"}
+        ctx = _make_scripts_ctx()
+
+        with (
+            patch("orchestrator.scheduler.claim_and_prepare_task", return_value=task),
+            patch("orchestrator.scheduler.get_active_task_ids", return_value=set()),
+            patch("orchestrator.scheduler.debug_log"),
+            patch("orchestrator.scheduler._requeue_task") as mock_requeue,
+        ):
+            proceed, reason = guard_claim_task(ctx)
+
+        assert proceed is True
+        assert reason == ""
+        mock_requeue.assert_not_called()
+        assert ctx.claimed_task == task
+
+    def test_allows_different_task_from_same_blueprint(self):
+        """Instance-2 claiming TASK-b is fine if instance-1 is on TASK-a."""
+        task = {"id": "TASK-b", "queue": "provisional"}
+        ctx = _make_scripts_ctx()
+
+        with (
+            patch("orchestrator.scheduler.claim_and_prepare_task", return_value=task),
+            patch("orchestrator.scheduler.get_active_task_ids", return_value={"TASK-a"}),
+            patch("orchestrator.scheduler.debug_log"),
+            patch("orchestrator.scheduler._requeue_task") as mock_requeue,
+        ):
+            proceed, reason = guard_claim_task(ctx)
+
+        assert proceed is True
+        mock_requeue.assert_not_called()
+        assert ctx.claimed_task == task
+
+    def test_no_claim_returns_false_without_dedup_check(self):
+        """When no task is available to claim, skip dedup check entirely."""
+        ctx = _make_scripts_ctx()
+
+        with (
+            patch("orchestrator.scheduler.claim_and_prepare_task", return_value=None),
+            patch("orchestrator.scheduler.get_active_task_ids") as mock_active,
+            patch("orchestrator.scheduler.debug_log"),
+        ):
+            proceed, reason = guard_claim_task(ctx)
+
+        assert proceed is False
+        assert reason == "no_task_to_claim"
+        mock_active.assert_not_called()  # dedup not reached if nothing was claimed
+
+    def test_worktree_mode_skips_dedup(self):
+        """Non-scripts agents skip guard_claim_task entirely (including dedup)."""
+        ctx = AgentContext(
+            agent_config={"spawn_mode": "worktree", "blueprint_name": "implementer"},
+            agent_name="implementer",
+            role="implement",
+            interval=60,
+            state=AgentState(),
+            state_path=Path("/tmp/fake_state.json"),
+        )
+
+        with (
+            patch("orchestrator.scheduler.claim_and_prepare_task") as mock_claim,
+            patch("orchestrator.scheduler.get_active_task_ids") as mock_active,
+        ):
+            proceed, reason = guard_claim_task(ctx)
+
+        assert proceed is True
+        mock_claim.assert_not_called()
+        mock_active.assert_not_called()

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Pool model: prevent duplicate instances working the same task** ([TASK-pool-dedup-claim])
+  - Added `get_active_task_ids(blueprint_name)` to `orchestrator/pool.py` — returns the set of task IDs currently held by alive instances of a blueprint.
+  - Added dedup check in `guard_claim_task` in `orchestrator/scheduler.py`: after claiming a task, if another running instance of the same blueprint is already working on it, the claim is released and the guard returns `False` so no second instance is spawned.
+  - Covers the bug where `guard_pool_capacity` sees spare capacity and spawns a second gatekeeper instance on an already-claimed task.
+
 ### Changed
 
 - **Updated `/enqueue` skill for v2.0 API-only architecture** ([TASK-fix-enqueue-skill])

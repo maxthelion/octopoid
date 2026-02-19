@@ -97,6 +97,25 @@ def register_instance_pid(
     save_blueprint_pids(blueprint_name, pids)
 
 
+def get_active_task_ids(blueprint_name: str) -> set[str]:
+    """Return the set of task IDs currently being worked on by running instances.
+
+    Only considers alive PIDs.
+
+    Args:
+        blueprint_name: Name of the blueprint (e.g. "implementer").
+
+    Returns:
+        Set of task_id strings for all running instances.
+    """
+    pids = load_blueprint_pids(blueprint_name)
+    return {
+        info["task_id"]
+        for pid, info in pids.items()
+        if info.get("task_id") and _is_pid_alive(pid)
+    }
+
+
 def cleanup_dead_pids(blueprint_name: str) -> int:
     """Remove dead PIDs from tracking.
 
