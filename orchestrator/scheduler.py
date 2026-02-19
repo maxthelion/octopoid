@@ -78,43 +78,6 @@ def guard_enabled(ctx: AgentContext) -> tuple[bool, str]:
     return (True, "")
 
 
-def guard_not_running(ctx: AgentContext) -> tuple[bool, str]:
-    """Check if agent process is still running; clean up crashed agents.
-
-    Args:
-        ctx: AgentContext containing agent state
-
-    Returns:
-        (should_proceed, reason_if_blocked)
-    """
-    # If agent is marked running and process exists, block
-    if ctx.state.running and ctx.state.pid and is_process_running(ctx.state.pid):
-        return (False, f"still running (PID {ctx.state.pid})")
-
-    # If marked running but process is dead, handle appropriately
-    if ctx.state.running and ctx.state.pid:
-        # Dead PID — mark as crashed
-        ctx.state = mark_finished(ctx.state, 1)
-        save_state(ctx.state, ctx.state_path)
-    elif ctx.state.running:
-        # running=True but no PID (spawn failed before PID was recorded).
-        # Clear the flag without incrementing failure counters.
-        ctx.state = AgentState(
-            running=False,
-            pid=None,
-            last_started=ctx.state.last_started,
-            last_finished=ctx.state.last_finished,
-            last_exit_code=ctx.state.last_exit_code,
-            consecutive_failures=ctx.state.consecutive_failures,
-            total_runs=ctx.state.total_runs,
-            total_successes=ctx.state.total_successes,
-            total_failures=ctx.state.total_failures,
-            extra=ctx.state.extra,
-        )
-        save_state(ctx.state, ctx.state_path)
-
-    return (True, "")
-
 
 def guard_pool_capacity(ctx: AgentContext) -> tuple[bool, str]:
     """Check if blueprint can spawn another instance (pool capacity guard).

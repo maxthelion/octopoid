@@ -3,7 +3,7 @@
 This test suite verifies the scheduler's pipeline architecture introduced in the refactor.
 Tests cover:
 - AgentContext dataclass
-- All 6 guard functions (enabled, not_running, interval, backpressure, pre_check, claim_task)
+- Guard functions (enabled, pool_capacity, interval, backpressure, pre_check, claim_task)
 - evaluate_agent guard chain
 - get_spawn_strategy dispatch
 - run_housekeeping fault isolation
@@ -28,7 +28,6 @@ from orchestrator.scheduler import (
     guard_backpressure,
     guard_enabled,
     guard_interval,
-    guard_not_running,
     guard_pool_capacity,
     guard_pre_check,
     handle_agent_result_via_flow,
@@ -147,83 +146,6 @@ class TestGuardEnabled:
         assert proceed is True
         assert reason == ""
 
-
-class TestGuardNotRunning:
-    """Test guard_not_running function."""
-
-    def test_not_running_idle_returns_true(self, tmp_path):
-        """Test that an idle agent (not running) passes."""
-        state_path = tmp_path / "state.json"
-        state = AgentState(running=False, pid=None)
-
-        ctx = AgentContext(
-            agent_config={},
-            agent_name="test-agent",
-            role="implement",
-            interval=300,
-            state=state,
-            state_path=state_path,
-        )
-
-        proceed, reason = guard_not_running(ctx)
-
-        assert proceed is True
-        assert reason == ""
-
-    @patch("orchestrator.scheduler.is_process_running")
-    def test_not_running_alive_returns_false(self, mock_is_running, tmp_path):
-        """Test that an agent with a running PID is blocked."""
-        mock_is_running.return_value = True
-
-        state_path = tmp_path / "state.json"
-        state = AgentState(running=True, pid=12345)
-
-        ctx = AgentContext(
-            agent_config={},
-            agent_name="test-agent",
-            role="implement",
-            interval=300,
-            state=state,
-            state_path=state_path,
-        )
-
-        proceed, reason = guard_not_running(ctx)
-
-        assert proceed is False
-        assert "still running" in reason
-        assert "12345" in reason
-        mock_is_running.assert_called_once_with(12345)
-
-    @patch("orchestrator.scheduler.is_process_running")
-    @patch("orchestrator.scheduler.save_state")
-    @patch("orchestrator.scheduler.mark_finished")
-    def test_not_running_crashed_returns_true_and_updates_state(
-        self, mock_mark_finished, mock_save_state, mock_is_running, tmp_path
-    ):
-        """Test that an agent marked running but with dead PID is cleaned up."""
-        mock_is_running.return_value = False
-        finished_state = AgentState(running=False, pid=None, last_exit_code=1)
-        mock_mark_finished.return_value = finished_state
-
-        state_path = tmp_path / "state.json"
-        state = AgentState(running=True, pid=99999)
-
-        ctx = AgentContext(
-            agent_config={},
-            agent_name="test-agent",
-            role="implement",
-            interval=300,
-            state=state,
-            state_path=state_path,
-        )
-
-        proceed, reason = guard_not_running(ctx)
-
-        assert proceed is True
-        assert reason == ""
-        mock_is_running.assert_called_once_with(99999)
-        mock_mark_finished.assert_called_once()
-        mock_save_state.assert_called_once()
 
 
 class TestGuardPoolCapacity:
