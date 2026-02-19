@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Mock agent test infrastructure — step 3** ([TASK-mock-3])
+  - `tests/integration/test_scheduler_mock.py`: 7 integration tests exercising full scheduler lifecycles using mock agents against the real local test server. No Claude API calls, no real GitHub API (uses fake `gh`). Tests cover: happy-path full cycle (implementer → provisional → gatekeeper approve → done), agent failure/crash → failed queue, gatekeeper reject → incoming, multiple rejections, edge cases (minimal commits, needs_continuation).
+  - Uses `clean_tasks` fixture to avoid stale-task interference (claim endpoint does not filter by scope, so tasks from previous tests must be deleted before each test).
+
 - **Mock agent test infrastructure — step 1** ([TASK-mock-1])
   - `tests/fixtures/mock-agent.sh`: configurable shell script that simulates agent behavior (implementer and gatekeeper modes) without calling Claude. Controlled via `MOCK_OUTCOME`, `MOCK_DECISION`, `MOCK_COMMENT`, `MOCK_REASON`, `MOCK_COMMITS`, `MOCK_CRASH`, and `MOCK_SLEEP` env vars.
   - `tests/fixtures/bin/gh`: fake `gh` CLI that returns controlled responses for `pr create`, `pr view`, `pr merge`, and `pr list`. Logs all calls to `GH_MOCK_LOG` when set.
