@@ -378,13 +378,10 @@ A terminal UI for monitoring tasks, agents, PRs, and queue state. Reads the serv
 
 ```bash
 # Launch dashboard (reads server from config.yaml)
-python octopoid-dash.py
+python -m packages.dashboard
 
-# Or override the server URL
-python octopoid-dash.py --server http://localhost:8787
-
-# Demo mode (no server needed)
-python octopoid-dash.py --demo
+# Or use the convenience wrapper
+./octopoid-dash
 ```
 
 ### Manage Drafts
