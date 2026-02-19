@@ -10,21 +10,24 @@ from pathlib import Path
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.widgets import Footer, Header, Label, TabbedContent, TabPane
+from textual.widgets import Footer, Header, TabbedContent, TabPane
 
 from .data import DataManager
 from .tabs.agents import AgentsTab
+from .tabs.done import DoneTab
+from .tabs.drafts import DraftsTab
 from .tabs.inbox import InboxTab
 from .tabs.prs import PRsTab
 from .tabs.work import TaskSelected, WorkTab
+from .widgets.task_detail import TaskDetailModal
 
 
 class OctopoidDashboard(App):
     """Octopoid TUI dashboard built with Textual.
 
     Six tabs: Work, PRs, Inbox, Agents, Done, Drafts.
-    Work, PRs, Inbox, and Agents tabs are fully implemented; Done and Drafts
-    show a placeholder message.
+    All tabs are fully implemented. Press Enter on a task to open a detail
+    modal; Escape closes it.
     """
 
     CSS_PATH = Path(__file__).parent / "styles" / "dashboard.tcss"
@@ -60,9 +63,9 @@ class OctopoidDashboard(App):
             with TabPane("Agents [A]", id="agents"):
                 yield AgentsTab(id="agents-tab")
             with TabPane("Done [D]", id="done"):
-                yield Label("Done tab — coming soon", classes="placeholder")
+                yield DoneTab(id="done-tab")
             with TabPane("Drafts [F]", id="drafts"):
-                yield Label("Drafts tab — coming soon", classes="placeholder")
+                yield DraftsTab(id="drafts-tab")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -96,26 +99,19 @@ class OctopoidDashboard(App):
     def _apply_report(self, report: dict) -> None:
         """Apply a freshly fetched report to all tabs (called on UI thread)."""
         self._report = report
-        try:
-            self.query_one("#work-tab", WorkTab).update_data(report)
-        except Exception:
-            pass
-        try:
-            self.query_one("#prs-tab", PRsTab).update_data(report)
-        except Exception:
-            pass
-        try:
-            self.query_one("#inbox-tab", InboxTab).update_data(report)
-        except Exception:
-            pass
-        try:
-            self.query_one("#agents-tab", AgentsTab).update_data(report)
-        except Exception:
-            pass
+        for widget_id, widget_type in [
+            ("#work-tab", WorkTab),
+            ("#prs-tab", PRsTab),
+            ("#inbox-tab", InboxTab),
+            ("#agents-tab", AgentsTab),
+            ("#done-tab", DoneTab),
+            ("#drafts-tab", DraftsTab),
+        ]:
+            try:
+                self.query_one(widget_id, widget_type).update_data(report)
+            except Exception:
+                pass
 
     def on_task_selected(self, event: TaskSelected) -> None:
-        """Handle task selection — show a brief notification for now."""
-        task = event.task
-        task_id = task.get("id", "???")
-        title = task.get("title", "Untitled")
-        self.notify(f"Selected: [{task_id}] {title}", timeout=3)
+        """Open the task detail modal for the selected task."""
+        self.push_screen(TaskDetailModal(event.task, self._report))

@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Textual dashboard — Done and Drafts tabs + task detail modal** ([TASK-dash-3])
+  - `packages/dashboard/tabs/done.py`: Done tab with a DataTable showing completed, failed, and recycled tasks from the last 7 days. Columns: status icon (✓/✗/♻), ID, title, age, turns, commits, merge method, agent. j/k navigation; Enter opens task detail modal.
+  - `packages/dashboard/tabs/drafts.py`: Drafts tab with master-detail layout — file list on the left (30%), full content on the right. Loads `project-management/drafts/*.md`; j/k navigates draft selection.
+  - `packages/dashboard/widgets/task_detail.py`: `TaskDetail` widget and `TaskDetailModal` ModalScreen. Shows full task info: ID, title, role, priority, agent with status badge, turns, commits, PR link, and outcome/merge info for done tasks. Escape closes the modal.
+  - Updated `app.py`: replaced placeholder labels with `DoneTab` and `DraftsTab`; wired both into `_apply_report()`; `on_task_selected` now pushes the `TaskDetailModal` (replaces the notification-only handler). All 6 tabs are now functional.
+  - Extended `styles/dashboard.tcss` with styles for the Done table, Drafts layout (list panel, content panel), and draft list labels.
+
 - **Textual dashboard — PRs, Inbox, and Agents tabs** ([TASK-dash-2])
   - `packages/dashboard/tabs/prs.py`: PRs tab with a DataTable showing open PR number, title, branch, age, and merge state.
   - `packages/dashboard/tabs/inbox.py`: Inbox tab with three columns — Proposals, Messages, and Drafts — each a scrollable ListView.
