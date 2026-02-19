@@ -42,6 +42,7 @@ TabPane {
     padding: 0;
     height: 1fr;
     background: #1a1a2e;
+    height: 1fr;
 }
 
 /* ─── Kanban board ───────────────────────────────────────────────────────── */

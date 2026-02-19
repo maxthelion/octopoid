@@ -1,4 +1,4 @@
 #!/usr/bin/env bash
 # Octopoid dashboard — convenience wrapper for python -m packages.dashboard
 set -euo pipefail
-exec python -m packages.dashboard "$@"
+exec python3 -m packages.dashboard "$@"
