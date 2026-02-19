@@ -8,7 +8,7 @@ import subprocess
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -1468,6 +1468,31 @@ def check_queue_health() -> None:
         debug_log(f"Queue health check failed: {e}")
 
 
+def check_and_requeue_expired_leases() -> None:
+    """Requeue tasks whose lease has expired (orchestrator-side fallback)."""
+    try:
+        sdk = queue_utils.get_sdk()
+        claimed_tasks = sdk.tasks.list(queue="claimed")
+        now = datetime.now(timezone.utc)
+
+        for task in claimed_tasks or []:
+            lease_expires = task.get("lease_expires_at")
+            if not lease_expires:
+                continue
+
+            try:
+                expires_at = datetime.fromisoformat(lease_expires.replace('Z', '+00:00'))
+                if expires_at < now:
+                    task_id = task["id"]
+                    sdk.tasks.update(task_id, queue="incoming", claimed_by=None, lease_expires_at=None)
+                    debug_log(f"Requeued expired lease: {task_id} (expired {lease_expires})")
+                    print(f"[{datetime.now().isoformat()}] Requeued expired lease: {task_id}")
+            except (ValueError, TypeError):
+                pass
+    except Exception as e:
+        debug_log(f"Lease expiry check failed: {e}")
+
+
 def _register_orchestrator() -> None:
     """Register this orchestrator with the API server (idempotent)."""
     try:
@@ -1519,6 +1544,7 @@ def _register_orchestrator() -> None:
 
 HOUSEKEEPING_JOBS = [
     _register_orchestrator,
+    check_and_requeue_expired_leases,
     check_and_update_finished_agents,
     _check_queue_health_throttled,
     process_orchestrator_hooks,
