@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Textual dashboard scaffold — Work tab** ([TASK-dash-1])
+  - New `packages/dashboard/` package replacing the curses-based `octopoid-dash.py` (step 1 of 4).
+  - `python -m packages.dashboard` launches a Textual TUI with 6-tab navigation (Work, PRs, Inbox, Agents, Done, Drafts).
+  - Work tab renders a three-column kanban board: **INCOMING**, **IN PROGRESS**, **IN REVIEW** with real data from `orchestrator.reports.get_project_report()`.
+  - In Progress cards display agent name, status badge (RUN / IDLE / BLOCK / PAUSE / ORPH), and a Unicode turns progress bar.
+  - Keyboard shortcuts: `q` quit, `r` refresh, `w/p/i/a/d/f` switch tabs, up/down navigate tasks, Enter notifies task selection.
+  - Data refreshes automatically every 5 seconds via a background thread worker.
+  - Added `textual>=8.0.0` to `requirements.txt`.
+
 ### Changed
 
 - **Updated `/enqueue` skill for v2.0 API-only architecture** ([TASK-fix-enqueue-skill])
