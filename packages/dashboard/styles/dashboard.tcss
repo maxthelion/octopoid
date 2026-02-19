@@ -191,3 +191,144 @@ ListView > ListItem.-highlighted {
     content-align: center middle;
     height: 100%;
 }
+
+/* ─── Shared section styles ──────────────────────────────────────────────── */
+
+.section-header {
+    background: #0f3460;
+    color: #4fc3f7;
+    text-style: bold;
+    width: 100%;
+    padding: 0 1;
+    margin-bottom: 1;
+}
+
+.dim-text {
+    color: #616161;
+}
+
+/* ─── PRs tab ────────────────────────────────────────────────────────────── */
+
+PRsTab > Vertical {
+    height: 100%;
+}
+
+.pr-table {
+    height: 1fr;
+    background: #1a1a2e;
+}
+
+DataTable > .datatable--header {
+    background: #0f3460;
+    color: #4fc3f7;
+    text-style: bold;
+}
+
+DataTable > .datatable--cursor {
+    background: #1f2f5e;
+    color: #e0e0e0;
+}
+
+/* ─── Inbox tab ──────────────────────────────────────────────────────────── */
+
+.inbox-columns {
+    height: 100%;
+}
+
+.inbox-column {
+    width: 1fr;
+    height: 100%;
+    border-right: solid #2a5298;
+    padding: 0 1;
+}
+
+.inbox-column:last-of-type {
+    border-right: none;
+}
+
+.inbox-list {
+    height: 1fr;
+    background: transparent;
+    border: none;
+}
+
+.inbox-item-label {
+    padding: 0 1;
+}
+
+.message--error {
+    color: #ef5350;
+}
+
+.message--warning {
+    color: #ffa726;
+}
+
+/* ─── Agents tab ─────────────────────────────────────────────────────────── */
+
+.agents-layout {
+    height: 100%;
+}
+
+.agent-list-panel {
+    width: 24;
+    height: 100%;
+    border-right: solid #2a5298;
+}
+
+.agent-listview {
+    height: 1fr;
+    background: transparent;
+    border: none;
+}
+
+.agent-list-item {
+    padding: 0 1;
+    height: 1;
+}
+
+.agent-name {
+    width: 1fr;
+    color: #e0e0e0;
+}
+
+.agent-detail-panel {
+    width: 1fr;
+    height: 100%;
+    padding: 0 1;
+}
+
+.agent-detail-name {
+    color: #4fc3f7;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+.detail-section-header {
+    color: #4fc3f7;
+    text-style: bold;
+    margin-top: 1;
+}
+
+.agent-detail-row {
+    color: #e0e0e0;
+}
+
+.status--running {
+    color: #66bb6a;
+    text-style: bold;
+}
+
+.status--paused {
+    color: #ce93d8;
+    text-style: bold;
+}
+
+.status--blocked {
+    color: #ffa726;
+    text-style: bold;
+}
+
+.status--idle {
+    color: #66bb6a;
+}

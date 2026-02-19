@@ -13,6 +13,9 @@ from textual.binding import Binding
 from textual.widgets import Footer, Header, Label, TabbedContent, TabPane
 
 from .data import DataManager
+from .tabs.agents import AgentsTab
+from .tabs.inbox import InboxTab
+from .tabs.prs import PRsTab
 from .tabs.work import TaskSelected, WorkTab
 
 
@@ -20,8 +23,8 @@ class OctopoidDashboard(App):
     """Octopoid TUI dashboard built with Textual.
 
     Six tabs: Work, PRs, Inbox, Agents, Done, Drafts.
-    Only the Work tab is implemented in this first step; the others show
-    a placeholder message.
+    Work, PRs, Inbox, and Agents tabs are fully implemented; Done and Drafts
+    show a placeholder message.
     """
 
     CSS_PATH = Path(__file__).parent / "styles" / "dashboard.tcss"
@@ -51,11 +54,11 @@ class OctopoidDashboard(App):
             with TabPane("Work [W]", id="work"):
                 yield WorkTab(id="work-tab")
             with TabPane("PRs [P]", id="prs"):
-                yield Label("PRs tab — coming soon", classes="placeholder")
+                yield PRsTab(id="prs-tab")
             with TabPane("Inbox [I]", id="inbox"):
-                yield Label("Inbox tab — coming soon", classes="placeholder")
+                yield InboxTab(id="inbox-tab")
             with TabPane("Agents [A]", id="agents"):
-                yield Label("Agents tab — coming soon", classes="placeholder")
+                yield AgentsTab(id="agents-tab")
             with TabPane("Done [D]", id="done"):
                 yield Label("Done tab — coming soon", classes="placeholder")
             with TabPane("Drafts [F]", id="drafts"):
@@ -94,8 +97,19 @@ class OctopoidDashboard(App):
         """Apply a freshly fetched report to all tabs (called on UI thread)."""
         self._report = report
         try:
-            work_tab = self.query_one("#work-tab", WorkTab)
-            work_tab.update_data(report)
+            self.query_one("#work-tab", WorkTab).update_data(report)
+        except Exception:
+            pass
+        try:
+            self.query_one("#prs-tab", PRsTab).update_data(report)
+        except Exception:
+            pass
+        try:
+            self.query_one("#inbox-tab", InboxTab).update_data(report)
+        except Exception:
+            pass
+        try:
+            self.query_one("#agents-tab", AgentsTab).update_data(report)
         except Exception:
             pass
 
