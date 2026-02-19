@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Project flow system step 2: child_flow dispatch in scheduler** ([TASK-projfix-2])
+  - `handle_agent_result_via_flow()` in `scheduler.py` now checks `task.get("project_id")`: if set and the flow has a `child_flow`, uses `child_flow` transitions instead of top-level transitions
+  - `_handle_done_outcome()` applies the same logic so implementer agents on child tasks run `rebase_on_project_branch, run_tests` instead of `push_branch, create_pr, submit_to_server`
+  - Added unit tests in `orchestrator/tests/test_scheduler_lifecycle.py` covering both paths (child task with `project_id` and normal task without)
+
 - **Project flow system step 1** ([TASK-projfix-1])
   - Added `rebase_on_project_branch` step to `orchestrator/steps.py`: fetches project's shared branch via SDK and rebases worktree, ensuring each child task sees previous children's work
   - Created `.octopoid/flows/project.yaml` with `child_flow` definition for multi-task projects (children skip `create_pr`, commit to shared branch)
