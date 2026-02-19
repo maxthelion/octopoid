@@ -60,7 +60,7 @@ When you have completed your review, write your decision to `result.json` in the
 {
   "status": "success",
   "decision": "reject",
-  "comment": "## Gatekeeper Review\n\n### Automated Checks\n- [ ] Tests fail (N failures)\n\n### Review Summary\n[Your analysis here]\n\n### Decision\n**REJECTED** ✗\n\n**Reason:** [Specific, actionable reason. What needs to be fixed?]"
+  "comment": "## Gatekeeper Review\n\n### Automated Checks\n- [ ] Tests fail (N failures)\n\n### Review Summary\n[Your analysis here]\n\n### Decision\n**REJECTED** ✗\n\n**Reason:** [Specific, actionable reason. What needs to be fixed?]\n\n**Before Retrying:**\nRebase your branch onto the base branch before making changes:\n```bash\ngit fetch origin\ngit rebase origin/<base_branch>\n```\nThen fix the issues above and push again."
 }
 ```
 
@@ -113,6 +113,14 @@ Your `comment` should follow this format:
 **REJECTED** ✗
 
 **Reason:** [Specific, actionable reason. What needs to be fixed?]
+
+**Before Retrying:**
+Rebase your branch onto the base branch before making changes:
+```bash
+git fetch origin
+git rebase origin/<base_branch>
+```
+Then fix the issues above and push again.
 ```
 
 ## Global Instructions

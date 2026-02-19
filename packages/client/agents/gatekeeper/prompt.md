@@ -73,6 +73,14 @@ Post a comment on the PR using `$scripts_dir/post-review` with this format:
 **REJECTED** ✗
 
 **Reason:** [Specific, actionable reason. What needs to be fixed?]
+
+**Before Retrying:**
+Rebase your branch onto the base branch before making changes:
+```bash
+git fetch origin
+git rebase origin/<base_branch>
+```
+Then fix the issues above and push again.
 ```
 
 ## What to Do Next
@@ -89,11 +97,12 @@ Post a comment on the PR using `$scripts_dir/post-review` with this format:
 
 ### If Rejecting:
 1. Post your review comment to the PR using `$scripts_dir/post-review` with **specific, actionable feedback**
-2. Call `../scripts/fail "Rejection reason"` with a clear reason
+2. Call `../scripts/fail "Rejection reason"` with a clear reason (include rebase instructions in the reason)
 3. The task will be moved back to `incoming` for the implementer to retry
 
 **IMPORTANT:**
 - Post rejection feedback as a PR comment AND in the fail reason
+- **Always include explicit rebase instructions** in the rejection comment and fail reason so the implementer knows to rebase before fixing and resubmitting
 - Never delete branches when rejecting
 - Be specific about what needs to be fixed (file paths, line numbers, missing functionality)
 
