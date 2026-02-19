@@ -44,6 +44,7 @@ class WorkColumn(Widget):
         title: str,
         tasks: list,
         show_progress: bool = False,
+        show_review: bool = False,
         agent_map: dict | None = None,
         **kwargs: object,
     ) -> None:
@@ -51,6 +52,7 @@ class WorkColumn(Widget):
         self._col_title = title
         self._tasks = tasks
         self._show_progress = show_progress
+        self._show_review = show_review
         self._agent_map = agent_map or {}
 
     def compose(self) -> ComposeResult:
@@ -73,6 +75,7 @@ class WorkColumn(Widget):
                 yield TaskCard(
                     task,
                     show_progress=self._show_progress,
+                    show_review=self._show_review,
                     agent_status=agent_status,
                 )
 
@@ -129,6 +132,7 @@ class WorkTab(Widget):
             yield WorkColumn(
                 "IN REVIEW",
                 in_review,
+                show_review=True,
                 classes="kanban-column",
                 id="col-in-review",
             )

@@ -124,6 +124,10 @@ ListView > ListItem.-highlighted {
     color: #66bb6a;
 }
 
+.task-review-duration {
+    color: #ffa726;
+}
+
 /* ─── Priority colors ────────────────────────────────────────────────────── */
 
 .priority-p0 {

@@ -196,6 +196,8 @@ def _format_task(task: dict[str, Any]) -> dict[str, Any]:
         "branch": task.get("branch"),
         "created": task.get("created"),
         "agent": task.get("claimed_by"),
+        "claimed_at": task.get("claimed_at"),
+        "submitted_at": task.get("submitted_at"),
         "turns": task.get("turns_used", 0),
         "turn_limit": _turn_limit_for_role(task.get("role")),
         "commits": task.get("commits_count", 0),

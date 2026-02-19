@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Dashboard — show reviewing agent and claim duration on In Review cards** ([TASK-review-card])
+  - In Review task cards now show the implementing agent's name and how long the task has been in review (formatted as `Xh Ym`, `Xd Yh`, etc.).
+  - Added `show_review` mode to `TaskCard` and `WorkColumn` widgets.
+  - Added `submitted_at` and `claimed_at` fields to `_format_task()` in `orchestrator/reports.py`.
+  - Added `.task-review-duration` CSS class (orange `#ffa726`) to `dashboard.tcss`.
+
 - **Textual dashboard — swap-in and launch script update** ([TASK-dash-4])
   - Deleted `octopoid-dash.py` (2 050-line curses implementation) — fully replaced by `packages/dashboard/`.
   - Added `octopoid-dash` shell wrapper script: `./octopoid-dash` is now the recommended entry point and delegates to `python -m packages.dashboard`.
