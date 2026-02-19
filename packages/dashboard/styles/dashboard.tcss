@@ -1,0 +1,375 @@
+/* Octopoid Dashboard — dark theme matching the curses color palette.
+ *
+ * Color mapping from octopoid-dash.py:
+ *   HEADER  → #4fc3f7  (bright cyan-blue)
+ *   RUNNING → #66bb6a  (bright green)
+ *   SUCCESS → #66bb6a  (bright green)
+ *   FAILURE → #ef5350  (bright red)
+ *   WARNING → #ffa726  (bright orange/yellow)
+ *   PAUSED  → #ce93d8  (bright magenta/purple)
+ *   BORDER  → #29b6f6  (bright cyan)
+ *   P0      → #ef5350  (red)
+ *   P1      → #ffa726  (yellow/orange)
+ *   P2      → #e0e0e0  (white)
+ *   DIM     → #616161  (bright black / gray)
+ */
+
+/* ─── App shell ─────────────────────────────────────────────────────────── */
+
+OctopoidDashboard {
+    background: #1a1a2e;
+    color: #e0e0e0;
+}
+
+Header {
+    background: #0f3460;
+    color: #4fc3f7;
+    text-style: bold;
+}
+
+Footer {
+    background: #0f3460;
+    color: #4fc3f7;
+}
+
+/* ─── Tab bar ────────────────────────────────────────────────────────────── */
+
+TabbedContent {
+    height: 1fr;
+}
+
+TabPane {
+    padding: 0;
+    background: #1a1a2e;
+}
+
+/* ─── Kanban board ───────────────────────────────────────────────────────── */
+
+.kanban-board {
+    height: 100%;
+}
+
+.kanban-column {
+    width: 1fr;
+    height: 100%;
+    border-right: solid #2a5298;
+    padding: 0 1;
+}
+
+.kanban-column:last-of-type {
+    border-right: none;
+}
+
+.column-header {
+    background: #0f3460;
+    color: #4fc3f7;
+    text-style: bold;
+    width: 100%;
+    padding: 0 1;
+    margin-bottom: 1;
+}
+
+/* ─── Task list ──────────────────────────────────────────────────────────── */
+
+.task-list {
+    height: 1fr;
+    background: transparent;
+    border: none;
+}
+
+/* ListItem default overrides */
+ListView > ListItem {
+    background: #16213e;
+    border: solid #2a5298;
+    margin: 0 0 1 0;
+    padding: 0;
+}
+
+ListView > ListItem:hover {
+    background: #1f2f5e;
+    border: solid #4fc3f7;
+}
+
+ListView > ListItem.-highlighted {
+    background: #1f2f5e;
+    border: solid #4fc3f7;
+}
+
+/* ─── Task card internals ────────────────────────────────────────────────── */
+
+.task-card-inner {
+    padding: 0 1;
+    height: auto;
+}
+
+.task-card-header {
+    height: 1;
+}
+
+.task-id {
+    color: #616161;
+}
+
+.task-title {
+    color: #e0e0e0;
+    text-style: bold;
+    overflow: hidden;
+}
+
+.task-agent {
+    color: #616161;
+}
+
+.task-progress {
+    color: #66bb6a;
+}
+
+/* ─── Priority colors ────────────────────────────────────────────────────── */
+
+.priority-p0 {
+    color: #ef5350;
+    text-style: bold;
+}
+
+.priority-badge.priority-p0 {
+    color: #ef5350;
+    text-style: bold;
+}
+
+.priority-p1 {
+    color: #ffa726;
+    text-style: bold;
+}
+
+.priority-badge.priority-p1 {
+    color: #ffa726;
+    text-style: bold;
+}
+
+.priority-p2 {
+    color: #e0e0e0;
+}
+
+.priority-badge.priority-p2 {
+    color: #616161;
+}
+
+/* ─── Status badges ──────────────────────────────────────────────────────── */
+
+.status-badge {
+    text-style: bold;
+    padding: 0 1;
+    width: auto;
+}
+
+.badge--running {
+    color: #66bb6a;
+}
+
+.badge--paused {
+    color: #ce93d8;
+}
+
+.badge--blocked {
+    color: #ffa726;
+}
+
+.badge--orphaned {
+    color: #ef5350;
+}
+
+.badge--idle {
+    color: #66bb6a;
+}
+
+/* ─── Placeholder tabs ───────────────────────────────────────────────────── */
+
+.placeholder {
+    padding: 2 4;
+    color: #616161;
+    text-align: center;
+    content-align: center middle;
+    height: 100%;
+}
+
+/* ─── Shared section styles ──────────────────────────────────────────────── */
+
+.section-header {
+    background: #0f3460;
+    color: #4fc3f7;
+    text-style: bold;
+    width: 100%;
+    padding: 0 1;
+    margin-bottom: 1;
+}
+
+.dim-text {
+    color: #616161;
+}
+
+/* ─── PRs tab ────────────────────────────────────────────────────────────── */
+
+PRsTab > Vertical {
+    height: 100%;
+}
+
+.pr-table {
+    height: 1fr;
+    background: #1a1a2e;
+}
+
+DataTable > .datatable--header {
+    background: #0f3460;
+    color: #4fc3f7;
+    text-style: bold;
+}
+
+DataTable > .datatable--cursor {
+    background: #1f2f5e;
+    color: #e0e0e0;
+}
+
+/* ─── Inbox tab ──────────────────────────────────────────────────────────── */
+
+.inbox-columns {
+    height: 100%;
+}
+
+.inbox-column {
+    width: 1fr;
+    height: 100%;
+    border-right: solid #2a5298;
+    padding: 0 1;
+}
+
+.inbox-column:last-of-type {
+    border-right: none;
+}
+
+.inbox-list {
+    height: 1fr;
+    background: transparent;
+    border: none;
+}
+
+.inbox-item-label {
+    padding: 0 1;
+}
+
+.message--error {
+    color: #ef5350;
+}
+
+.message--warning {
+    color: #ffa726;
+}
+
+/* ─── Agents tab ─────────────────────────────────────────────────────────── */
+
+.agents-layout {
+    height: 100%;
+}
+
+.agent-list-panel {
+    width: 24;
+    height: 100%;
+    border-right: solid #2a5298;
+}
+
+.agent-listview {
+    height: 1fr;
+    background: transparent;
+    border: none;
+}
+
+.agent-list-item {
+    padding: 0 1;
+    height: 1;
+}
+
+.agent-name {
+    width: 1fr;
+    color: #e0e0e0;
+}
+
+.agent-detail-panel {
+    width: 1fr;
+    height: 100%;
+    padding: 0 1;
+}
+
+.agent-detail-name {
+    color: #4fc3f7;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+.detail-section-header {
+    color: #4fc3f7;
+    text-style: bold;
+    margin-top: 1;
+}
+
+.agent-detail-row {
+    color: #e0e0e0;
+}
+
+.status--running {
+    color: #66bb6a;
+    text-style: bold;
+}
+
+.status--paused {
+    color: #ce93d8;
+    text-style: bold;
+}
+
+.status--blocked {
+    color: #ffa726;
+    text-style: bold;
+}
+
+.status--idle {
+    color: #66bb6a;
+}
+
+/* ─── Done tab ───────────────────────────────────────────────────────────── */
+
+.done-table {
+    height: 1fr;
+    background: #1a1a2e;
+}
+
+/* ─── Drafts tab ─────────────────────────────────────────────────────────── */
+
+.drafts-layout {
+    height: 100%;
+}
+
+.draft-list-panel {
+    width: 30%;
+    height: 100%;
+    border-right: solid #2a5298;
+}
+
+.draft-listview {
+    height: 1fr;
+    background: transparent;
+    border: none;
+}
+
+.draft-list-label {
+    padding: 0 1;
+    color: #e0e0e0;
+}
+
+.draft-content-panel {
+    width: 1fr;
+    height: 100%;
+    padding: 0 1;
+}
+
+.draft-content-text {
+    color: #e0e0e0;
+    padding: 0 1;
+}

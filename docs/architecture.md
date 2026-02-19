@@ -572,7 +572,7 @@ There are **three distinct rejection counters** on each task:
 
 ### Dashboard Column Mapping
 
-The TUI dashboard (`octopoid-dash.py`) maps task state to columns:
+The TUI dashboard (`packages/dashboard/`) maps task state to columns:
 
 | Column | Task state |
 |--------|----------|

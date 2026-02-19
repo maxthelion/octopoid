@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Textual dashboard — swap-in and launch script update** ([TASK-dash-4])
+  - Deleted `octopoid-dash.py` (2 050-line curses implementation) — fully replaced by `packages/dashboard/`.
+  - Added `octopoid-dash` shell wrapper script: `./octopoid-dash` is now the recommended entry point and delegates to `python -m packages.dashboard`.
+  - Updated `README.md` dashboard section to reference the new entry point.
+  - Updated `docs/architecture.md` dashboard reference from `octopoid-dash.py` to `packages/dashboard/`.
+  - Rewrote `tests/test_dashboard.py` for the Textual package: package importability, `DataManager.fetch_sync()`, `_format_age()`, tab `update_data()` interface, `TaskSelected` message, and wrapper script existence (32 tests, 0 skipped).
+
+- **Textual dashboard — Done and Drafts tabs + task detail modal** ([TASK-dash-3])
+  - `packages/dashboard/tabs/done.py`: Done tab with a DataTable showing completed, failed, and recycled tasks from the last 7 days. Columns: status icon (✓/✗/♻), ID, title, age, turns, commits, merge method, agent. j/k navigation; Enter opens task detail modal.
+  - `packages/dashboard/tabs/drafts.py`: Drafts tab with master-detail layout — file list on the left (30%), full content on the right. Loads `project-management/drafts/*.md`; j/k navigates draft selection.
+  - `packages/dashboard/widgets/task_detail.py`: `TaskDetail` widget and `TaskDetailModal` ModalScreen. Shows full task info: ID, title, role, priority, agent with status badge, turns, commits, PR link, and outcome/merge info for done tasks. Escape closes the modal.
+  - Updated `app.py`: replaced placeholder labels with `DoneTab` and `DraftsTab`; wired both into `_apply_report()`; `on_task_selected` now pushes the `TaskDetailModal` (replaces the notification-only handler). All 6 tabs are now functional.
+  - Extended `styles/dashboard.tcss` with styles for the Done table, Drafts layout (list panel, content panel), and draft list labels.
+
+- **Textual dashboard — PRs, Inbox, and Agents tabs** ([TASK-dash-2])
+  - `packages/dashboard/tabs/prs.py`: PRs tab with a DataTable showing open PR number, title, branch, age, and merge state.
+  - `packages/dashboard/tabs/inbox.py`: Inbox tab with three columns — Proposals, Messages, and Drafts — each a scrollable ListView.
+  - `packages/dashboard/tabs/agents.py`: Agents tab with master-detail layout — agent list on the left (name + status badge), detail pane on the right (role, status, current task, recent work, notes, blueprint metrics).
+  - All three tabs wire into `_apply_report()` in `app.py` and refresh on every data poll.
+  - Extended `styles/dashboard.tcss` with styles for section headers, PRs table, inbox columns, and agents layout.
+
+- **Textual dashboard scaffold — Work tab** ([TASK-dash-1])
+  - New `packages/dashboard/` package replacing the curses-based `octopoid-dash.py` (step 1 of 4).
+  - `python -m packages.dashboard` launches a Textual TUI with 6-tab navigation (Work, PRs, Inbox, Agents, Done, Drafts).
+  - Work tab renders a three-column kanban board: **INCOMING**, **IN PROGRESS**, **IN REVIEW** with real data from `orchestrator.reports.get_project_report()`.
+  - In Progress cards display agent name, status badge (RUN / IDLE / BLOCK / PAUSE / ORPH), and a Unicode turns progress bar.
+  - Keyboard shortcuts: `q` quit, `r` refresh, `w/p/i/a/d/f` switch tabs, up/down navigate tasks, Enter notifies task selection.
+  - Data refreshes automatically every 5 seconds via a background thread worker.
+  - Added `textual>=8.0.0` to `requirements.txt`.
+
 ### Fixed
 
 - **Pool model: prevent duplicate instances working the same task** ([TASK-pool-dedup-claim])
