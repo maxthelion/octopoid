@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Textual dashboard — PRs, Inbox, and Agents tabs** ([TASK-dash-2])
+  - `packages/dashboard/tabs/prs.py`: PRs tab with a DataTable showing open PR number, title, branch, age, and merge state.
+  - `packages/dashboard/tabs/inbox.py`: Inbox tab with three columns — Proposals, Messages, and Drafts — each a scrollable ListView.
+  - `packages/dashboard/tabs/agents.py`: Agents tab with master-detail layout — agent list on the left (name + status badge), detail pane on the right (role, status, current task, recent work, notes, blueprint metrics).
+  - All three tabs wire into `_apply_report()` in `app.py` and refresh on every data poll.
+  - Extended `styles/dashboard.tcss` with styles for section headers, PRs table, inbox columns, and agents layout.
+
 - **Textual dashboard scaffold — Work tab** ([TASK-dash-1])
   - New `packages/dashboard/` package replacing the curses-based `octopoid-dash.py` (step 1 of 4).
   - `python -m packages.dashboard` launches a Textual TUI with 6-tab navigation (Work, PRs, Inbox, Agents, Done, Drafts).
