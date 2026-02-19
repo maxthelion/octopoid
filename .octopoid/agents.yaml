@@ -5,20 +5,15 @@ queue_limits:
   max_incoming: 20
   max_provisional: 10
 
-fleet:
-  - name: implementer-1
+agents:
+  implementer:
     type: implementer
+    max_instances: 2
     interval_seconds: 60
     max_turns: 150
     model: sonnet
 
-  - name: implementer-2
-    type: implementer
-    interval_seconds: 60
-    max_turns: 150
-    model: sonnet
-
-  - name: sanity-check-gatekeeper
+  sanity-check-gatekeeper:
     role: gatekeeper
     spawn_mode: scripts
     claim_from: provisional
@@ -26,10 +21,12 @@ fleet:
     max_turns: 50
     model: sonnet
     agent_dir: .octopoid/agents/gatekeeper
+    max_instances: 1
 
-  - name: github-issue-monitor
+  github-issue-monitor:
     type: custom
     path: .octopoid/agents/github-issue-monitor/
     interval_seconds: 900
     lightweight: true
+    max_instances: 1
     paused: true
