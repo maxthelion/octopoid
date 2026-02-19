@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Task detail modal — Diff, Desc, Result, Logs tabbed content** ([TASK-0c3ec91c])
+  - `TaskDetailModal` now shows a compact metadata header (ID, title, priority, agent, turns/PR) plus four tabbed content views ported from the old curses dashboard.
+  - **Diff** tab: runs `git diff --stat origin/<base_branch>...HEAD` in the task's worktree.
+  - **Desc** tab: reads `.octopoid/tasks/<task_id>.md`, falling back to the `## Task Description` section of `prompt.md`.
+  - **Result** tab: reads and pretty-prints `.octopoid/runtime/tasks/<task_id>/result.json`.
+  - **Logs** tab: reads `stdout.log` or `stderr.log` from the task runtime directory.
+  - Content loads in a background thread (`@work(thread=True)`) so the UI never freezes on slow git diffs or large log files.
+  - Graceful fallbacks for missing files (e.g. "no diff available", "no result yet").
+  - Updated `dashboard.tcss` to set `TabPane { height: 1fr }` so tab content is visible.
+
 - **Dashboard live turn counter for in-progress tasks** ([TASK-eb8c55a5])
   - `_read_live_turns()` in `reports.py` reads `.octopoid/agents/<instance_name>/tool_counter` file sizes to get live turn counts for all running agent instances.
   - `_gather_work()` now overlays live turn counts onto in-progress (claimed) task cards, replacing the always-zero `turns_used` value from the server.
