@@ -18,6 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Project flow system step 3: auto-inherit project branch on task creation** ([TASK-projfix-3])
+  - `create_task()` in `orchestrator/tasks.py` now fetches the project via SDK when `project_id` is given but `branch` is not, using `project["branch"]` automatically
+  - Explicit `branch=` argument always takes precedence over the project branch
+  - Falls back to `get_base_branch()` if project has no branch set or SDK fetch fails
+  - Added `tests/test_create_task_project_branch.py` with 4 tests covering inheritance, override, no-project, and no-branch-on-project cases
+
 - **Project flow system step 2: child_flow dispatch in scheduler** ([TASK-projfix-2])
   - `handle_agent_result_via_flow()` in `scheduler.py` now checks `task.get("project_id")`: if set and the flow has a `child_flow`, uses `child_flow` transitions instead of top-level transitions
   - `_handle_done_outcome()` applies the same logic so implementer agents on child tasks run `rebase_on_project_branch, run_tests` instead of `push_branch, create_pr, submit_to_server`
