@@ -6,7 +6,7 @@ transitions:
     agent: implementer
 
   "claimed -> provisional":
-    runs: [push_branch, run_tests, create_pr, submit_to_server]
+    runs: [push_branch, run_tests, create_pr]
 
   "provisional -> done":
     conditions:

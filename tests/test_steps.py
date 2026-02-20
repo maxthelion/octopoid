@@ -168,24 +168,27 @@ class TestRunTestsStep:
 
 
 class TestSubmitToServerStep:
-    """Tests for the submit_to_server step."""
+    """Tests for the submit_to_server step (deprecated no-op)."""
 
-    def test_submit_to_server_calls_sdk_submit(self, tmp_path, mock_sdk_for_unit_tests):
-        """submit_to_server calls sdk.tasks.submit with task_id."""
+    def test_submit_to_server_is_noop_and_warns(self, tmp_path, mock_sdk_for_unit_tests):
+        """submit_to_server is a deprecated no-op — it should NOT call sdk.tasks.submit."""
+        import warnings
         from orchestrator.steps import submit_to_server
 
         task_dir = tmp_path
-        worktree = task_dir / "worktree"
-        worktree.mkdir()
-        # Create a minimal git repo structure so the git command doesn't crash
-        subprocess.run(["git", "init"], cwd=worktree, capture_output=True)
-
         task = {"id": "TASK-test123"}
-        submit_to_server(task, {}, task_dir)
 
-        mock_sdk_for_unit_tests.tasks.submit.assert_called_once()
-        call_args = mock_sdk_for_unit_tests.tasks.submit.call_args
-        assert call_args[0][0] == "TASK-test123" or call_args[1].get("task_id") == "TASK-test123"
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            submit_to_server(task, {}, task_dir)
+
+        # Should NOT submit — the engine owns transitions now
+        mock_sdk_for_unit_tests.tasks.submit.assert_not_called()
+
+        # Should emit a DeprecationWarning
+        deprecation_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
+        assert deprecation_warnings, "Expected a DeprecationWarning"
+        assert "submit_to_server" in str(deprecation_warnings[0].message)
 
 
 class TestMergePrStep:

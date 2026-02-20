@@ -1272,8 +1272,57 @@ def _read_or_infer_result(task_dir: Path) -> dict:
     return {"outcome": "error", "reason": "No result.json produced"}
 
 
+def _perform_transition(sdk: object, task_id: str, to_state: str) -> None:
+    """Perform the actual API call to transition a task to the given state.
+
+    The mapping is:
+    - "provisional" → sdk.tasks.submit()  (standard submit after implementation)
+    - "done"        → sdk.tasks.accept()  (direct accept, e.g. child tasks)
+    - anything else → sdk.tasks.update(queue=to_state)  (custom queues)
+    """
+    if to_state == "provisional":
+        sdk.tasks.submit(task_id=task_id, commits_count=0, turns_used=0)
+    elif to_state == "done":
+        sdk.tasks.accept(task_id=task_id, accepted_by="flow-engine")
+    else:
+        sdk.tasks.update(task_id, queue=to_state)
+    debug_log(f"Task {task_id}: engine performed transition to {to_state}")
+
+
+def _increment_step_failure_count(task_dir: Path) -> int:
+    """Increment and return the consecutive step-failure count for a task."""
+    counter_file = task_dir / "step_failure_count"
+    count = 0
+    if counter_file.exists():
+        try:
+            count = int(counter_file.read_text().strip())
+        except (ValueError, OSError):
+            count = 0
+    count += 1
+    try:
+        counter_file.write_text(str(count))
+    except OSError:
+        pass
+    return count
+
+
+def _reset_step_failure_count(task_dir: Path) -> None:
+    """Reset the step-failure counter for a task."""
+    counter_file = task_dir / "step_failure_count"
+    try:
+        counter_file.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def _handle_done_outcome(sdk: object, task_id: str, task: dict, result: dict, task_dir: Path) -> None:
-    """Execute flow steps for a successfully-completed task."""
+    """Execute flow steps for a successfully-completed task, then perform the transition.
+
+    The engine owns the transition:
+    1. Look up the flow transition from "claimed"
+    2. Run pre-transition steps (push_branch, run_tests, create_pr, etc.)
+    3. Engine calls the right API method based on the transition's to_state
+    """
     from .flow import load_flow
     from .steps import execute_steps
 
@@ -1291,14 +1340,22 @@ def _handle_done_outcome(sdk: object, task_id: str, task: dict, result: dict, ta
     else:
         transitions = flow.get_transitions_from("claimed")
 
-    if transitions and transitions[0].runs:
-        debug_log(f"Task {task_id}: executing flow steps {transitions[0].runs}")
-        execute_steps(transitions[0].runs, task, result, task_dir)
-        print(f"[{datetime.now().isoformat()}] Task {task_id} submitted via flow steps")
-    else:
-        # Fallback: direct submit if flow has no steps
+    if not transitions:
+        # Fallback: direct submit if no transition defined in flow
         sdk.tasks.submit(task_id=task_id, commits_count=0, turns_used=0)
-        debug_log(f"Task {task_id}: no flow steps, used direct submit")
+        debug_log(f"Task {task_id}: no flow transition from claimed, used direct submit")
+        return
+
+    transition = transitions[0]
+
+    # Execute pre-transition steps (side effects before state change)
+    if transition.runs:
+        debug_log(f"Task {task_id}: executing flow steps {transition.runs}")
+        execute_steps(transition.runs, task, result, task_dir)
+
+    # Engine performs the transition — the step list no longer needs a "move" step
+    _perform_transition(sdk, task_id, transition.to_state)
+    print(f"[{datetime.now().isoformat()}] Task {task_id} transitioned to {transition.to_state} via flow")
 
 
 def _handle_fail_outcome(sdk: object, task_id: str, reason: str, current_queue: str) -> None:
@@ -1325,12 +1382,15 @@ def handle_agent_result(task_id: str, agent_name: str, task_dir: Path) -> None:
     Reads result.json and transitions the task using flow steps:
     1. Read result.json to determine outcome
     2. Fetch current task state from server
-    3. For "done" outcomes in "claimed" queue: execute the flow's claimed→provisional steps
+    3. For "done" outcomes in "claimed" queue: execute the flow's steps, then the engine
+       performs the transition to the target queue (submit, accept, or update)
     4. For "failed"/"error": move to failed queue
     5. For "needs_continuation": move to needs_continuation queue
 
-    The scheduler owns the full push/PR/submit lifecycle — agents just commit
-    code and write result.json.
+    Raises on step failure so the caller (check_and_update_finished_agents) knows
+    NOT to delete the PID — the next tick will retry. After 3 consecutive failures
+    for the same task, the task is moved to failed and the function returns cleanly
+    (so the PID is removed).
 
     Args:
         task_id: Task identifier
@@ -1341,17 +1401,17 @@ def handle_agent_result(task_id: str, agent_name: str, task_dir: Path) -> None:
     outcome = result.get("outcome", "error")
     debug_log(f"Task {task_id} result: {outcome}")
 
+    sdk = queue_utils.get_sdk()
+
+    task = sdk.tasks.get(task_id)
+    if not task:
+        debug_log(f"Task {task_id}: not found on server, skipping result handling")
+        return
+
+    current_queue = task.get("queue", "unknown")
+    debug_log(f"Task {task_id}: current queue = {current_queue}, outcome = {outcome}")
+
     try:
-        sdk = queue_utils.get_sdk()
-
-        task = sdk.tasks.get(task_id)
-        if not task:
-            debug_log(f"Task {task_id}: not found on server, skipping result handling")
-            return
-
-        current_queue = task.get("queue", "unknown")
-        debug_log(f"Task {task_id}: current queue = {current_queue}, outcome = {outcome}")
-
         if outcome in ("done", "submitted"):
             _handle_done_outcome(sdk, task_id, task, result, task_dir)
         elif outcome in ("failed", "error"):
@@ -1360,10 +1420,33 @@ def handle_agent_result(task_id: str, agent_name: str, task_dir: Path) -> None:
             _handle_continuation_outcome(sdk, task_id, agent_name, current_queue)
         else:
             _handle_fail_outcome(sdk, task_id, f"Unknown outcome: {outcome}", current_queue)
-
     except Exception as e:
-        debug_log(f"Error handling result for {task_id}: {e}")
-        # Don't try to fail the task here — let lease monitor handle recovery
+        import traceback
+        failure_count = _increment_step_failure_count(task_dir)
+        print(
+            f"[{datetime.now().isoformat()}] ERROR: step failure for task {task_id} "
+            f"(attempt {failure_count}/3): {e}"
+        )
+        debug_log(f"handle_agent_result: step failure #{failure_count} for {task_id}:\n{traceback.format_exc()}")
+
+        if failure_count >= 3:
+            # Too many consecutive failures — give up and move to failed
+            print(
+                f"[{datetime.now().isoformat()}] Task {task_id}: {failure_count} consecutive "
+                f"step failures, moving to failed"
+            )
+            try:
+                sdk.tasks.update(
+                    task_id,
+                    queue="failed",
+                    execution_notes=f"Step failure after {failure_count} attempts: {e}",
+                )
+            except Exception as update_err:
+                debug_log(f"handle_agent_result: failed to update {task_id} to failed: {update_err}")
+            _reset_step_failure_count(task_dir)
+            return  # Return cleanly so the caller removes the PID
+
+        raise  # Re-raise so caller leaves PID in tracking for retry
 
 
 def process_orchestrator_hooks(provisional_tasks: list | None = None) -> None:
@@ -1473,15 +1556,30 @@ def check_and_update_finished_agents() -> None:
             if task_id:
                 task_dir = get_tasks_dir() / task_id
                 if task_dir.exists():
-                    if claim_from != "incoming":
-                        # Review agents (claim from provisional, etc.) use flow dispatch
-                        handle_agent_result_via_flow(task_id, instance_name, task_dir, expected_queue=claim_from)
-                    else:
-                        # Implementers (claim from incoming) use outcome dispatch
-                        handle_agent_result(task_id, instance_name, task_dir)
-
-            del pids[pid]
-            print(f"[{datetime.now().isoformat()}] Instance {instance_name} (PID {pid}) finished")
+                    try:
+                        if claim_from != "incoming":
+                            # Review agents (claim from provisional, etc.) use flow dispatch
+                            handle_agent_result_via_flow(task_id, instance_name, task_dir, expected_queue=claim_from)
+                        else:
+                            # Implementers (claim from incoming) use outcome dispatch
+                            handle_agent_result(task_id, instance_name, task_dir)
+                        # Only remove PID on success — failed handling keeps PID for retry
+                        del pids[pid]
+                        print(f"[{datetime.now().isoformat()}] Instance {instance_name} (PID {pid}) finished")
+                    except Exception as e:
+                        print(
+                            f"[{datetime.now().isoformat()}] Instance {instance_name} (PID {pid}) "
+                            f"result handling failed, will retry next tick: {e}"
+                        )
+                        # PID intentionally left in tracking for retry
+                else:
+                    # Task dir missing — clean up the PID
+                    del pids[pid]
+                    print(f"[{datetime.now().isoformat()}] Instance {instance_name} (PID {pid}) finished (no task dir)")
+            else:
+                # No task ID — clean up the PID
+                del pids[pid]
+                print(f"[{datetime.now().isoformat()}] Instance {instance_name} (PID {pid}) finished (no task id)")
 
         save_blueprint_pids(blueprint_name, pids)
 

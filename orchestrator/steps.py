@@ -276,24 +276,20 @@ def rebase_on_project_branch(task: dict, result: dict, task_dir: Path) -> None:
 
 @register_step("submit_to_server")
 def submit_to_server(task: dict, result: dict, task_dir: Path) -> None:
-    """Submit the task to provisional via the server API."""
-    from .sdk import get_sdk
+    """DEPRECATED: The flow engine now owns task transitions.
 
-    task_id = task["id"]
-    worktree = task_dir / "worktree"
+    This step used to submit a task to provisional via the server API. The
+    engine now calls sdk.tasks.submit() automatically after steps complete,
+    based on the flow YAML's to_state. This step is a no-op kept only for
+    backwards compatibility with any existing flow YAML that still lists it.
 
-    # Count commits ahead of base
-    commits = 0
-    try:
-        count = subprocess.run(
-            ["git", "rev-list", "--count", "origin/HEAD..HEAD"],
-            cwd=worktree, capture_output=True, text=True, check=False,
-        )
-        if count.returncode == 0:
-            commits = int(count.stdout.strip())
-    except (ValueError, subprocess.SubprocessError):
-        pass
-
-    sdk = get_sdk()
-    sdk.tasks.submit(task_id, commits_count=commits, turns_used=0)
-    print(f"submit_to_server step: task {task_id} submitted (commits={commits})")
+    Remove from flow YAML `runs:` lists — it does nothing.
+    """
+    import warnings
+    warnings.warn(
+        "submit_to_server step is deprecated — the flow engine performs transitions "
+        "automatically after steps complete. Remove it from your flow YAML runs list.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    print(f"submit_to_server step: DEPRECATED no-op for task {task['id']} (engine owns transitions now)")
