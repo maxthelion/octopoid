@@ -69,7 +69,7 @@ When a PR has merge conflicts (mergeStateStatus: CONFLICTING or DIRTY), fix it i
 
 ## Investigating issues
 
-- **Pull before investigating.** Before exploring the state of the codebase or diagnosing an issue, run `git pull --recurse-submodules` to ensure you're looking at the latest code. Stale submodules have caused false conclusions about missing features.
+- **Pull before investigating or writing tasks.** Before exploring the state of the codebase, diagnosing an issue, checking whether something is implemented, or creating a new task, run `git pull --recurse-submodules` to ensure you're looking at the latest code. Agents push to the remote constantly — without pulling first, you will make wrong conclusions about what exists and create duplicate work.
 - Don't assume problems are known. When you encounter a systemic issue (e.g. a silent failure, a missing transition, a broken pipeline), always note it — either write a quick draft via `/draft-idea` or flag it to the user explicitly.
 - Don't hand-wave with "the server didn't get the update" — investigate *why* and document the root cause or at least the symptoms.
 
