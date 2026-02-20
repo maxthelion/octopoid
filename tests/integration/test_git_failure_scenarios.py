@@ -1,6 +1,7 @@
 """Git failure scenario integration tests using mock agents.
 
-Tests error paths: merge conflicts, push failures, rebase instructions.
+Tests error paths: merge conflicts, push failures, rebase instructions,
+and create_pr step recovery.
 Uses the same mock infrastructure as test_scheduler_mock.py.
 
 No Claude API calls. No real GitHub API calls (uses fake gh CLI).
@@ -9,6 +10,7 @@ Run with a local server on port 9787:
     cd submodules/server && npx wrangler dev --port 9787
 """
 
+import json
 import os
 import shutil
 import subprocess
@@ -580,4 +582,127 @@ class TestCombinedScenarios:
         assert final_task["queue"] == "incoming", (
             f"Task must cycle back to incoming after second conflict guard, "
             f"got {final_task['queue']}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# create_pr step failure recovery
+# ---------------------------------------------------------------------------
+
+
+class TestCreatePrFailureRecovery:
+    """Tests for create_pr step failure and recovery scenarios."""
+
+    def test_pr_already_exists_step_recovers(
+        self,
+        scoped_sdk,
+        orchestrator_id: str,
+        tmp_path: Path,
+        clean_tasks,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """create_pr step recovers when a PR already exists for the task branch.
+
+        Simulates the scenario where a PR was created by a previous partial run.
+        The step calls gh pr view first — the stateful fake gh returns the
+        pre-existing PR from the state file — so create_pr returns that PR
+        without calling gh pr create.
+
+        The task must advance to provisional, and pr_url must be set.
+        """
+        task_id = _make_task_id()
+        scoped_sdk.tasks.create(
+            id=task_id,
+            file_path=f".octopoid/tasks/{task_id}.md",
+            title="PR exists recovery test",
+            role="implement",
+            branch="main",
+        )
+        scoped_sdk.tasks.claim(
+            orchestrator_id=orchestrator_id,
+            agent_name="mock-implementer",
+            role_filter="implement",
+        )
+
+        impl_task_dir = tmp_path / "impl-task"
+        impl_worktree = impl_task_dir / "worktree"
+        _init_git_repo_with_remote(impl_worktree)
+
+        result = _run_mock_agent(impl_worktree, impl_task_dir, commits=1, outcome="done")
+        assert result.returncode == 0, f"Mock agent failed: {result.stderr}"
+
+        # Detach HEAD so push_branch step can create the task-specific branch
+        _git(["checkout", "--detach", "HEAD"], cwd=impl_worktree)
+
+        # Pre-create a PR in the stateful fake gh state for the expected branch
+        task_branch = f"agent/{task_id}"
+        pr_url = "https://github.com/mock/repo/pull/42"
+        state_file = tmp_path / "gh_state.json"
+        state_file.write_text(json.dumps({
+            "prs": {
+                task_branch: {"url": pr_url, "number": 42},
+            }
+        }))
+        monkeypatch.setenv("GH_STATE_FILE", str(state_file))
+
+        handle_agent_result(task_id, "mock-implementer", impl_task_dir)
+
+        task = scoped_sdk.tasks.get(task_id)
+        assert task is not None
+        assert task["queue"] == "provisional", (
+            f"Expected provisional after create_pr recovery, got {task['queue']}"
+        )
+        assert task.get("pr_url") == pr_url, (
+            f"Expected pr_url={pr_url!r}, got {task.get('pr_url')!r}"
+        )
+
+    def test_pr_create_fails_unknown_error(
+        self,
+        scoped_sdk,
+        orchestrator_id: str,
+        tmp_path: Path,
+        clean_tasks,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """create_pr step leaves task in claimed when gh pr create fails with unknown error.
+
+        GH_MOCK_CREATE_FAIL=true makes gh pr create exit non-zero with a generic
+        error that does NOT contain "already exists". The create_pr step raises
+        CalledProcessError, which handle_agent_result's outer except handler
+        catches and swallows — leaving the task in claimed for lease recovery.
+        """
+        task_id = _make_task_id()
+        scoped_sdk.tasks.create(
+            id=task_id,
+            file_path=f".octopoid/tasks/{task_id}.md",
+            title="PR create fail test",
+            role="implement",
+            branch="main",
+        )
+        scoped_sdk.tasks.claim(
+            orchestrator_id=orchestrator_id,
+            agent_name="mock-implementer",
+            role_filter="implement",
+        )
+
+        impl_task_dir = tmp_path / "impl-task"
+        impl_worktree = impl_task_dir / "worktree"
+        _init_git_repo_with_remote(impl_worktree)
+
+        result = _run_mock_agent(impl_worktree, impl_task_dir, commits=1, outcome="done")
+        assert result.returncode == 0, f"Mock agent failed: {result.stderr}"
+
+        # Detach HEAD so push_branch step can create the task-specific branch
+        _git(["checkout", "--detach", "HEAD"], cwd=impl_worktree)
+
+        # Force gh pr create to fail with a generic (non-"already exists") error
+        monkeypatch.setenv("GH_MOCK_CREATE_FAIL", "true")
+
+        handle_agent_result(task_id, "mock-implementer", impl_task_dir)
+
+        task = scoped_sdk.tasks.get(task_id)
+        assert task is not None
+        assert task["queue"] == "claimed", (
+            f"Expected task to remain in claimed after create_pr failure, "
+            f"got {task['queue']}"
         )

@@ -9,9 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Stateful fake gh CLI for testing PR sequences** ([TASK-test-4-1])
-  - `tests/fixtures/bin/gh`: Added `GH_STATE_FILE` env var to enable stateful mode. When set, `pr create` writes PRs to a JSON state file (auto-incrementing numbers, errors on duplicate branch), `pr view` looks up PRs by branch name or number, `pr merge` marks PRs as MERGED in state, and `pr list` returns all tracked PRs. When `GH_STATE_FILE` is not set, behaviour is identical to before (backwards compatible).
-  - `tests/test_mock_fixtures.py`: 8 new smoke tests covering the full create→view→merge lifecycle, duplicate create errors, not-found handling, list returning all PRs, merge-fail with stateful mode, incrementing PR numbers, and backwards compatibility without `GH_STATE_FILE`.
+- **Integration tests for create_pr step failure recovery** ([TASK-test-4-2])
+  - `tests/fixtures/bin/gh`: Added `GH_MOCK_CREATE_FAIL` env var — when `"true"`, `gh pr create` exits non-zero with a generic error (not "already exists"), enabling tests for unknown create failures. Added `GH_STATE_FILE` support — a JSON file tracks PRs by branch; `gh pr view <branch> -q ...` looks up the branch in the state file first, and `gh pr create` writes the new PR to the state file. Fixed `GH_MOCK_PR_EXISTS=true` to return `url number` format (previously returned URL only, causing `pr_number` to be parsed as `None`).
+  - `tests/integration/test_git_failure_scenarios.py`: Added `TestCreatePrFailureRecovery` class with two tests: (1) `test_pr_already_exists_step_recovers` — pre-populates `GH_STATE_FILE` with a PR for the task branch, calls `handle_agent_result`, and asserts the task reaches `provisional` with `pr_url` set; (2) `test_pr_create_fails_unknown_error` — sets `GH_MOCK_CREATE_FAIL=true` and asserts the task stays in `claimed` for lease recovery.
 
 - **Project completion detection and PR creation** ([TASK-29d97975])
   - `orchestrator/scheduler.py`: Added `check_project_completion()` housekeeping job (60s interval). When all child tasks in an active project reach the `done` queue, the function creates a PR from the project's shared branch to the base branch via `gh pr create`, then updates the project status to `"review"` via `sdk.projects.update()`. Idempotent: skips projects already in `"review"` or `"completed"` status, and reuses existing PRs if one already exists for the branch. Added to `HOUSEKEEPING_JOB_INTERVALS`, `HOUSEKEEPING_JOBS`, and `run_scheduler()`.
