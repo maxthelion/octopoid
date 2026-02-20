@@ -42,6 +42,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Task detail modal crashes from Textual naming collision**
+  - Renamed `self._task` to `self._task_data` on `TaskDetail` and `TaskDetailModal` to avoid collision with Textual's internal `_task` attribute (`asyncio.Task`), which caused `'_asyncio.Task' object has no attribute 'get'` errors.
+  - Fixed `self.call_from_thread(update)` to `self.app.call_from_thread(update)` since `ModalScreen` doesn't have `call_from_thread` directly.
+
+- **PID cleanup race condition orphaning finished tasks**
+  - `_gather_agents()` in `reports.py` was calling `cleanup_dead_pids()` every 5 seconds (via dashboard polling), removing dead PIDs from `running_pids.json` before `check_and_update_finished_agents` could process results. Tasks got stuck in `claimed` with no process to finish them.
+  - Replaced `cleanup_dead_pids()` + `load_blueprint_pids()` calls in `_gather_agents()` with read-only `count_running_instances()` + `get_active_task_ids()`.
+  - Removed `cleanup_dead_pids` import from `guard_pool_capacity` in scheduler (cleanup now only happens in `check_and_update_finished_agents`).
+
+- **Dashboard `octopoid-dash` script fails with `python: not found`**
+  - Changed `exec python` to `exec python3` in the `octopoid-dash` launch script (macOS doesn't ship `python`).
+
+- **Dashboard blank tabs after agent PRs**
+  - Re-added `TabPane { height: 1fr }` rule to `dashboard.tcss` (Textual 8 needs explicit height or content resolves to 0).
+
+- **Dashboard freeze on task card click**
+  - `WorkTab.on_task_selected` was re-posting `TaskSelected` causing a message loop. Removed the handler; the message bubbles naturally from `WorkColumn` to `App`.
+
+- **Dashboard `_gather_prs` burning GitHub API rate limit**
+  - `_gather_prs()` called `gh pr list` then `gh pr view` per open PR every 5 seconds, exhausting the 5000 GraphQL calls/hour limit. Disabled the call (`"prs": []` in reports).
+
+- **Dashboard error logging**
+  - Added file logging to `.octopoid/logs/dashboard.log` via `__main__.py`.
+  - Added `try/except` with logging around `_fetch_data` and `on_task_selected` in `app.py`.
+
 - **Textual dashboard — kanban task card selection and navigation** ([TASK-ca13d073])
   - `WorkTab` now focuses the first column's `ListView` on mount and whenever the Work tab becomes active (`on_show`), making keyboard navigation available immediately.
   - `WorkColumn.on_key` handles `left`/`right` arrow keys to move focus between kanban columns.
