@@ -13,11 +13,9 @@ from orchestrator.reports import (
     _gather_agents,
     _gather_health,
     _gather_messages,
-    _gather_prs,
     _gather_proposals,
     _gather_work,
     _get_agent_notes,
-    _get_recent_tasks_for_agent,
     _is_recent,
     _load_agent_state,
     _store_staging_url,
@@ -35,7 +33,6 @@ class TestGetProjectReport:
 
     @patch("orchestrator.reports._gather_work")
     @patch("orchestrator.reports._gather_done_tasks")
-    @patch("orchestrator.reports._gather_prs")
     @patch("orchestrator.reports._gather_proposals")
     @patch("orchestrator.reports._gather_messages")
     @patch("orchestrator.reports._gather_agents")
@@ -46,13 +43,11 @@ class TestGetProjectReport:
         mock_agents,
         mock_messages,
         mock_proposals,
-        mock_prs,
         mock_done,
         mock_work,
     ):
         mock_work.return_value = {"incoming": [], "in_progress": [], "in_review": [], "done_today": []}
         mock_done.return_value = []
-        mock_prs.return_value = []
         mock_proposals.return_value = []
         mock_messages.return_value = []
         mock_agents.return_value = []
@@ -71,7 +66,6 @@ class TestGetProjectReport:
 
     @patch("orchestrator.reports._gather_work")
     @patch("orchestrator.reports._gather_done_tasks")
-    @patch("orchestrator.reports._gather_prs")
     @patch("orchestrator.reports._gather_proposals")
     @patch("orchestrator.reports._gather_messages")
     @patch("orchestrator.reports._gather_agents")
@@ -82,13 +76,11 @@ class TestGetProjectReport:
         mock_agents,
         mock_messages,
         mock_proposals,
-        mock_prs,
         mock_done,
         mock_work,
     ):
         mock_work.return_value = {"incoming": [], "in_progress": [], "in_review": [], "done_today": []}
         mock_done.return_value = []
-        mock_prs.return_value = []
         mock_proposals.return_value = []
         mock_messages.return_value = []
         mock_agents.return_value = []
@@ -101,7 +93,6 @@ class TestGetProjectReport:
 
     @patch("orchestrator.reports._gather_work")
     @patch("orchestrator.reports._gather_done_tasks")
-    @patch("orchestrator.reports._gather_prs")
     @patch("orchestrator.reports._gather_proposals")
     @patch("orchestrator.reports._gather_messages")
     @patch("orchestrator.reports._gather_agents")
@@ -112,13 +103,11 @@ class TestGetProjectReport:
         mock_agents,
         mock_messages,
         mock_proposals,
-        mock_prs,
         mock_done,
         mock_work,
     ):
         mock_work.return_value = {"incoming": [], "in_progress": [], "in_review": [], "done_today": []}
         mock_done.return_value = []
-        mock_prs.return_value = []
         mock_proposals.return_value = []
         mock_messages.return_value = []
         mock_agents.return_value = []
@@ -246,63 +235,6 @@ class TestIsRecent:
         }
         cutoff = datetime.now() - timedelta(days=7)
         assert _is_recent(task, cutoff) is True
-
-
-# ---------------------------------------------------------------------------
-# PRs
-# ---------------------------------------------------------------------------
-
-
-class TestGatherPrs:
-    """Tests for _gather_prs()."""
-
-    @patch("subprocess.run")
-    def test_returns_formatted_prs(self, mock_run):
-        mock_run.return_value = MagicMock(
-            returncode=0,
-            stdout=json.dumps([
-                {
-                    "number": 55,
-                    "title": "Fix z-fighting",
-                    "headRefName": "agent/f737dc48",
-                    "author": {"login": "bot"},
-                    "updatedAt": "2026-02-07T10:00:00Z",
-                    "createdAt": "2026-02-07T09:00:00Z",
-                    "url": "https://github.com/owner/repo/pull/55",
-                },
-            ]),
-        )
-
-        prs = _gather_prs()
-
-        assert len(prs) == 1
-        assert prs[0]["number"] == 55
-        assert prs[0]["title"] == "Fix z-fighting"
-        assert prs[0]["branch"] == "agent/f737dc48"
-        assert prs[0]["author"] == "bot"
-        assert prs[0]["url"] == "https://github.com/owner/repo/pull/55"
-
-    @patch("subprocess.run")
-    def test_returns_empty_on_gh_failure(self, mock_run):
-        mock_run.return_value = MagicMock(returncode=1, stdout="")
-
-        prs = _gather_prs()
-        assert prs == []
-
-    @patch("subprocess.run", side_effect=FileNotFoundError("gh not found"))
-    def test_returns_empty_when_gh_not_installed(self, mock_run):
-        prs = _gather_prs()
-        assert prs == []
-
-    @patch("subprocess.run")
-    def test_handles_null_author(self, mock_run):
-        mock_run.return_value = MagicMock(
-            returncode=0,
-            stdout=json.dumps([{"number": 1, "title": "PR", "author": None}]),
-        )
-
-        prs = _gather_prs()
-        assert prs[0]["author"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -597,14 +529,6 @@ class TestGatherHealth:
         assert health["system_paused"] is True
 
 
-class TestRecentTasksForAgent:
-    """Tests for _get_recent_tasks_for_agent()."""
-
-    def test_returns_empty_list(self):
-        tasks = _get_recent_tasks_for_agent("any-agent")
-        assert tasks == []
-
-
 # ---------------------------------------------------------------------------
 # Staging URL extraction
 # ---------------------------------------------------------------------------
@@ -676,58 +600,6 @@ class TestStoreStagingUrl:
     def test_noop_without_db(self):
         # Should not raise - DB mode is always off now
         _store_staging_url(55, "https://preview.pages.dev")
-
-
-class TestGatherPrsStagingUrl:
-    """Tests for staging_url integration in _gather_prs()."""
-
-    @patch("orchestrator.reports._store_staging_url")
-    @patch("orchestrator.reports._extract_staging_url")
-    @patch("subprocess.run")
-    def test_pr_includes_staging_url(self, mock_run, mock_extract, mock_store):
-        mock_run.return_value = MagicMock(
-            returncode=0,
-            stdout=json.dumps([{
-                "number": 55,
-                "title": "Feature PR",
-                "headRefName": "agent/abc123",
-                "author": {"login": "bot"},
-                "updatedAt": "2026-02-07T10:00:00Z",
-                "createdAt": "2026-02-07T09:00:00Z",
-                "url": "https://github.com/owner/repo/pull/55",
-            }]),
-        )
-        mock_extract.return_value = "https://abc123.pages.dev"
-
-        prs = _gather_prs()
-
-        assert len(prs) == 1
-        assert prs[0]["staging_url"] == "https://abc123.pages.dev"
-        mock_store.assert_called_once_with(55, "https://abc123.pages.dev", branch_name="agent/abc123", sdk=None)
-
-    @patch("orchestrator.reports._store_staging_url")
-    @patch("orchestrator.reports._extract_staging_url")
-    @patch("subprocess.run")
-    def test_pr_staging_url_none_when_not_found(self, mock_run, mock_extract, mock_store):
-        mock_run.return_value = MagicMock(
-            returncode=0,
-            stdout=json.dumps([{
-                "number": 55,
-                "title": "Feature PR",
-                "headRefName": "agent/abc123",
-                "author": {"login": "bot"},
-                "updatedAt": "2026-02-07T10:00:00Z",
-                "createdAt": "2026-02-07T09:00:00Z",
-                "url": "https://github.com/owner/repo/pull/55",
-            }]),
-        )
-        mock_extract.return_value = None
-
-        prs = _gather_prs()
-
-        assert len(prs) == 1
-        assert prs[0]["staging_url"] is None
-        mock_store.assert_not_called()
 
 
 class TestFormatTaskStagingUrl:

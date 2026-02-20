@@ -154,11 +154,6 @@ def get_tasks_file_dir() -> Path:
     return d
 
 
-def get_queue_dir() -> Path:
-    """Get the shared queue directory."""
-    return get_shared_dir() / "queue"
-
-
 def get_proposals_dir() -> Path:
     """Get the shared proposals directory."""
     return get_shared_dir() / "proposals"

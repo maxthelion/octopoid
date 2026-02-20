@@ -188,45 +188,43 @@ class TestCreateTask:
 
     def test_create_task_file_based(self, mock_orchestrator_dir, mock_sdk_for_unit_tests):
         """Test creating a task in file-based mode."""
-        with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "runtime" / "shared" / "queue"):
-            from orchestrator.queue_utils import create_task
+        from orchestrator.queue_utils import create_task
 
-            task_path = create_task(
-                title="New feature",
-                role="implement",
-                context="Implement a new feature",
-                acceptance_criteria=["Feature works", "Tests pass"],
-                priority="P1",
-                branch="main",
-                created_by="test",
-            )
+        task_path = create_task(
+            title="New feature",
+            role="implement",
+            context="Implement a new feature",
+            acceptance_criteria=["Feature works", "Tests pass"],
+            priority="P1",
+            branch="main",
+            created_by="test",
+        )
 
-            assert task_path.exists()
-            content = task_path.read_text()
+        assert task_path.exists()
+        content = task_path.read_text()
 
-            assert "New feature" in content
-            assert "ROLE: implement" in content
-            assert "PRIORITY: P1" in content
-            assert "- [ ] Feature works" in content
+        assert "New feature" in content
+        assert "ROLE: implement" in content
+        assert "PRIORITY: P1" in content
+        assert "- [ ] Feature works" in content
 
-            # Verify SDK was called (mocked) to create the task
-            mock_sdk_for_unit_tests.tasks.create.assert_called_once()
+        # Verify SDK was called (mocked) to create the task
+        mock_sdk_for_unit_tests.tasks.create.assert_called_once()
 
     def test_create_task_with_dependencies(self, mock_orchestrator_dir):
         """Test creating a task with dependencies."""
-        with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "runtime" / "shared" / "queue"):
-            from orchestrator.queue_utils import create_task
+        from orchestrator.queue_utils import create_task
 
-            task_path = create_task(
-                title="Dependent task",
-                role="implement",
-                context="This depends on another task",
-                acceptance_criteria=["Done"],
-                blocked_by="task123,task456",
-            )
+        task_path = create_task(
+            title="Dependent task",
+            role="implement",
+            context="This depends on another task",
+            acceptance_criteria=["Done"],
+            blocked_by="task123,task456",
+        )
 
-            content = task_path.read_text()
-            assert "BLOCKED_BY: task123,task456" in content
+        content = task_path.read_text()
+        assert "BLOCKED_BY: task123,task456" in content
 
     def test_create_task_acceptance_criteria_string_multiline(self, mock_orchestrator_dir):
         """Test that a multi-line string for acceptance_criteria preserves lines.
@@ -234,94 +232,90 @@ class TestCreateTask:
         Regression test: previously, passing a string would iterate character-by-character,
         producing one '- [ ] <char>' line per character instead of per line.
         """
-        with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "runtime" / "shared" / "queue"):
-            from orchestrator.queue_utils import create_task
+        from orchestrator.queue_utils import create_task
 
-            criteria_str = "Feature works correctly\nTests are added\nDocs updated"
+        criteria_str = "Feature works correctly\nTests are added\nDocs updated"
 
-            task_path = create_task(
-                title="String criteria task",
-                role="implement",
-                context="Test context",
-                acceptance_criteria=criteria_str,
-            )
+        task_path = create_task(
+            title="String criteria task",
+            role="implement",
+            context="Test context",
+            acceptance_criteria=criteria_str,
+        )
 
-            content = task_path.read_text()
+        content = task_path.read_text()
 
-            # Each line should be a checklist item
-            assert "- [ ] Feature works correctly" in content
-            assert "- [ ] Tests are added" in content
-            assert "- [ ] Docs updated" in content
+        # Each line should be a checklist item
+        assert "- [ ] Feature works correctly" in content
+        assert "- [ ] Tests are added" in content
+        assert "- [ ] Docs updated" in content
 
-            # Must NOT have character-level explosion
-            assert "- [ ] F" not in content or "- [ ] Feature works correctly" in content
-            # Count checklist items — should be exactly 3
-            checklist_lines = [
-                line for line in content.splitlines()
-                if line.strip().startswith("- [ ]")
-            ]
-            assert len(checklist_lines) == 3
+        # Must NOT have character-level explosion
+        assert "- [ ] F" not in content or "- [ ] Feature works correctly" in content
+        # Count checklist items — should be exactly 3
+        checklist_lines = [
+            line for line in content.splitlines()
+            if line.strip().startswith("- [ ]")
+        ]
+        assert len(checklist_lines) == 3
 
     def test_create_task_acceptance_criteria_string_with_existing_prefixes(self, mock_orchestrator_dir):
         """Test that lines already prefixed with '- [ ]' are not double-wrapped."""
-        with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "runtime" / "shared" / "queue"):
-            from orchestrator.queue_utils import create_task
+        from orchestrator.queue_utils import create_task
 
-            criteria_str = "- [ ] Already prefixed\n- [ ] Also prefixed"
+        criteria_str = "- [ ] Already prefixed\n- [ ] Also prefixed"
 
-            task_path = create_task(
-                title="Pre-prefixed criteria",
-                role="implement",
-                context="Test context",
-                acceptance_criteria=criteria_str,
-            )
+        task_path = create_task(
+            title="Pre-prefixed criteria",
+            role="implement",
+            context="Test context",
+            acceptance_criteria=criteria_str,
+        )
 
-            content = task_path.read_text()
+        content = task_path.read_text()
 
-            # Should appear exactly once, not double-wrapped
-            assert "- [ ] Already prefixed" in content
-            assert "- [ ] - [ ] Already prefixed" not in content
-            assert "- [ ] Also prefixed" in content
-            assert "- [ ] - [ ] Also prefixed" not in content
+        # Should appear exactly once, not double-wrapped
+        assert "- [ ] Already prefixed" in content
+        assert "- [ ] - [ ] Already prefixed" not in content
+        assert "- [ ] Also prefixed" in content
+        assert "- [ ] - [ ] Also prefixed" not in content
 
     def test_create_task_acceptance_criteria_list_with_existing_prefixes(self, mock_orchestrator_dir):
         """Test that list items already prefixed with '- [ ]' are not double-wrapped."""
-        with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "runtime" / "shared" / "queue"):
-            from orchestrator.queue_utils import create_task
+        from orchestrator.queue_utils import create_task
 
-            task_path = create_task(
-                title="Pre-prefixed list criteria",
-                role="implement",
-                context="Test context",
-                acceptance_criteria=["- [ ] Already prefixed", "Bare line"],
-            )
+        task_path = create_task(
+            title="Pre-prefixed list criteria",
+            role="implement",
+            context="Test context",
+            acceptance_criteria=["- [ ] Already prefixed", "Bare line"],
+        )
 
-            content = task_path.read_text()
+        content = task_path.read_text()
 
-            assert "- [ ] Already prefixed" in content
-            assert "- [ ] - [ ] Already prefixed" not in content
-            assert "- [ ] Bare line" in content
+        assert "- [ ] Already prefixed" in content
+        assert "- [ ] - [ ] Already prefixed" not in content
+        assert "- [ ] Bare line" in content
 
     def test_create_task_acceptance_criteria_single_string(self, mock_orchestrator_dir):
         """Test that a single-line string works correctly."""
-        with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "runtime" / "shared" / "queue"):
-            from orchestrator.queue_utils import create_task
+        from orchestrator.queue_utils import create_task
 
-            task_path = create_task(
-                title="Single line criteria",
-                role="implement",
-                context="Test context",
-                acceptance_criteria="Feature works",
-            )
+        task_path = create_task(
+            title="Single line criteria",
+            role="implement",
+            context="Test context",
+            acceptance_criteria="Feature works",
+        )
 
-            content = task_path.read_text()
+        content = task_path.read_text()
 
-            assert "- [ ] Feature works" in content
-            checklist_lines = [
-                line for line in content.splitlines()
-                if line.strip().startswith("- [ ]")
-            ]
-            assert len(checklist_lines) == 1
+        assert "- [ ] Feature works" in content
+        checklist_lines = [
+            line for line in content.splitlines()
+            if line.strip().startswith("- [ ]")
+        ]
+        assert len(checklist_lines) == 1
 
 
 class TestFailTask:
@@ -536,67 +530,63 @@ class TestCreateTaskBlockedByNormalization:
 
     def test_create_task_no_blocked_by_no_blocked_by_in_file(self, mock_orchestrator_dir):
         """create_task without blocked_by should not write BLOCKED_BY line to file."""
-        with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "runtime" / "shared" / "queue"):
-            from orchestrator.queue_utils import create_task
+        from orchestrator.queue_utils import create_task
 
-            task_path = create_task(
-                title="No blockers",
-                role="implement",
-                context="test",
-                acceptance_criteria=["test"],
-                blocked_by=None,
-            )
+        task_path = create_task(
+            title="No blockers",
+            role="implement",
+            context="test",
+            acceptance_criteria=["test"],
+            blocked_by=None,
+        )
 
-            content = task_path.read_text()
-            assert "BLOCKED_BY" not in content
+        content = task_path.read_text()
+        assert "BLOCKED_BY" not in content
 
     def test_create_task_string_none_blocked_by_no_blocked_by_in_file(self, mock_orchestrator_dir):
         """create_task with blocked_by='None' should not write BLOCKED_BY line to file."""
-        with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "runtime" / "shared" / "queue"):
-            from orchestrator.queue_utils import create_task
+        from orchestrator.queue_utils import create_task
 
-            task_path = create_task(
-                title="String None blocker",
-                role="implement",
-                context="test",
-                acceptance_criteria=["test"],
-                blocked_by="None",
-            )
+        task_path = create_task(
+            title="String None blocker",
+            role="implement",
+            context="test",
+            acceptance_criteria=["test"],
+            blocked_by="None",
+        )
 
-            content = task_path.read_text()
-            assert "BLOCKED_BY" not in content
+        content = task_path.read_text()
+        assert "BLOCKED_BY" not in content
 
     def test_create_task_empty_string_blocked_by_no_blocked_by_in_file(self, mock_orchestrator_dir):
         """create_task with blocked_by='' should not write BLOCKED_BY line to file."""
-        with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "runtime" / "shared" / "queue"):
-            from orchestrator.queue_utils import create_task
+        from orchestrator.queue_utils import create_task
 
-            task_path = create_task(
-                title="Empty string blocker",
-                role="implement",
-                context="test",
-                acceptance_criteria=["test"],
-                blocked_by="",
-            )
+        task_path = create_task(
+            title="Empty string blocker",
+            role="implement",
+            context="test",
+            acceptance_criteria=["test"],
+            blocked_by="",
+        )
 
-            content = task_path.read_text()
-            assert "BLOCKED_BY" not in content
+        content = task_path.read_text()
+        assert "BLOCKED_BY" not in content
 
     def test_create_task_valid_blocked_by_written_to_file(self, mock_orchestrator_dir):
         """create_task with a real blocked_by writes BLOCKED_BY line to file."""
-        with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "runtime" / "shared" / "queue"):
-            from orchestrator.queue_utils import create_task
+        from orchestrator.queue_utils import create_task
 
-            task_path = create_task(
-                title="Valid blocker",
-                role="implement",
-                context="test",
-                acceptance_criteria=["test"],
-                blocked_by="abc123",
-            )
+        task_path = create_task(
+            title="Valid blocker",
+            role="implement",
+            context="test",
+            acceptance_criteria=["test"],
+            blocked_by="abc123",
+        )
 
-            content = task_path.read_text()
-            assert "BLOCKED_BY: abc123" in content
+        content = task_path.read_text()
+        assert "BLOCKED_BY: abc123" in content
 
 
 class TestCreateTaskChecks:
@@ -604,34 +594,32 @@ class TestCreateTaskChecks:
 
     def test_create_task_with_checks_writes_to_file(self, mock_orchestrator_dir):
         """create_task with checks writes CHECKS line to file."""
-        with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "runtime" / "shared" / "queue"):
-            from orchestrator.queue_utils import create_task
+        from orchestrator.queue_utils import create_task
 
-            task_path = create_task(
-                title="Task with checks",
-                role="orchestrator_impl",
-                context="test context",
-                acceptance_criteria=["test"],
-                checks=["gk-testing-octopoid", "vitest"],
-            )
+        task_path = create_task(
+            title="Task with checks",
+            role="orchestrator_impl",
+            context="test context",
+            acceptance_criteria=["test"],
+            checks=["gk-testing-octopoid", "vitest"],
+        )
 
-            content = task_path.read_text()
-            assert "CHECKS: gk-testing-octopoid,vitest" in content
+        content = task_path.read_text()
+        assert "CHECKS: gk-testing-octopoid,vitest" in content
 
     def test_create_task_without_checks_no_checks_line(self, mock_orchestrator_dir):
         """create_task without checks does not write CHECKS line."""
-        with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "runtime" / "shared" / "queue"):
-            from orchestrator.queue_utils import create_task
+        from orchestrator.queue_utils import create_task
 
-            task_path = create_task(
-                title="Task without checks",
-                role="implement",
-                context="test context",
-                acceptance_criteria=["test"],
-            )
+        task_path = create_task(
+            title="Task without checks",
+            role="implement",
+            context="test context",
+            acceptance_criteria=["test"],
+        )
 
-            content = task_path.read_text()
-            assert "CHECKS:" not in content
+        content = task_path.read_text()
+        assert "CHECKS:" not in content
 
 
 class TestCreateTaskOrchestratorImplDefaultChecks:
@@ -639,49 +627,44 @@ class TestCreateTaskOrchestratorImplDefaultChecks:
 
     def test_orchestrator_impl_no_default_checks(self, mock_orchestrator_dir):
         """Creating orchestrator_impl task without checks gets no default checks."""
-        with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "runtime" / "shared" / "queue"):
-            from orchestrator.queue_utils import create_task
+        from orchestrator.queue_utils import create_task
 
-            task_path = create_task(
-                title="Orchestrator impl task",
-                role="orchestrator_impl",
-                context="test context",
-                acceptance_criteria=["test"],
-            )
+        task_path = create_task(
+            title="Orchestrator impl task",
+            role="orchestrator_impl",
+            context="test context",
+            acceptance_criteria=["test"],
+        )
 
-            content = task_path.read_text()
-            assert "CHECKS:" not in content
+        content = task_path.read_text()
+        assert "CHECKS:" not in content
 
     def test_orchestrator_impl_explicit_checks_override_default(self, mock_orchestrator_dir):
         """Creating orchestrator_impl task with explicit checks uses those instead."""
-        with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "runtime" / "shared" / "queue"):
-            from orchestrator.queue_utils import create_task
+        from orchestrator.queue_utils import create_task
 
-            task_path = create_task(
-                title="Orchestrator impl task with custom checks",
-                role="orchestrator_impl",
-                context="test context",
-                acceptance_criteria=["test"],
-                checks=["custom-check", "another-check"],
-            )
+        task_path = create_task(
+            title="Orchestrator impl task with custom checks",
+            role="orchestrator_impl",
+            context="test context",
+            acceptance_criteria=["test"],
+            checks=["custom-check", "another-check"],
+        )
 
-            content = task_path.read_text()
-            assert "CHECKS: custom-check,another-check" in content
-            assert "gk-testing-octopoid" not in content
+        content = task_path.read_text()
+        assert "CHECKS: custom-check,another-check" in content
+        assert "gk-testing-octopoid" not in content
 
     def test_non_orchestrator_impl_no_default_checks(self, mock_orchestrator_dir):
         """Non-orchestrator_impl tasks do NOT get default checks."""
-        with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "runtime" / "shared" / "queue"):
-            from orchestrator.queue_utils import create_task
+        from orchestrator.queue_utils import create_task
 
-            task_path = create_task(
-                title="Normal implement task",
-                role="implement",
-                context="test context",
-                acceptance_criteria=["test"],
-            )
+        task_path = create_task(
+            title="Normal implement task",
+            role="implement",
+            context="test context",
+            acceptance_criteria=["test"],
+        )
 
-            content = task_path.read_text()
-            assert "CHECKS:" not in content
-
-
+        content = task_path.read_text()
+        assert "CHECKS:" not in content

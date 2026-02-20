@@ -33,8 +33,6 @@ from orchestrator.scheduler import (
     handle_agent_result_via_flow,
     run_housekeeping,
     spawn_implementer,
-    spawn_lightweight,
-    spawn_worktree,
 )
 from orchestrator.state_utils import AgentState
 
@@ -561,10 +559,10 @@ class TestEvaluateAgent:
 
 
 class TestGetSpawnStrategy:
-    """Test get_spawn_strategy dispatch logic."""
+    """Test get_spawn_strategy always returns spawn_implementer."""
 
-    def test_get_spawn_strategy_implementer(self, tmp_path):
-        """Test that implementer role with claimed_task returns spawn_implementer."""
+    def test_get_spawn_strategy_returns_spawn_implementer(self, tmp_path):
+        """get_spawn_strategy always returns spawn_implementer (scripts mode only)."""
         state_path = tmp_path / "state.json"
         ctx = AgentContext(
             agent_config={"spawn_mode": "scripts"},
@@ -580,25 +578,8 @@ class TestGetSpawnStrategy:
 
         assert strategy == spawn_implementer
 
-    def test_get_spawn_strategy_implementer_no_task_fallback(self, tmp_path):
-        """Test that implementer without claimed_task falls back to spawn_worktree."""
-        state_path = tmp_path / "state.json"
-        ctx = AgentContext(
-            agent_config={},
-            agent_name="test-agent",
-            role="implementer",
-            interval=300,
-            state=AgentState(),
-            state_path=state_path,
-            claimed_task=None,
-        )
-
-        strategy = get_spawn_strategy(ctx)
-
-        assert strategy == spawn_worktree
-
-    def test_get_spawn_strategy_lightweight(self, tmp_path):
-        """Test that lightweight config returns spawn_lightweight."""
+    def test_get_spawn_strategy_always_implementer_regardless_of_config(self, tmp_path):
+        """get_spawn_strategy returns spawn_implementer regardless of agent config."""
         state_path = tmp_path / "state.json"
         ctx = AgentContext(
             agent_config={"lightweight": True},
@@ -611,23 +592,7 @@ class TestGetSpawnStrategy:
 
         strategy = get_spawn_strategy(ctx)
 
-        assert strategy == spawn_lightweight
-
-    def test_get_spawn_strategy_worktree(self, tmp_path):
-        """Test that non-lightweight, non-implementer returns spawn_worktree."""
-        state_path = tmp_path / "state.json"
-        ctx = AgentContext(
-            agent_config={"lightweight": False},
-            agent_name="test-agent",
-            role="breakdown",
-            interval=300,
-            state=AgentState(),
-            state_path=state_path,
-        )
-
-        strategy = get_spawn_strategy(ctx)
-
-        assert strategy == spawn_worktree
+        assert strategy == spawn_implementer
 
 
 # =============================================================================

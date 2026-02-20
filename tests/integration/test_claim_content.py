@@ -60,8 +60,9 @@ class TestClaimReturnsContent:
 
         # Patch tasks dir and orchestrator ID (SDK already patched by conftest)
         import orchestrator.queue_utils as qu
+        import orchestrator.tasks as tasks_mod
 
-        with patch.object(qu, "get_tasks_file_dir", return_value=tasks_dir), \
+        with patch.object(tasks_mod, "get_tasks_file_dir", return_value=tasks_dir), \
              patch.object(qu, "get_orchestrator_id", return_value=orchestrator_id):
 
             task = qu.claim_task(role_filter="implement", agent_name="test-agent")
@@ -110,8 +111,9 @@ class TestClaimReturnsContent:
         )
 
         import orchestrator.queue_utils as qu
+        import orchestrator.tasks as tasks_mod
 
-        with patch.object(qu, "get_tasks_file_dir", return_value=tasks_dir), \
+        with patch.object(tasks_mod, "get_tasks_file_dir", return_value=tasks_dir), \
              patch.object(qu, "get_orchestrator_id", return_value=orchestrator_id):
 
             with pytest.raises(FileNotFoundError):
