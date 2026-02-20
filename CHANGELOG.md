@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **Dead code cleanup: deleted files, functions, and spawn strategies** ([TASK-4dbee1a5])
+  - Deleted `orchestrator/roles/base.py`, `orchestrator/roles/__init__.py` (BaseRole ABC, broken imports — never used in production).
+  - Deleted `orchestrator/planning.py`, `orchestrator/approve_orch.py`, `orchestrator/review_orch.py` (v1.x filesystem queue modules replaced by SDK).
+  - Deleted `orchestrator/breakdowns.py` (v1.x breakdown queue, re-exported via queue_utils only).
+  - Deleted `tests/test_recycling.py`, `tests/test_pre_check_recycle.py`, `tests/test_accept_all.py`, `tests/test_planning.py` (tests for deleted modules).
+  - `orchestrator/scheduler.py`: Removed `spawn_agent()`, `read_agent_exit_code()`, `spawn_lightweight()`, `spawn_worktree()`, dead housekeeping comments block. Simplified `get_spawn_strategy()` to always return `spawn_implementer` (scripts mode only).
+  - `orchestrator/tasks.py`: Removed `escalate_to_planning()` (never called).
+  - `orchestrator/config.py`: Removed `get_queue_dir()` (only used by deleted files).
+  - `orchestrator/queue_utils.py`: Removed re-exports of deleted breakdowns functions (`approve_breakdown`, `get_breakdowns_dir`, `is_burned_out`, `list_pending_breakdowns`, `recycle_to_breakdown`) and `get_queue_dir`.
+  - `orchestrator/reports.py`: Removed v1.x DB fallback block from `_gather_done_tasks`, removed `_get_accepted_by()`, `_gather_prs()`, `_get_recent_tasks_for_agent()`.
+  - Updated all affected tests to remove stale patches and test classes for deleted symbols.
+
 ### Fixed
 
 - **Flow engine: orchestrator hook loop no longer bypasses flow conditions (GH-143)** ([TASK-89fda8bb])
