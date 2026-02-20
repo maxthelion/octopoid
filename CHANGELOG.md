@@ -9,29 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Wire check_project_completion through the flow engine** ([TASK-c1ba9caa])
-  - `orchestrator/scheduler.py`: Rewrote `check_project_completion()` to load the project's flow and execute the `children_complete -> provisional` transition via the flow engine instead of hardcoded `gh pr create`. Added `_execute_project_flow_transition()` which loads the flow, evaluates script conditions (e.g. `all_tests_pass`), executes the transition's step list, then updates project status. Added `_evaluate_project_script_condition()` which runs script conditions (detecting pytest/npm/make) and returns pass/fail. Manual conditions block automatic transitions (requiring explicit `approve_project_via_flow()` call).
-  - `orchestrator/steps.py`: Added `create_project_pr` step — creates a PR from the project's shared branch to the base branch via `gh pr create`, then stores `pr_url`/`pr_number` on the project via `sdk.projects.update()`. Added `merge_project_pr` step — merges the project's PR via `gh pr merge`.
-  - `orchestrator/flow.py`: Updated `generate_project_flow()` to use `create_project_pr` and `merge_project_pr` step names instead of the task-centric `create_pr` and `merge_pr`.
-  - `orchestrator/projects.py`: Added `approve_project_via_flow(project_id)` — executes the `provisional -> done` flow transition for human approval. Loads the flow, finds the `provisional -> done` transition, executes its steps (e.g. `merge_project_pr`), and updates the project status.
-  - `orchestrator/queue_utils.py`: Exported `approve_project_via_flow`.
-  - `tests/test_check_project_completion.py`: Rewrote and expanded test suite with 24 unit tests covering flow-based completion detection, script condition pass/fail, manual condition blocking, `_evaluate_project_script_condition`, and `approve_project_via_flow` success/error paths.
-
-- **Integration tests for lease expiry end-to-end recovery** ([TASK-test-2-1])
-  - `tests/integration/test_lease_recovery.py`: Three deterministic integration tests covering the lease monitor (`check_and_requeue_expired_leases`). Tests simulate expiry by patching `lease_expires_at` to a past timestamp (no sleeps). Covers: expired lease → task requeued to `incoming`; expired lease → task is re-claimable after recovery; agent finishes before expiry → lease monitor is a no-op and task stays in its terminal queue.
-
-### Fixed
-
-- **Guard against spawning agents for empty task descriptions** ([TASK-16ffb5c4])
-  - `orchestrator/scheduler.py`: Added `guard_task_description_nonempty` guard to `AGENT_GUARDS`. For scripts-mode agents, after claiming a task, the guard checks that `task["content"]` is non-empty and non-whitespace. If the task file is missing or empty, the task is moved to `failed` with a clear reason (e.g. "Task description is empty — no file at .octopoid/tasks/TASK-xxx.md") and no agent is spawned.
-  - `orchestrator/tests/test_scheduler_lifecycle.py`: 8 unit tests covering all guard paths — no task, non-scripts mode, valid content, whitespace-only content, missing content field, empty file, reason message formatting, and SDK failure resilience.
-
-- **Flow engine now owns task transitions — fixes child task orphaning and step failure orphaning** ([TASK-44d77f1f])
-  - `orchestrator/scheduler.py`: `_handle_done_outcome` now calls `_perform_transition()` after steps succeed, mapping the flow YAML `to_state` to the correct API call (`submit` for `provisional`, `accept` for `done`, `update(queue=...)` for custom queues). The engine performs the transition — steps are pure side effects.
-  - `orchestrator/scheduler.py`: `handle_agent_result` no longer silently swallows step exceptions. Exceptions propagate so `check_and_update_finished_agents` keeps the PID in tracking for retry. After 3 consecutive step failures, the task moves to `failed` and the counter resets.
-  - `orchestrator/scheduler.py`: `check_and_update_finished_agents` only removes a PID from `running_pids.json` when result handling succeeds. On failure the PID is retained so the next scheduler tick retries.
-  - `orchestrator/steps.py`: `submit_to_server` step deprecated to a no-op — the engine performs transitions, no step needs to call the API.
-  - `.octopoid/flows/default.yaml`: Removed `submit_to_server` from `claimed -> provisional` runs. New list: `[push_branch, run_tests, create_pr]`.
+- **Integration tests: orphaned agent recovery via PID tracking** ([TASK-test-2-2])
+  - `tests/integration/test_pid_recovery.py`: Two integration tests covering dead and alive PID scenarios using real `running_pids.json` file I/O (not mocked). `TestDeadPIDRecovery.test_dead_pid_detected_and_task_moved_to_failed` verifies that `check_and_update_finished_agents()` removes dead PIDs from `running_pids.json` and moves the task to the `failed` queue. `TestAlivePIDPreservation.test_alive_pid_not_cleaned_up` verifies that `cleanup_dead_pids()` leaves alive PIDs untouched and does not modify task state on the server.
 
 - **Project completion detection and PR creation** ([TASK-29d97975])
   - `orchestrator/scheduler.py`: Added `check_project_completion()` housekeeping job (60s interval). When all child tasks in an active project reach the `done` queue, the function creates a PR from the project's shared branch to the base branch via `gh pr create`, then updates the project status to `"review"` via `sdk.projects.update()`. Idempotent: skips projects already in `"review"` or `"completed"` status, and reuses existing PRs if one already exists for the branch. Added to `HOUSEKEEPING_JOB_INTERVALS`, `HOUSEKEEPING_JOBS`, and `run_scheduler()`.
