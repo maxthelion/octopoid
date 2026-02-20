@@ -79,6 +79,11 @@ def reject_with_feedback(task: dict, result: dict, task_dir: Path) -> None:
         except Exception as e:
             print(f"reject_with_feedback: failed to post PR comment: {e}")
 
+    # Write rejection feedback to task dir so the implementer can read it on retry
+    if comment and task_dir:
+        rejection_file = task_dir / "last_rejection.md"
+        rejection_file.write_text(comment)
+
     # Append explicit rebase instructions if not already present in the comment
     base_branch = get_base_branch()
     rebase_instructions = (

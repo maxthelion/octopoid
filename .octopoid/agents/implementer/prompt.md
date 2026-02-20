@@ -3,11 +3,11 @@
 **Priority:** $task_priority
 **Branch:** $task_branch
 
+$review_section
+
 ## Task Description
 
 $task_content
-
-$review_section
 
 $continuation_section
 

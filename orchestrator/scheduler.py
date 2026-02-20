@@ -886,6 +886,14 @@ def prepare_task_directory(
     task_dir = get_tasks_dir() / task_id
     task_dir.mkdir(parents=True, exist_ok=True)
 
+    # Read rejection feedback before cleaning (so we can inject it into the prompt)
+    rejection_feedback = ""
+    rejection_file = task_dir / "last_rejection.md"
+    if rejection_file.exists():
+        rejection_feedback = rejection_file.read_text()
+        rejection_file.unlink()
+        debug_log(f"Read and cleared last_rejection.md from {task_dir}")
+
     # Clean stale artifacts from previous runs
     for stale_file in ['result.json', 'notes.md']:
         stale_path = task_dir / stale_file
@@ -1003,6 +1011,19 @@ def prepare_task_directory(
                 lines.append(f"{i}. {name}")
         required_steps = "\n".join(lines)
 
+    # Build review_section from rejection feedback (if any)
+    review_section = ""
+    if rejection_feedback:
+        attempt = task.get("rejection_count", 1)
+        review_section = (
+            f"## IMPORTANT: Previous Review Feedback (Attempt {attempt})\n\n"
+            f"Your previous implementation was rejected by the gatekeeper. "
+            f"You MUST address ALL of the following issues before resubmitting. "
+            f"Do not repeat the same mistakes.\n\n"
+            f"{rejection_feedback}\n\n"
+            f"---\n"
+        )
+
     # Perform template substitution
     from string import Template
     template = Template(prompt_template)
@@ -1016,7 +1037,7 @@ def prepare_task_directory(
         scripts_dir="../scripts",
         global_instructions=global_instructions,
         required_steps=required_steps,
-        review_section="",
+        review_section=review_section,
         continuation_section="",
     )
 
