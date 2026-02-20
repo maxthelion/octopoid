@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Flow engine: orchestrator hook loop no longer bypasses flow conditions (GH-143)** ([TASK-89fda8bb])
+  - `orchestrator/scheduler.py`: Added `_has_flow_blocking_conditions()` helper that checks whether a task's flow has `agent` or `manual` conditions on its current transition.
+  - `orchestrator/scheduler.py`: `process_orchestrator_hooks()` now skips tasks whose flow has blocking conditions. Previously, tasks moved directly to `provisional` via `sdk.tasks.update()` were immediately auto-accepted by the hook loop, bypassing gatekeeper agents and human approval gates entirely.
+  - `tests/test_scheduler_poll.py`: Added `TestHasFlowBlockingConditions` and `TestProcessOrchestratorHooksSkipsBlockedTasks` test classes covering the fix; updated `test_housekeeping_intervals_defined` to include `poll_github_issues`.
+
 ### Added
 
 - **`flow` parameter for `create_task()`** ([TASK-f8148819])
