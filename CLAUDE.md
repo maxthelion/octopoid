@@ -35,6 +35,14 @@ If you skip this, the scheduler may keep running old code from stale `.pyc` file
 - When rejecting a task, **rewrite the entire task file** to reflect only what remains to be done. Do not just prepend a rejection notice above the old description — the agent will follow the original instructions and ignore the notice. Remove or update any code examples, instructions, or acceptance criteria that contradict the rejection feedback. The task file should read as a clear, self-consistent set of instructions with no ambiguity.
 - When approving a task, post a review summary comment on the PR before merging.
 
+## Git hygiene
+
+**Never use `git stash`.** Stashes are invisible — they don't appear in `git log`, `git status`, or branch history. A stashed fix is effectively lost. If you need to set aside work, commit it (even as a WIP commit on a throwaway branch). Commits are discoverable; stashes are not.
+
+**Commit fixes immediately.** Don't leave fixes as uncommitted working-tree edits. Uncommitted changes are fragile — any stash, reset, or branch switch can lose them. A small standalone commit is always safer.
+
+**Use `git reflog` and `git stash list` for forensics.** When changes seem to have disappeared — the history doesn't match expectations, or a fix that was "definitely made" isn't in the log — check reflog and stash list. Reflog tracks every HEAD movement including rebases and resets. Stash list reveals forgotten stashed work.
+
 ## Worktree rules
 
 **Worktrees must always stay on detached HEAD.** Never call `git checkout <branch>` in a worktree. The agent creates a named branch only when it is ready to push (via `create_task_branch`). This prevents git from refusing to checkout a branch that is already checked out in another worktree.
@@ -63,6 +71,10 @@ When a PR has merge conflicts (mergeStateStatus: CONFLICTING or DIRTY), fix it i
 
 - Don't assume problems are known. When you encounter a systemic issue (e.g. a silent failure, a missing transition, a broken pipeline), always note it — either write a quick draft via `/draft-idea` or flag it to the user explicitly.
 - Don't hand-wave with "the server didn't get the update" — investigate *why* and document the root cause or at least the symptoms.
+
+## Plan verification rule
+
+When a plan says something is "already done" or "already disabled", **verify it** before skipping the change. Read the actual file and confirm the current state matches the plan's claim. This rule exists because a plan once incorrectly stated `_gather_prs` was already set to `[]`, causing the implementing agent to skip the fix — the function kept running and burned 22k+ GitHub API calls/hour for days.
 
 ## Testing philosophy: outside-in
 

@@ -34,16 +34,17 @@ def get_project_report(sdk: "OctopoidSDK") -> dict[str, Any]:
 
     Returns:
         Structured dict with keys: work, prs, proposals, messages,
-        agents, health.
+        agents, health, drafts.
     """
     return {
         "work": _gather_work(sdk),
         "done_tasks": _gather_done_tasks(sdk),
-        "prs": _gather_prs(sdk),
+        "prs": [],  # Disabled — _gather_prs was burning 22k+ gh API calls/hour
         "proposals": _gather_proposals(),
         "messages": _gather_messages(),
         "agents": _gather_agents(),
         "health": _gather_health(sdk),
+        "drafts": _gather_drafts(sdk),
         "generated_at": datetime.now().isoformat(),
     }
 
@@ -433,6 +434,29 @@ def _store_staging_url(pr_number: int, staging_url: str, *, branch_name: str | N
             pass
     except Exception:
         pass  # Best-effort — don't break PR gathering
+
+
+# ---------------------------------------------------------------------------
+# Drafts
+# ---------------------------------------------------------------------------
+
+
+def _gather_drafts(sdk: "OctopoidSDK") -> list[dict[str, Any]]:
+    """Gather drafts from the API server."""
+    try:
+        drafts = sdk.drafts.list()
+        return [
+            {
+                "id": d.get("id"),
+                "title": d.get("title"),
+                "status": d.get("status", "idea"),
+                "file_path": d.get("file_path"),
+                "created_at": d.get("created_at"),
+            }
+            for d in drafts
+        ]
+    except Exception:
+        return []
 
 
 # ---------------------------------------------------------------------------
