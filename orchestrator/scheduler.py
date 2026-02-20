@@ -1493,6 +1493,40 @@ def handle_agent_result(task_id: str, agent_name: str, task_dir: Path) -> None:
         raise  # Re-raise so caller leaves PID in tracking for retry
 
 
+def _has_flow_blocking_conditions(task: dict) -> bool:
+    """Check if the task's flow has agent/manual conditions on the current transition.
+
+    Returns True if the flow requires an agent or human to explicitly approve
+    before the task can transition from its current queue. In that case,
+    process_orchestrator_hooks must not auto-accept the task — the gatekeeper
+    (or a human) must run first via handle_agent_result_via_flow.
+
+    Returns False if:
+    - The flow has no conditions (or only script conditions) on the transition
+    - The flow cannot be loaded (fail open so legacy tasks are unaffected)
+    """
+    from .flow import load_flow
+
+    try:
+        flow_name = task.get("flow", "default")
+        current_queue = task.get("queue", "provisional")
+
+        flow = load_flow(flow_name)
+        transitions = flow.get_transitions_from(current_queue)
+
+        if not transitions:
+            return False
+
+        transition = transitions[0]
+        return any(
+            c.type in ("agent", "manual") and not c.skip
+            for c in transition.conditions
+        )
+    except Exception:
+        # If flow can't be loaded, don't block legacy tasks
+        return False
+
+
 def process_orchestrator_hooks(provisional_tasks: list | None = None) -> None:
     """Run orchestrator-side hooks on provisional tasks.
 
@@ -1501,6 +1535,11 @@ def process_orchestrator_hooks(provisional_tasks: list | None = None) -> None:
     2. Run each one via HookManager
     3. Record evidence
     4. If all hooks pass, accept the task
+
+    Skips tasks whose flow has agent/manual conditions on the next transition —
+    those require a gatekeeper or human to explicitly approve via
+    handle_agent_result_via_flow. Auto-accepting such tasks bypasses the flow
+    conditions and is the root cause of GH-143.
 
     Args:
         provisional_tasks: Pre-fetched list of provisional tasks from the poll endpoint.
@@ -1521,6 +1560,16 @@ def process_orchestrator_hooks(provisional_tasks: list | None = None) -> None:
 
         for task in provisional:
             task_id = task.get("id", "")
+
+            # Skip tasks whose flow has blocking conditions (agent/manual approval).
+            # These must go through the gatekeeper / human approval path, not here.
+            if _has_flow_blocking_conditions(task):
+                debug_log(
+                    f"Task {task_id}: flow has agent/manual conditions, "
+                    "skipping orchestrator hook auto-accept"
+                )
+                continue
+
             pending = hook_manager.get_pending_hooks(task, hook_type="orchestrator")
             if not pending:
                 continue
