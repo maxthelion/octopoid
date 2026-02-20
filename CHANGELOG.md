@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`flow` parameter for `create_task()`** ([TASK-f8148819])
+  - `orchestrator/tasks.py`: Added optional `flow: str | None = None` parameter to `create_task()`. Callers can now specify a custom flow (e.g. `"fast"`) at creation time. When `flow` is `None`, the existing default logic applies (`"project"` if `project_id` else `"default"`).
+
 - **GitHub issue poller as a scheduled job** ([TASK-e7edf05f])
   - `orchestrator/jobs.py`: New `@register_job poll_github_issues` function. Fetches open GitHub issues via `gh issue list`, skips already-processed ones (tracked in `.octopoid/runtime/github_issues_state.json`), maps issue labels to priority (P0/P1/P2), creates tasks via `create_task()`, comments on the issue when a task is created, and forwards `server`-labelled issues to `maxthelion/octopoid-server`.
   - `.octopoid/jobs.yaml`: New `poll_github_issues` entry with `interval: 900` and `group: local`.
