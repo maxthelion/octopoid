@@ -357,9 +357,9 @@ def get_default_flow_name() -> str:
 def generate_default_flow() -> str:
     """Generate the default flow YAML content.
 
-    This matches the current behavior:
+    The flow engine owns transitions — steps are pre-transition side effects.
     - incoming → claimed: implementer agent claims
-    - claimed → provisional: runs push_branch, run_tests, create_pr, submit_to_server
+    - claimed → provisional: runs push_branch, run_tests, create_pr
     - provisional → done: gatekeeper agent reviews, runs post_review_comment, merge_pr
     """
     return """name: default
@@ -370,7 +370,7 @@ transitions:
     agent: implementer
 
   "claimed -> provisional":
-    runs: [push_branch, run_tests, create_pr, submit_to_server]
+    runs: [push_branch, run_tests, create_pr]
 
   "provisional -> done":
     conditions:

@@ -146,6 +146,27 @@ def init_orchestrator(
     else:
         print(f"  Exists:  {project_flow_path.relative_to(parent)}")
 
+    # Scaffold gatekeeper agent directory
+    gatekeeper_dir = octopoid_dir / "agents" / "gatekeeper"
+    if not gatekeeper_dir.exists():
+        # Copy from the orchestrator's built-in gatekeeper template
+        builtin_gatekeeper = submodule / ".octopoid" / "agents" / "gatekeeper"
+        if builtin_gatekeeper.exists():
+            shutil.copytree(builtin_gatekeeper, gatekeeper_dir)
+            print(f"  Created: {gatekeeper_dir.relative_to(parent)}/ (from template)")
+        else:
+            # Fallback: create minimal scaffolding
+            gatekeeper_dir.mkdir(parents=True)
+            scripts_dir = gatekeeper_dir / "scripts"
+            scripts_dir.mkdir()
+            (gatekeeper_dir / "agent.yaml").write_text(GATEKEEPER_AGENT_YAML)
+            (gatekeeper_dir / "prompt.md").write_text(GATEKEEPER_PROMPT_STUB)
+            (scripts_dir / "run-tests").write_text(GATEKEEPER_RUN_TESTS_SCRIPT)
+            (scripts_dir / "run-tests").chmod(0o755)
+            print(f"  Created: {gatekeeper_dir.relative_to(parent)}/ (minimal scaffold)")
+    else:
+        print(f"  Exists:  {gatekeeper_dir.relative_to(parent)}/")
+
     print()
 
     # Determine whether to install skills
@@ -265,12 +286,15 @@ agents:
     max_instances: 1   # How many instances can run concurrently
     interval_seconds: 180  # 3 minutes
 
-  # github-issue-monitor:
-  #   type: custom
-  #   path: .octopoid/agents/github-issue-monitor/
-  #   interval_seconds: 900
-  #   max_instances: 1
-  #   lightweight: true
+  sanity-check-gatekeeper:
+    role: gatekeeper
+    spawn_mode: scripts
+    claim_from: provisional
+    interval_seconds: 120
+    max_turns: 100
+    model: sonnet
+    agent_dir: .octopoid/agents/gatekeeper
+    max_instances: 1
 """
 
 EXAMPLE_GLOBAL_INSTRUCTIONS = """# Global Agent Instructions
@@ -281,6 +305,40 @@ These instructions apply to all agents in the orchestrator.
 - Follow existing code patterns and conventions
 - Write tests for new functionality
 - Create focused, atomic commits
+"""
+
+GATEKEEPER_AGENT_YAML = """role: gatekeeper
+model: sonnet
+max_turns: 100
+interval_seconds: 120
+spawn_mode: scripts
+lightweight: false
+allowed_tools:
+  - Read
+  - Glob
+  - Grep
+  - Bash
+"""
+
+GATEKEEPER_PROMPT_STUB = """# Gatekeeper Review
+
+Review the task's implementation against its acceptance criteria.
+Run the scripts in `../scripts/` for automated checks, then review the diff.
+
+Write your decision to `result.json`:
+- `{"status": "success", "decision": "approve", "comment": "..."}` to approve
+- `{"status": "success", "decision": "reject", "comment": "..."}` to reject
+
+When rejecting, you MUST also rewrite the task file with concrete code examples
+showing the correct implementation. The implementing agent reads only the task file,
+not PR comments. Show the target code — never name forbidden patterns.
+"""
+
+GATEKEEPER_RUN_TESTS_SCRIPT = """#!/bin/bash
+# Run the project test suite. Customize this for your project.
+# Exit 0 if tests pass, 1 if they fail.
+echo "No test runner configured. Edit .octopoid/agents/gatekeeper/scripts/run-tests"
+exit 0
 """
 
 GITIGNORE_ADDITIONS = """
