@@ -277,8 +277,9 @@ def guard_task_description_nonempty(ctx: AgentContext) -> tuple[bool, str]:
 
     try:
         sdk = queue_utils.get_sdk()
-        sdk.tasks.update(task_id, queue="failed", claimed_by=None)
-        debug_log(f"Moved task {task_id} to failed: {reason}")
+        fail_target = _get_fail_target_from_flow(ctx.claimed_task, "claimed")
+        sdk.tasks.update(task_id, queue=fail_target, claimed_by=None)
+        debug_log(f"Moved task {task_id} to {fail_target}: {reason}")
     except Exception as e:
         debug_log(f"guard_task_description_nonempty: failed to update task {task_id}: {e}")
 
@@ -1160,6 +1161,10 @@ def handle_agent_result_via_flow(task_id: str, agent_name: str, task_dir: Path, 
         debug_log(traceback.format_exc())
         try:
             sdk = queue_utils.get_sdk()
+            # Intentionally hardcoded: this is the emergency fallback that fires when
+            # the flow system itself crashes (load_flow, execute_steps, etc.).  We
+            # cannot consult the flow to find the target because the flow machinery is
+            # what just failed.  "failed" is the only safe terminal state here.
             sdk.tasks.update(task_id, queue='failed', execution_notes=f'Flow dispatch error: {e}')
         except Exception:
             debug_log(f"Failed to move {task_id} to failed queue")
@@ -1211,6 +1216,61 @@ def _perform_transition(sdk: object, task_id: str, to_state: str) -> None:
     else:
         sdk.tasks.update(task_id, queue=to_state)
     debug_log(f"Task {task_id}: engine performed transition to {to_state}")
+
+
+def _get_fail_target_from_flow(task: dict, current_queue: str) -> str:
+    """Consult the flow definition for the target queue when a task fails.
+
+    Loads the task's flow and checks for on_fail targets on conditions in the
+    transition from current_queue. Returns the first on_fail state found, or
+    "failed" if the flow defines no failure path for this transition.
+
+    Falls back to "failed" gracefully if the flow cannot be loaded (e.g. in
+    test environments or when the flow file is missing).
+
+    Args:
+        task: Task dict containing at least a "flow" key (defaults to "default")
+        current_queue: The queue the task is currently in
+
+    Returns:
+        Target queue name for failed outcomes (e.g. "failed", "incoming")
+    """
+    from .flow import load_flow
+
+    try:
+        flow_name = task.get("flow", "default")
+        flow = load_flow(flow_name)
+        transitions = flow.get_transitions_from(current_queue)
+        if transitions:
+            for condition in transitions[0].conditions:
+                if condition.on_fail:
+                    return condition.on_fail
+    except Exception:
+        pass  # Fall through to hardcoded default
+
+    return "failed"
+
+
+def _get_continuation_target_from_flow(task: dict, current_queue: str) -> str:
+    """Consult the flow definition for the target queue when a task needs continuation.
+
+    Currently the flow YAML has no dedicated continuation concept, so this
+    always returns "needs_continuation". The function exists so the scheduler
+    consults the flow for continuation routing — when flows gain a continuation
+    path, this function will pick it up automatically.
+
+    Falls back to "needs_continuation" gracefully if the flow cannot be loaded.
+
+    Args:
+        task: Task dict containing at least a "flow" key (defaults to "default")
+        current_queue: The queue the task is currently in
+
+    Returns:
+        Target queue name for continuation outcomes (e.g. "needs_continuation")
+    """
+    # No continuation concept in flows yet — always use the standard queue.
+    # When flows gain on_continuation support, look it up here.
+    return "needs_continuation"
 
 
 def _increment_step_failure_count(task_dir: Path) -> int:
@@ -1282,20 +1342,33 @@ def _handle_done_outcome(sdk: object, task_id: str, task: dict, result: dict, ta
     print(f"[{datetime.now().isoformat()}] Task {task_id} transitioned to {transition.to_state} via flow")
 
 
-def _handle_fail_outcome(sdk: object, task_id: str, reason: str, current_queue: str) -> None:
-    """Move a failed task to the failed queue."""
+def _handle_fail_outcome(sdk: object, task_id: str, task: dict, reason: str, current_queue: str) -> None:
+    """Move a failed task to the appropriate queue, consulting the flow for the target.
+
+    Loads the task's flow to find any on_fail target defined on conditions for
+    the current transition. Falls back to "failed" if the flow defines no
+    failure path.
+    """
     if current_queue == "claimed":
-        sdk.tasks.update(task_id, queue="failed")
-        debug_log(f"Task {task_id}: failed (claimed → failed): {reason}")
+        fail_target = _get_fail_target_from_flow(task, current_queue)
+        sdk.tasks.update(task_id, queue=fail_target)
+        debug_log(f"Task {task_id}: failed (claimed → {fail_target}): {reason}")
     else:
         debug_log(f"Task {task_id}: outcome=failed but queue={current_queue}, skipping")
 
 
-def _handle_continuation_outcome(sdk: object, task_id: str, agent_name: str, current_queue: str) -> None:
-    """Move a task to needs_continuation queue."""
+def _handle_continuation_outcome(sdk: object, task_id: str, task: dict, agent_name: str, current_queue: str) -> None:
+    """Move a task to the continuation queue, consulting the flow for the target.
+
+    Loads the task's flow to find any continuation routing defined there.
+    Currently flows have no dedicated continuation concept, so this always
+    falls back to "needs_continuation". When flows gain on_continuation
+    support, _get_continuation_target_from_flow will return that target.
+    """
     if current_queue == "claimed":
-        sdk.tasks.update(task_id, queue="needs_continuation")
-        debug_log(f"Task {task_id}: needs continuation by {agent_name}")
+        continuation_target = _get_continuation_target_from_flow(task, current_queue)
+        sdk.tasks.update(task_id, queue=continuation_target)
+        debug_log(f"Task {task_id}: needs continuation by {agent_name} (→ {continuation_target})")
     else:
         debug_log(f"Task {task_id}: outcome=needs_continuation but queue={current_queue}, skipping")
 
@@ -1339,11 +1412,11 @@ def handle_agent_result(task_id: str, agent_name: str, task_dir: Path) -> None:
         if outcome in ("done", "submitted"):
             _handle_done_outcome(sdk, task_id, task, result, task_dir)
         elif outcome in ("failed", "error"):
-            _handle_fail_outcome(sdk, task_id, result.get("reason", "Agent reported failure"), current_queue)
+            _handle_fail_outcome(sdk, task_id, task, result.get("reason", "Agent reported failure"), current_queue)
         elif outcome == "needs_continuation":
-            _handle_continuation_outcome(sdk, task_id, agent_name, current_queue)
+            _handle_continuation_outcome(sdk, task_id, task, agent_name, current_queue)
         else:
-            _handle_fail_outcome(sdk, task_id, f"Unknown outcome: {outcome}", current_queue)
+            _handle_fail_outcome(sdk, task_id, task, f"Unknown outcome: {outcome}", current_queue)
     except Exception as e:
         import traceback
         failure_count = _increment_step_failure_count(task_dir)
