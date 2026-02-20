@@ -96,11 +96,58 @@ Conditions are evaluated in declaration order. Put cheap checks first:
 
 If a programmatic condition fails, agent conditions never run (saves tokens).
 
+## Project Flows
+
+Projects use a separate flow (`project.yaml`) that governs the project-level state machine,
+alongside a `child_flow` that governs individual child tasks.
+
+```yaml
+name: project
+description: Multi-task project with shared branch
+
+child_flow:
+  transitions:
+    "incoming -> claimed":
+      agent: implementer
+    "claimed -> done":
+      runs: [rebase_on_project_branch, run_tests]
+      # No create_pr — children commit to the shared branch
+
+transitions:
+  "children_complete -> provisional":
+    runs: [create_project_pr]
+    conditions:
+      - name: all_tests_pass
+        type: script
+        script: run-tests
+
+  "provisional -> done":
+    conditions:
+      - name: human_approval
+        type: manual
+    runs: [merge_project_pr]
+```
+
+**How project flows work:**
+
+1. **`check_project_completion()` (60s tick)**: When all child tasks reach `done`, the scheduler loads
+   the project's flow, finds the `children_complete -> provisional` transition, evaluates any script
+   conditions (e.g. `all_tests_pass` runs tests in the parent project directory), executes the step
+   list (`create_project_pr`), then sets project status to `provisional`.
+
+2. **`approve_project_via_flow(project_id)`**: Called when a human approves a project in `provisional`
+   status. Finds the `provisional -> done` transition, runs its steps (`merge_project_pr`), and sets
+   project status to `done`. Manual conditions require explicit approval through this function.
+
+**Project-specific steps** (registered in `steps.py`):
+- `create_project_pr` — creates a PR from the project's shared branch to the base branch; stores
+  `pr_url`/`pr_number` on the project via `sdk.projects.update()`
+- `merge_project_pr` — merges the project's PR via `gh pr merge`
+
 ## Not Yet Implemented
 
 These features are designed but not yet built (tracked in separate drafts):
 
-- **Project flows** — `child_flow` for multi-task projects where children skip PR creation (Draft 42)
 - **Task-level flow overrides** — tasks overriding specific transitions via `flow_overrides` (Draft 43)
 - **Condition result persistence** — storing which conditions already passed on the task (Draft 43)
 - **Hook manager removal** — the hook manager still runs alongside flows as a legacy path (Draft 41)

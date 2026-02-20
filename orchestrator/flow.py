@@ -408,7 +408,7 @@ child_flow:
 # Flow for the project itself, after all children complete.
 transitions:
   "children_complete -> provisional":
-    runs: [create_pr]
+    runs: [create_project_pr]
     conditions:
       - name: all_tests_pass
         type: script
@@ -418,7 +418,7 @@ transitions:
     conditions:
       - name: human_approval
         type: manual
-    runs: [merge_pr]
+    runs: [merge_project_pr]
 """
 
 

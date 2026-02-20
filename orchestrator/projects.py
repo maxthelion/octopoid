@@ -114,6 +114,63 @@ def get_project_status(project_id: str) -> dict[str, Any] | None:
     }
 
 
+def approve_project_via_flow(project_id: str) -> dict[str, Any]:
+    """Execute the 'provisional -> done' flow transition for a project (human approval).
+
+    This is called when a human approves a project that is in 'provisional' status
+    (the review state after all child tasks complete and the PR is created).
+
+    The flow engine:
+    1. Loads the project's flow definition
+    2. Finds the 'provisional -> done' transition
+    3. Executes its steps (e.g. merge_project_pr)
+    4. Updates the project status to the transition's target state ('done')
+
+    Returns:
+        dict with 'success': True/False and optional 'error' or 'new_status' keys.
+    """
+    from .config import find_parent_project
+    from .flow import load_flow
+    from .steps import execute_steps
+
+    project = get_project(project_id)
+    if not project:
+        return {"success": False, "error": f"Project {project_id} not found"}
+
+    flow_name = project.get("flow", "project")
+    try:
+        flow = load_flow(flow_name)
+    except FileNotFoundError:
+        if flow_name != "project":
+            try:
+                flow = load_flow("project")
+            except FileNotFoundError:
+                return {"success": False, "error": f"Flow '{flow_name}' and 'project' not found"}
+        else:
+            return {"success": False, "error": "Flow 'project' not found"}
+
+    transitions = flow.get_transitions_from("provisional")
+    if not transitions:
+        return {
+            "success": False,
+            "error": f"No transition from 'provisional' in flow '{flow_name}'",
+        }
+
+    transition = transitions[0]
+    parent_project_dir = find_parent_project()
+
+    try:
+        if transition.runs:
+            execute_steps(transition.runs, project, {}, parent_project_dir)
+    except Exception as e:
+        return {"success": False, "error": f"Step execution failed: {e}"}
+
+    sdk = get_sdk()
+    sdk.projects.update(project_id, status=transition.to_state)
+
+    return {"success": True, "new_status": transition.to_state}
+
+
 def send_to_breakdown(
     title: str,
     description: str,

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Wire check_project_completion through the flow engine** ([TASK-c1ba9caa])
+  - `orchestrator/scheduler.py`: Rewrote `check_project_completion()` to load the project's flow and execute the `children_complete -> provisional` transition via the flow engine instead of hardcoded `gh pr create`. Added `_execute_project_flow_transition()` which loads the flow, evaluates script conditions (e.g. `all_tests_pass`), executes the transition's step list, then updates project status. Added `_evaluate_project_script_condition()` which runs script conditions (detecting pytest/npm/make) and returns pass/fail. Manual conditions block automatic transitions (requiring explicit `approve_project_via_flow()` call).
+  - `orchestrator/steps.py`: Added `create_project_pr` step — creates a PR from the project's shared branch to the base branch via `gh pr create`, then stores `pr_url`/`pr_number` on the project via `sdk.projects.update()`. Added `merge_project_pr` step — merges the project's PR via `gh pr merge`.
+  - `orchestrator/flow.py`: Updated `generate_project_flow()` to use `create_project_pr` and `merge_project_pr` step names instead of the task-centric `create_pr` and `merge_pr`.
+  - `orchestrator/projects.py`: Added `approve_project_via_flow(project_id)` — executes the `provisional -> done` flow transition for human approval. Loads the flow, finds the `provisional -> done` transition, executes its steps (e.g. `merge_project_pr`), and updates the project status.
+  - `orchestrator/queue_utils.py`: Exported `approve_project_via_flow`.
+  - `tests/test_check_project_completion.py`: Rewrote and expanded test suite with 24 unit tests covering flow-based completion detection, script condition pass/fail, manual condition blocking, `_evaluate_project_script_condition`, and `approve_project_via_flow` success/error paths.
+
 ### Fixed
 
 - **Guard against spawning agents for empty task descriptions** ([TASK-16ffb5c4])

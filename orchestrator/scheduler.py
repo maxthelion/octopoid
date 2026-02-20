@@ -1760,15 +1760,161 @@ def check_queue_health() -> None:
         debug_log(f"Queue health check failed: {e}")
 
 
+def _evaluate_project_script_condition(condition: object, project_dir: Path, project_id: str) -> bool:
+    """Evaluate a script-type condition for a project.
+
+    Runs the condition's script in the project directory.
+    Returns True if the script exits with code 0 (passes), False otherwise.
+
+    The special script name 'run-tests' is mapped to auto-detected test runner
+    commands (pytest, npm test, make test) based on project files present.
+    """
+    script_name = getattr(condition, "script", None)
+    if not script_name:
+        debug_log(f"Project {project_id}: condition '{condition.name}' has no script, passing by default")
+        return True
+
+    if script_name == "run-tests":
+        # Auto-detect test runner based on project files
+        test_cmd: list[str] | None = None
+        if (project_dir / "pytest.ini").exists() or (project_dir / "pyproject.toml").exists():
+            test_cmd = ["python", "-m", "pytest", "--tb=short", "-q"]
+        elif (project_dir / "package.json").exists():
+            test_cmd = ["npm", "test"]
+        elif (project_dir / "Makefile").exists():
+            test_cmd = ["make", "test"]
+
+        if test_cmd is None:
+            debug_log(f"Project {project_id}: no test runner detected, condition '{condition.name}' passes")
+            return True
+        cmd = test_cmd
+    else:
+        cmd = [script_name]
+
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        if proc.returncode == 0:
+            debug_log(f"Project {project_id}: condition '{condition.name}' passed")
+            return True
+        else:
+            output = (proc.stdout + "\n" + proc.stderr)[-1000:]
+            debug_log(
+                f"Project {project_id}: condition '{condition.name}' failed "
+                f"(exit {proc.returncode}):\n{output}"
+            )
+            print(
+                f"[{datetime.now().isoformat()}] Project {project_id}: "
+                f"condition '{condition.name}' failed (exit {proc.returncode})"
+            )
+            return False
+    except subprocess.TimeoutExpired:
+        debug_log(f"Project {project_id}: condition '{condition.name}' timed out")
+        print(f"[{datetime.now().isoformat()}] Project {project_id}: condition '{condition.name}' timed out")
+        return False
+    except Exception as e:
+        debug_log(f"Project {project_id}: condition '{condition.name}' error: {e}")
+        return False
+
+
+def _execute_project_flow_transition(sdk: object, project: dict, from_state: str) -> bool:
+    """Execute a project flow transition from the given state via the flow engine.
+
+    Loads the project's flow, finds the transition from from_state, evaluates
+    script conditions, executes the transition's step list, then updates the
+    project status to the transition's target state.
+
+    Returns True if the transition was executed, False if skipped (no transition
+    defined or a condition failed).
+    """
+    from .flow import load_flow
+    from .steps import execute_steps
+
+    project_id = project["id"]
+    flow_name = project.get("flow", "project")
+
+    try:
+        flow = load_flow(flow_name)
+    except FileNotFoundError:
+        if flow_name != "project":
+            debug_log(
+                f"Project {project_id}: flow '{flow_name}' not found, falling back to 'project'"
+            )
+            try:
+                flow = load_flow("project")
+            except FileNotFoundError:
+                debug_log(f"Project {project_id}: 'project' flow not found, skipping")
+                return False
+        else:
+            debug_log(f"Project {project_id}: 'project' flow not found, skipping")
+            return False
+
+    transitions = flow.get_transitions_from(from_state)
+    if not transitions:
+        debug_log(
+            f"Project {project_id}: no transition from '{from_state}' in flow '{flow_name}'"
+        )
+        return False
+
+    transition = transitions[0]
+    parent_project_dir = find_parent_project()
+
+    # Evaluate conditions — script conditions run synchronously; manual conditions
+    # are skipped here (they require explicit human action via approve_project_via_flow)
+    for condition in transition.conditions:
+        if condition.type == "script":
+            if not _evaluate_project_script_condition(condition, parent_project_dir, project_id):
+                debug_log(
+                    f"Project {project_id}: condition '{condition.name}' failed, "
+                    f"not transitioning to '{transition.to_state}'"
+                )
+                return False
+        elif condition.type == "manual":
+            # Manual conditions block automatic transitions — they require an explicit
+            # human approval call (approve_project_via_flow). Skip silently here.
+            debug_log(
+                f"Project {project_id}: transition '{from_state} -> {transition.to_state}' "
+                f"requires manual condition '{condition.name}' — skipping automatic transition"
+            )
+            return False
+        # Agent conditions on project flows are not currently supported
+
+    # Execute pre-transition steps
+    if transition.runs:
+        debug_log(f"Project {project_id}: executing steps {transition.runs}")
+        execute_steps(transition.runs, project, {}, parent_project_dir)
+
+    # Re-fetch project to pick up PR metadata stored by steps (e.g. create_project_pr)
+    updated_project = sdk.projects.get(project_id) or project
+    pr_url = updated_project.get("pr_url")
+
+    # Perform the transition
+    sdk.projects.update(project_id, status=transition.to_state)
+    print(
+        f"[{datetime.now().isoformat()}] Project {project_id} moved to '{transition.to_state}' "
+        f"via flow (PR: {pr_url})"
+    )
+    debug_log(f"Project {project_id}: transitioned '{from_state}' -> '{transition.to_state}'")
+    return True
+
+
 def check_project_completion() -> None:
-    """Check active projects and create PRs when all child tasks are done.
+    """Check active projects and run the children_complete -> provisional flow transition.
 
     For each active project where every child task is in the 'done' queue:
-    1. Create a PR from the project's shared branch to the base branch
-    2. Update the project status to 'review'
+    1. Load the project's flow (defaults to 'project')
+    2. Find the 'children_complete -> provisional' transition
+    3. Evaluate flow conditions (e.g. all_tests_pass) before transitioning
+    4. Execute transition steps (e.g. create_project_pr) via the flow engine
+    5. Update project status to the transition's target state
 
     Runs as a housekeeping job every 60 seconds. Skips projects that are
-    already in 'review' or 'completed' status (by only listing 'active' ones).
+    already past 'active' status.
     """
     try:
         sdk = queue_utils.get_sdk()
@@ -1782,7 +1928,7 @@ def check_project_completion() -> None:
             project_status = project.get("status", "")
 
             # Extra safety check — skip non-active projects if list returns stale data
-            if project_status in ("review", "completed", "done"):
+            if project_status in ("review", "provisional", "completed", "done"):
                 debug_log(f"check_project_completion: skipping {project_id} (status={project_status})")
                 continue
 
@@ -1795,128 +1941,13 @@ def check_project_completion() -> None:
             if not all_done:
                 continue
 
-            # All children done — create PR on the shared branch
-            project_branch = project.get("branch")
-            if not project_branch:
+            # All children done — project has no branch check kept for safety
+            if not project.get("branch"):
                 debug_log(f"check_project_completion: project {project_id} has no branch, skipping")
                 continue
 
-            base_branch = get_base_branch()
-            parent_project = find_parent_project()
-
-            # Check if PR already exists for this branch
-            pr_check = subprocess.run(
-                [
-                    "gh", "pr", "view", project_branch,
-                    "--json", "url,number",
-                    "-q", '.url + " " + (.number|tostring)',
-                ],
-                cwd=parent_project,
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-
-            pr_url: str | None = None
-            pr_number: int | None = None
-
-            if pr_check.returncode == 0 and pr_check.stdout.strip():
-                # PR already exists
-                parts = pr_check.stdout.strip().rsplit(" ", 1)
-                pr_url = parts[0]
-                try:
-                    pr_number = int(parts[1]) if len(parts) > 1 else None
-                except ValueError:
-                    pass
-                debug_log(f"check_project_completion: PR already exists for {project_id}: {pr_url}")
-            else:
-                # Create new PR from the project branch
-                project_title = project.get("title", project_id)
-                pr_body = (
-                    f"## Project: {project_title}\n\n"
-                    f"All child tasks for project `{project_id}` are complete. "
-                    f"This PR merges the shared project branch into `{base_branch}`."
-                )
-                pr_create = subprocess.run(
-                    [
-                        "gh", "pr", "create",
-                        "--base", base_branch,
-                        "--head", project_branch,
-                        "--title", f"[{project_id}] {project_title}",
-                        "--body", pr_body,
-                    ],
-                    cwd=parent_project,
-                    capture_output=True,
-                    text=True,
-                    timeout=60,
-                )
-
-                if pr_create.returncode != 0:
-                    # PR may already exist (race condition or "already exists" error)
-                    if "already exists" in (pr_create.stderr or ""):
-                        retry = subprocess.run(
-                            [
-                                "gh", "pr", "view", project_branch,
-                                "--json", "url,number",
-                                "-q", '.url + " " + (.number|tostring)',
-                            ],
-                            cwd=parent_project,
-                            capture_output=True,
-                            text=True,
-                            timeout=30,
-                        )
-                        if retry.returncode == 0 and retry.stdout.strip():
-                            parts = retry.stdout.strip().rsplit(" ", 1)
-                            pr_url = parts[0]
-                            try:
-                                pr_number = int(parts[1]) if len(parts) > 1 else None
-                            except ValueError:
-                                pass
-                        else:
-                            debug_log(
-                                f"check_project_completion: PR creation failed for {project_id}: "
-                                f"{pr_create.stderr.strip()}"
-                            )
-                            print(
-                                f"[{datetime.now().isoformat()}] Failed to create project PR "
-                                f"for {project_id}: {pr_create.stderr.strip()}"
-                            )
-                            continue
-                    else:
-                        debug_log(
-                            f"check_project_completion: PR creation failed for {project_id}: "
-                            f"{pr_create.stderr.strip()}"
-                        )
-                        print(
-                            f"[{datetime.now().isoformat()}] Failed to create project PR "
-                            f"for {project_id}: {pr_create.stderr.strip()}"
-                        )
-                        continue
-                else:
-                    pr_url = pr_create.stdout.strip()
-                    if pr_url:
-                        try:
-                            pr_number = int(pr_url.rstrip("/").rsplit("/", 1)[-1])
-                        except (ValueError, IndexError):
-                            pass
-                    print(
-                        f"[{datetime.now().isoformat()}] Created project PR for {project_id}: {pr_url}"
-                    )
-                    debug_log(f"check_project_completion: created PR {pr_url} for {project_id}")
-
-            # Update project: store PR info and move to review
-            update_kwargs: dict = {"status": "review"}
-            if pr_url:
-                update_kwargs["pr_url"] = pr_url
-            if pr_number is not None:
-                update_kwargs["pr_number"] = pr_number
-
-            sdk.projects.update(project_id, **update_kwargs)
-            print(
-                f"[{datetime.now().isoformat()}] Project {project_id} moved to review "
-                f"(PR: {pr_url})"
-            )
-            debug_log(f"check_project_completion: project {project_id} -> review")
+            debug_log(f"check_project_completion: all children done for {project_id}, running flow transition")
+            _execute_project_flow_transition(sdk, project, "children_complete")
 
     except Exception as e:
         debug_log(f"check_project_completion failed: {e}")

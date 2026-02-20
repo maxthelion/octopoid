@@ -274,6 +274,159 @@ def rebase_on_project_branch(task: dict, result: dict, task_dir: Path) -> None:
     print(f"rebase_on_project_branch: rebased onto origin/{project_branch}")
 
 
+@register_step("create_project_pr")
+def create_project_pr(project: dict, result: dict, project_dir: Path) -> None:
+    """Create a PR for a project's shared branch. Stores PR metadata on the project.
+
+    This step is used in project flows (not task flows). The 'project' dict is a
+    project object (has 'id', 'title', 'branch', 'base_branch').
+    project_dir is the parent project root directory used for gh CLI operations.
+    """
+    from .config import find_parent_project, get_base_branch
+    from .sdk import get_sdk
+
+    project_id = project["id"]
+    project_title = project.get("title", project_id)
+    project_branch = project.get("branch")
+
+    if not project_branch:
+        raise RuntimeError(f"create_project_pr: project {project_id} has no branch")
+
+    base_branch = project.get("base_branch") or get_base_branch()
+    cwd = project_dir if (project_dir and project_dir != Path(".")) else find_parent_project()
+
+    pr_body = (
+        f"## Project: {project_title}\n\n"
+        f"All child tasks for project `{project_id}` are complete. "
+        f"This PR merges the shared project branch into `{base_branch}`."
+    )
+
+    # Check if PR already exists for this branch
+    pr_check = subprocess.run(
+        [
+            "gh", "pr", "view", project_branch,
+            "--json", "url,number",
+            "-q", '.url + " " + (.number|tostring)',
+        ],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    pr_url: str | None = None
+    pr_number: int | None = None
+
+    if pr_check.returncode == 0 and pr_check.stdout.strip():
+        parts = pr_check.stdout.strip().rsplit(" ", 1)
+        pr_url = parts[0]
+        try:
+            pr_number = int(parts[1]) if len(parts) > 1 else None
+        except ValueError:
+            pass
+        print(f"create_project_pr: PR already exists for {project_id}: {pr_url}")
+    else:
+        pr_create = subprocess.run(
+            [
+                "gh", "pr", "create",
+                "--base", base_branch,
+                "--head", project_branch,
+                "--title", f"[{project_id}] {project_title}",
+                "--body", pr_body,
+            ],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+        if pr_create.returncode != 0:
+            if "already exists" in (pr_create.stderr or ""):
+                retry = subprocess.run(
+                    [
+                        "gh", "pr", "view", project_branch,
+                        "--json", "url,number",
+                        "-q", '.url + " " + (.number|tostring)',
+                    ],
+                    cwd=cwd,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                if retry.returncode == 0 and retry.stdout.strip():
+                    parts = retry.stdout.strip().rsplit(" ", 1)
+                    pr_url = parts[0]
+                    try:
+                        pr_number = int(parts[1]) if len(parts) > 1 else None
+                    except ValueError:
+                        pass
+                else:
+                    raise RuntimeError(
+                        f"create_project_pr: PR creation failed for {project_id}: "
+                        f"{pr_create.stderr.strip()}"
+                    )
+            else:
+                raise RuntimeError(
+                    f"create_project_pr: PR creation failed for {project_id}: "
+                    f"{pr_create.stderr.strip()}"
+                )
+        else:
+            pr_url = pr_create.stdout.strip()
+            if pr_url:
+                try:
+                    pr_number = int(pr_url.rstrip("/").rsplit("/", 1)[-1])
+                except (ValueError, IndexError):
+                    pass
+            print(f"create_project_pr: created PR {pr_url} for {project_id}")
+
+    # Store PR metadata on the project (without changing status — the flow engine does that)
+    if pr_url or pr_number is not None:
+        sdk = get_sdk()
+        update_kwargs: dict = {}
+        if pr_url:
+            update_kwargs["pr_url"] = pr_url
+        if pr_number is not None:
+            update_kwargs["pr_number"] = pr_number
+        sdk.projects.update(project_id, **update_kwargs)
+
+
+@register_step("merge_project_pr")
+def merge_project_pr(project: dict, result: dict, project_dir: Path) -> None:
+    """Merge the project's PR via gh CLI.
+
+    Used in project flows for the 'provisional -> done' transition.
+    Requires the project to have a 'pr_number' set (by create_project_pr).
+    """
+    from .config import find_parent_project
+
+    project_id = project["id"]
+    pr_number = project.get("pr_number")
+
+    if not pr_number:
+        raise RuntimeError(
+            f"merge_project_pr: project {project_id} has no pr_number — "
+            f"create_project_pr must run first"
+        )
+
+    cwd = project_dir if (project_dir and project_dir != Path(".")) else find_parent_project()
+
+    merge_result = subprocess.run(
+        ["gh", "pr", "merge", str(pr_number), "--merge"],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    if merge_result.returncode != 0:
+        raise RuntimeError(
+            f"merge_project_pr: failed to merge PR #{pr_number} for {project_id}: "
+            f"{merge_result.stderr.strip()}"
+        )
+
+    print(f"merge_project_pr: merged PR #{pr_number} for {project_id}")
+
+
 @register_step("submit_to_server")
 def submit_to_server(task: dict, result: dict, task_dir: Path) -> None:
     """DEPRECATED: The flow engine now owns task transitions.
