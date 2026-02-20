@@ -21,6 +21,7 @@ from .config import (
     get_logs_dir,
     get_base_branch,
     get_orchestrator_dir,
+    get_scope,
     get_tasks_dir,
     get_tasks_file_dir,
     is_system_paused,
@@ -2440,6 +2441,17 @@ def run_scheduler() -> None:
 
     print(f"[{datetime.now().isoformat()}] Scheduler starting")
     debug_log("Scheduler tick starting")
+
+    # Fail loudly if scope is not configured — prevents cross-project task claiming
+    scope = get_scope()
+    if not scope:
+        print(
+            "FATAL: 'scope' is not set in .octopoid/config.yaml. "
+            "Add 'scope: <project-name>' to prevent cross-project task claiming.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    debug_log(f"Scope: {scope}")
 
     # Check global pause flag
     if is_system_paused():

@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Scope isolation for orchestrator** ([TASK-f39ed45a])
+  - `.octopoid/config.yaml`: New top-level `scope: octopoid` field. Isolates this orchestrator's tasks from other projects sharing the same server. The scheduler refuses to start if `scope` is missing.
+  - `orchestrator/config.py`: New `get_scope()` function reads `scope` from `.octopoid/config.yaml`. Returns `None` if absent.
+  - `orchestrator/sdk.py`: `get_sdk()` now passes `scope=get_scope()` to the `OctopoidSDK` constructor. The SDK auto-injects scope on all API calls (task creation, claiming, listing, orchestrator registration).
+  - `orchestrator/scheduler.py`: `run_scheduler()` validates scope at startup — exits with code 1 and a clear message if `scope` is not configured.
+  - `tests/test_scope.py`: New tests for `get_scope()`, SDK scope injection, and scheduler startup validation.
+
 - **Declarative scheduler job system** ([TASK-42c991a8])
   - `orchestrator/jobs.py`: New module with `JobContext` dataclass, `@register_job` decorator, `JOB_REGISTRY`, `load_jobs_yaml()`, and `run_due_jobs()` generic dispatcher. Replaces the 7-block if-chain in `run_scheduler()` with a single call. Preserves the poll-batching optimisation: poll data is fetched once if any remote job is due. Supports `type: script` (Python function) and `type: agent` (one-shot Claude agent via existing spawn infrastructure, counting against pool capacity).
   - `orchestrator/job_conditions.py`: New module with `@register_condition` decorator, `CONDITION_REGISTRY`, and initial conditions `no_agents_running` and `has_open_prs` for use in future job YAML definitions.

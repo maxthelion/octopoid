@@ -596,6 +596,20 @@ def _load_project_config() -> dict[str, Any]:
         return {}
 
 
+def get_scope() -> str | None:
+    """Get the scope for this orchestrator from .octopoid/config.yaml.
+
+    Scope isolates this orchestrator's tasks from other projects on the same
+    server. Returns None if the field is absent (caller should treat this as
+    a misconfiguration).
+    """
+    config = _load_project_config()
+    scope = config.get("scope")
+    if scope:
+        return str(scope)
+    return None
+
+
 def get_hooks_config() -> dict[str, list[str]]:
     """Get project-level hooks configuration.
 
