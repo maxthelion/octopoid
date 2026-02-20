@@ -16,7 +16,8 @@ class TestBasicLifecycle:
             file_path="/tmp/lifecycle-001.md",
             title="Lifecycle Test",
             role="implement",
-            priority="P1"
+            priority="P1",
+            branch="main",
         )
         assert task['queue'] == 'incoming'
         assert task['id'] == "lifecycle-001"
@@ -60,7 +61,8 @@ class TestBasicLifecycle:
             id="reject-001",
             file_path="/tmp/reject-001.md",
             title="Reject Test",
-            role="implement"
+            role="implement",
+            branch="main",
         )
 
         claimed = sdk.tasks.claim(
@@ -105,7 +107,8 @@ class TestBasicLifecycle:
             id="multi-reject-001",
             file_path="/tmp/multi-reject-001.md",
             title="Multi Reject Test",
-            role="implement"
+            role="implement",
+            branch="main",
         )
 
         for i in range(3):
@@ -143,13 +146,15 @@ class TestClaimBehavior:
             id="test-implement",
             file_path="/tmp/test-implement.md",
             title="Implement Task",
-            role="implement"
+            role="implement",
+            branch="main",
         )
         sdk.tasks.create(
             id="test-breakdown",
             file_path="/tmp/test-breakdown.md",
             title="Breakdown Task",
-            role="breakdown"
+            role="breakdown",
+            branch="main",
         )
 
         # Claim with implement filter
@@ -180,21 +185,24 @@ class TestClaimBehavior:
             file_path="/tmp/test-p2.md",
             title="P2 Task",
             role="implement",
-            priority="P2"
+            priority="P2",
+            branch="main",
         )
         sdk.tasks.create(
             id="test-p0",
             file_path="/tmp/test-p0.md",
             title="P0 Task",
             role="implement",
-            priority="P0"
+            priority="P0",
+            branch="main",
         )
         sdk.tasks.create(
             id="test-p1",
             file_path="/tmp/test-p1.md",
             title="P1 Task",
             role="implement",
-            priority="P1"
+            priority="P1",
+            branch="main",
         )
 
         # Claim should return P0 first
@@ -212,7 +220,8 @@ class TestClaimBehavior:
             id="claim-update-001",
             file_path="/tmp/claim-update-001.md",
             title="Claim Update Test",
-            role="implement"
+            role="implement",
+            branch="main",
         )
 
         claimed = sdk.tasks.claim(
@@ -233,7 +242,8 @@ class TestStateValidation:
             id="unclaimed-001",
             file_path="/tmp/unclaimed-001.md",
             title="Unclaimed Task",
-            role="implement"
+            role="implement",
+            branch="main",
         )
 
         # Try to submit without claiming
@@ -250,7 +260,8 @@ class TestStateValidation:
             id="not-provisional-001",
             file_path="/tmp/not-provisional-001.md",
             title="Not Provisional",
-            role="implement"
+            role="implement",
+            branch="main",
         )
 
         # Try to accept task in incoming state
@@ -268,7 +279,8 @@ class TestStateValidation:
             file_path="/tmp/wrong-queue-001.md",
             title="Wrong Queue",
             role="implement",
-            queue="provisional"
+            queue="provisional",
+            branch="main",
         )
 
         # Claim should not return this task

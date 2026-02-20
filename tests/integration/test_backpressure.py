@@ -38,6 +38,7 @@ class TestBackpressureBlocksAtCapacity:
                     file_path=f"/tmp/bp-cap-{i}.md",
                     title=f"Backpressure capacity test {i}",
                     role="implement",
+                    branch="main",
                 )
 
             # ── Claim 2 tasks ─────────────────────────────────────────────

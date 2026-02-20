@@ -1994,7 +1994,7 @@ def _register_orchestrator(orchestrator_registered: bool = False) -> None:
         return
     try:
         from .queue_utils import get_sdk, get_orchestrator_id
-        from .config import load_config
+        from .config import _load_project_config as load_config
         sdk = get_sdk()
         orch_id = get_orchestrator_id()
         parts = orch_id.split("-", 1)
