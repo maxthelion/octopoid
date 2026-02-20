@@ -1632,6 +1632,33 @@ def _register_orchestrator(orchestrator_registered: bool = False) -> None:
     except Exception as e:
         debug_log(f"Orchestrator registration failed (non-fatal): {e}")
 
+    # Sync flow definitions to server so it can validate queue names at runtime.
+    # Non-fatal: errors are logged but never block registration.
+    try:
+        from .flow import list_flows, load_flow
+        from .config import get_orchestrator_dir
+        flows_dir = get_orchestrator_dir() / "flows"
+        if flows_dir.exists():
+            from .queue_utils import get_sdk as _get_sdk
+            _sdk = _get_sdk()
+            for flow_name in list_flows():
+                try:
+                    flow = load_flow(flow_name)
+                    states = sorted(flow.get_all_states())
+                    transitions = [
+                        {"from": t.from_state, "to": t.to_state}
+                        for t in flow.transitions
+                    ]
+                    _sdk._request("PUT", f"/api/v1/flows/{flow_name}", json={
+                        "states": states,
+                        "transitions": transitions,
+                    })
+                    debug_log(f"Synced flow '{flow_name}' to server")
+                except Exception as flow_err:
+                    debug_log(f"Flow sync failed for '{flow_name}' (non-fatal): {flow_err}")
+    except Exception as e:
+        debug_log(f"Flow sync failed (non-fatal): {e}")
+
 
 # =============================================================================
 # Housekeeping Jobs

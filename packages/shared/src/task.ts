@@ -2,19 +2,9 @@
  * Task types for Octopoid
  */
 
-export type TaskQueue =
-  | 'incoming'
-  | 'claimed'
-  | 'provisional'
-  | 'done'
-  | 'failed'
-  | 'rejected'
-  | 'escalated'
-  | 'recycled'
-  | 'breakdown'
-  | 'needs_continuation'
-  | 'backlog'
-  | 'blocked'
+export type TaskQueue = string  // validated at runtime against registered flows
+export const BUILT_IN_QUEUES = ['incoming', 'claimed', 'done', 'failed'] as const
+export type BuiltInQueue = typeof BUILT_IN_QUEUES[number]
 
 export type TaskPriority = 'P0' | 'P1' | 'P2' | 'P3'
 

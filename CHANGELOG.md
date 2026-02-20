@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Extensible queue validation — relax TaskQueue types and sync flows to server** ([TASK-26ff1030])
+  - `orchestrator/config.py`: `TaskQueue` is now `str` (validated at runtime by server); replaced `Literal` union with `BUILT_IN_QUEUES` set. `ACTIVE_QUEUES`, `PENDING_QUEUES`, `TERMINAL_QUEUES` now typed as `list[str]`.
+  - `packages/shared/src/task.ts`: `TaskQueue` is now `string` with a `BUILT_IN_QUEUES` const and `BuiltInQueue` helper type.
+  - `orchestrator/scheduler.py`: `_register_orchestrator()` now syncs all `.octopoid/flows/*.yaml` definitions to the server via `PUT /api/v1/flows/:name` after registration. Errors are non-fatal (logged only).
+  - `packages/python-sdk/octopoid_sdk/client.py`: Added `FlowsAPI` namespace with `register(name, states, transitions)` method; available as `sdk.flows`.
+
 - **Task detail modal — Diff, Desc, Result, Logs tabbed content** ([TASK-0c3ec91c])
   - `TaskDetailModal` now shows a compact metadata header (ID, title, priority, agent, turns/PR) plus four tabbed content views ported from the old curses dashboard.
   - **Diff** tab: runs `git diff --stat origin/<base_branch>...HEAD` in the task's worktree.

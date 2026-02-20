@@ -328,6 +328,34 @@ class ProjectsAPI:
         return response if isinstance(response, list) else []
 
 
+class FlowsAPI:
+    """Flows API endpoints — register flow definitions with the server"""
+
+    def __init__(self, client: 'OctopoidSDK'):
+        self.client = client
+
+    def register(
+        self,
+        name: str,
+        states: List[str],
+        transitions: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        """Register (upsert) a flow definition on the server.
+
+        Args:
+            name: Flow name (e.g., 'default')
+            states: List of all queue names used by this flow
+            transitions: Optional list of transition dicts with 'from' and 'to' keys
+
+        Returns:
+            Server response dict
+        """
+        data: Dict[str, Any] = {'states': states}
+        if transitions is not None:
+            data['transitions'] = transitions
+        return self.client._request('PUT', f'/api/v1/flows/{name}', json=data)
+
+
 class StatusAPI:
     """Status and health API endpoints"""
 
@@ -373,6 +401,7 @@ class OctopoidSDK:
         self.tasks = TasksAPI(self)
         self.drafts = DraftsAPI(self)
         self.projects = ProjectsAPI(self)
+        self.flows = FlowsAPI(self)
         self.status = StatusAPI(self)
 
     def _request(

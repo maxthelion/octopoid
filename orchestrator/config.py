@@ -8,32 +8,20 @@ import yaml
 
 
 # ---------------------------------------------------------------------------
-# Task queue states — must match packages/shared/src/task.ts TaskQueue type
+# Task queue states — validated at runtime by server against registered flows
 # ---------------------------------------------------------------------------
 
-TaskQueue = Literal[
-    "incoming",
-    "claimed",
-    "provisional",
-    "done",
-    "failed",
-    "rejected",
-    "escalated",
-    "recycled",
-    "breakdown",
-    "needs_continuation",
-    "backlog",
-    "blocked",
-]
+TaskQueue = str  # validated at runtime by server against registered flows
+BUILT_IN_QUEUES: set[str] = {"incoming", "claimed", "done", "failed"}
 
 # Queues where a task is still actively being worked on
-ACTIVE_QUEUES: list[TaskQueue] = ["claimed", "needs_continuation"]
+ACTIVE_QUEUES: list[str] = ["claimed", "needs_continuation"]
 
 # Queues where a task is waiting for work
-PENDING_QUEUES: list[TaskQueue] = ["incoming", "backlog", "blocked"]
+PENDING_QUEUES: list[str] = ["incoming", "backlog", "blocked"]
 
 # Terminal queues — task is finished (successfully or not)
-TERMINAL_QUEUES: list[TaskQueue] = ["done", "failed", "rejected", "escalated", "recycled"]
+TERMINAL_QUEUES: list[str] = ["done", "failed", "rejected", "escalated", "recycled"]
 
 
 # ---------------------------------------------------------------------------
