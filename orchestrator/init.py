@@ -167,6 +167,20 @@ def init_orchestrator(
     else:
         print(f"  Exists:  {gatekeeper_dir.relative_to(parent)}/")
 
+    # Scaffold implementer agent directory
+    implementer_dir = octopoid_dir / "agents" / "implementer"
+    if not implementer_dir.exists():
+        # Copy from the orchestrator's built-in implementer template
+        builtin_implementer = submodule / ".octopoid" / "agents" / "implementer"
+        if builtin_implementer.exists():
+            shutil.copytree(builtin_implementer, implementer_dir)
+            print(f"  Created: {implementer_dir.relative_to(parent)}/ (from template)")
+        else:
+            implementer_dir.mkdir(parents=True)
+            print(f"  Created: {implementer_dir.relative_to(parent)}/ (empty scaffold)")
+    else:
+        print(f"  Exists:  {implementer_dir.relative_to(parent)}/")
+
     # Install dashboard wrapper script
     dash_script = parent / "octopoid-dash"
     submodule_rel = submodule.relative_to(parent)
@@ -299,7 +313,9 @@ queue_limits:
 # Agent blueprints — each key is a blueprint name
 agents:
   implementer:
-    role: implementer
+    role: implement
+    spawn_mode: scripts
+    agent_dir: .octopoid/agents/implementer
     max_instances: 1   # How many instances can run concurrently
     interval_seconds: 180  # 3 minutes
 
