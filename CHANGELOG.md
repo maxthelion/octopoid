@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Project completion detection and PR creation** ([TASK-29d97975])
+  - `orchestrator/scheduler.py`: Added `check_project_completion()` housekeeping job (60s interval). When all child tasks in an active project reach the `done` queue, the function creates a PR from the project's shared branch to the base branch via `gh pr create`, then updates the project status to `"review"` via `sdk.projects.update()`. Idempotent: skips projects already in `"review"` or `"completed"` status, and reuses existing PRs if one already exists for the branch. Added to `HOUSEKEEPING_JOB_INTERVALS`, `HOUSEKEEPING_JOBS`, and `run_scheduler()`.
+  - `tests/test_check_project_completion.py`: 11 unit tests covering no-projects, incomplete tasks, all-done happy path, existing PR reuse, status skip guards, missing branch, SDK error resilience, PR creation failure, and multi-project isolation.
+
 - **Extensible queue validation — relax TaskQueue types and sync flows to server** ([TASK-26ff1030])
   - `orchestrator/config.py`: `TaskQueue` is now `str` (validated at runtime by server); replaced `Literal` union with `BUILT_IN_QUEUES` set. `ACTIVE_QUEUES`, `PENDING_QUEUES`, `TERMINAL_QUEUES` now typed as `list[str]`.
   - `packages/shared/src/task.ts`: `TaskQueue` is now `string` with a `BUILT_IN_QUEUES` const and `BuiltInQueue` helper type.

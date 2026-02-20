@@ -232,6 +232,7 @@ class TestJobIntervalManagement:
             "_register_orchestrator",
             "check_and_requeue_expired_leases",
             "process_orchestrator_hooks",
+            "check_project_completion",
             "_check_queue_health_throttled",
             "agent_evaluation_loop",
         }
