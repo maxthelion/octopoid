@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **GitHub issue poller as a scheduled job** ([TASK-e7edf05f])
+  - `orchestrator/jobs.py`: New `@register_job poll_github_issues` function. Fetches open GitHub issues via `gh issue list`, skips already-processed ones (tracked in `.octopoid/runtime/github_issues_state.json`), maps issue labels to priority (P0/P1/P2), creates tasks via `create_task()`, comments on the issue when a task is created, and forwards `server`-labelled issues to `maxthelion/octopoid-server`.
+  - `.octopoid/jobs.yaml`: New `poll_github_issues` entry with `interval: 900` and `group: local`.
+  - Deleted `orchestrator/roles/github_issue_monitor.py` (replaced by job function).
+  - Removed `github-issue-monitor` entry from `.octopoid/agents.yaml` and deleted `.octopoid/agents/github-issue-monitor/`.
+
 - **Scope isolation for orchestrator** ([TASK-f39ed45a])
   - `.octopoid/config.yaml`: New top-level `scope: octopoid` field. Isolates this orchestrator's tasks from other projects sharing the same server. The scheduler refuses to start if `scope` is missing.
   - `orchestrator/config.py`: New `get_scope()` function reads `scope` from `.octopoid/config.yaml`. Returns `None` if absent.

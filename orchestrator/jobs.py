@@ -309,3 +309,240 @@ def sweep_stale_resources(ctx: JobContext) -> None:
     """Archive logs and clean up stale worktrees and remote branches."""
     from .scheduler import sweep_stale_resources as _impl
     _impl()
+
+
+# ---------------------------------------------------------------------------
+# GitHub issue poller
+# ---------------------------------------------------------------------------
+
+
+def _load_github_issues_state(state_file: Path) -> dict:
+    """Load processed-issues state from disk."""
+    if not state_file.exists():
+        return {"processed_issues": []}
+    try:
+        with open(state_file) as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        _debug_log(f"poll_github_issues: could not load state ({e}), starting fresh")
+        return {"processed_issues": []}
+
+
+def _save_github_issues_state(state_file: Path, state: dict) -> None:
+    """Persist processed-issues state to disk."""
+    try:
+        state_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(state_file, "w") as f:
+            json.dump(state, f, indent=2)
+    except OSError as e:
+        _debug_log(f"poll_github_issues: could not save state: {e}")
+
+
+def _fetch_github_issues(cwd: Path) -> list[dict]:
+    """Fetch open GitHub issues via the gh CLI."""
+    try:
+        result = subprocess.run(
+            [
+                "gh", "issue", "list",
+                "--state", "open",
+                "--json", "number,title,url,body,labels",
+                "--limit", "100",
+            ],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode != 0:
+            _debug_log(f"poll_github_issues: gh issue list failed: {result.stderr.strip()}")
+            return []
+        return json.loads(result.stdout)
+    except subprocess.TimeoutExpired:
+        _debug_log("poll_github_issues: gh issue list timed out")
+        return []
+    except (json.JSONDecodeError, FileNotFoundError, Exception) as e:
+        _debug_log(f"poll_github_issues: error fetching issues: {e}")
+        return []
+
+
+def _create_task_from_github_issue(issue: dict) -> str | None:
+    """Create a task from a GitHub issue using create_task().
+
+    Returns the task_id string on success, or None on failure.
+    """
+    from .tasks import create_task
+
+    issue_number = issue["number"]
+    title = issue["title"]
+    url = issue["url"]
+    body = issue.get("body") or ""
+    labels = [label["name"] for label in issue.get("labels", [])]
+
+    # Map labels → priority
+    priority = "P1"
+    if any(label in ("urgent", "critical", "P0") for label in labels):
+        priority = "P0"
+    elif any(label in ("low-priority", "P2") for label in labels):
+        priority = "P2"
+
+    # All issue-originated tasks use the implement role
+    role = "implement"
+
+    context_parts = [
+        f"**GitHub Issue:** [{issue_number}]({url})",
+        "",
+        "**Description:**",
+        body if body else "(No description provided)",
+    ]
+    if labels:
+        context_parts.extend(["", "**Labels:** " + ", ".join(labels)])
+    context = "\n".join(context_parts)
+
+    acceptance_criteria = [
+        f"Resolve GitHub issue #{issue_number}",
+        "All tests pass",
+        "Code follows project conventions",
+    ]
+
+    try:
+        task_path = create_task(
+            title=f"[GH-{issue_number}] {title}",
+            role=role,
+            context=context,
+            acceptance_criteria=acceptance_criteria,
+            priority=priority,
+            created_by="poll_github_issues",
+        )
+        # Derive the task_id from the filename (TASK-<id>.md)
+        task_id = task_path.stem.removeprefix("TASK-")
+        _debug_log(f"poll_github_issues: created task {task_id} for issue #{issue_number}")
+        return task_id
+    except Exception as e:
+        _debug_log(f"poll_github_issues: failed to create task for issue #{issue_number}: {e}")
+        return None
+
+
+def _comment_on_github_issue(issue_number: int, task_id: str, cwd: Path) -> None:
+    """Post a comment on a GitHub issue noting that a task was created."""
+    comment = (
+        f"Octopoid has automatically created task `{task_id}` for this issue.\n\n"
+        f"The task is now in the queue and will be picked up by an available agent."
+    )
+    try:
+        subprocess.run(
+            ["gh", "issue", "comment", str(issue_number), "--body", comment],
+            cwd=cwd,
+            capture_output=True,
+            timeout=15,
+        )
+    except Exception as e:
+        _debug_log(f"poll_github_issues: could not comment on issue #{issue_number}: {e}")
+
+
+def _forward_github_issue_to_server(issue: dict, cwd: Path) -> bool:
+    """Forward a server-labelled issue to maxthelion/octopoid-server.
+
+    Creates a new issue on the server repo with a back-link, then comments
+    on the original issue.
+    """
+    issue_number = issue["number"]
+    title = issue["title"]
+    url = issue["url"]
+    body = (issue.get("body") or "").strip()
+
+    cross_body = f"Forwarded from octopoid issue [{issue_number}]({url}).\n\n---\n\n{body}"
+
+    try:
+        result = subprocess.run(
+            [
+                "gh", "issue", "create",
+                "--repo", "maxthelion/octopoid-server",
+                "--title", title,
+                "--body", cross_body,
+            ],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode != 0:
+            _debug_log(
+                f"poll_github_issues: failed to forward issue #{issue_number}: "
+                f"{result.stderr.strip()}"
+            )
+            return False
+
+        server_issue_url = result.stdout.strip()
+        _debug_log(
+            f"poll_github_issues: forwarded issue #{issue_number} → {server_issue_url}"
+        )
+
+        # Comment on the original issue
+        comment = f"This issue has been forwarded to the server repo: {server_issue_url}"
+        subprocess.run(
+            ["gh", "issue", "comment", str(issue_number), "--body", comment],
+            cwd=cwd,
+            capture_output=True,
+            timeout=15,
+        )
+        return True
+
+    except Exception as e:
+        _debug_log(f"poll_github_issues: error forwarding issue #{issue_number}: {e}")
+        return False
+
+
+@register_job
+def poll_github_issues(ctx: JobContext) -> None:
+    """Poll GitHub issues and create tasks for new ones.
+
+    Rate limit budget: 1 gh issue list call per run (interval: 900s = 4 calls/hour).
+    Issues labelled 'server' are forwarded to maxthelion/octopoid-server instead.
+    Processed issue numbers are persisted in .octopoid/runtime/github_issues_state.json.
+    """
+    from .config import get_orchestrator_dir, find_parent_project
+
+    state_file = get_orchestrator_dir() / "runtime" / "github_issues_state.json"
+    parent_project = find_parent_project()
+
+    state = _load_github_issues_state(state_file)
+    processed_issues: set[int] = set(state.get("processed_issues", []))
+
+    issues = _fetch_github_issues(parent_project)
+    if not issues:
+        return
+
+    _debug_log(f"poll_github_issues: {len(issues)} open issue(s) fetched")
+
+    new_count = 0
+    forwarded_count = 0
+
+    for issue in issues:
+        issue_number = issue["number"]
+        if issue_number in processed_issues:
+            continue
+
+        labels = [label["name"] for label in issue.get("labels", [])]
+
+        if "server" in labels:
+            _debug_log(
+                f"poll_github_issues: issue #{issue_number} has 'server' label, forwarding"
+            )
+            if _forward_github_issue_to_server(issue, parent_project):
+                processed_issues.add(issue_number)
+                forwarded_count += 1
+        else:
+            task_id = _create_task_from_github_issue(issue)
+            if task_id:
+                _comment_on_github_issue(issue_number, task_id, parent_project)
+                processed_issues.add(issue_number)
+                new_count += 1
+
+    state["processed_issues"] = sorted(processed_issues)
+    _save_github_issues_state(state_file, state)
+
+    if new_count or forwarded_count:
+        _debug_log(
+            f"poll_github_issues: created {new_count} task(s), "
+            f"forwarded {forwarded_count} issue(s)"
+        )
