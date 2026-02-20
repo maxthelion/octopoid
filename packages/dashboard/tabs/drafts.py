@@ -9,7 +9,7 @@ from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.widget import Widget
-from textual.widgets import Button, Label, ListItem, ListView
+from textual.widgets import Button, Label, ListItem, ListView, Markdown
 from textual.containers import Horizontal, Vertical, VerticalScroll
 
 from .done import _format_age
@@ -57,9 +57,10 @@ def _load_draft_content(draft: dict) -> str:
 class _DraftItem(ListItem):
     """A single draft entry in the left list — compact 1-line format."""
 
-    def __init__(self, draft: dict, **kwargs: object) -> None:
+    def __init__(self, draft: dict, num: int = 0, **kwargs: object) -> None:
         super().__init__(**kwargs)
         self._draft = draft
+        self._num = num
 
     @property
     def draft_data(self) -> dict:
@@ -70,8 +71,9 @@ class _DraftItem(ListItem):
         tag, color = _STATUS_TAGS.get(status, ("???", "#e0e0e0"))
         title = self._draft.get("title", "Untitled")
         label_text = Text()
-        label_text.append(f" {tag} ", style=f"bold {color}")
-        label_text.append(f" {title}", style="#e0e0e0")
+        label_text.append(f"{self._num:>3} ", style="bold #616161")
+        label_text.append(f"{tag} ", style=f"bold {color}")
+        label_text.append(title, style="#e0e0e0")
         yield Label(label_text, classes="draft-list-label")
 
 
@@ -111,10 +113,10 @@ class DraftsTab(Widget):
 
             with VerticalScroll(id="draft-content-panel", classes="draft-content-panel"):
                 yield Label(" CONTENT ", classes="section-header")
-                yield Label(
-                    "No draft selected.",
+                yield Markdown(
+                    "_No draft selected._",
                     id="draft-content",
-                    classes="dim-text",
+                    classes="draft-content-text",
                 )
 
     def on_mount(self) -> None:
@@ -150,8 +152,8 @@ class DraftsTab(Widget):
         if not filtered:
             lv.append(ListItem(Label("No drafts match filters.", classes="dim-text")))
         else:
-            for draft in filtered:
-                lv.append(_DraftItem(draft))
+            for idx, draft in enumerate(filtered, start=1):
+                lv.append(_DraftItem(draft, num=idx))
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         """Update the content pane when a draft is selected."""
@@ -160,8 +162,8 @@ class DraftsTab(Widget):
         draft = event.item.draft_data
         content = _load_draft_content(draft)
         try:
-            label = self.query_one("#draft-content", Label)
-            label.update(content or "(empty)")
+            md = self.query_one("#draft-content", Markdown)
+            md.update(content or "_empty_")
         except Exception:
             pass
 
