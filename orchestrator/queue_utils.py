@@ -20,8 +20,8 @@ from .tasks import (
     unclaim_task,
 )
 from .projects import (
-    activate_project, create_project, get_project, get_project_status,
-    get_project_tasks, list_projects, send_to_breakdown,
+    activate_project, approve_project_via_flow, create_project, get_project,
+    get_project_status, get_project_tasks, list_projects, send_to_breakdown,
 )
 from .breakdowns import (
     approve_breakdown, get_breakdowns_dir, is_burned_out,
