@@ -21,6 +21,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `orchestrator/reports.py`: Removed v1.x DB fallback block from `_gather_done_tasks`, removed `_get_accepted_by()`, `_gather_prs()`, `_get_recent_tasks_for_agent()`.
   - Updated all affected tests to remove stale patches and test classes for deleted symbols.
 
+### Changed
+
+- **Migrate remaining hardcoded state transitions to flow system** ([TASK-498853bf])
+  - `orchestrator/scheduler.py`: Added `_get_fail_target_from_flow(task, current_queue)` helper that loads the task's flow and returns the `on_fail` target from the first matching condition, falling back to `"failed"`.
+  - `orchestrator/scheduler.py`: Added `_get_continuation_target_from_flow(task, current_queue)` helper stub — flows have no continuation concept yet, always returns `"needs_continuation"`, ready for when flows gain `on_continuation` support.
+  - `orchestrator/scheduler.py` `guard_task_description_nonempty()`: Now calls `_get_fail_target_from_flow` instead of hardcoding `queue="failed"`.
+  - `orchestrator/scheduler.py` `_handle_fail_outcome()`: Now accepts `task: dict` and uses `_get_fail_target_from_flow` to determine the target queue, enabling flow-configured failure paths.
+  - `orchestrator/scheduler.py` `_handle_continuation_outcome()`: Now accepts `task: dict` and delegates to `_get_continuation_target_from_flow` for consistency with the flow system.
+  - `orchestrator/scheduler.py` `handle_agent_result_via_flow()` error handler: Documented why the emergency fallback to `"failed"` remains hardcoded — it fires when the flow machinery itself crashes, so consulting the flow is not possible.
+
 ### Fixed
 
 - **Flow engine: orchestrator hook loop no longer bypasses flow conditions (GH-143)** ([TASK-89fda8bb])
