@@ -169,8 +169,7 @@ def mock_sdk_for_unit_tests(request):
     with patch('orchestrator.sdk.get_sdk', return_value=mock_sdk):
         with patch('orchestrator.tasks.get_sdk', return_value=mock_sdk):
             with patch('orchestrator.projects.get_sdk', return_value=mock_sdk):
-                with patch('orchestrator.breakdowns.get_sdk', return_value=mock_sdk):
-                    yield mock_sdk
+                yield mock_sdk
 
     # Reset the SDK cache after the test as well
     orchestrator.sdk._sdk = None

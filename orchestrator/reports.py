@@ -152,44 +152,26 @@ def _gather_done_tasks(sdk: Optional["OctopoidSDK"] = None) -> list[dict[str, An
     """
     cutoff = datetime.now() - timedelta(days=7)
 
+    if not sdk:
+        return []
+
     # Done tasks
-    if sdk:
-        done_all = sdk.tasks.list(queue='done')
-        done_recent = [t for t in done_all if _is_recent(t, cutoff)]
+    done_all = sdk.tasks.list(queue='done')
+    done_recent = [t for t in done_all if _is_recent(t, cutoff)]
 
-        # Failed tasks
-        try:
-            failed_all = sdk.tasks.list(queue='failed')
-            failed_recent = [t for t in failed_all if _is_recent(t, cutoff)]
-        except Exception:
-            failed_recent = []
+    # Failed tasks
+    try:
+        failed_all = sdk.tasks.list(queue='failed')
+        failed_recent = [t for t in failed_all if _is_recent(t, cutoff)]
+    except Exception:
+        failed_recent = []
 
-        # Recycled tasks
-        try:
-            recycled_all = sdk.tasks.list(queue='recycled')
-            recycled_recent = [t for t in recycled_all if _is_recent(t, cutoff)]
-        except Exception:
-            recycled_recent = []
-    else:
-        # v1.x local mode
-        from .queue_utils import list_tasks
-
-        done_all = list_tasks("done")
-        done_recent = [t for t in done_all if _is_recent(t, cutoff)]
-
-        # Failed tasks
-        try:
-            failed_all = list_tasks("failed")
-            failed_recent = [t for t in failed_all if _is_recent(t, cutoff)]
-        except Exception:
-            failed_recent = []
-
-        # Recycled tasks (queue='recycled')
-        try:
-            recycled_all = list_tasks("recycled")
-            recycled_recent = [t for t in recycled_all if _is_recent(t, cutoff)]
-        except Exception:
-            recycled_recent = []
+    # Recycled tasks
+    try:
+        recycled_all = sdk.tasks.list(queue='recycled')
+        recycled_recent = [t for t in recycled_all if _is_recent(t, cutoff)]
+    except Exception:
+        recycled_recent = []
 
     result = []
     for t in done_recent:
@@ -197,7 +179,7 @@ def _gather_done_tasks(sdk: Optional["OctopoidSDK"] = None) -> list[dict[str, An
         item["final_queue"] = "done"
         # Use actual completion time (completed_at), fall back to updated_at, then created_at
         item["completed_at"] = t.get("completed_at") or t.get("updated_at") or t.get("created_at") or t.get("created")
-        item["accepted_by"] = _get_accepted_by(t.get("id"))
+        item["accepted_by"] = None
         result.append(item)
 
     for t in failed_recent:
@@ -219,14 +201,6 @@ def _gather_done_tasks(sdk: Optional["OctopoidSDK"] = None) -> list[dict[str, An
     # Sort by most recent first (using completed_at/created)
     result.sort(key=lambda t: t.get("completed_at") or "", reverse=True)
     return result
-
-
-def _get_accepted_by(task_id: str | None) -> str | None:
-    """Look up who accepted a task from task_history.
-
-    Previously queried the local DB; now returns None (DB removed in v2.0).
-    """
-    return None
 
 
 def _format_task(task: dict[str, Any]) -> dict[str, Any]:
@@ -302,58 +276,6 @@ _ROLE_TURN_LIMITS: dict[str, int] = {
 def _turn_limit_for_role(role: str | None) -> int:
     """Return the max turn limit for a given role."""
     return _ROLE_TURN_LIMITS.get(role or "", 100)
-
-
-# ---------------------------------------------------------------------------
-# Open PRs
-# ---------------------------------------------------------------------------
-
-
-def _gather_prs(sdk: Optional["OctopoidSDK"] = None) -> list[dict[str, Any]]:
-    """Gather open pull requests via gh CLI.
-
-    For each PR, also attempts to extract a Cloudflare Pages branch preview URL
-    from the PR comments and store it as staging_url on the associated task.
-    """
-    try:
-        result = subprocess.run(
-            [
-                "gh", "pr", "list", "--state", "open", "--json",
-                "number,title,headRefName,author,updatedAt,createdAt,url",
-                "--limit", "30",
-            ],
-            capture_output=True, text=True, timeout=15,
-        )
-        if result.returncode != 0:
-            return []
-
-        prs = json.loads(result.stdout)
-        pr_list = []
-        for pr in prs:
-            pr_number = pr.get("number")
-            staging_url = None
-
-            # Try to extract Cloudflare Pages branch preview URL from PR comments
-            if pr_number:
-                staging_url = _extract_staging_url(pr_number)
-
-            # If we found a staging URL, try to store it on the associated task
-            if staging_url and pr_number:
-                _store_staging_url(pr_number, staging_url, branch_name=pr.get("headRefName"), sdk=sdk)
-
-            pr_list.append({
-                "number": pr_number,
-                "title": pr.get("title"),
-                "branch": pr.get("headRefName"),
-                "author": (pr.get("author") or {}).get("login"),
-                "url": pr.get("url"),
-                "created_at": pr.get("createdAt"),
-                "updated_at": pr.get("updatedAt"),
-                "staging_url": staging_url,
-            })
-        return pr_list
-    except (subprocess.SubprocessError, json.JSONDecodeError, FileNotFoundError):
-        return []
 
 
 def _extract_staging_url(pr_number: int) -> str | None:
@@ -583,14 +505,6 @@ def _load_agent_state(state_path: Path) -> dict[str, Any]:
         return json.loads(state_path.read_text())
     except (json.JSONDecodeError, OSError):
         return {}
-
-
-def _get_recent_tasks_for_agent(agent_name: str, limit: int = 5) -> list[dict[str, Any]]:
-    """Get recently completed tasks for an agent.
-
-    Previously queried the local DB; now returns [] (DB removed in v2.0).
-    """
-    return []
 
 
 def _extract_title_from_file(file_path: str | None) -> str:

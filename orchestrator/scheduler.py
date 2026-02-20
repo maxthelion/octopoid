@@ -36,7 +36,6 @@ from .state_utils import (
     is_overdue,
     is_process_running,
     load_state,
-    mark_finished,
     mark_started,
     save_state,
 )
@@ -780,125 +779,6 @@ def write_agent_env(agent_name: str, agent_id: int, role: str, agent_config: dic
 
     env_path.write_text("\n".join(lines) + "\n")
     return env_path
-
-
-def spawn_agent(agent_name: str, agent_id: int, role: str, agent_config: dict) -> int:
-    """Spawn an agent subprocess.
-
-    Args:
-        agent_name: Name of the agent
-        agent_id: Numeric ID of the agent
-        role: Agent role
-        agent_config: Full agent configuration
-
-    Returns:
-        Process ID of spawned agent
-    """
-    # Determine working directory - lightweight agents use parent project
-    is_lightweight = agent_config.get("lightweight", False)
-    if is_lightweight:
-        cwd = find_parent_project()
-        worktree_path = cwd  # For env var
-    else:
-        worktree_path = get_worktree_path(agent_name)
-        cwd = worktree_path
-
-    # Build environment
-    env = os.environ.copy()
-    env["AGENT_NAME"] = agent_name
-    env["AGENT_ID"] = str(agent_id)
-    env["AGENT_ROLE"] = role
-    env["PARENT_PROJECT"] = str(find_parent_project())
-    env["WORKTREE"] = str(worktree_path)
-    from .config import get_shared_dir
-    env["SHARED_DIR"] = str(get_shared_dir())
-    env["ORCHESTRATOR_DIR"] = str(get_orchestrator_dir())
-
-    # Set PYTHONPATH to include the orchestrator submodule
-    # This allows `import orchestrator.orchestrator...` to work
-    orchestrator_submodule = find_parent_project() / "orchestrator"
-    existing_pythonpath = env.get("PYTHONPATH", "")
-    if existing_pythonpath:
-        env["PYTHONPATH"] = f"{orchestrator_submodule}:{existing_pythonpath}"
-    else:
-        env["PYTHONPATH"] = str(orchestrator_submodule)
-
-    # Pass model override from agent config (e.g., "sonnet", "opus")
-    if "model" in agent_config:
-        env["AGENT_MODEL"] = agent_config["model"]
-
-    # Pass focus for specialist agents (configured in agents.yaml)
-    if "focus" in agent_config:
-        env["AGENT_FOCUS"] = agent_config["focus"]
-
-    # Pass review context if configured
-    if "review_task_id" in agent_config:
-        env["REVIEW_TASK_ID"] = agent_config["review_task_id"]
-    if "review_check_name" in agent_config:
-        env["REVIEW_CHECK_NAME"] = agent_config["review_check_name"]
-
-    # Pass debug mode to agents
-    if DEBUG:
-        env["ORCHESTRATOR_DEBUG"] = "1"
-
-    port_vars = get_port_env_vars(agent_id)
-    env.update(port_vars)
-
-    # Determine the role module to run
-    role_module = f"orchestrator.roles.{role}"
-
-    debug_log(f"Spawning agent {agent_name}: module={role_module}, cwd={cwd}, lightweight={is_lightweight}")
-    debug_log(f"Agent env: AGENT_FOCUS={env.get('AGENT_FOCUS', 'N/A')}, ports={port_vars}")
-
-    # Set up log files for agent output
-    agent_dir = get_agents_runtime_dir() / agent_name
-    agent_dir.mkdir(parents=True, exist_ok=True)
-    stdout_log = agent_dir / "stdout.log"
-    stderr_log = agent_dir / "stderr.log"
-
-    # Open log files (truncate on each run to keep them manageable)
-    stdout_file = open(stdout_log, "w")
-    stderr_file = open(stderr_log, "w")
-
-    # Spawn the role as a subprocess
-    process = subprocess.Popen(
-        [sys.executable, "-m", role_module],
-        cwd=cwd,
-        env=env,
-        stdout=stdout_file,
-        stderr=stderr_file,
-        start_new_session=True,  # Detach from parent
-    )
-
-    # Note: We don't close the files here - the subprocess will write to them
-    # and they'll be closed when the subprocess exits. The file descriptors
-    # are inherited by the child process.
-
-    debug_log(f"Agent {agent_name} spawned with PID {process.pid}, logs: {stderr_log}")
-    return process.pid
-
-
-def read_agent_exit_code(agent_name: str) -> int | None:
-    """Read the exit code written by an agent.
-
-    Args:
-        agent_name: Name of the agent
-
-    Returns:
-        Exit code or None if not found
-    """
-    exit_code_path = get_agents_runtime_dir() / agent_name / "exit_code"
-    if not exit_code_path.exists():
-        return None
-
-    try:
-        content = exit_code_path.read_text().strip()
-        exit_code = int(content)
-        # Clean up the file after reading
-        exit_code_path.unlink()
-        return exit_code
-    except (ValueError, OSError):
-        return None
 
 
 def _get_server_url_from_config() -> str:
@@ -2101,33 +1981,6 @@ def _register_orchestrator(orchestrator_registered: bool = False) -> None:
         debug_log(f"Flow sync failed (non-fatal): {e}")
 
 
-# =============================================================================
-# Housekeeping Jobs
-# =============================================================================
-#
-# The following functions were removed during the scheduler refactor:
-#
-# - process_auto_accept_tasks(): Dead code — auto_accept feature not implemented
-#   (function body was just `return` in pre-refactor code)
-#
-# - assign_qa_checks(): Dead code — gatekeeper QA system not implemented
-#   (function body was just `return` in pre-refactor code)
-#
-# - process_gatekeeper_reviews(): Dead code — gatekeeper review system not implemented
-#   (function body was just `return` in pre-refactor code)
-#
-# - dispatch_gatekeeper_agents(): Dead code — gatekeeper agent dispatch not implemented
-#   (function body was just `return` in pre-refactor code)
-#
-# - check_stale_branches(): Dead code — branch staleness monitoring not implemented
-#   (function body was just `return` in pre-refactor code; helper functions existed
-#   but were never called)
-#
-# - check_branch_freshness(): Dead code — branch freshness checks not implemented
-#   (function body was just `return` in pre-refactor code; rebase logic was stubbed)
-#
-# Note: process_orchestrator_hooks() is still active and listed below.
-
 def sweep_stale_resources() -> None:
     """Archive logs and delete worktrees for old done/failed tasks.
 
@@ -2345,75 +2198,9 @@ def spawn_implementer(ctx: AgentContext) -> int:
     return pid
 
 
-def spawn_lightweight(ctx: AgentContext) -> int:
-    """Spawn a lightweight agent (no worktree, runs in parent project)."""
-    blueprint_name = ctx.agent_config.get("blueprint_name", ctx.agent_name)
-    instance_name = _next_instance_name(blueprint_name)
-
-    write_agent_env(ctx.agent_name, ctx.agent_config.get("id", 0), ctx.role, ctx.agent_config)
-    pid = spawn_agent(ctx.agent_name, ctx.agent_config.get("id", 0), ctx.role, ctx.agent_config)
-
-    task_id = ctx.claimed_task["id"] if ctx.claimed_task else ""
-    register_instance_pid(blueprint_name, pid, task_id, instance_name)
-
-    new_state = mark_started(ctx.state, pid)
-    save_state(new_state, ctx.state_path)
-    return pid
-
-
-def spawn_worktree(ctx: AgentContext) -> int:
-    """Spawn an agent with a worktree (general case for non-lightweight, non-implementer)."""
-    # Resolve base branch for the worktree
-    base_branch = ctx.agent_config.get("base_branch", get_base_branch())
-
-    if ctx.claimed_task:
-        # Use the claimed task's branch for the worktree
-        task_branch = ctx.claimed_task.get("branch")
-        if task_branch and task_branch != "main":
-            debug_log(f"Using claimed task branch for {ctx.agent_name}: {task_branch}")
-            base_branch = task_branch
-    else:
-        # For non-claimable agents, peek at queue for branch hint
-        task_branch = peek_task_branch(ctx.role)
-        if task_branch:
-            debug_log(f"Peeked task branch for {ctx.agent_name}: {task_branch}")
-            base_branch = task_branch
-
-    debug_log(f"Ensuring worktree for {ctx.agent_name} on branch {base_branch}")
-    ensure_worktree(ctx.agent_name, base_branch)
-
-    # Initialize submodule for orchestrator_impl agents
-    if ctx.role == "orchestrator_impl":
-        _init_submodule(ctx.agent_name)
-
-    # Write env file
-    debug_log(f"Writing env file for {ctx.agent_name}")
-    write_agent_env(ctx.agent_name, ctx.agent_config.get("id", 0), ctx.role, ctx.agent_config)
-
-    # Spawn agent
-    pid = spawn_agent(ctx.agent_name, ctx.agent_config.get("id", 0), ctx.role, ctx.agent_config)
-
-    blueprint_name = ctx.agent_config.get("blueprint_name", ctx.agent_name)
-    instance_name = _next_instance_name(blueprint_name)
-    task_id = ctx.claimed_task["id"] if ctx.claimed_task else ""
-    register_instance_pid(blueprint_name, pid, task_id, instance_name)
-
-    # Update JSON state
-    new_state = mark_started(ctx.state, pid)
-    save_state(new_state, ctx.state_path)
-    return pid
-
-
 def get_spawn_strategy(ctx: AgentContext) -> Callable:
-    """Select spawn strategy based on agent config."""
-    spawn_mode = ctx.agent_config.get("spawn_mode", "worktree")
-    is_lightweight = ctx.agent_config.get("lightweight", False)
-
-    if spawn_mode == "scripts" and ctx.claimed_task:
-        return spawn_implementer
-    if is_lightweight:
-        return spawn_lightweight
-    return spawn_worktree
+    """Select spawn strategy: always uses spawn_implementer (scripts mode only)."""
+    return spawn_implementer
 
 
 def _fetch_poll_data() -> dict | None:

@@ -1,7 +1,5 @@
 """Tests to verify SDK mocking prevents production side effects in unit tests."""
 
-from unittest.mock import patch
-
 
 class TestSDKMocking:
     """Verify that get_sdk() is automatically mocked in unit tests."""
@@ -17,26 +15,25 @@ class TestSDKMocking:
 
     def test_create_task_uses_mocked_sdk(self, mock_orchestrator_dir, mock_sdk_for_unit_tests):
         """Verify create_task() uses the mocked SDK and doesn't hit production."""
-        with patch('orchestrator.queue_utils.get_queue_dir', return_value=mock_orchestrator_dir / "runtime" / "shared" / "queue"):
-            from orchestrator.queue_utils import create_task
+        from orchestrator.queue_utils import create_task
 
-            task_path = create_task(
-                title="Test task for SDK mocking",
-                role="implement",
-                context="This test verifies SDK is mocked",
-                acceptance_criteria=["SDK calls are mocked", "No production side effects"],
-            )
+        task_path = create_task(
+            title="Test task for SDK mocking",
+            role="implement",
+            context="This test verifies SDK is mocked",
+            acceptance_criteria=["SDK calls are mocked", "No production side effects"],
+        )
 
-            # Verify the task file was created locally
-            assert task_path.exists()
+        # Verify the task file was created locally
+        assert task_path.exists()
 
-            # Verify the mocked SDK's create method was called (not a real HTTP request)
-            mock_sdk_for_unit_tests.tasks.create.assert_called_once()
+        # Verify the mocked SDK's create method was called (not a real HTTP request)
+        mock_sdk_for_unit_tests.tasks.create.assert_called_once()
 
-            # Verify the mock was called with the expected parameters
-            call_kwargs = mock_sdk_for_unit_tests.tasks.create.call_args[1]
-            assert call_kwargs["title"] == "Test task for SDK mocking"
-            assert call_kwargs["role"] == "implement"
+        # Verify the mock was called with the expected parameters
+        call_kwargs = mock_sdk_for_unit_tests.tasks.create.call_args[1]
+        assert call_kwargs["title"] == "Test task for SDK mocking"
+        assert call_kwargs["role"] == "implement"
 
     def test_sdk_mock_prevents_network_calls(self, mock_sdk_for_unit_tests):
         """Verify the mock SDK doesn't make real network requests."""

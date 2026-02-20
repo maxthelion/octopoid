@@ -316,11 +316,6 @@ def get_review_feedback(task_id: str) -> str | None:
 
     return "\n\n---\n\n".join(section.strip() for section in legacy_sections)
 
-def escalate_to_planning(task_id: str, plan_id: str) -> dict:
-    """Escalate a task to planning queue."""
-    sdk = get_sdk()
-    return sdk.tasks.update(task_id, queue="escalated", plan_id=plan_id)
-
 def fail_task(task_id: str, error: str) -> dict:
     """Fail a task (moves to failed queue with cleanup)."""
     error_summary = error[:200] + ("..." if len(error) > 200 else "")
