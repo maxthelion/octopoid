@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Fix spawn_mode default to prevent agent failures** ([TASK-401995d0])
+  - `orchestrator/scheduler.py`: Changed default `spawn_mode` from `"worktree"` to `"scripts"` in `guard_claim_task()`, `guard_task_description_nonempty()`, and `get_spawn_strategy()`. The `"worktree"` mode referenced deleted `orchestrator.roles.*` modules (only `base.py` and `__init__.py` remain), causing agents to crash with `No module named orchestrator.roles.implementer`. The `"scripts"` mode (Claude Code with prompt files) is the only live code path.
+
 ### Added
 
 - **`flow` parameter for `create_task()`** ([TASK-f8148819])

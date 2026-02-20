@@ -190,7 +190,7 @@ def guard_claim_task(ctx: AgentContext) -> tuple[bool, str]:
     Returns:
         (should_proceed, reason_if_blocked)
     """
-    spawn_mode = ctx.agent_config.get("spawn_mode", "worktree")
+    spawn_mode = ctx.agent_config.get("spawn_mode", "scripts")
     if spawn_mode != "scripts":
         # Not a scripts-mode agent — skip claim, let the role module claim
         return (True, "")
@@ -250,7 +250,7 @@ def guard_task_description_nonempty(ctx: AgentContext) -> tuple[bool, str]:
     if not ctx.claimed_task:
         return (True, "")
 
-    spawn_mode = ctx.agent_config.get("spawn_mode", "worktree")
+    spawn_mode = ctx.agent_config.get("spawn_mode", "scripts")
     if spawn_mode != "scripts":
         return (True, "")
 
@@ -2329,7 +2329,7 @@ def spawn_worktree(ctx: AgentContext) -> int:
 
 def get_spawn_strategy(ctx: AgentContext) -> Callable:
     """Select spawn strategy based on agent config."""
-    spawn_mode = ctx.agent_config.get("spawn_mode", "worktree")
+    spawn_mode = ctx.agent_config.get("spawn_mode", "scripts")
     is_lightweight = ctx.agent_config.get("lightweight", False)
 
     if spawn_mode == "scripts" and ctx.claimed_task:
