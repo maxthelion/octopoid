@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Periodic sweeper for stale worktrees and merged branches** ([TASK-ffd4757c])
+  - `orchestrator/scheduler.py`: Added `sweep_stale_resources()` function that runs every 30 minutes as a scheduler job. For tasks in `done` or `failed` queues older than 1 hour: archives `stdout.log`, `stderr.log`, `result.json`, and `prompt.md` to `.octopoid/runtime/logs/<task-id>/`, deletes the worktree, and (for `done` tasks only) deletes the remote `agent/<task-id>` branch. Runs `git worktree prune` after deletions. Failures are non-fatal and logged.
+  - `scripts/sweep-resources.sh`: Manual one-time sweep script that can be run from the project root to clean up the current backlog. Supports `--grace SECONDS` flag to override the 1-hour grace period (e.g., `--grace 0` to clean everything).
+
 - **GitHub Actions CI for integration tests** ([TASK-720c6196])
   - `.github/workflows/ci.yml`: Updated `unit-tests` job to use Python 3.13, set `PYTHONPATH` to repo root, and run `pytest tests/ --ignore=tests/integration` (fixes `ModuleNotFoundError: No module named 'orchestrator'`).
   - `.github/workflows/ci.yml`: Updated `integration-tests` job to use Python 3.13 and Node 20, start a fully local test server via wrangler dev (no Cloudflare cloud connection; uses workerd runtime locally), set `PYTHONPATH`, and run `pytest tests/integration/`.
