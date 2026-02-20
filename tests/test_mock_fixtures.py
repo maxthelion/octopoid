@@ -210,6 +210,198 @@ def test_fake_gh_logs_calls(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Stateful mode tests (GH_STATE_FILE)
+# ---------------------------------------------------------------------------
+
+
+def _run_gh_stateful(*args, state_file, env_overrides=None):
+    """Run fake gh with GH_STATE_FILE set for stateful mode."""
+    overrides = {"GH_STATE_FILE": str(state_file), **(env_overrides or {})}
+    return _run_gh(*args, env_overrides=overrides)
+
+
+def test_fake_gh_stateful_create_view_merge_sequence(tmp_path):
+    """Stateful mode: create → view → merge sequence tracks PR state correctly."""
+    state_file = tmp_path / "state.json"
+    branch = "agent/TASK-abc123"
+
+    # Create PR
+    result = _run_gh_stateful(
+        "pr", "create", "--base", "main", "--head", branch, "--title", "Test PR", "--body", "body",
+        state_file=state_file,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "github.com" in result.stdout
+    pr_url = result.stdout.strip()
+
+    # View by branch — should return CLEAN status
+    result = _run_gh_stateful(
+        "pr", "view", branch, "--json", "mergeable",
+        state_file=state_file,
+    )
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["mergeable"] == "CLEAN"
+    assert data["mergeStateStatus"] == "CLEAN"
+    pr_number = data["number"]
+
+    # View by number — same PR
+    result = _run_gh_stateful(
+        "pr", "view", str(pr_number), "--json", "mergeable",
+        state_file=state_file,
+    )
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["number"] == pr_number
+
+    # View with -q to get URL
+    result = _run_gh_stateful(
+        "pr", "view", branch, "--json", "url", "-q", ".url",
+        state_file=state_file,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == pr_url
+
+    # Merge PR
+    result = _run_gh_stateful(
+        "pr", "merge", str(pr_number), "--squash",
+        state_file=state_file,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "Merged" in result.stdout
+
+    # View after merge — status should be MERGED
+    result = _run_gh_stateful(
+        "pr", "view", branch, "--json", "mergeable",
+        state_file=state_file,
+    )
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["mergeable"] == "MERGED"
+
+
+def test_fake_gh_stateful_duplicate_create_errors(tmp_path):
+    """Stateful mode: creating a PR for the same branch twice returns an error."""
+    state_file = tmp_path / "state.json"
+    branch = "my-feature"
+
+    # First create succeeds
+    result = _run_gh_stateful(
+        "pr", "create", "--base", "main", "--head", branch, "--title", "First", "--body", "b",
+        state_file=state_file,
+    )
+    assert result.returncode == 0, result.stderr
+
+    # Second create for same branch fails
+    result = _run_gh_stateful(
+        "pr", "create", "--base", "main", "--head", branch, "--title", "Duplicate", "--body", "b",
+        state_file=state_file,
+    )
+    assert result.returncode != 0
+    assert "already exists" in result.stderr
+
+
+def test_fake_gh_stateful_view_not_found(tmp_path):
+    """Stateful mode: viewing a PR that doesn't exist exits non-zero."""
+    state_file = tmp_path / "state.json"
+
+    result = _run_gh_stateful(
+        "pr", "view", "no-such-branch", "--json", "mergeable",
+        state_file=state_file,
+    )
+    assert result.returncode != 0
+
+
+def test_fake_gh_stateful_list_returns_all_prs(tmp_path):
+    """Stateful mode: pr list returns all created PRs as a JSON array."""
+    state_file = tmp_path / "state.json"
+
+    _run_gh_stateful(
+        "pr", "create", "--base", "main", "--head", "branch-one", "--title", "PR 1", "--body", "b",
+        state_file=state_file,
+    )
+    _run_gh_stateful(
+        "pr", "create", "--base", "main", "--head", "branch-two", "--title", "PR 2", "--body", "b",
+        state_file=state_file,
+    )
+
+    result = _run_gh_stateful("pr", "list", state_file=state_file)
+    assert result.returncode == 0, result.stderr
+    prs = json.loads(result.stdout)
+    assert len(prs) == 2
+    branches = {pr["headRefName"] for pr in prs}
+    assert branches == {"branch-one", "branch-two"}
+
+
+def test_fake_gh_stateful_merge_fail_honoured(tmp_path):
+    """Stateful mode: GH_MOCK_MERGE_FAIL=true still causes pr merge to fail."""
+    state_file = tmp_path / "state.json"
+
+    _run_gh_stateful(
+        "pr", "create", "--base", "main", "--head", "my-branch", "--title", "T", "--body", "b",
+        state_file=state_file,
+    )
+
+    result = _run_gh_stateful(
+        "pr", "merge", "1", "--squash",
+        state_file=state_file,
+        env_overrides={"GH_MOCK_MERGE_FAIL": "true"},
+    )
+    assert result.returncode != 0
+
+
+def test_fake_gh_stateful_pr_numbers_increment(tmp_path):
+    """Stateful mode: each new PR gets a unique incrementing number."""
+    state_file = tmp_path / "state.json"
+
+    r1 = _run_gh_stateful(
+        "pr", "create", "--base", "main", "--head", "branch-a", "--title", "A", "--body", "b",
+        state_file=state_file,
+    )
+    r2 = _run_gh_stateful(
+        "pr", "create", "--base", "main", "--head", "branch-b", "--title", "B", "--body", "b",
+        state_file=state_file,
+    )
+    assert result.returncode == 0 if (result := r1) else True
+    url1 = r1.stdout.strip()
+    url2 = r2.stdout.strip()
+    assert url1 != url2
+    # URLs contain sequential numbers
+    assert "/pull/1" in url1
+    assert "/pull/2" in url2
+
+
+def test_fake_gh_no_state_file_backwards_compatible():
+    """Without GH_STATE_FILE, fake gh behaves exactly as before (stateless)."""
+    # pr create returns URL with GH_MOCK_PR_NUMBER
+    result = _run_gh(
+        "pr", "create", "--base", "main", "--head", "feature", "--title", "T", "--body", "b",
+        env_overrides={"GH_MOCK_PR_NUMBER": "77"},
+    )
+    assert result.returncode == 0
+    assert "77" in result.stdout
+
+    # pr view returns JSON from env vars (no state file needed)
+    result = _run_gh(
+        "pr", "view", "77", "--json", "mergeable",
+        env_overrides={"GH_MOCK_PR_NUMBER": "77", "GH_MOCK_MERGE_STATUS": "CLEAN"},
+    )
+    assert result.returncode == 0
+    data = json.loads(result.stdout)
+    assert data["number"] == 77
+    assert data["mergeable"] == "CLEAN"
+
+    # pr list returns empty array
+    result = _run_gh("pr", "list")
+    assert result.returncode == 0
+    assert json.loads(result.stdout) == []
+
+    # pr merge succeeds
+    result = _run_gh("pr", "merge", "77", "--squash")
+    assert result.returncode == 0
+
+
+# ---------------------------------------------------------------------------
 # Fixture smoke tests: test_repo, conflicting_repo, task_dir, run_mock_agent
 # ---------------------------------------------------------------------------
 

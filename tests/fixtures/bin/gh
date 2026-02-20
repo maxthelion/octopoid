@@ -2,11 +2,21 @@
 # Fake gh CLI for testing — returns controlled responses via environment variables.
 #
 # Variables:
-#   GH_MOCK_PR_NUMBER    PR number to return (default: 99)
-#   GH_MOCK_MERGE_STATUS mergeStateStatus / mergeable value for gh pr view (default: CLEAN)
+#   GH_MOCK_PR_NUMBER    PR number to return (default: 99) [stateless mode only]
+#   GH_MOCK_MERGE_STATUS mergeStateStatus / mergeable value for gh pr view (default: CLEAN) [stateless mode only]
 #   GH_MOCK_MERGE_FAIL   if "true", gh pr merge exits non-zero (default: false)
-#   GH_MOCK_PR_EXISTS    if "true", gh pr view <branch> -q .url returns the URL (default: false)
+#   GH_MOCK_PR_EXISTS    if "true", gh pr view <branch> -q .url returns the URL (default: false) [stateless mode only]
 #   GH_MOCK_LOG          if set, all calls are appended to this file
+#   GH_STATE_FILE        if set, enable stateful mode — tracks PR state in a JSON file
+#
+# Stateful mode (GH_STATE_FILE set):
+#   State file format:
+#     {"prs": {"branch-name": {"number": 42, "url": "...", "status": "CLEAN", "branch": "branch-name"}}}
+#
+#   pr create  — writes new PR to state; errors if branch already has a PR
+#   pr view    — looks up PR by branch name or number; exits non-zero if not found
+#   pr merge   — marks PR as MERGED in state; honours GH_MOCK_MERGE_FAIL
+#   pr list    — returns all PRs from state as JSON array
 
 GH_MOCK_PR_NUMBER="${GH_MOCK_PR_NUMBER:-99}"
 GH_MOCK_MERGE_STATUS="${GH_MOCK_MERGE_STATUS:-CLEAN}"
@@ -31,14 +41,61 @@ shift 2
 case "$subcmd $subcmd2" in
     "pr create")
         # gh pr create --base <base> --head <branch> --title <title> --body <body>
-        # Output: PR URL
-        echo "https://github.com/${MOCK_REPO}/pull/${GH_MOCK_PR_NUMBER}"
+        if [ -n "${GH_STATE_FILE:-}" ]; then
+            # Stateful mode — parse --head argument
+            branch=""
+            prev_arg=""
+            for arg in "$@"; do
+                if [ "$prev_arg" = "--head" ]; then
+                    branch="$arg"
+                    break
+                fi
+                prev_arg="$arg"
+            done
+            [ -z "$branch" ] && branch="unknown-branch"
+
+            GH_BRANCH="$branch" GH_MOCK_REPO="$MOCK_REPO" python3 << 'PYEOF'
+import json, os, sys
+
+state_file = os.environ['GH_STATE_FILE']
+branch = os.environ['GH_BRANCH']
+mock_repo = os.environ['GH_MOCK_REPO']
+
+try:
+    with open(state_file) as f:
+        state = json.load(f)
+except (FileNotFoundError, json.JSONDecodeError):
+    state = {'prs': {}}
+
+prs = state.setdefault('prs', {})
+if branch in prs:
+    print("a pull request for branch '{}' already exists".format(branch), file=sys.stderr)
+    sys.exit(1)
+
+next_num = max((p['number'] for p in prs.values()), default=0) + 1
+prs[branch] = {
+    'number': next_num,
+    'url': 'https://github.com/{}/pull/{}'.format(mock_repo, next_num),
+    'status': 'CLEAN',
+    'branch': branch,
+}
+with open(state_file, 'w') as f:
+    json.dump(state, f)
+print('https://github.com/{}/pull/{}'.format(mock_repo, next_num))
+PYEOF
+        else
+            # Stateless mode (backwards compatible)
+            echo "https://github.com/${MOCK_REPO}/pull/${GH_MOCK_PR_NUMBER}"
+        fi
         ;;
 
     "pr view")
         # Two patterns:
         #   gh pr view <num_or_branch> --json mergeable          → full JSON
         #   gh pr view <num_or_branch> --json url -q .url        → just the URL (or fail)
+        ref="$1"
+        shift
+
         HAS_Q=false
         for arg in "$@"; do
             if [ "$arg" = "-q" ]; then
@@ -47,20 +104,67 @@ case "$subcmd $subcmd2" in
             fi
         done
 
-        if $HAS_Q; then
-            # Called with -q to extract a specific field — used to check if a PR
-            # already exists for a branch. Fail unless GH_MOCK_PR_EXISTS=true.
-            if [ "${GH_MOCK_PR_EXISTS}" = "true" ]; then
-                echo "https://github.com/${MOCK_REPO}/pull/${GH_MOCK_PR_NUMBER}"
-            else
-                echo "no pull requests found for branch" >&2
-                exit 1
-            fi
+        if [ -n "${GH_STATE_FILE:-}" ]; then
+            # Stateful mode — look up PR by branch name or number
+            GH_REF="$ref" GH_HAS_Q="$HAS_Q" GH_MOCK_REPO="$MOCK_REPO" python3 << 'PYEOF'
+import json, os, sys
+
+state_file = os.environ['GH_STATE_FILE']
+ref = os.environ['GH_REF']
+has_q = os.environ['GH_HAS_Q'] == 'true'
+mock_repo = os.environ['GH_MOCK_REPO']
+
+try:
+    with open(state_file) as f:
+        state = json.load(f)
+except (FileNotFoundError, json.JSONDecodeError):
+    state = {'prs': {}}
+
+prs = state.get('prs', {})
+
+# Look up by branch name first, then by PR number
+pr = prs.get(ref)
+if pr is None:
+    try:
+        num = int(ref)
+        for p in prs.values():
+            if p['number'] == num:
+                pr = p
+                break
+    except (ValueError, TypeError):
+        pass
+
+if pr is None:
+    print("no pull requests found for '{}'".format(ref), file=sys.stderr)
+    sys.exit(1)
+
+if has_q:
+    print(pr['url'])
+else:
+    print(json.dumps({
+        'number': pr['number'],
+        'url': pr['url'],
+        'mergeable': pr['status'],
+        'mergeStateStatus': pr['status'],
+    }))
+PYEOF
         else
-            # Return full JSON with merge status fields
-            printf '{"number":%s,"url":"https://github.com/%s/pull/%s","mergeable":"%s","mergeStateStatus":"%s"}\n' \
-                "$GH_MOCK_PR_NUMBER" "$MOCK_REPO" "$GH_MOCK_PR_NUMBER" \
-                "$GH_MOCK_MERGE_STATUS" "$GH_MOCK_MERGE_STATUS"
+            # Stateless mode (backwards compatible)
+            if $HAS_Q; then
+                # Called with -q to extract a specific field — used to check if a PR
+                # already exists for a branch. Fail unless GH_MOCK_PR_EXISTS=true.
+                if [ "${GH_MOCK_PR_EXISTS}" = "true" ]; then
+                    echo "https://github.com/${MOCK_REPO}/pull/${GH_MOCK_PR_NUMBER}"
+                else
+                    echo "no pull requests found for branch" >&2
+                    exit 1
+                fi
+            else
+                # Return full JSON with merge status fields
+                printf '{"number":%s,"url":"https://github.com/%s/pull/%s","mergeable":"%s","mergeStateStatus":"%s"}\n' \
+                    "$GH_MOCK_PR_NUMBER" "$MOCK_REPO" "$GH_MOCK_PR_NUMBER" \
+                    "$GH_MOCK_MERGE_STATUS" "$GH_MOCK_MERGE_STATUS"
+            fi
         fi
         ;;
 
@@ -70,12 +174,82 @@ case "$subcmd $subcmd2" in
             echo "error: pull request merge failed" >&2
             exit 1
         fi
-        echo "Merged pull request #${GH_MOCK_PR_NUMBER}"
+
+        if [ -n "${GH_STATE_FILE:-}" ]; then
+            # Stateful mode — mark PR as MERGED in state file
+            ref="$1"
+            GH_REF="$ref" python3 << 'PYEOF'
+import json, os, sys
+
+state_file = os.environ['GH_STATE_FILE']
+ref = os.environ['GH_REF']
+
+try:
+    with open(state_file) as f:
+        state = json.load(f)
+except (FileNotFoundError, json.JSONDecodeError):
+    state = {'prs': {}}
+
+prs = state.get('prs', {})
+
+# Look up by branch name first, then by PR number
+pr = prs.get(ref)
+pr_key = ref
+if pr is None:
+    try:
+        num = int(ref)
+        for key, p in prs.items():
+            if p['number'] == num:
+                pr = p
+                pr_key = key
+                break
+    except (ValueError, TypeError):
+        pass
+
+if pr is not None:
+    state['prs'][pr_key]['status'] = 'MERGED'
+    with open(state_file, 'w') as f:
+        json.dump(state, f)
+    print("Merged pull request #{}".format(pr['number']))
+else:
+    print("Merged pull request")
+PYEOF
+        else
+            echo "Merged pull request #${GH_MOCK_PR_NUMBER}"
+        fi
         ;;
 
     "pr list")
         # gh pr list --state open --json number [--label <label>]
-        echo "[]"
+        if [ -n "${GH_STATE_FILE:-}" ]; then
+            # Stateful mode — return all PRs from state file as JSON array
+            python3 << 'PYEOF'
+import json, os, sys
+
+state_file = os.environ['GH_STATE_FILE']
+
+try:
+    with open(state_file) as f:
+        state = json.load(f)
+except (FileNotFoundError, json.JSONDecodeError):
+    state = {'prs': {}}
+
+prs = state.get('prs', {})
+result = [
+    {
+        'number': p['number'],
+        'url': p['url'],
+        'headRefName': p['branch'],
+        'mergeable': p['status'],
+        'mergeStateStatus': p['status'],
+    }
+    for p in prs.values()
+]
+print(json.dumps(result))
+PYEOF
+        else
+            echo "[]"
+        fi
         ;;
 
     "issue comment")

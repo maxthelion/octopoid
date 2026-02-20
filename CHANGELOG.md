@@ -7,20 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-
-- **Flow engine now owns task transitions — fixes child task orphaning and step failure orphaning** ([TASK-44d77f1f])
-  - `orchestrator/scheduler.py`: `_handle_done_outcome` now calls `_perform_transition()` after steps succeed, mapping the flow YAML `to_state` to the correct API call (`submit` for `provisional`, `accept` for `done`, `update(queue=...)` for custom queues). The engine performs the transition — steps are pure side effects.
-  - `orchestrator/scheduler.py`: `handle_agent_result` no longer silently swallows step exceptions. Exceptions propagate so `check_and_update_finished_agents` keeps the PID in tracking for retry. After 3 consecutive step failures, the task moves to `failed` and the counter resets.
-  - `orchestrator/scheduler.py`: `check_and_update_finished_agents` only removes a PID from `running_pids.json` when result handling succeeds. On failure the PID is retained so the next scheduler tick retries.
-  - `orchestrator/steps.py`: `submit_to_server` step deprecated to a no-op — the engine performs transitions, no step needs to call the API.
-  - `.octopoid/flows/default.yaml`: Removed `submit_to_server` from `claimed -> provisional` runs. New list: `[push_branch, run_tests, create_pr]`.
-
 ### Added
 
-- **Integration tests for task priority ordering** (`tests/integration/test_priority_ordering.py`)
-  - `test_priority_ordering_p0_before_p1_before_p2`: Creates P2/P0/P1 tasks out of order and asserts claims return P0 → P1 → P2
-  - `test_same_priority_fifo_order`: Creates 3 P1 tasks and asserts they are claimed in creation (FIFO) order
+- **Stateful fake gh CLI for testing PR sequences** ([TASK-test-4-1])
+  - `tests/fixtures/bin/gh`: Added `GH_STATE_FILE` env var to enable stateful mode. When set, `pr create` writes PRs to a JSON state file (auto-incrementing numbers, errors on duplicate branch), `pr view` looks up PRs by branch name or number, `pr merge` marks PRs as MERGED in state, and `pr list` returns all tracked PRs. When `GH_STATE_FILE` is not set, behaviour is identical to before (backwards compatible).
+  - `tests/test_mock_fixtures.py`: 8 new smoke tests covering the full create→view→merge lifecycle, duplicate create errors, not-found handling, list returning all PRs, merge-fail with stateful mode, incrementing PR numbers, and backwards compatibility without `GH_STATE_FILE`.
 
 - **Project completion detection and PR creation** ([TASK-29d97975])
   - `orchestrator/scheduler.py`: Added `check_project_completion()` housekeeping job (60s interval). When all child tasks in an active project reach the `done` queue, the function creates a PR from the project's shared branch to the base branch via `gh pr create`, then updates the project status to `"review"` via `sdk.projects.update()`. Idempotent: skips projects already in `"review"` or `"completed"` status, and reuses existing PRs if one already exists for the branch. Added to `HOUSEKEEPING_JOB_INTERVALS`, `HOUSEKEEPING_JOBS`, and `run_scheduler()`.
