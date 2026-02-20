@@ -1990,15 +1990,17 @@ def _register_orchestrator(orchestrator_registered: bool = False) -> None:
         cluster = parts[0] if len(parts) > 1 else "default"
         machine_id = parts[1] if len(parts) > 1 else orch_id
         config = load_config()
-        repo_url = config.get("repo", {}).get("url", "")
-        sdk._request("POST", "/api/v1/orchestrators/register", json={
+        repo_url = config.get("repo", {}).get("url", "") or None
+        payload: dict = {
             "id": orch_id,
             "cluster": cluster,
             "machine_id": machine_id,
-            "repo_url": repo_url,
             "version": "2.0.0",
             "max_agents": config.get("agents", {}).get("max_concurrent", 3),
-        })
+        }
+        if repo_url is not None:
+            payload["repo_url"] = repo_url
+        sdk._request("POST", "/api/v1/orchestrators/register", json=payload)
         debug_log(f"Registered orchestrator: {orch_id}")
     except Exception as e:
         debug_log(f"Orchestrator registration failed (non-fatal): {e}")

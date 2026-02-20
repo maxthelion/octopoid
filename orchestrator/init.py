@@ -299,7 +299,9 @@ queue_limits:
 # Agent blueprints — each key is a blueprint name
 agents:
   implementer:
-    role: implementer
+    role: implement
+    spawn_mode: scripts
+    agent_dir: .octopoid/agents/implementer
     max_instances: 1   # How many instances can run concurrently
     interval_seconds: 180  # 3 minutes
 
