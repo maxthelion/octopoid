@@ -140,6 +140,42 @@ class TestRunTestsStep:
             with pytest.raises(RuntimeError, match="Tests failed"):
                 run_tests({}, {}, task_dir)
 
+    def test_run_tests_timeout_raises_runtime_error(self, tmp_path):
+        """run_tests raises RuntimeError when subprocess times out."""
+        from orchestrator.steps import run_tests
+
+        task_dir = tmp_path
+        worktree = task_dir / "worktree"
+        worktree.mkdir()
+        (worktree / "pytest.ini").write_text("[pytest]\n")
+
+        with patch(
+            "orchestrator.steps.subprocess.run",
+            side_effect=subprocess.TimeoutExpired(
+                cmd=["python", "-m", "pytest"], timeout=300
+            ),
+        ):
+            with pytest.raises(RuntimeError, match="timed out"):
+                run_tests({}, {}, task_dir)
+
+    def test_run_tests_success_path(self, tmp_path):
+        """run_tests completes without error when tests pass (exit code 0)."""
+        from orchestrator.steps import run_tests
+
+        task_dir = tmp_path
+        worktree = task_dir / "worktree"
+        worktree.mkdir()
+        (worktree / "pytest.ini").write_text("[pytest]\n")
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "1 passed"
+        mock_result.stderr = ""
+
+        with patch("orchestrator.steps.subprocess.run", return_value=mock_result):
+            # Should not raise
+            run_tests({}, {}, task_dir)
+
     def test_run_tests_passes_augmented_path_env(self, tmp_path):
         """run_tests passes an env with augmented PATH to subprocess."""
         from orchestrator.steps import run_tests
