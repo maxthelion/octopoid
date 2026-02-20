@@ -9,8 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Integration tests: orphaned agent recovery via PID tracking** ([TASK-test-2-2])
-  - `tests/integration/test_pid_recovery.py`: Two integration tests covering dead and alive PID scenarios using real `running_pids.json` file I/O (not mocked). `TestDeadPIDRecovery.test_dead_pid_detected_and_task_moved_to_failed` verifies that `check_and_update_finished_agents()` removes dead PIDs from `running_pids.json` and moves the task to the `failed` queue. `TestAlivePIDPreservation.test_alive_pid_not_cleaned_up` verifies that `cleanup_dead_pids()` leaves alive PIDs untouched and does not modify task state on the server.
+- **Integration tests: double-processing guard (idempotent result handling)** ([TASK-test-2-3])
+  - `tests/integration/test_scheduler_mock.py`: Added `TestIdempotentResultHandling` class with two tests verifying that `handle_agent_result()` is safe to call multiple times without causing duplicate transitions, errors, or data corruption. `test_double_processing_is_idempotent` confirms a second call on a task already in "provisional" is a no-op. `test_processing_result_for_done_task` confirms calling `handle_agent_result()` on a fully completed ("done") task leaves it unchanged.
 
 - **Project completion detection and PR creation** ([TASK-29d97975])
   - `orchestrator/scheduler.py`: Added `check_project_completion()` housekeeping job (60s interval). When all child tasks in an active project reach the `done` queue, the function creates a PR from the project's shared branch to the base branch via `gh pr create`, then updates the project status to `"review"` via `sdk.projects.update()`. Idempotent: skips projects already in `"review"` or `"completed"` status, and reuses existing PRs if one already exists for the branch. Added to `HOUSEKEEPING_JOB_INTERVALS`, `HOUSEKEEPING_JOBS`, and `run_scheduler()`.

@@ -574,3 +574,123 @@ class TestEdgeCases:
         assert task["queue"] == "needs_continuation", (
             f"Expected needs_continuation, got {task['queue']}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Idempotent result handling (double-processing guard)
+# ---------------------------------------------------------------------------
+
+
+class TestIdempotentResultHandling:
+    """Tests that handle_agent_result() is safe to call multiple times.
+
+    If the scheduler processes the same result.json twice (e.g. race between
+    PID cleanup and result handling), it must not cause duplicate transitions,
+    errors, or data corruption.
+    """
+
+    def test_double_processing_is_idempotent(
+        self,
+        scoped_sdk,
+        orchestrator_id: str,
+        tmp_path: Path,
+        clean_tasks,
+    ) -> None:
+        """Calling handle_agent_result() twice for the same result is a safe no-op.
+
+        First call: task moves from claimed → provisional via flow steps.
+        Second call: task already in provisional → guard triggers, no error,
+        no double-submission, queue unchanged.
+        """
+        task_id = _make_task_id()
+        scoped_sdk.tasks.create(
+            id=task_id,
+            file_path=f".octopoid/tasks/{task_id}.md",
+            title="Idempotent result test",
+            role="implement",
+            branch="main",
+        )
+        scoped_sdk.tasks.claim(
+            orchestrator_id=orchestrator_id,
+            agent_name="mock-implementer",
+            role_filter="implement",
+        )
+
+        impl_task_dir = tmp_path / "impl-task"
+        impl_worktree = impl_task_dir / "worktree"
+        _init_git_repo_with_remote(impl_worktree)
+
+        result = _run_mock_agent(impl_worktree, impl_task_dir, commits=1, outcome="success")
+        assert result.returncode == 0, f"Mock agent failed: {result.stderr}"
+
+        # Detach HEAD so push_branch can create the task-specific branch
+        _git(["checkout", "--detach", "HEAD"], cwd=impl_worktree)
+
+        # First call: task moves from claimed → provisional
+        handle_agent_result(task_id, "mock-implementer", impl_task_dir)
+
+        task = scoped_sdk.tasks.get(task_id)
+        assert task is not None
+        assert task["queue"] == "provisional", (
+            f"Expected provisional after first handle_agent_result, got {task['queue']}"
+        )
+
+        # Second call: same task_id and task_dir — must be a no-op, no exceptions
+        handle_agent_result(task_id, "mock-implementer", impl_task_dir)
+
+        task = scoped_sdk.tasks.get(task_id)
+        assert task is not None
+        assert task["queue"] == "provisional", (
+            f"Expected task to remain in provisional after double-processing, "
+            f"got {task['queue']}"
+        )
+
+    def test_processing_result_for_done_task(
+        self,
+        scoped_sdk,
+        orchestrator_id: str,
+        tmp_path: Path,
+        clean_tasks,
+    ) -> None:
+        """Calling handle_agent_result() on a task already in 'done' is a safe no-op.
+
+        Simulates a late or duplicate result arriving after the full lifecycle
+        has already completed. The queue guard in _handle_done_outcome must
+        skip any transitions and leave the task in 'done'.
+        """
+        # Advance task to provisional via SDK helpers
+        task_id = _make_provisional(scoped_sdk, orchestrator_id)
+
+        # Advance provisional → done via gatekeeper approval
+        gk_worktree = tmp_path / "gk-worktree"
+        _init_git_repo_basic(gk_worktree)
+        gk_task_dir = tmp_path / "gk-task"
+
+        result = _run_mock_agent(
+            gk_worktree, gk_task_dir,
+            commits=1, decision="approve", comment="LGTM",
+        )
+        assert result.returncode == 0, f"Mock gatekeeper failed: {result.stderr}"
+
+        handle_agent_result_via_flow(task_id, "mock-gatekeeper", gk_task_dir)
+
+        task = scoped_sdk.tasks.get(task_id)
+        assert task is not None
+        assert task["queue"] == "done", (
+            f"Expected done after gatekeeper approval, got {task['queue']}"
+        )
+
+        # Simulate a late/duplicate implementer result arriving after task is done
+        late_task_dir = tmp_path / "late-task"
+        late_task_dir.mkdir(parents=True)
+        (late_task_dir / "result.json").write_text('{"outcome": "done"}')
+
+        # Must not raise, must not corrupt task state
+        handle_agent_result(task_id, "mock-implementer", late_task_dir)
+
+        task = scoped_sdk.tasks.get(task_id)
+        assert task is not None
+        assert task["queue"] == "done", (
+            f"Expected task to remain in done after late result processing, "
+            f"got {task['queue']}"
+        )
