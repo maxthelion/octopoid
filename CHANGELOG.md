@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Declarative scheduler job system** ([TASK-42c991a8])
+  - `orchestrator/jobs.py`: New module with `JobContext` dataclass, `@register_job` decorator, `JOB_REGISTRY`, `load_jobs_yaml()`, and `run_due_jobs()` generic dispatcher. Replaces the 7-block if-chain in `run_scheduler()` with a single call. Preserves the poll-batching optimisation: poll data is fetched once if any remote job is due. Supports `type: script` (Python function) and `type: agent` (one-shot Claude agent via existing spawn infrastructure, counting against pool capacity).
+  - `orchestrator/job_conditions.py`: New module with `@register_condition` decorator, `CONDITION_REGISTRY`, and initial conditions `no_agents_running` and `has_open_prs` for use in future job YAML definitions.
+  - `.octopoid/jobs.yaml`: Declarative definition of all 8 housekeeping jobs with their intervals and group (`local`/`remote`). Intervals are the single source of truth; `HOUSEKEEPING_JOB_INTERVALS` dict has been removed from `scheduler.py`.
+
+### Changed
+
+- **`orchestrator/scheduler.py`**: Replaced the hardcoded `HOUSEKEEPING_JOB_INTERVALS` dict and 7-block if-chain in `run_scheduler()` with a call to `run_due_jobs()`. Job intervals now live in `.octopoid/jobs.yaml`.
+
 - **Periodic sweeper for stale worktrees and merged branches** ([TASK-ffd4757c])
   - `orchestrator/scheduler.py`: Added `sweep_stale_resources()` function that runs every 30 minutes as a scheduler job. For tasks in `done` or `failed` queues older than 1 hour: archives `stdout.log`, `stderr.log`, `result.json`, and `prompt.md` to `.octopoid/runtime/logs/<task-id>/`, deletes the worktree, and (for `done` tasks only) deletes the remote `agent/<task-id>` branch. Runs `git worktree prune` after deletions. Failures are non-fatal and logged.
   - `scripts/sweep-resources.sh`: Manual one-time sweep script that can be run from the project root to clean up the current backlog. Supports `--grace SECONDS` flag to override the 1-hour grace period (e.g., `--grace 0` to clean everything).
