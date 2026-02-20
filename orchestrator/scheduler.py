@@ -1992,26 +1992,47 @@ def check_project_completion() -> None:
 
 
 def check_and_requeue_expired_leases() -> None:
-    """Requeue tasks whose lease has expired (orchestrator-side fallback)."""
+    """Requeue tasks whose lease has expired (orchestrator-side fallback).
+
+    Handles two cases:
+    - Tasks in 'claimed' queue (claimed from 'incoming' via the implementer):
+      returned to 'incoming'.
+    - Tasks in 'provisional' queue with an active claim (claimed in-place by the
+      gatekeeper via claim_for_review): claim fields are cleared, task stays in
+      'provisional'.
+    """
     try:
         sdk = queue_utils.get_sdk()
-        claimed_tasks = sdk.tasks.list(queue="claimed")
         now = datetime.now(timezone.utc)
 
-        for task in claimed_tasks or []:
-            lease_expires = task.get("lease_expires_at")
-            if not lease_expires:
-                continue
+        # Map: queue_name -> target queue after expiry
+        # 'claimed' tasks came from 'incoming'; 'provisional' tasks stay in 'provisional'.
+        queues_to_check = {
+            "claimed": "incoming",
+            "provisional": "provisional",
+        }
 
-            try:
-                expires_at = datetime.fromisoformat(lease_expires.replace('Z', '+00:00'))
-                if expires_at < now:
-                    task_id = task["id"]
-                    sdk.tasks.update(task_id, queue="incoming", claimed_by=None, lease_expires_at=None)
-                    debug_log(f"Requeued expired lease: {task_id} (expired {lease_expires})")
-                    print(f"[{datetime.now().isoformat()}] Requeued expired lease: {task_id}")
-            except (ValueError, TypeError):
-                pass
+        for queue_name, target_queue in queues_to_check.items():
+            tasks = sdk.tasks.list(queue=queue_name)
+            for task in tasks or []:
+                # For provisional queue, only process tasks actively claimed
+                # (claimed_by set) — unclaimed provisional tasks need no action.
+                if queue_name == "provisional" and not task.get("claimed_by"):
+                    continue
+
+                lease_expires = task.get("lease_expires_at")
+                if not lease_expires:
+                    continue
+
+                try:
+                    expires_at = datetime.fromisoformat(lease_expires.replace('Z', '+00:00'))
+                    if expires_at < now:
+                        task_id = task["id"]
+                        sdk.tasks.update(task_id, queue=target_queue, claimed_by=None, lease_expires_at=None)
+                        debug_log(f"Requeued expired lease: {task_id} → {target_queue} (expired {lease_expires})")
+                        print(f"[{datetime.now().isoformat()}] Requeued expired lease: {task_id} → {target_queue}")
+                except (ValueError, TypeError):
+                    pass
     except Exception as e:
         debug_log(f"Lease expiry check failed: {e}")
 
@@ -2248,13 +2269,20 @@ def run_housekeeping() -> None:
 # Spawn Strategies
 # =============================================================================
 
-def _requeue_task(task_id: str) -> None:
-    """Requeue a claimed task back to incoming after spawn failure."""
+def _requeue_task(task_id: str, source_queue: str = "incoming") -> None:
+    """Requeue a task back to its source queue after spawn failure.
+
+    Args:
+        task_id: Task to requeue.
+        source_queue: Queue the task should return to. For tasks claimed from
+            'incoming' (implementer), this is 'incoming'. For tasks claimed
+            in-place from 'provisional' (gatekeeper), this is 'provisional'.
+    """
     try:
         from .queue_utils import get_sdk
         sdk = get_sdk()
-        sdk.tasks.update(task_id, queue="incoming", claimed_by=None)
-        debug_log(f"Requeued task {task_id} back to incoming")
+        sdk.tasks.update(task_id, queue=source_queue, claimed_by=None, lease_expires_at=None)
+        debug_log(f"Requeued task {task_id} back to {source_queue}")
     except Exception as e:
         debug_log(f"Failed to requeue task {task_id}: {e}")
 
@@ -2476,7 +2504,8 @@ def _run_agent_evaluation_loop(queue_counts: dict | None) -> None:
                 print(f"[{datetime.now().isoformat()}] Spawn failed for {agent_name}: {e}")
                 debug_log(f"Spawn failed for {agent_name}: {e}")
                 if ctx.claimed_task:
-                    _requeue_task(ctx.claimed_task["id"])
+                    source_queue = ctx.agent_config.get("claim_from", "incoming")
+                    _requeue_task(ctx.claimed_task["id"], source_queue=source_queue)
 
 
 def run_scheduler() -> None:
