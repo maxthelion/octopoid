@@ -229,8 +229,12 @@ class Flow:
         return cls.from_dict(data)
 
     def get_all_states(self) -> set[str]:
-        """Get all states referenced in this flow."""
-        states = set()
+        """Get all states referenced in this flow.
+
+        Always includes built-in states (failed) that the server requires
+        even if no flow transition references them directly.
+        """
+        states = {"failed"}
         for trans in self.transitions:
             states.add(trans.from_state)
             states.add(trans.to_state)

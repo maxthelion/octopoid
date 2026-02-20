@@ -1963,18 +1963,21 @@ def _register_orchestrator(orchestrator_registered: bool = False) -> None:
         return
     try:
         from .queue_utils import get_sdk, get_orchestrator_id
+        from .config import load_config
         sdk = get_sdk()
         orch_id = get_orchestrator_id()
         parts = orch_id.split("-", 1)
         cluster = parts[0] if len(parts) > 1 else "default"
         machine_id = parts[1] if len(parts) > 1 else orch_id
+        config = load_config()
+        repo_url = config.get("repo", {}).get("url", "")
         sdk._request("POST", "/api/v1/orchestrators/register", json={
             "id": orch_id,
             "cluster": cluster,
             "machine_id": machine_id,
-            "repo_url": "",
+            "repo_url": repo_url,
             "version": "2.0.0",
-            "max_agents": 3,
+            "max_agents": config.get("agents", {}).get("max_concurrent", 3),
         })
         debug_log(f"Registered orchestrator: {orch_id}")
     except Exception as e:
@@ -2237,10 +2240,15 @@ def _run_agent_evaluation_loop(queue_counts: dict | None) -> None:
 
     for agent_config in agents:
         agent_name = agent_config.get("name")
-        role = agent_config.get("role")
+        role = agent_config.get("role") or agent_config.get("type")
         if not agent_name or not role:
-            print(f"Skipping invalid agent config: {agent_config}")
-            debug_log(f"Invalid agent config: {agent_config}")
+            missing = []
+            if not agent_name:
+                missing.append("name")
+            if not role:
+                missing.append("role")
+            print(f"Skipping agent config (missing {', '.join(missing)}): {agent_config}")
+            debug_log(f"Invalid agent config (missing {', '.join(missing)}): {agent_config}")
             continue
 
         debug_log(f"Evaluating agent {agent_name}: role={role}")

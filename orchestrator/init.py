@@ -282,7 +282,7 @@ queue_limits:
 # Agent blueprints — each key is a blueprint name
 agents:
   implementer:
-    type: implementer
+    role: implementer
     max_instances: 1   # How many instances can run concurrently
     interval_seconds: 180  # 3 minutes
 
