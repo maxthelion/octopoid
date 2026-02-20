@@ -78,7 +78,14 @@ def find_parent_project() -> Path:
     """Find the parent project root by walking up from orchestrator/ to find .git.
 
     Returns the directory containing .git (the parent project root).
+
+    When ORCHESTRATOR_DIR env var is set (e.g. in tests or subprocess environments),
+    returns its parent directory instead of walking the filesystem.
     """
+    env_override = os.environ.get("ORCHESTRATOR_DIR")
+    if env_override:
+        return Path(env_override).parent
+
     current = Path(__file__).resolve().parent
 
     # Walk up looking for .git
