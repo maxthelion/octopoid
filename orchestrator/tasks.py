@@ -571,6 +571,7 @@ CREATED_BY: {created_by}
             queue=queue,
             branch=branch,
             hooks=hooks_json,
+            flow="project" if project_id else "default",
             metadata={
                 "created_by": created_by,
                 "blocked_by": blocked_by,
