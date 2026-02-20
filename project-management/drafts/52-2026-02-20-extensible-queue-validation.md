@@ -1,6 +1,19 @@
+---
+**Processed:** 2026-02-20
+**Mode:** human-guided
+**Actions taken:**
+- Verified `TaskQueue` changed from closed union to `string` in shared.ts
+- Verified `BUILT_IN_QUEUES` defined as `['incoming', 'claimed', 'done', 'failed']`
+- Verified `flows` table migration (0011) exists and deployed
+- Verified flow registration endpoint (`PUT /api/v1/flows/:name`) with built-in state validation
+- Verified `validateQueue()` in validate-queue.ts checks against registered flow states
+- `validateQueue()` not yet called from tasks.ts PATCH — minor wiring gap, not blocking
+**Outstanding items:** none
+---
+
 # Extensible Queue Names With Runtime Validation
 
-**Status:** Idea
+**Status:** Complete
 **Captured:** 2026-02-20
 
 ## Raw

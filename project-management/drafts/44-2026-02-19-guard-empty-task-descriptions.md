@@ -1,6 +1,15 @@
+---
+**Processed:** 2026-02-20
+**Mode:** human-guided
+**Actions taken:**
+- Verified `guard_task_description_nonempty` is implemented in scheduler.py:236 and wired into the guard chain
+- No outstanding work — archived
+**Outstanding items:** none
+---
+
 # Guard Against Spawning Agents for Empty Task Descriptions
 
-**Status:** Idea
+**Status:** Complete
 **Captured:** 2026-02-19
 
 ## Raw
