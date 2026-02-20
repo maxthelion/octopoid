@@ -27,7 +27,6 @@ class TestStepRegistry:
         assert "push_branch" in STEP_REGISTRY
         assert "run_tests" in STEP_REGISTRY
         assert "create_pr" in STEP_REGISTRY
-        assert "submit_to_server" in STEP_REGISTRY
 
     def test_execute_steps_unknown_step_raises(self):
         """execute_steps raises ValueError for unknown step names."""
@@ -201,30 +200,6 @@ class TestRunTestsStep:
 
         assert "PATH" in captured_env
         assert captured_env["PATH"]  # not empty
-
-
-class TestSubmitToServerStep:
-    """Tests for the submit_to_server step (deprecated no-op)."""
-
-    def test_submit_to_server_is_noop_and_warns(self, tmp_path, mock_sdk_for_unit_tests):
-        """submit_to_server is a deprecated no-op — it should NOT call sdk.tasks.submit."""
-        import warnings
-        from orchestrator.steps import submit_to_server
-
-        task_dir = tmp_path
-        task = {"id": "TASK-test123"}
-
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            submit_to_server(task, {}, task_dir)
-
-        # Should NOT submit — the engine owns transitions now
-        mock_sdk_for_unit_tests.tasks.submit.assert_not_called()
-
-        # Should emit a DeprecationWarning
-        deprecation_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-        assert deprecation_warnings, "Expected a DeprecationWarning"
-        assert "submit_to_server" in str(deprecation_warnings[0].message)
 
 
 class TestMergePrStep:

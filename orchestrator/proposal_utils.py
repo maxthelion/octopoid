@@ -8,10 +8,7 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from .config import (
-    get_curator_scoring,
-    get_proposal_limits,
     get_proposals_dir,
-    get_voice_weight,
 )
 
 ProposalStatus = Literal["active", "promoted", "deferred", "rejected"]
@@ -56,24 +53,6 @@ def count_proposals(status: ProposalStatus, proposer: str | None = None) -> int:
             count += 1
 
     return count
-
-
-def can_create_proposal(proposer_type: str) -> tuple[bool, str]:
-    """Check if a proposer can create a new proposal (backpressure check).
-
-    Args:
-        proposer_type: The proposer type (e.g., "test-checker")
-
-    Returns:
-        Tuple of (can_create, reason_if_not)
-    """
-    limits = get_proposal_limits(proposer_type)
-    active_count = count_proposals("active", proposer_type)
-
-    if active_count >= limits["max_active"]:
-        return False, f"Proposal limit reached: {active_count} active (limit: {limits['max_active']})"
-
-    return True, ""
 
 
 def list_proposals(status: ProposalStatus, proposer: str | None = None) -> list[dict[str, Any]]:
@@ -370,43 +349,6 @@ def reactivate_proposal(proposal_path: Path | str) -> Path:
 
     os.rename(proposal_path, dest)
     return dest
-
-
-def score_proposal(proposal: dict[str, Any], context: dict[str, Any] | None = None) -> float:
-    """Score a proposal using curator scoring weights.
-
-    Args:
-        proposal: Proposal dictionary from parse_proposal_file
-        context: Optional context with scoring factors
-
-    Returns:
-        Score between 0 and 1
-    """
-    weights = get_curator_scoring()
-    context = context or {}
-
-    # Get individual scores (default to 0.5 if not provided)
-    priority_alignment = context.get("priority_alignment", 0.5)
-    complexity_reduction = context.get("complexity_reduction", 0.5)
-    risk = 1.0 - context.get("risk", 0.5)  # Invert risk (lower risk = higher score)
-    dependencies_met = context.get("dependencies_met", 0.5)
-
-    # Voice weight from proposer
-    proposer = proposal.get("proposer", "unknown")
-    voice_weight = get_voice_weight(proposer)
-    # Normalize voice weight to 0-1 range (assuming max weight is 2.0)
-    voice_score = min(voice_weight / 2.0, 1.0)
-
-    # Calculate weighted score
-    score = (
-        weights["priority_alignment"] * priority_alignment
-        + weights["complexity_reduction"] * complexity_reduction
-        + weights["risk"] * risk
-        + weights["dependencies_met"] * dependencies_met
-        + weights["voice_weight"] * voice_score
-    )
-
-    return score
 
 
 def detect_conflicts(proposals: list[dict[str, Any]]) -> list[tuple[dict, dict, str]]:

@@ -221,11 +221,8 @@ class HookManager:
     ) -> dict | None:
         """Record hook completion evidence with the server.
 
-        Calls the hook evidence endpoint on the server to update
-        the hook's status. Once Phase 2 (server-side hooks) is
-        implemented, this will use POST /api/v1/tasks/:id/hooks/:hookName/complete.
-
-        For now, falls back to updating the task's hooks field via PATCH.
+        Reads the task's current hooks list, updates the matching hook's
+        status, and writes back via PATCH.
 
         Args:
             task_id: Task ID
