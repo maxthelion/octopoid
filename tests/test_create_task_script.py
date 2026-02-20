@@ -3,10 +3,6 @@
 These tests verify that the canonical task creation script:
 - Accepts valid inputs and creates tasks correctly
 - Validates role, priority, and required fields
-
-NOTE: Tests that verify file creation paths are skipped because
-get_tasks_file_dir() uses find_parent_project() which doesn't
-honour ORCHESTRATOR_DIR in subprocess environments.
 - Returns proper exit codes (0 for success, 1 for errors)
 - Outputs task ID on success
 
@@ -34,10 +30,12 @@ def test_env(mock_orchestrator_dir):
     """Environment with ORCHESTRATOR_DIR pointing to test directory."""
     env = os.environ.copy()
     env["ORCHESTRATOR_DIR"] = str(mock_orchestrator_dir)
+    # Prevent subprocess from hitting any real server
+    env.pop("OCTOPOID_SERVER_URL", None)
+    env.pop("OCTOPOID_API_KEY", None)
     return env
 
 
-@pytest.mark.skip(reason="create_task uses find_parent_project() which doesn't honour ORCHESTRATOR_DIR in subprocesses")
 class TestCreateTaskScript:
     """Tests for the create_task.py CLI script."""
 

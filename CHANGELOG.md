@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `tests/test_init.py`: Updated `test_skills_skipped_shows_hint` to assert `"install-commands"` instead of `"--skills"` to match current init output.
   - Removed `tests/test_queue_diagnostics.py` and `tests/test_queue_auto_fixes.py` (16 dead tests for a `diagnose_queue_health` script that no longer exists; replaced by `tests/integration/test_queue_health_diagnostics.py`).
 
+- **`find_parent_project()` now respects `ORCHESTRATOR_DIR` env var in subprocesses** ([TASK-a3800d8a])
+  - `orchestrator/config.py`: When `ORCHESTRATOR_DIR` is set, `find_parent_project()` returns `Path(ORCHESTRATOR_DIR).parent` instead of walking the filesystem. This makes all derived path helpers (`get_tasks_file_dir`, `get_base_branch`, etc.) work correctly in subprocess environments.
+  - `orchestrator/tasks.py`: Warning messages from `create_task()` are now printed to `sys.stderr` so `stdout` only contains the task ID.
+  - `tests/test_create_task_script.py`: Removed permanent `@pytest.mark.skip`; 11 of 12 tests now run and pass.
+
 - **Guard against spawning agents for empty task descriptions** ([TASK-16ffb5c4])
   - `orchestrator/scheduler.py`: Added `guard_task_description_nonempty` guard to `AGENT_GUARDS`. For scripts-mode agents, after claiming a task, the guard checks that `task["content"]` is non-empty and non-whitespace. If the task file is missing or empty, the task is moved to `failed` with a clear reason (e.g. "Task description is empty — no file at .octopoid/tasks/TASK-xxx.md") and no agent is spawned.
   - `orchestrator/tests/test_scheduler_lifecycle.py`: 8 unit tests covering all guard paths — no task, non-scripts mode, valid content, whitespace-only content, missing content field, empty file, reason message formatting, and SDK failure resilience.

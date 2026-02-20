@@ -6,6 +6,7 @@ Task files on disk are supplementary — the API is the source of truth.
 
 import os
 import re
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -558,7 +559,7 @@ CREATED_BY: {created_by}
             import json as _json
             hooks_json = _json.dumps(hooks_list)
     except Exception as e:
-        print(f"Warning: Failed to resolve hooks: {e}")
+        print(f"Warning: Failed to resolve hooks: {e}", file=sys.stderr)
 
     try:
         sdk = get_sdk()
@@ -581,7 +582,7 @@ CREATED_BY: {created_by}
             }
         )
     except Exception as e:
-        print(f"Warning: Failed to register task with API: {e}")
+        print(f"Warning: Failed to register task with API: {e}", file=sys.stderr)
 
     logger = get_task_logger(task_id)
     logger.log_created(
