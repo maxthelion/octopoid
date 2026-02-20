@@ -33,6 +33,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Dashboard TUI: drafts tab readability improvements** ([TASK-23ec69f6])
+  - `packages/dashboard/tabs/drafts.py`: Draft list items now show a 1-based index number at the start of each row so draft numbers are visible and not truncated.
+  - `packages/dashboard/tabs/drafts.py`: Draft content panel now uses Textual's `Markdown` widget instead of a plain `Label`, so markdown syntax (headers, bold, tables, code blocks) renders correctly.
+  - `packages/dashboard/styles/dashboard.tcss`: Added explicit `Tab`/`Tabs` styling — muted text for inactive tabs, bright cyan bold for the active tab, reduced padding — so tab labels are legible against the dark background.
+  - `packages/dashboard/styles/dashboard.tcss`: Filter button text color raised from `#616161` to `#b0b0b0` for legibility on the dark background.
+
 - **Flow engine: orchestrator hook loop no longer bypasses flow conditions (GH-143)** ([TASK-89fda8bb])
   - `orchestrator/scheduler.py`: Added `_has_flow_blocking_conditions()` helper that checks whether a task's flow has `agent` or `manual` conditions on its current transition.
   - `orchestrator/scheduler.py`: `process_orchestrator_hooks()` now skips tasks whose flow has blocking conditions. Previously, tasks moved directly to `provisional` via `sdk.tasks.update()` were immediately auto-accepted by the hook loop, bypassing gatekeeper agents and human approval gates entirely.
