@@ -79,6 +79,8 @@ When a plan says something is "already done" or "already disabled", **verify it*
 
 ## Testing philosophy: outside-in
 
+See `docs/testing.md` for the complete testing guide.
+
 Prefer end-to-end tests with a real local server over mocked unit tests. The testing pyramid:
 
 1. **Priority 1 — End-to-end:** Scheduler + real local server + real SDK. Test full lifecycles (create → claim → spawn → submit → accept). Use the `scoped_sdk` fixture for isolation.
@@ -89,3 +91,4 @@ Prefer end-to-end tests with a real local server over mocked unit tests. The tes
 - Use `scoped_sdk` (from `tests/integration/conftest.py`) for test isolation — each test gets its own scope on the local server.
 - Only mock `get_sdk()` when you genuinely need to test behavior with specific return values (error paths, edge cases). Never mock just to avoid running the server.
 - Integration tests run against `localhost:9787` (start with `tests/integration/bin/start-test-server.sh`). Never hit production from tests.
+- When writing new tests, follow the patterns and templates in docs/testing.md.
