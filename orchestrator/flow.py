@@ -6,6 +6,7 @@ Transitions between states have conditions (gates) and actions (runs).
 Flow files are YAML stored in .octopoid/flows/
 """
 
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -40,6 +41,49 @@ class Condition:
             on_fail=data.get("on_fail"),
             skip=data.get("skip", False),
         )
+
+    def evaluate(self, cwd: Path | None = None) -> bool:
+        """Evaluate this condition.
+
+        For type=script: runs the script as a subprocess shell command and
+        returns True if the exit code is 0, False for any non-zero exit code.
+
+        For type=agent or type=manual: raises NotImplementedError — these are
+        evaluated externally by the scheduler (agent spawning or human approval).
+
+        If skip=True, returns True immediately without running anything.
+
+        Args:
+            cwd: Working directory for script execution (optional)
+
+        Returns:
+            True if the condition passes, False if it fails
+
+        Raises:
+            NotImplementedError: For agent/manual conditions
+            ValueError: If script is not set for script conditions
+        """
+        if self.skip:
+            return True
+
+        if self.type != "script":
+            raise NotImplementedError(
+                f"Condition '{self.name}' of type '{self.type}' cannot be evaluated "
+                "programmatically; agent/manual conditions are handled by the scheduler"
+            )
+
+        if not self.script:
+            raise ValueError(
+                f"Condition '{self.name}': script type requires 'script' field"
+            )
+
+        result = subprocess.run(
+            self.script,
+            shell=True,
+            cwd=cwd,
+            capture_output=True,
+        )
+        return result.returncode == 0
 
     def validate(self, flow_name: str, transition: str) -> list[str]:
         """Validate this condition.

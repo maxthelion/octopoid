@@ -7,10 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Flow engine now owns task transitions — fixes child task orphaning and step failure orphaning** ([TASK-44d77f1f])
+  - `orchestrator/scheduler.py`: `_handle_done_outcome` now calls `_perform_transition()` after steps succeed, mapping the flow YAML `to_state` to the correct API call (`submit` for `provisional`, `accept` for `done`, `update(queue=...)` for custom queues). The engine performs the transition — steps are pure side effects.
+  - `orchestrator/scheduler.py`: `handle_agent_result` no longer silently swallows step exceptions. Exceptions propagate so `check_and_update_finished_agents` keeps the PID in tracking for retry. After 3 consecutive step failures, the task moves to `failed` and the counter resets.
+  - `orchestrator/scheduler.py`: `check_and_update_finished_agents` only removes a PID from `running_pids.json` when result handling succeeds. On failure the PID is retained so the next scheduler tick retries.
+  - `orchestrator/steps.py`: `submit_to_server` step deprecated to a no-op — the engine performs transitions, no step needs to call the API.
+  - `.octopoid/flows/default.yaml`: Removed `submit_to_server` from `claimed -> provisional` runs. New list: `[push_branch, run_tests, create_pr]`.
+
 ### Added
 
-- **Tests for run_tests step timeout and success paths** ([TASK-test-4-3])
-  - `tests/test_steps.py`: Added `test_run_tests_timeout_raises_runtime_error` — verifies that `subprocess.TimeoutExpired` from the subprocess is re-raised as `RuntimeError("Tests timed out after 300s")` (not swallowed). Added `test_run_tests_success_path` — verifies that a passing test run (exit code 0) completes without raising.
+- **Flow engine: `Condition.evaluate()` for type: script conditions** ([TASK-test-5-1])
+  - `orchestrator/flow.py`: Added `Condition.evaluate(cwd=None)` method. For `type=script` conditions, runs the script as a shell command (via `subprocess.run(shell=True)`) and returns `True` if exit code is 0, `False` otherwise. `skip=True` short-circuits to `True` without running the script. Agent/manual conditions raise `NotImplementedError` — they are evaluated externally by the scheduler.
+  - `tests/integration/test_flow_conditions.py`: Integration tests for script conditions — 8 condition-evaluation tests (no server required) and 2 end-to-end tests with SDK task state transitions (`scoped_sdk`).
 
 - **Project completion detection and PR creation** ([TASK-29d97975])
   - `orchestrator/scheduler.py`: Added `check_project_completion()` housekeeping job (60s interval). When all child tasks in an active project reach the `done` queue, the function creates a PR from the project's shared branch to the base branch via `gh pr create`, then updates the project status to `"review"` via `sdk.projects.update()`. Idempotent: skips projects already in `"review"` or `"completed"` status, and reuses existing PRs if one already exists for the branch. Added to `HOUSEKEEPING_JOB_INTERVALS`, `HOUSEKEEPING_JOBS`, and `run_scheduler()`.
