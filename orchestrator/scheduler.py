@@ -598,6 +598,7 @@ HOUSEKEEPING_JOB_INTERVALS: dict[str, int] = {
     "_register_orchestrator": 300,                # Rarely changes
     "check_and_requeue_expired_leases": 60,       # API call, keep at 60s
     "process_orchestrator_hooks": 60,             # API call via poll
+    "check_project_completion": 60,               # Project completion detection
     "_check_queue_health_throttled": 1800,        # Already self-throttled
     "agent_evaluation_loop": 60,                  # Main remote poll + claim loop
 }
@@ -1606,6 +1607,168 @@ def check_queue_health() -> None:
         debug_log(f"Queue health check failed: {e}")
 
 
+def check_project_completion() -> None:
+    """Check active projects and create PRs when all child tasks are done.
+
+    For each active project where every child task is in the 'done' queue:
+    1. Create a PR from the project's shared branch to the base branch
+    2. Update the project status to 'review'
+
+    Runs as a housekeeping job every 60 seconds. Skips projects that are
+    already in 'review' or 'completed' status (by only listing 'active' ones).
+    """
+    try:
+        sdk = queue_utils.get_sdk()
+        projects = sdk.projects.list(status="active")
+
+        if not projects:
+            return
+
+        for project in projects:
+            project_id = project.get("id", "")
+            project_status = project.get("status", "")
+
+            # Extra safety check — skip non-active projects if list returns stale data
+            if project_status in ("review", "completed", "done"):
+                debug_log(f"check_project_completion: skipping {project_id} (status={project_status})")
+                continue
+
+            tasks = sdk.projects.get_tasks(project_id)
+
+            if not tasks:
+                continue
+
+            all_done = all(t.get("queue") == "done" for t in tasks)
+            if not all_done:
+                continue
+
+            # All children done — create PR on the shared branch
+            project_branch = project.get("branch")
+            if not project_branch:
+                debug_log(f"check_project_completion: project {project_id} has no branch, skipping")
+                continue
+
+            base_branch = get_base_branch()
+            parent_project = find_parent_project()
+
+            # Check if PR already exists for this branch
+            pr_check = subprocess.run(
+                [
+                    "gh", "pr", "view", project_branch,
+                    "--json", "url,number",
+                    "-q", '.url + " " + (.number|tostring)',
+                ],
+                cwd=parent_project,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+
+            pr_url: str | None = None
+            pr_number: int | None = None
+
+            if pr_check.returncode == 0 and pr_check.stdout.strip():
+                # PR already exists
+                parts = pr_check.stdout.strip().rsplit(" ", 1)
+                pr_url = parts[0]
+                try:
+                    pr_number = int(parts[1]) if len(parts) > 1 else None
+                except ValueError:
+                    pass
+                debug_log(f"check_project_completion: PR already exists for {project_id}: {pr_url}")
+            else:
+                # Create new PR from the project branch
+                project_title = project.get("title", project_id)
+                pr_body = (
+                    f"## Project: {project_title}\n\n"
+                    f"All child tasks for project `{project_id}` are complete. "
+                    f"This PR merges the shared project branch into `{base_branch}`."
+                )
+                pr_create = subprocess.run(
+                    [
+                        "gh", "pr", "create",
+                        "--base", base_branch,
+                        "--head", project_branch,
+                        "--title", f"[{project_id}] {project_title}",
+                        "--body", pr_body,
+                    ],
+                    cwd=parent_project,
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                )
+
+                if pr_create.returncode != 0:
+                    # PR may already exist (race condition or "already exists" error)
+                    if "already exists" in (pr_create.stderr or ""):
+                        retry = subprocess.run(
+                            [
+                                "gh", "pr", "view", project_branch,
+                                "--json", "url,number",
+                                "-q", '.url + " " + (.number|tostring)',
+                            ],
+                            cwd=parent_project,
+                            capture_output=True,
+                            text=True,
+                            timeout=30,
+                        )
+                        if retry.returncode == 0 and retry.stdout.strip():
+                            parts = retry.stdout.strip().rsplit(" ", 1)
+                            pr_url = parts[0]
+                            try:
+                                pr_number = int(parts[1]) if len(parts) > 1 else None
+                            except ValueError:
+                                pass
+                        else:
+                            debug_log(
+                                f"check_project_completion: PR creation failed for {project_id}: "
+                                f"{pr_create.stderr.strip()}"
+                            )
+                            print(
+                                f"[{datetime.now().isoformat()}] Failed to create project PR "
+                                f"for {project_id}: {pr_create.stderr.strip()}"
+                            )
+                            continue
+                    else:
+                        debug_log(
+                            f"check_project_completion: PR creation failed for {project_id}: "
+                            f"{pr_create.stderr.strip()}"
+                        )
+                        print(
+                            f"[{datetime.now().isoformat()}] Failed to create project PR "
+                            f"for {project_id}: {pr_create.stderr.strip()}"
+                        )
+                        continue
+                else:
+                    pr_url = pr_create.stdout.strip()
+                    if pr_url:
+                        try:
+                            pr_number = int(pr_url.rstrip("/").rsplit("/", 1)[-1])
+                        except (ValueError, IndexError):
+                            pass
+                    print(
+                        f"[{datetime.now().isoformat()}] Created project PR for {project_id}: {pr_url}"
+                    )
+                    debug_log(f"check_project_completion: created PR {pr_url} for {project_id}")
+
+            # Update project: store PR info and move to review
+            update_kwargs: dict = {"status": "review"}
+            if pr_url:
+                update_kwargs["pr_url"] = pr_url
+            if pr_number is not None:
+                update_kwargs["pr_number"] = pr_number
+
+            sdk.projects.update(project_id, **update_kwargs)
+            print(
+                f"[{datetime.now().isoformat()}] Project {project_id} moved to review "
+                f"(PR: {pr_url})"
+            )
+            debug_log(f"check_project_completion: project {project_id} -> review")
+
+    except Exception as e:
+        debug_log(f"check_project_completion failed: {e}")
+
+
 def check_and_requeue_expired_leases() -> None:
     """Requeue tasks whose lease has expired (orchestrator-side fallback)."""
     try:
@@ -1725,6 +1888,7 @@ HOUSEKEEPING_JOBS = [
     check_and_update_finished_agents,
     _check_queue_health_throttled,
     process_orchestrator_hooks,
+    check_project_completion,
 ]
 
 
@@ -1975,6 +2139,7 @@ def run_scheduler() -> None:
     - _register_orchestrator: every 300s (uses poll to skip if already registered)
     - check_and_requeue_expired_leases: every 60s
     - process_orchestrator_hooks: every 60s (uses poll provisional_tasks list)
+    - check_project_completion: every 60s (detect completed projects, create PRs)
     - _check_queue_health_throttled: every 1800s
     - agent_evaluation_loop: every 60s (uses poll queue_counts for backpressure)
 
@@ -2008,12 +2173,17 @@ def run_scheduler() -> None:
                                HOUSEKEEPING_JOB_INTERVALS["check_and_requeue_expired_leases"])
     needs_hooks = is_job_due(scheduler_state, "process_orchestrator_hooks",
                              HOUSEKEEPING_JOB_INTERVALS["process_orchestrator_hooks"])
+    needs_project_completion = is_job_due(scheduler_state, "check_project_completion",
+                                          HOUSEKEEPING_JOB_INTERVALS["check_project_completion"])
     needs_health = is_job_due(scheduler_state, "_check_queue_health_throttled",
                               HOUSEKEEPING_JOB_INTERVALS["_check_queue_health_throttled"])
     needs_agents = is_job_due(scheduler_state, "agent_evaluation_loop",
                               HOUSEKEEPING_JOB_INTERVALS["agent_evaluation_loop"])
 
-    needs_remote = needs_register or needs_requeue or needs_hooks or needs_health or needs_agents
+    needs_remote = (
+        needs_register or needs_requeue or needs_hooks or needs_project_completion
+        or needs_health or needs_agents
+    )
 
     # --- Fetch poll data once for all remote jobs ---
     poll_data: dict | None = None
@@ -2045,6 +2215,14 @@ def run_scheduler() -> None:
         except Exception as e:
             debug_log(f"process_orchestrator_hooks failed: {e}")
         record_job_run(scheduler_state, "process_orchestrator_hooks")
+
+    # --- Project completion check (60s) ---
+    if needs_project_completion:
+        try:
+            check_project_completion()
+        except Exception as e:
+            debug_log(f"check_project_completion failed: {e}")
+        record_job_run(scheduler_state, "check_project_completion")
 
     # --- Queue health check (1800s, already self-throttled) ---
     if needs_health:
