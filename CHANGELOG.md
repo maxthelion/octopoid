@@ -7,10 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Flow engine now owns task transitions — fixes child task orphaning and step failure orphaning** ([TASK-44d77f1f])
+  - `orchestrator/scheduler.py`: `_handle_done_outcome` now calls `_perform_transition()` after steps succeed, mapping the flow YAML `to_state` to the correct API call (`submit` for `provisional`, `accept` for `done`, `update(queue=...)` for custom queues). The engine performs the transition — steps are pure side effects.
+  - `orchestrator/scheduler.py`: `handle_agent_result` no longer silently swallows step exceptions. Exceptions propagate so `check_and_update_finished_agents` keeps the PID in tracking for retry. After 3 consecutive step failures, the task moves to `failed` and the counter resets.
+  - `orchestrator/scheduler.py`: `check_and_update_finished_agents` only removes a PID from `running_pids.json` when result handling succeeds. On failure the PID is retained so the next scheduler tick retries.
+  - `orchestrator/steps.py`: `submit_to_server` step deprecated to a no-op — the engine performs transitions, no step needs to call the API.
+  - `.octopoid/flows/default.yaml`: Removed `submit_to_server` from `claimed -> provisional` runs. New list: `[push_branch, run_tests, create_pr]`.
+
 ### Added
 
-- **Integration tests for pool capacity limits** ([TASK-test-3-1])
-  - `tests/integration/test_pool_concurrency.py`: Two tests verifying pool capacity enforcement end-to-end. `TestPoolCapacityRespected` confirms `guard_pool_capacity` blocks at `max_instances` and allows spawning after a slot frees. `TestCountOnlyAlivePids` confirms `count_running_instances` counts only alive PIDs, ignoring dead ones. Both use real filesystem pool tracking with `tmp_path` and patch `get_agents_runtime_dir`.
+- **Integration tests for duplicate claim prevention across pool instances** ([TASK-test-3-2])
+  - `tests/integration/test_duplicate_claim_prevention.py`: Two integration tests using a real test server and real pool PID tracking.
+  - `test_second_instance_blocked_on_duplicate_task`: Verifies `guard_claim_task` returns `(False, "duplicate_task: ...")` when a live PID for the same blueprint is already registered for the claimed task.
+  - `test_different_tasks_claimed_by_different_instances`: Verifies two pool instances can each claim a distinct task without the dedup guard interfering.
 
 - **Project completion detection and PR creation** ([TASK-29d97975])
   - `orchestrator/scheduler.py`: Added `check_project_completion()` housekeeping job (60s interval). When all child tasks in an active project reach the `done` queue, the function creates a PR from the project's shared branch to the base branch via `gh pr create`, then updates the project status to `"review"` via `sdk.projects.update()`. Idempotent: skips projects already in `"review"` or `"completed"` status, and reuses existing PRs if one already exists for the branch. Added to `HOUSEKEEPING_JOB_INTERVALS`, `HOUSEKEEPING_JOBS`, and `run_scheduler()`.
