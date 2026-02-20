@@ -83,47 +83,6 @@ The `comment` field should be a full markdown PR review comment. It will be post
 
 Just write `result.json` and exit. The orchestrator handles all transitions.
 
-## CRITICAL: Rewrite the Task File on Rejection
-
-When you reject a task, you MUST also rewrite the task file (`.octopoid/tasks/$task_id.md`) before writing `result.json`. The implementing agent reads only the task file — not the PR comment. If you reject without rewriting, the next agent gets the same instructions and makes the same mistakes.
-
-### How to rewrite
-
-Replace the entire task file content with a new, self-consistent description that:
-
-1. **Describes only what remains to be done** — not what was wrong with the previous attempt
-2. **Gives concrete code examples for the target state** — show the exact code the agent should write, not prose descriptions of what to change
-3. **Never names forbidden patterns** — don't say "Do NOT create X". The agent latches onto named patterns and creates them anyway. Instead, show the correct approach and only the correct approach.
-4. **Addresses architectural tensions explicitly** — if the correct approach seems counterintuitive (e.g. reusing a flag that shows seemingly irrelevant data), explain why it works
-
-### Example: bad vs good
-
-**Bad** (names the forbidden pattern, prose-only):
-```markdown
-Do NOT create a `show_review` flag. Use `show_progress` instead.
-Add a time_ago helper. Format must be "5m ago".
-```
-
-**Good** (shows target code, no forbidden pattern named):
-```markdown
-### task_card.py — extend the `show_progress` block
-
-Replace the existing `if self.show_progress and agent:` block with:
-
-\```python
-if self.show_progress and agent:
-    agent_name = (agent or "")[:12]
-    claimed_ago = _time_ago(task.get("claimed_at"))
-    agent_label = f"  {agent_name}"
-    if claimed_ago:
-        agent_label += f"  {claimed_ago}"
-    yield Label(agent_label, classes="task-agent dim")
-    yield Label(_progress_bar(turns, turn_limit), classes="task-progress")
-\```
-```
-
-The implementing agent will copy the code example. Make it copy-correct.
-
 ## Review Comment Format
 
 Your `comment` should follow this format:

@@ -63,9 +63,13 @@ def reject_with_feedback(task: dict, result: dict, task_dir: Path) -> None:
     the implementer when they check the PR) and rejects the task via the SDK.
     Appends explicit rebase instructions to the rejection reason if not already
     present, so the implementer knows to rebase before retrying.
+
+    Also posts the feedback as a rejection message on the task thread so the
+    next agent sees the full rejection history without any task file rewriting.
     """
     from . import queue_utils
     from .config import get_base_branch
+    from .task_thread import post_message
 
     sdk = queue_utils.get_sdk()
     comment = result.get("comment", "Rejected by gatekeeper")
@@ -95,7 +99,14 @@ def reject_with_feedback(task: dict, result: dict, task_dir: Path) -> None:
     else:
         reason = comment
 
-    sdk.tasks.reject(task["id"], reason=reason, rejected_by="gatekeeper")
+    # Post rejection as a message on the task thread so the next agent sees it
+    task_id = task["id"]
+    try:
+        post_message(task_id, role="rejection", content=reason, author="gatekeeper")
+    except Exception as e:
+        print(f"reject_with_feedback: failed to post thread message: {e}")
+
+    sdk.tasks.reject(task_id, reason=reason, rejected_by="gatekeeper")
 
 
 # =============================================================================
