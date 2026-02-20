@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **MessagesAPI added to Python SDK** ([TASK-24c48219])
+  - `packages/python-sdk/octopoid_sdk/client.py`: Added `MessagesAPI` class with `create()` and `list()` methods.
+  - `sdk.messages.create(task_id, from_actor, type, content, to_actor=None)` posts to `/api/v1/messages`.
+  - `sdk.messages.list(task_id=None, to_actor=None, type=None)` queries with optional filters.
+  - Exposed as `sdk.messages` on `OctopoidSDK`.
+
 ### Removed
 
 - **Dead code cleanup: deleted files, functions, and spawn strategies** ([TASK-4dbee1a5])

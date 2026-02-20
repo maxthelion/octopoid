@@ -356,6 +356,68 @@ class FlowsAPI:
         return self.client._request('PUT', f'/api/v1/flows/{name}', json=data)
 
 
+class MessagesAPI:
+    """Messages API endpoints"""
+
+    def __init__(self, client: 'OctopoidSDK'):
+        self._client = client
+
+    def create(
+        self,
+        task_id: str,
+        from_actor: str,
+        type: str,
+        content: str,
+        to_actor: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Create a new message
+
+        Args:
+            task_id: Task ID this message belongs to
+            from_actor: Actor sending the message (e.g., 'agent', 'human')
+            type: Message type (e.g., 'comment', 'question')
+            content: Message content
+            to_actor: Optional recipient actor
+
+        Returns:
+            Created message dictionary
+        """
+        payload: Dict[str, Any] = {
+            'task_id': task_id,
+            'from_actor': from_actor,
+            'type': type,
+            'content': content,
+        }
+        if to_actor:
+            payload['to_actor'] = to_actor
+        return self._client._request('POST', '/api/v1/messages', json=payload)
+
+    def list(
+        self,
+        task_id: Optional[str] = None,
+        to_actor: Optional[str] = None,
+        type: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """List messages with optional filters
+
+        Args:
+            task_id: Filter by task ID
+            to_actor: Filter by recipient actor
+            type: Filter by message type
+
+        Returns:
+            List of message dictionaries
+        """
+        params: Dict[str, Any] = {}
+        if task_id:
+            params['task_id'] = task_id
+        if to_actor:
+            params['to_actor'] = to_actor
+        if type:
+            params['type'] = type
+        return self._client._request('GET', '/api/v1/messages', params=params).get('messages', [])
+
+
 class StatusAPI:
     """Status and health API endpoints"""
 
@@ -402,6 +464,7 @@ class OctopoidSDK:
         self.drafts = DraftsAPI(self)
         self.projects = ProjectsAPI(self)
         self.flows = FlowsAPI(self)
+        self.messages = MessagesAPI(self)
         self.status = StatusAPI(self)
 
     def _request(
