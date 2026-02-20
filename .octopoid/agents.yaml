@@ -23,10 +23,3 @@ agents:
     agent_dir: .octopoid/agents/gatekeeper
     max_instances: 1
 
-  github-issue-monitor:
-    type: custom
-    path: .octopoid/agents/github-issue-monitor/
-    interval_seconds: 900
-    lightweight: true
-    max_instances: 1
-    paused: true
