@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Guard against spawning agents for empty task descriptions** ([TASK-16ffb5c4])
+  - `orchestrator/scheduler.py`: Added `guard_task_description_nonempty` guard to `AGENT_GUARDS`. For scripts-mode agents, after claiming a task, the guard checks that `task["content"]` is non-empty and non-whitespace. If the task file is missing or empty, the task is moved to `failed` with a clear reason (e.g. "Task description is empty — no file at .octopoid/tasks/TASK-xxx.md") and no agent is spawned.
+  - `orchestrator/tests/test_scheduler_lifecycle.py`: 8 unit tests covering all guard paths — no task, non-scripts mode, valid content, whitespace-only content, missing content field, empty file, reason message formatting, and SDK failure resilience.
+
 - **Flow engine now owns task transitions — fixes child task orphaning and step failure orphaning** ([TASK-44d77f1f])
   - `orchestrator/scheduler.py`: `_handle_done_outcome` now calls `_perform_transition()` after steps succeed, mapping the flow YAML `to_state` to the correct API call (`submit` for `provisional`, `accept` for `done`, `update(queue=...)` for custom queues). The engine performs the transition — steps are pure side effects.
   - `orchestrator/scheduler.py`: `handle_agent_result` no longer silently swallows step exceptions. Exceptions propagate so `check_and_update_finished_agents` keeps the PID in tracking for retry. After 3 consecutive step failures, the task moves to `failed` and the counter resets.
@@ -18,8 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Integration tests: backpressure prevents over-claiming** ([TASK-test-6-1])
-  - `tests/integration/test_backpressure.py`: 6 tests verifying `can_claim_task()` blocks claiming when `claimed >= max_claimed` or `provisional >= max_provisional`, releases capacity after a task completes, and uses pre-fetched `queue_counts` without making extra API calls.
+- **Integration tests for queue health diagnostics** ([TASK-test-6-2])
+  - `tests/integration/test_queue_health_diagnostics.py`: 5 integration tests covering `check_and_requeue_expired_leases()` against a real test server. Tests use `sdk` + `clean_tasks` for isolation and patch `datetime.now` in the scheduler to simulate expired leases (the server API does not allow setting `lease_expires_at` to past dates). Covers: stuck task detected and requeued (Test 1), healthy queue tasks left untouched (Test 2), and multiple stuck tasks all requeued in one pass (Test 3).
 
 - **Project completion detection and PR creation** ([TASK-29d97975])
   - `orchestrator/scheduler.py`: Added `check_project_completion()` housekeeping job (60s interval). When all child tasks in an active project reach the `done` queue, the function creates a PR from the project's shared branch to the base branch via `gh pr create`, then updates the project status to `"review"` via `sdk.projects.update()`. Idempotent: skips projects already in `"review"` or `"completed"` status, and reuses existing PRs if one already exists for the branch. Added to `HOUSEKEEPING_JOB_INTERVALS`, `HOUSEKEEPING_JOBS`, and `run_scheduler()`.
