@@ -304,6 +304,13 @@ class TestScriptConditionWithTaskState:
 # ---------------------------------------------------------------------------
 
 
+def _make_script(path: Path, exit_code: int) -> Path:
+    """Create an executable shell script that exits with the given code."""
+    path.write_text(f"#!/bin/sh\nexit {exit_code}\n")
+    path.chmod(path.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    return path
+
+
 def _make_marker_script(path: Path, marker: Path) -> Path:
     """Create an executable shell script that writes a marker file then exits 0."""
     path.write_text(f"#!/bin/sh\ntouch {marker}\nexit 0\n")

@@ -340,8 +340,11 @@ class TestPushFailureScenarios:
         remote = _remote_path(impl_worktree)
         shutil.rmtree(remote)
 
-        # handle_agent_result tries push_branch → CalledProcessError → swallowed
-        handle_agent_result(task_id, "mock-implementer", impl_task_dir)
+        # handle_agent_result tries push_branch → CalledProcessError → re-raised
+        # on first attempt (retry mechanism: attempt 1/3). The task stays in
+        # claimed because the step failure prevents the transition.
+        with pytest.raises(subprocess.CalledProcessError):
+            handle_agent_result(task_id, "mock-implementer", impl_task_dir)
 
         task = scoped_sdk.tasks.get(task_id)
         assert task is not None
@@ -698,7 +701,10 @@ class TestCreatePrFailureRecovery:
         # Force gh pr create to fail with a generic (non-"already exists") error
         monkeypatch.setenv("GH_MOCK_CREATE_FAIL", "true")
 
-        handle_agent_result(task_id, "mock-implementer", impl_task_dir)
+        # handle_agent_result re-raises on first attempt (retry mechanism: 1/3).
+        # The task stays in claimed because the step failure prevents the transition.
+        with pytest.raises(subprocess.CalledProcessError):
+            handle_agent_result(task_id, "mock-implementer", impl_task_dir)
 
         task = scoped_sdk.tasks.get(task_id)
         assert task is not None
