@@ -64,7 +64,13 @@ importers:
         specifier: ^5.3.3
         version: 5.9.3
 
-  packages/server:
+  packages/shared:
+    devDependencies:
+      typescript:
+        specifier: ^5.3.3
+        version: 5.9.3
+
+  submodules/server:
     dependencies:
       hono:
         specifier: ^4.0.0
@@ -82,12 +88,6 @@ importers:
       wrangler:
         specifier: ^3.28.0
         version: 3.114.17(@cloudflare/workers-types@4.20260210.0)
-
-  packages/shared:
-    devDependencies:
-      typescript:
-        specifier: ^5.3.3
-        version: 5.9.3
 
 packages:
 
