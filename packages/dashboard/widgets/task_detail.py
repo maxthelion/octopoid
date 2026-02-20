@@ -151,11 +151,11 @@ class TaskDetail(Widget):
         **kwargs: object,
     ) -> None:
         super().__init__(**kwargs)
-        self._task = task
+        self._task_data = task
         self._report = report or {}
 
     def compose(self) -> ComposeResult:
-        task = self._task
+        task = self._task_data
         report = self._report
 
         task_id = task.get("id") or "???"
@@ -301,12 +301,12 @@ class TaskDetailModal(ModalScreen):
         **kwargs: object,
     ) -> None:
         super().__init__(**kwargs)
-        self._task = task
+        self._task_data = task
         self._report = report or {}
         self._loaded_tabs: set[int] = set()
 
     def compose(self) -> ComposeResult:
-        task = self._task
+        task = self._task_data
         task_id = task.get("id") or "???"
         title = task.get("title") or "Untitled"
         priority = task.get("priority") or "?"
@@ -369,7 +369,7 @@ class TaskDetailModal(ModalScreen):
     @work(thread=True)
     def _fetch_and_update(self, tab_index: int) -> None:
         """Fetch tab content in a background thread and update the label."""
-        task_id = self._task.get("id") or ""
+        task_id = self._task_data.get("id") or ""
         content = _fetch_tab_content(task_id, tab_index)
         widget_id = _TAB_CONTENT_IDS[tab_index]
 
@@ -380,4 +380,4 @@ class TaskDetailModal(ModalScreen):
             except Exception:
                 pass
 
-        self.call_from_thread(update)
+        self.app.call_from_thread(update)
