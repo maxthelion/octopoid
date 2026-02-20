@@ -34,7 +34,7 @@ def get_project_report(sdk: "OctopoidSDK") -> dict[str, Any]:
 
     Returns:
         Structured dict with keys: work, prs, proposals, messages,
-        agents, health.
+        agents, health, drafts.
     """
     return {
         "work": _gather_work(sdk),
@@ -44,6 +44,7 @@ def get_project_report(sdk: "OctopoidSDK") -> dict[str, Any]:
         "messages": _gather_messages(),
         "agents": _gather_agents(),
         "health": _gather_health(sdk),
+        "drafts": _gather_drafts(sdk),
         "generated_at": datetime.now().isoformat(),
     }
 
@@ -436,6 +437,29 @@ def _store_staging_url(pr_number: int, staging_url: str, *, branch_name: str | N
 
 
 # ---------------------------------------------------------------------------
+# Drafts
+# ---------------------------------------------------------------------------
+
+
+def _gather_drafts(sdk: "OctopoidSDK") -> list[dict[str, Any]]:
+    """Gather drafts from the API server."""
+    try:
+        drafts = sdk.drafts.list()
+        return [
+            {
+                "id": d.get("id"),
+                "title": d.get("title"),
+                "status": d.get("status", "idea"),
+                "file_path": d.get("file_path"),
+                "created_at": d.get("created_at"),
+            }
+            for d in drafts
+        ]
+    except Exception:
+        return []
+
+
+# ---------------------------------------------------------------------------
 # Proposals (inbox items)
 # ---------------------------------------------------------------------------
 
@@ -493,7 +517,7 @@ def _gather_agents() -> list[dict[str, Any]]:
     """Gather agent blueprint status using the pool model."""
     try:
         from .config import get_agents, get_notes_dir
-        from .pool import cleanup_dead_pids, load_blueprint_pids
+        from .pool import count_running_instances, get_active_task_ids
 
         agents = get_agents()
     except FileNotFoundError:
@@ -512,18 +536,15 @@ def _gather_agents() -> list[dict[str, Any]]:
         paused = agent.get("paused", False)
         max_instances = agent.get("max_instances", 1)
 
-        # Clean up dead PIDs, then load current live PIDs
-        cleanup_dead_pids(blueprint_name)
-        pids = load_blueprint_pids(blueprint_name)
-        running_instances = len(pids)  # all remaining PIDs are alive after cleanup
+        # Count alive PIDs only — do NOT call cleanup_dead_pids() here.
+        # Removing dead PIDs must only happen in check_and_update_finished_agents,
+        # which processes the agent result first. Calling cleanup here races
+        # with result processing and causes orphaned tasks.
+        running_instances = count_running_instances(blueprint_name)
         idle_capacity = max(0, max_instances - running_instances)
 
-        # Aggregate current tasks from live PIDs
-        current_tasks = [
-            info.get("task_id")
-            for info in pids.values()
-            if info.get("task_id")
-        ]
+        # Aggregate current tasks from live PIDs only
+        current_tasks = list(get_active_task_ids(blueprint_name))
 
         # Determine overall status
         if paused:

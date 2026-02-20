@@ -1,4 +1,4 @@
-"""Drafts tab — project management draft ideas, master-detail view."""
+"""Drafts tab — server-sourced draft ideas, status filters, master-detail view."""
 
 from __future__ import annotations
 
@@ -9,52 +9,56 @@ from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.widget import Widget
-from textual.widgets import Label, ListItem, ListView
+from textual.widgets import Button, Label, ListItem, ListView
 from textual.containers import Horizontal, Vertical, VerticalScroll
 
 from .done import _format_age
 
 
-def _load_drafts() -> list[dict]:
-    """Load draft files from project-management/drafts/."""
-    drafts_dir = Path.cwd() / "project-management" / "drafts"
-    if not drafts_dir.exists():
-        return []
-    result = []
-    for f in sorted(drafts_dir.glob("*.md")):
-        title = f.stem.replace("-", " ").title()
-        try:
-            first_line = f.read_text().split("\n", 1)[0]
-            if first_line.startswith("# "):
-                title = first_line[2:].strip()
-        except OSError:
-            pass
-        try:
-            mtime = f.stat().st_mtime
-            created_at: str | None = datetime.fromtimestamp(mtime).isoformat()
-        except OSError:
-            created_at = None
-        result.append({"filename": f.name, "title": title, "path": str(f), "created_at": created_at})
-    return result
+# Status tag labels and colors
+_STATUS_TAGS: dict[str, tuple[str, str]] = {
+    "active": ("ACT", "#66bb6a"),
+    "idea": ("IDEA", "#4fc3f7"),
+    "partial": ("PART", "#ffa726"),
+    "complete": ("DONE", "#616161"),
+    "superseded": ("ARCH", "#ef5350"),
+}
+
+# Filter labels shown on the buttons
+_FILTER_LABELS: list[tuple[str, str]] = [
+    ("active", "Active"),
+    ("idea", "Idea"),
+    ("partial", "Partial"),
+    ("complete", "Complete"),
+    ("superseded", "Archived"),
+]
+
+# Default filter state: Archived (superseded) is hidden by default
+_DEFAULT_FILTERS: dict[str, bool] = {
+    "active": True,
+    "idea": True,
+    "partial": True,
+    "complete": True,
+    "superseded": False,
+}
 
 
 def _load_draft_content(draft: dict) -> str:
-    """Load the full text content of a draft file."""
-    path_str = draft.get("path") or ""
-    if not path_str:
+    """Load the full text content of a draft file from its file_path field."""
+    file_path = draft.get("file_path") or ""
+    if not file_path:
         return ""
     try:
-        return Path(path_str).read_text()
+        return Path(file_path).read_text()
     except OSError:
         return "(could not read file)"
 
 
 class _DraftItem(ListItem):
-    """A single draft entry in the left list."""
+    """A single draft entry in the left list — compact 1-line format."""
 
-    def __init__(self, index: int, draft: dict, **kwargs: object) -> None:
+    def __init__(self, draft: dict, **kwargs: object) -> None:
         super().__init__(**kwargs)
-        self._index = index
         self._draft = draft
 
     @property
@@ -62,18 +66,17 @@ class _DraftItem(ListItem):
         return self._draft
 
     def compose(self) -> ComposeResult:
-        draft_num = self._draft.get("id", self._index + 1)
-        title = self._draft.get("title", self._draft.get("filename", "?"))
-        age = _format_age(self._draft.get("created_at"))
-        line = Text()
-        line.append(f"{draft_num}. {title}")
-        if age:
-            line.append(f"  {age}", style="dim")
-        yield Label(line, classes="draft-list-label")
+        status = self._draft.get("status", "idea")
+        tag, color = _STATUS_TAGS.get(status, ("???", "#e0e0e0"))
+        title = self._draft.get("title", "Untitled")
+        label_text = Text()
+        label_text.append(f" {tag} ", style=f"bold {color}")
+        label_text.append(f" {title}", style="#e0e0e0")
+        yield Label(label_text, classes="draft-list-label")
 
 
 class DraftsTab(Widget):
-    """Master-detail drafts view: list on left, file content on right."""
+    """Master-detail drafts view: filter buttons + list on left, file content on right."""
 
     BINDINGS = [
         Binding("j", "cursor_down", "Down", show=False),
@@ -88,38 +91,67 @@ class DraftsTab(Widget):
 
     def __init__(self, report: dict | None = None, **kwargs: object) -> None:
         super().__init__(**kwargs)
-        # report is not used directly — drafts come from the filesystem
         self._drafts: list[dict] = []
+        self._filters: dict[str, bool] = dict(_DEFAULT_FILTERS)
 
     def compose(self) -> ComposeResult:
-        self._drafts = _load_drafts()
-        selected = self._drafts[0] if self._drafts else None
-
         with Horizontal(classes="drafts-layout"):
             with Vertical(classes="draft-list-panel", id="draft-list-panel"):
                 yield Label(" DRAFTS ", classes="section-header")
+                with Horizontal(classes="draft-filters", id="draft-filters"):
+                    for status, label in _FILTER_LABELS:
+                        active_class = " draft-filter-active" if self._filters[status] else ""
+                        yield Button(
+                            label,
+                            id=f"filter-{status}",
+                            classes=f"draft-filter-btn draft-filter-{status}{active_class}",
+                        )
                 with ListView(id="draft-listview", classes="draft-listview"):
-                    if not self._drafts:
-                        yield ListItem(Label("No drafts found.", classes="dim-text"))
-                    else:
-                        for i, draft in enumerate(self._drafts):
-                            yield _DraftItem(i, draft)
+                    pass
 
             with VerticalScroll(id="draft-content-panel", classes="draft-content-panel"):
                 yield Label(" CONTENT ", classes="section-header")
-                if selected:
-                    content = _load_draft_content(selected)
-                    yield Label(
-                        content or "(empty)",
-                        id="draft-content",
-                        classes="draft-content-text",
-                    )
-                else:
-                    yield Label(
-                        "No draft selected.",
-                        id="draft-content",
-                        classes="dim-text",
-                    )
+                yield Label(
+                    "No draft selected.",
+                    id="draft-content",
+                    classes="dim-text",
+                )
+
+    def on_mount(self) -> None:
+        self._refresh_list()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Toggle a filter button on/off."""
+        btn_id = event.button.id or ""
+        if not btn_id.startswith("filter-"):
+            return
+        status = btn_id[len("filter-"):]
+        if status not in self._filters:
+            return
+        self._filters[status] = not self._filters[status]
+        btn = event.button
+        if self._filters[status]:
+            btn.add_class("draft-filter-active")
+        else:
+            btn.remove_class("draft-filter-active")
+        self._refresh_list()
+
+    def _refresh_list(self) -> None:
+        """Repopulate the list with currently filtered drafts."""
+        try:
+            lv = self.query_one("#draft-listview", ListView)
+        except Exception:
+            return
+        lv.clear()
+        filtered = [
+            d for d in self._drafts
+            if self._filters.get(d.get("status", "idea"), True)
+        ]
+        if not filtered:
+            lv.append(ListItem(Label("No drafts match filters.", classes="dim-text")))
+        else:
+            for draft in filtered:
+                lv.append(_DraftItem(draft))
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         """Update the content pane when a draft is selected."""
@@ -146,5 +178,6 @@ class DraftsTab(Widget):
             pass
 
     def update_data(self, report: dict) -> None:
-        """Rescan the drafts directory and recompose."""
-        self.refresh(recompose=True)
+        """Update drafts from report and refresh the list."""
+        self._drafts = report.get("drafts", [])
+        self._refresh_list()

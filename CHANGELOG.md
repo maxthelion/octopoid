@@ -15,6 +15,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `orchestrator/scheduler.py`: `_register_orchestrator()` now syncs all `.octopoid/flows/*.yaml` definitions to the server via `PUT /api/v1/flows/:name` after registration. Errors are non-fatal (logged only).
   - `packages/python-sdk/octopoid_sdk/client.py`: Added `FlowsAPI` namespace with `register(name, states, transitions)` method; available as `sdk.flows`.
 
+- **Dashboard tab redesign — Tasks tab, server-sourced Drafts, remove PRs** ([TASK-dash-redesign])
+  - Removed PRs tab (was calling `gh pr view` per-PR every 5s, burning GitHub API rate limit).
+  - Added `_gather_drafts(sdk)` to `orchestrator/reports.py`: fetches drafts via `sdk.drafts.list()` and includes them in the project report.
+  - Rewrote `packages/dashboard/tabs/drafts.py`: server-sourced data (no more filesystem scan); horizontal filter buttons (Active/Idea/Partial/Complete/Archived — Archived hidden by default); compact 1-line items with colored status tags (ACT green, IDEA cyan, PART orange, DONE gray, ARCH red); content panel reads file from `file_path` field.
+  - Created `packages/dashboard/tabs/tasks.py`: new `TasksTab` with nested `TabbedContent` containing Done (existing `DoneTab`), Failed (new `FailedTab` filtering `final_queue=="failed"`), and Proposed (placeholder).
+  - Updated `app.py`: removed `PRsTab`, replaced `DoneTab` with `TasksTab` at keybinding `t`; updated `_apply_report` accordingly.
+  - Updated `dashboard.tcss`: removed PR styles; added inner `TabbedContent` height rules; added draft filter button and compact list item styles.
+  - Final tab layout: `Work [W] | Inbox [I] | Agents [A] | Tasks [T] | Drafts [F]`
+
 - **Task detail modal — Diff, Desc, Result, Logs tabbed content** ([TASK-0c3ec91c])
   - `TaskDetailModal` now shows a compact metadata header (ID, title, priority, agent, turns/PR) plus four tabbed content views ported from the old curses dashboard.
   - **Diff** tab: runs `git diff --stat origin/<base_branch>...HEAD` in the task's worktree.

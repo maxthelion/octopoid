@@ -14,10 +14,9 @@ from textual.widgets import Footer, Header, TabbedContent, TabPane
 
 from .data import DataManager
 from .tabs.agents import AgentsTab
-from .tabs.done import DoneTab
 from .tabs.drafts import DraftsTab
 from .tabs.inbox import InboxTab
-from .tabs.prs import PRsTab
+from .tabs.tasks import TasksTab
 from .tabs.work import TaskSelected, WorkTab
 from .widgets.task_detail import TaskDetailModal
 
@@ -25,7 +24,7 @@ from .widgets.task_detail import TaskDetailModal
 class OctopoidDashboard(App):
     """Octopoid TUI dashboard built with Textual.
 
-    Six tabs: Work, PRs, Inbox, Agents, Done, Drafts.
+    Five tabs: Work, Inbox, Agents, Tasks, Drafts.
     All tabs are fully implemented. Press Enter on a task to open a detail
     modal; Escape closes it.
     """
@@ -39,10 +38,9 @@ class OctopoidDashboard(App):
         Binding("q", "quit", "Quit", show=True),
         Binding("r", "refresh", "Refresh", show=True),
         Binding("w", "show_tab('work')", "Work", show=False),
-        Binding("p", "show_tab('prs')", "PRs", show=False),
         Binding("i", "show_tab('inbox')", "Inbox", show=False),
         Binding("a", "show_tab('agents')", "Agents", show=False),
-        Binding("d", "show_tab('done')", "Done", show=False),
+        Binding("t", "show_tab('tasks')", "Tasks", show=False),
         Binding("f", "show_tab('drafts')", "Drafts", show=False),
     ]
 
@@ -56,14 +54,12 @@ class OctopoidDashboard(App):
         with TabbedContent(id="tabs"):
             with TabPane("Work [W]", id="work"):
                 yield WorkTab(id="work-tab")
-            with TabPane("PRs [P]", id="prs"):
-                yield PRsTab(id="prs-tab")
             with TabPane("Inbox [I]", id="inbox"):
                 yield InboxTab(id="inbox-tab")
             with TabPane("Agents [A]", id="agents"):
                 yield AgentsTab(id="agents-tab")
-            with TabPane("Done [D]", id="done"):
-                yield DoneTab(id="done-tab")
+            with TabPane("Tasks [T]", id="tasks"):
+                yield TasksTab(id="tasks-tab")
             with TabPane("Drafts [F]", id="drafts"):
                 yield DraftsTab(id="drafts-tab")
         yield Footer()
@@ -101,10 +97,9 @@ class OctopoidDashboard(App):
         self._report = report
         for widget_id, widget_type in [
             ("#work-tab", WorkTab),
-            ("#prs-tab", PRsTab),
             ("#inbox-tab", InboxTab),
             ("#agents-tab", AgentsTab),
-            ("#done-tab", DoneTab),
+            ("#tasks-tab", TasksTab),
             ("#drafts-tab", DraftsTab),
         ]:
             try:

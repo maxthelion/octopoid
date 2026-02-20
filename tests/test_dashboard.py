@@ -75,7 +75,7 @@ class TestOctopoidDashboard:
     def test_has_tab_bindings(self):
         from packages.dashboard.app import OctopoidDashboard
         keys = [b.key for b in OctopoidDashboard.BINDINGS]
-        for key in ["w", "p", "i", "a", "d", "f"]:
+        for key in ["w", "i", "a", "t", "f"]:
             assert key in keys, f"Missing binding for key '{key}'"
 
     def test_css_path_exists(self):
