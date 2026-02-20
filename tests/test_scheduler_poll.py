@@ -241,6 +241,7 @@ class TestJobIntervalManagement:
             "_check_queue_health_throttled",
             "agent_evaluation_loop",
             "sweep_stale_resources",
+            "poll_github_issues",
         }
         intervals = _get_job_intervals()
         assert expected == set(intervals.keys())
