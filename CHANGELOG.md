@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Gatekeeper rejection feedback injected into implementer retry prompts** ([TASK-2a683b87])
+  - `reject_with_feedback()` writes the gatekeeper comment to `last_rejection.md` in the task dir
+  - `prepare_task_directory()` reads `last_rejection.md` on retry, builds a `review_section` with attempt number and clears the file
+  - Prompt template moves `$review_section` above `## Task Description` so agents see rejection feedback first; on first attempt the prompt is unchanged
+
 - **Task detail modal — Diff, Desc, Result, Logs tabbed content** ([TASK-0c3ec91c])
   - `TaskDetailModal` now shows a compact metadata header (ID, title, priority, agent, turns/PR) plus four tabbed content views ported from the old curses dashboard.
   - **Diff** tab: runs `git diff --stat origin/<base_branch>...HEAD` in the task's worktree.
