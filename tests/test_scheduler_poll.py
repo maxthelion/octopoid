@@ -272,10 +272,11 @@ class TestRegisterOrchestratorSkip:
             patch("orchestrator.queue_utils.get_orchestrator_id", return_value="test-orch"),
         ):
             _register_orchestrator(orchestrator_registered=False)
-        mock_sdk._request.assert_called_once()
-        call_args = mock_sdk._request.call_args
-        assert call_args.args[0] == "POST"
-        assert "register" in call_args.args[1]
+        # _request is called at least once for registration; flow sync may add more calls
+        assert mock_sdk._request.call_count >= 1
+        first_call = mock_sdk._request.call_args_list[0]
+        assert first_call.args[0] == "POST"
+        assert "register" in first_call.args[1]
 
     def test_sends_post_by_default(self):
         """Default behaviour (no orchestrator_registered arg) sends POST."""
@@ -285,7 +286,8 @@ class TestRegisterOrchestratorSkip:
             patch("orchestrator.queue_utils.get_orchestrator_id", return_value="test-orch"),
         ):
             _register_orchestrator()
-        mock_sdk._request.assert_called_once()
+        # _request is called at least once for registration; flow sync may add more calls
+        assert mock_sdk._request.call_count >= 1
 
 
 # =============================================================================
