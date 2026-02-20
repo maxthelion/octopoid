@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **GitHub Actions CI for integration tests** ([TASK-720c6196])
+  - `.github/workflows/ci.yml`: Updated `unit-tests` job to use Python 3.13, set `PYTHONPATH` to repo root, and run `pytest tests/ --ignore=tests/integration` (fixes `ModuleNotFoundError: No module named 'orchestrator'`).
+  - `.github/workflows/ci.yml`: Updated `integration-tests` job to use Python 3.13 and Node 20, start a fully local test server via wrangler dev (no Cloudflare cloud connection; uses workerd runtime locally), set `PYTHONPATH`, and run `pytest tests/integration/`.
+  - Updated all jobs to use Node 20 (up from 18) and pnpm v9.
+
 ### Fixed
 
 - **Fix test suite health issues** ([TASK-89cf1633])

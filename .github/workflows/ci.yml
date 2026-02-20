@@ -4,7 +4,7 @@ on:
   push:
     branches: [main, feature/*]
   pull_request:
-    branches: [main]
+    branches: [main, feature/*]
 
 jobs:
   lint-and-typecheck:
@@ -16,11 +16,11 @@ jobs:
 
       - uses: pnpm/action-setup@v2
         with:
-          version: 8
+          version: 9
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '20'
           cache: 'pnpm'
 
       - name: Install dependencies
@@ -44,11 +44,11 @@ jobs:
 
       - uses: pnpm/action-setup@v2
         with:
-          version: 8
+          version: 9
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '20'
           cache: 'pnpm'
 
       - name: Install dependencies
@@ -64,21 +64,21 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.13'
 
-      - name: Install dependencies
-        run: pip install pytest requests
-
-      - name: Build Python SDK
-        run: |
-          cd packages/python-sdk
-          pip install -e .
+      - name: Install Python SDK
+        run: pip install -e packages/python-sdk
 
       - name: Install orchestrator
         run: pip install -e .
 
+      - name: Install test dependencies
+        run: pip install pytest requests pyyaml textual
+
       - name: Run unit tests
-        run: pytest tests/test_*.py -v
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: pytest tests/ --ignore=tests/integration -v
 
   integration-tests:
     runs-on: ubuntu-latest
@@ -89,33 +89,46 @@ jobs:
 
       - uses: pnpm/action-setup@v2
         with:
-          version: 8
+          version: 9
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '20'
           cache: 'pnpm'
 
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.13'
 
+      # pnpm install covers the server submodule (submodules/* in pnpm-workspace.yaml)
       - name: Install dependencies
-        run: |
-          pnpm install
-          pip install pytest requests
+        run: pnpm install
 
-      - name: Build Python SDK
-        run: |
-          cd packages/python-sdk
-          pip install -e .
+      - name: Install Python SDK
+        run: pip install -e packages/python-sdk
 
-      - name: Start test server and run integration tests
-        run: |
-          cd tests/integration
-          ./bin/start-test-server.sh
-          pytest -v
-          ./bin/stop-test-server.sh
+      - name: Install orchestrator
+        run: pip install -e .
+
+      - name: Install test dependencies
+        run: pip install pytest requests pyyaml textual
+
+      # wrangler dev runs a fully local server using the workerd runtime (no cloud connection).
+      # WRANGLER_SEND_METRICS=false disables telemetry. NO_UPDATE_CHECK prevents npm checks.
+      - name: Start local test server
+        env:
+          WRANGLER_SEND_METRICS: "false"
+          NO_UPDATE_CHECK: "1"
+        run: bash tests/integration/bin/start-test-server.sh
+
+      - name: Run integration tests
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: pytest tests/integration/ -v
+
+      - name: Stop test server
+        if: always()
+        run: bash tests/integration/bin/stop-test-server.sh
 
   build:
     runs-on: ubuntu-latest
@@ -126,11 +139,11 @@ jobs:
 
       - uses: pnpm/action-setup@v2
         with:
-          version: 8
+          version: 9
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '20'
           cache: 'pnpm'
 
       - name: Install dependencies
