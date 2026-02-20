@@ -1,0 +1,28 @@
+name: project
+description: Multi-task project with shared branch
+
+# Flow applied to child tasks within this project.
+# Children don't create PRs — the project creates one PR at the end.
+child_flow:
+  transitions:
+    "incoming -> claimed":
+      agent: implementer
+
+    "claimed -> done":
+      runs: [rebase_on_project_branch, run_tests]
+      # No create_pr — children commit to the shared branch
+
+# Flow for the project itself, after all children complete.
+transitions:
+  "children_complete -> provisional":
+    runs: [create_pr]
+    conditions:
+      - name: all_tests_pass
+        type: script
+        script: run-tests
+
+  "provisional -> done":
+    conditions:
+      - name: human_approval
+        type: manual
+    runs: [merge_pr]

@@ -230,6 +230,50 @@ def create_pr(task: dict, result: dict, task_dir: Path) -> None:
         sdk.tasks.update(task_id, **update_kwargs)
 
 
+@register_step("rebase_on_project_branch")
+def rebase_on_project_branch(task: dict, result: dict, task_dir: Path) -> None:
+    """Rebase the worktree onto the project's shared branch.
+
+    Fetches the project's branch via the SDK and rebases, so each child task
+    sees the previous child's work.
+    """
+    from .sdk import get_sdk
+
+    project_id = task.get("project_id")
+    if not project_id:
+        print("rebase_on_project_branch: no project_id on task, skipping")
+        return
+
+    sdk = get_sdk()
+    project = sdk.projects.get(project_id)
+    if not project:
+        raise RuntimeError(f"rebase_on_project_branch: project {project_id} not found")
+
+    project_branch = project.get("branch")
+    if not project_branch:
+        raise RuntimeError(f"rebase_on_project_branch: project {project_id} has no branch")
+
+    worktree = task_dir / "worktree"
+
+    fetch = subprocess.run(
+        ["git", "fetch", "origin"],
+        cwd=worktree, capture_output=True, text=True,
+    )
+    if fetch.returncode != 0:
+        raise RuntimeError(f"rebase_on_project_branch: git fetch failed:\n{fetch.stderr}")
+
+    rebase = subprocess.run(
+        ["git", "rebase", f"origin/{project_branch}"],
+        cwd=worktree, capture_output=True, text=True,
+    )
+    if rebase.returncode != 0:
+        raise RuntimeError(
+            f"rebase_on_project_branch: git rebase failed:\n{rebase.stdout}\n{rebase.stderr}"
+        )
+
+    print(f"rebase_on_project_branch: rebased onto origin/{project_branch}")
+
+
 @register_step("submit_to_server")
 def submit_to_server(task: dict, result: dict, task_dir: Path) -> None:
     """Submit the task to provisional via the server API."""

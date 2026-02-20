@@ -495,7 +495,16 @@ def create_task(
 ) -> Path:
     """Create a new task file in the specified queue."""
     if not branch:
-        branch = get_base_branch()
+        if project_id:
+            try:
+                sdk = get_sdk()
+                project = sdk.projects.get(project_id)
+                if project and project.get("branch"):
+                    branch = project["branch"]
+            except Exception as e:
+                print(f"Warning: Failed to fetch project {project_id} for branch: {e}")
+        if not branch:
+            branch = get_base_branch()
     task_id = uuid4().hex[:8]
     filename = f"TASK-{task_id}.md"
 

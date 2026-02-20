@@ -148,6 +148,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Project flow system step 4: end-to-end integration test** ([TASK-projfix-4])
+  - Added `tests/integration/test_project_lifecycle.py` with 7 tests covering the full project lifecycle against the real local server
+  - Tests verify: project creation with branch, child task association via top-level `project_id` field, `/projects/{id}/tasks` endpoint returning correct tasks, child tasks completing without individual PRs (child_flow semantics), project transitioning to provisional when all children are done
+  - Uses `clean_tasks` fixture for test isolation; documents that `project_id` must be a top-level field (not inside `metadata`) for the server FK constraint and `/projects/{id}/tasks` to work
+
+- **Project flow system step 3: auto-inherit project branch on task creation** ([TASK-projfix-3])
+  - `create_task()` in `orchestrator/tasks.py` now fetches the project via SDK when `project_id` is given but `branch` is not, using `project["branch"]` automatically
+  - Explicit `branch=` argument always takes precedence over the project branch
+  - Falls back to `get_base_branch()` if project has no branch set or SDK fetch fails
+  - Added `tests/test_create_task_project_branch.py` with 4 tests covering inheritance, override, no-project, and no-branch-on-project cases
+
+- **Project flow system step 2: child_flow dispatch in scheduler** ([TASK-projfix-2])
+  - `handle_agent_result_via_flow()` in `scheduler.py` now checks `task.get("project_id")`: if set and the flow has a `child_flow`, uses `child_flow` transitions instead of top-level transitions
+  - `_handle_done_outcome()` applies the same logic so implementer agents on child tasks run `rebase_on_project_branch, run_tests` instead of `push_branch, create_pr, submit_to_server`
+  - Added unit tests in `orchestrator/tests/test_scheduler_lifecycle.py` covering both paths (child task with `project_id` and normal task without)
+
+- **Project flow system step 1** ([TASK-projfix-1])
+  - Added `rebase_on_project_branch` step to `orchestrator/steps.py`: fetches project's shared branch via SDK and rebases worktree, ensuring each child task sees previous children's work
+  - Created `.octopoid/flows/project.yaml` with `child_flow` definition for multi-task projects (children skip `create_pr`, commit to shared branch)
+  - `create_flows_directory()` in `flow.py` now generates both `default.yaml` and `project.yaml`
+
 - **Pool model step 4: reports and flow validation** ([TASK-7ac764e6])
   - `_gather_agents()` in `reports.py` updated to use pool model: iterates blueprints, calls `cleanup_dead_pids` + `load_blueprint_pids`, and reports `running_instances`, `max_instances`, `idle_capacity`, and `current_tasks` per blueprint.
   - `_gather_health()` in `reports.py` updated to count capacity via `count_running_instances()` summed across all blueprints instead of reading `state.json` per agent.
