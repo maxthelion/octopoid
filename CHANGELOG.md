@@ -18,10 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Integration tests for duplicate claim prevention across pool instances** ([TASK-test-3-2])
-  - `tests/integration/test_duplicate_claim_prevention.py`: Two integration tests using a real test server and real pool PID tracking.
-  - `test_second_instance_blocked_on_duplicate_task`: Verifies `guard_claim_task` returns `(False, "duplicate_task: ...")` when a live PID for the same blueprint is already registered for the claimed task.
-  - `test_different_tasks_claimed_by_different_instances`: Verifies two pool instances can each claim a distinct task without the dedup guard interfering.
+- **Integration tests for task priority ordering** (`tests/integration/test_priority_ordering.py`)
+  - `test_priority_ordering_p0_before_p1_before_p2`: Creates P2/P0/P1 tasks out of order and asserts claims return P0 → P1 → P2
+  - `test_same_priority_fifo_order`: Creates 3 P1 tasks and asserts they are claimed in creation (FIFO) order
 
 - **Project completion detection and PR creation** ([TASK-29d97975])
   - `orchestrator/scheduler.py`: Added `check_project_completion()` housekeeping job (60s interval). When all child tasks in an active project reach the `done` queue, the function creates a PR from the project's shared branch to the base branch via `gh pr create`, then updates the project status to `"review"` via `sdk.projects.update()`. Idempotent: skips projects already in `"review"` or `"completed"` status, and reuses existing PRs if one already exists for the branch. Added to `HOUSEKEEPING_JOB_INTERVALS`, `HOUSEKEEPING_JOBS`, and `run_scheduler()`.
