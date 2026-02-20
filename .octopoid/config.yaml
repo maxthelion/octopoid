@@ -15,7 +15,7 @@ scope: octopoid
 # Repository settings
 repo:
   path: /Users/maxwilliams/dev/octopoid
-  base_branch: feature/client-server-architecture
+  base_branch: main
 
 # Agent configuration
 agents:

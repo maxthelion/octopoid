@@ -31,7 +31,7 @@ If you skip this, the scheduler may keep running old code from stale `.pyc` file
 - When closing or merging PRs, never use `--delete-branch`. We may need to go back and check the branch later.
 - When rejecting a task, post the rejection feedback as a comment on the PR (not just in the task body).
 - **Always write the task file BEFORE changing task state** (reject, requeue, enqueue). The scheduler runs every 60s and agents claim tasks immediately. If you reject/requeue first, an agent may claim the task and read the old file before you've rewritten it.
-- **Do NOT set BRANCH in task files** unless the task specifically needs a different branch. The system defaults to `repo.base_branch` from `.octopoid/config.yaml` (currently `feature/client-server-architecture`). Hardcoding a branch in a task file overrides this and can cause agents to miss feature branch work.
+- **Do NOT set BRANCH in task files** unless the task specifically needs a different branch. The system defaults to `repo.base_branch` from `.octopoid/config.yaml` (currently `main`). Hardcoding a branch in a task file overrides this and can cause agents to miss feature branch work.
 - When rejecting a task, **rewrite the entire task file** to reflect only what remains to be done. Do not just prepend a rejection notice above the old description — the agent will follow the original instructions and ignore the notice. Remove or update any code examples, instructions, or acceptance criteria that contradict the rejection feedback. The task file should read as a clear, self-consistent set of instructions with no ambiguity.
 - When approving a task, post a review summary comment on the PR before merging.
 
