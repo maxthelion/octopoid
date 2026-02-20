@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **CI integration-tests: set PYTHONPATH and install pyyaml** ([TASK-0ca92576])
+  - `.github/workflows/ci.yml`: Added `PYTHONPATH: ${{ github.workspace }}` env to the integration-tests step so `from orchestrator.*` imports resolve. Added `pyyaml` to the `pip install` dependencies list.
+
 - **Guard against spawning agents for empty task descriptions** ([TASK-16ffb5c4])
   - `orchestrator/scheduler.py`: Added `guard_task_description_nonempty` guard to `AGENT_GUARDS`. For scripts-mode agents, after claiming a task, the guard checks that `task["content"]` is non-empty and non-whitespace. If the task file is missing or empty, the task is moved to `failed` with a clear reason (e.g. "Task description is empty — no file at .octopoid/tasks/TASK-xxx.md") and no agent is spawned.
   - `orchestrator/tests/test_scheduler_lifecycle.py`: 8 unit tests covering all guard paths — no task, non-scripts mode, valid content, whitespace-only content, missing content field, empty file, reason message formatting, and SDK failure resilience.

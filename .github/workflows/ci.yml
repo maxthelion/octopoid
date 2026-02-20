@@ -80,7 +80,7 @@ jobs:
       - name: Install dependencies
         run: |
           pnpm install
-          pip install pytest requests
+          pip install pytest requests pyyaml
 
       - name: Build Python SDK
         run: |
@@ -88,6 +88,8 @@ jobs:
           pip install -e .
 
       - name: Start test server and run integration tests
+        env:
+          PYTHONPATH: ${{ github.workspace }}
         run: |
           cd tests/integration
           ./bin/start-test-server.sh
