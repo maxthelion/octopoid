@@ -652,3 +652,140 @@ class TestStepFailureRetry:
         mock_sdk.tasks.submit.assert_called_once_with(
             task_id="TASK-test123", commits_count=0, turns_used=0
         )
+
+
+# ---------------------------------------------------------------------------
+# Test: guard_task_description_nonempty
+# ---------------------------------------------------------------------------
+
+class TestGuardTaskDescriptionNonempty:
+    """Verify guard_task_description_nonempty blocks spawning for empty tasks."""
+
+    def _make_ctx(self, claimed_task: dict | None, spawn_mode: str = "scripts") -> object:
+        from orchestrator.scheduler import AgentContext
+        from orchestrator.state_utils import AgentState
+        state = AgentState()
+        return AgentContext(
+            agent_config={"spawn_mode": spawn_mode},
+            agent_name="implementer-1",
+            role="implement",
+            interval=60,
+            state=state,
+            state_path=Path("/tmp/state.json"),
+            claimed_task=claimed_task,
+        )
+
+    def test_no_claimed_task_passes(self):
+        """Guard passes when no task is claimed."""
+        from orchestrator.scheduler import guard_task_description_nonempty
+        ctx = self._make_ctx(None)
+        proceed, reason = guard_task_description_nonempty(ctx)
+        assert proceed is True
+        assert reason == ""
+
+    def test_non_scripts_mode_passes(self):
+        """Guard passes for non-scripts-mode agents (they claim their own tasks)."""
+        from orchestrator.scheduler import guard_task_description_nonempty
+        ctx = self._make_ctx({"id": "abc123", "content": ""}, spawn_mode="worktree")
+        proceed, reason = guard_task_description_nonempty(ctx)
+        assert proceed is True
+        assert reason == ""
+
+    def test_task_with_nonempty_content_passes(self):
+        """Guard passes when task content is present and non-empty."""
+        from orchestrator.scheduler import guard_task_description_nonempty
+        ctx = self._make_ctx({
+            "id": "abc123",
+            "content": "# Task\n\nDo something useful.\n",
+        })
+        proceed, reason = guard_task_description_nonempty(ctx)
+        assert proceed is True
+        assert reason == ""
+
+    def test_task_with_whitespace_only_content_fails(self, tmp_path):
+        """Guard blocks spawn and fails task when content is only whitespace."""
+        from orchestrator.scheduler import guard_task_description_nonempty
+
+        mock_sdk = MagicMock()
+        ctx = self._make_ctx({"id": "abc123", "content": "   \n   "})
+
+        with patch("orchestrator.scheduler.queue_utils") as mock_qu, \
+             patch("orchestrator.scheduler.get_tasks_file_dir", return_value=tmp_path):
+            mock_qu.get_sdk.return_value = mock_sdk
+            proceed, reason = guard_task_description_nonempty(ctx)
+
+        assert proceed is False
+        assert "empty_description" in reason
+        mock_sdk.tasks.update.assert_called_once_with("abc123", queue="failed", claimed_by=None)
+
+    def test_task_with_no_content_field_fails(self, tmp_path):
+        """Guard blocks spawn when task has no content field at all."""
+        from orchestrator.scheduler import guard_task_description_nonempty
+
+        mock_sdk = MagicMock()
+        ctx = self._make_ctx({"id": "abc123"})
+
+        with patch("orchestrator.scheduler.queue_utils") as mock_qu, \
+             patch("orchestrator.scheduler.get_tasks_file_dir", return_value=tmp_path):
+            mock_qu.get_sdk.return_value = mock_sdk
+            proceed, reason = guard_task_description_nonempty(ctx)
+
+        assert proceed is False
+        assert "empty_description" in reason
+        assert "abc123" in reason
+        mock_sdk.tasks.update.assert_called_once_with("abc123", queue="failed", claimed_by=None)
+
+    def test_empty_content_reason_mentions_file_path_when_missing(self, tmp_path):
+        """Error reason mentions expected file path when file is missing."""
+        from orchestrator.scheduler import guard_task_description_nonempty
+
+        mock_sdk = MagicMock()
+        ctx = self._make_ctx({"id": "abc123", "content": ""})
+
+        with patch("orchestrator.scheduler.queue_utils") as mock_qu, \
+             patch("orchestrator.scheduler.get_tasks_file_dir", return_value=tmp_path):
+            mock_qu.get_sdk.return_value = mock_sdk
+            proceed, reason = guard_task_description_nonempty(ctx)
+
+        assert proceed is False
+        assert "TASK-abc123.md" in reason
+
+    def test_empty_content_with_existing_empty_file_mentions_file(self, tmp_path):
+        """Error reason mentions the file path when file exists but is empty."""
+        from orchestrator.scheduler import guard_task_description_nonempty
+
+        mock_sdk = MagicMock()
+        task_file = tmp_path / "TASK-abc123.md"
+        task_file.write_text("")
+
+        ctx = self._make_ctx({
+            "id": "abc123",
+            "content": "",
+            "file_path": str(task_file),
+        })
+
+        with patch("orchestrator.scheduler.queue_utils") as mock_qu, \
+             patch("orchestrator.scheduler.get_tasks_file_dir", return_value=tmp_path):
+            mock_qu.get_sdk.return_value = mock_sdk
+            proceed, reason = guard_task_description_nonempty(ctx)
+
+        assert proceed is False
+        assert "exists but has no content" in reason
+        mock_sdk.tasks.update.assert_called_once_with("abc123", queue="failed", claimed_by=None)
+
+    def test_sdk_failure_still_blocks_spawn(self, tmp_path):
+        """Guard still blocks spawn even if the SDK call to fail the task throws."""
+        from orchestrator.scheduler import guard_task_description_nonempty
+
+        mock_sdk = MagicMock()
+        mock_sdk.tasks.update.side_effect = RuntimeError("network error")
+        ctx = self._make_ctx({"id": "abc123", "content": ""})
+
+        with patch("orchestrator.scheduler.queue_utils") as mock_qu, \
+             patch("orchestrator.scheduler.get_tasks_file_dir", return_value=tmp_path):
+            mock_qu.get_sdk.return_value = mock_sdk
+            proceed, reason = guard_task_description_nonempty(ctx)
+
+        # Guard still blocks even though SDK threw
+        assert proceed is False
+        assert "empty_description" in reason

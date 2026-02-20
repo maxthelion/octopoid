@@ -22,6 +22,7 @@ from .config import (
     get_base_branch,
     get_orchestrator_dir,
     get_tasks_dir,
+    get_tasks_file_dir,
     is_system_paused,
 )
 from .git_utils import ensure_worktree, get_task_branch, get_worktree_path
@@ -231,6 +232,59 @@ def guard_claim_task(ctx: AgentContext) -> tuple[bool, str]:
     return (True, "")
 
 
+def guard_task_description_nonempty(ctx: AgentContext) -> tuple[bool, str]:
+    """Guard against spawning agents for tasks with empty or missing descriptions.
+
+    Only active for scripts-mode agents with a claimed task. Checks that the
+    task's content (read from the .octopoid/tasks/ file) is non-empty. If the
+    file is missing or empty, the task is moved to the failed queue and no
+    agent is spawned.
+
+    Args:
+        ctx: AgentContext containing the claimed task
+
+    Returns:
+        (should_proceed, reason_if_blocked)
+    """
+    if not ctx.claimed_task:
+        return (True, "")
+
+    spawn_mode = ctx.agent_config.get("spawn_mode", "worktree")
+    if spawn_mode != "scripts":
+        return (True, "")
+
+    content = ctx.claimed_task.get("content", "")
+    if content and content.strip():
+        return (True, "")
+
+    # Content is empty — determine why and build a clear reason
+    task_id = ctx.claimed_task.get("id", "unknown")
+    file_path_str = ctx.claimed_task.get("file_path", "")
+
+    tasks_file_dir = get_tasks_file_dir()
+    expected_path = tasks_file_dir / f"TASK-{task_id}.md"
+
+    if file_path_str:
+        fp = Path(file_path_str)
+        if fp.is_absolute() and fp.exists():
+            reason = f"Task description is empty — file at {file_path_str} exists but has no content"
+        else:
+            reason = f"Task description is empty — no file at {expected_path}"
+    else:
+        reason = f"Task description is empty — no file at {expected_path}"
+
+    debug_log(f"guard_task_description_nonempty: {reason}")
+
+    try:
+        sdk = queue_utils.get_sdk()
+        sdk.tasks.update(task_id, queue="failed", claimed_by=None)
+        debug_log(f"Moved task {task_id} to failed: {reason}")
+    except Exception as e:
+        debug_log(f"guard_task_description_nonempty: failed to update task {task_id}: {e}")
+
+    return (False, f"empty_description: {reason}")
+
+
 def guard_pr_mergeable(ctx: AgentContext) -> tuple[bool, str]:
     """Check that the claimed task's PR has no merge conflicts.
 
@@ -304,6 +358,7 @@ AGENT_GUARDS = [
     guard_backpressure,
     guard_pre_check,
     guard_claim_task,
+    guard_task_description_nonempty,
     guard_pr_mergeable,
 ]
 
