@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from orchestrator.flow import Condition, Flow
+from orchestrator.flow import Condition, Flow, evaluate_script_conditions
 
 
 class TestScriptConditionEvaluate:
@@ -297,3 +297,80 @@ class TestScriptConditionWithTaskState:
         task = scoped_sdk.tasks.get(claimed_id)
         assert task["queue"] == "provisional"  # still blocked at pre-condition state
         assert task["queue"] != "done"  # transition to 'done' is blocked by failing condition
+
+
+# ---------------------------------------------------------------------------
+# Multi-condition short-circuit ordering (TASK-test-5-2)
+# ---------------------------------------------------------------------------
+
+
+def _make_marker_script(path: Path, marker: Path) -> Path:
+    """Create an executable shell script that writes a marker file then exits 0."""
+    path.write_text(f"#!/bin/sh\ntouch {marker}\nexit 0\n")
+    path.chmod(path.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    return path
+
+
+class TestMultiConditionShortCircuit:
+    """Conditions are evaluated in declaration order; a failing condition
+    prevents all subsequent conditions from running."""
+
+    def test_first_condition_fails_second_never_evaluated(self, tmp_path: Path) -> None:
+        """When the first condition fails, the second condition must not run."""
+        fail_script = _make_script(tmp_path / "check-fail.sh", exit_code=1)
+        marker_file = tmp_path / "marker.txt"
+        marker_script = _make_marker_script(tmp_path / "write-marker.sh", marker_file)
+
+        conditions = [
+            Condition(
+                name="pre_check",
+                type="script",
+                script=str(fail_script),
+                on_fail="incoming",
+            ),
+            Condition(
+                name="marker_check",
+                type="script",
+                script=str(marker_script),
+                on_fail="incoming",
+            ),
+        ]
+
+        passed, failed_condition = evaluate_script_conditions(conditions)
+
+        assert not passed, "Expected evaluation to fail but it passed"
+        assert failed_condition is not None
+        assert failed_condition.name == "pre_check"
+        assert failed_condition.on_fail == "incoming"
+        assert not marker_file.exists(), (
+            "Marker file exists — second condition executed when it should have been skipped"
+        )
+
+    def test_first_condition_passes_second_evaluated(self, tmp_path: Path) -> None:
+        """When the first condition passes, the second condition is evaluated."""
+        pass_script = _make_script(tmp_path / "check-pass.sh", exit_code=0)
+        marker_file = tmp_path / "marker.txt"
+        marker_script = _make_marker_script(tmp_path / "write-marker.sh", marker_file)
+
+        conditions = [
+            Condition(
+                name="pre_check",
+                type="script",
+                script=str(pass_script),
+                on_fail="incoming",
+            ),
+            Condition(
+                name="marker_check",
+                type="script",
+                script=str(marker_script),
+                on_fail="incoming",
+            ),
+        ]
+
+        passed, failed_condition = evaluate_script_conditions(conditions)
+
+        assert passed, "Expected evaluation to pass but it failed"
+        assert failed_condition is None
+        assert marker_file.exists(), (
+            "Marker file missing — second condition was not evaluated when it should have been"
+        )

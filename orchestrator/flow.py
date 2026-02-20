@@ -480,3 +480,37 @@ def create_flows_directory() -> None:
     project_flow_path = flows_dir / "project.yaml"
     if not project_flow_path.exists():
         project_flow_path.write_text(generate_project_flow())
+
+
+def evaluate_script_conditions(
+    conditions: list[Condition],
+    cwd: Path | None = None,
+) -> tuple[bool, "Condition | None"]:
+    """Evaluate script-type conditions in declaration order.
+
+    Short-circuits on the first failing condition — later conditions are NOT
+    evaluated once one fails. Non-script conditions (agent, manual) are skipped
+    by this function; they are handled separately by the scheduler.
+
+    Args:
+        conditions: List of Condition objects from a Transition.
+        cwd: Working directory for script execution (optional).
+
+    Returns:
+        (all_passed, first_failed_condition) where first_failed_condition is
+        None if all script conditions passed.
+    """
+    for condition in conditions:
+        if condition.type != "script":
+            continue
+        script = condition.script
+        if not script:
+            continue
+        result = subprocess.run(
+            [script],
+            cwd=cwd,
+            capture_output=True,
+        )
+        if result.returncode != 0:
+            return (False, condition)
+    return (True, None)
