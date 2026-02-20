@@ -57,6 +57,29 @@ jobs:
       - name: Run server unit tests
         run: pnpm --filter @octopoid/server vitest run tests/state-machine.test.ts tests/routes-tasks.test.ts
 
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install pytest requests
+
+      - name: Build Python SDK
+        run: |
+          cd packages/python-sdk
+          pip install -e .
+
+      - name: Install orchestrator
+        run: pip install -e .
+
+      - name: Run unit tests
+        run: pytest tests/test_*.py -v
+
   integration-tests:
     runs-on: ubuntu-latest
     steps:

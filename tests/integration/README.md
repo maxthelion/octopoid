@@ -36,19 +36,21 @@ pytest tests/integration/ -v
 ```
 tests/integration/
 ├── bin/
-│   ├── start-test-server.sh   # Start test server on port 9787
-│   └── stop-test-server.sh    # Stop test server
-├── fixtures/                  # Test data fixtures
-├── conftest.py               # Pytest fixtures and config
-├── test_api_server.py        # API endpoint tests
-├── test_hooks.py             # Hooks system and task type tests
-├── test_task_lifecycle.py    # Task lifecycle and state machine tests
-└── run_tests.sh              # Main test runner
+│   ├── start-test-server.sh      # Start test server on port 9787
+│   └── stop-test-server.sh       # Stop test server
+├── fixtures/                     # Test data fixtures
+├── conftest.py                   # Pytest fixtures and config
+├── test_api_server.py            # API endpoint tests
+├── test_hooks.py                 # Hooks system and task type tests
+├── test_task_lifecycle.py        # Task lifecycle and state machine tests
+├── test_scheduler_mock.py        # Scheduler lifecycle tests using mock agents
+├── test_git_failure_scenarios.py # Git failure scenario tests using mock agents
+└── run_tests.sh                  # Main test runner
 ```
 
 ## Test Suites
 
-**Total: 41 tests, all passing ✅**
+**Total: 54 tests, all passing ✅**
 
 ### 1. API Server Tests (`test_api_server.py`) - 17 tests
 
@@ -93,7 +95,40 @@ tests/integration/
 - Pipeline fail-fast (failed hook stops execution)
 - Pipeline uses type-specific hooks
 
-### 3. Task Lifecycle Tests (`test_task_lifecycle.py`) - 10 tests
+### 3. Mock Agent Tests (`test_scheduler_mock.py`) - 7 tests
+
+**Happy Path (1 test)**
+- Full cycle: create → claim → mock implementer → provisional → mock gatekeeper approve → done
+
+**Failure Scenarios (2 tests)**
+- Agent failure result moves task to failed queue
+- Agent crash (no result.json) moves task to failed queue
+
+**Gatekeeper Flows (2 tests)**
+- Gatekeeper reject returns task to incoming with feedback
+- Multiple rejections increment rejection count
+
+**Edge Cases (2 tests)**
+- Minimal commits (1 commit) reaches provisional successfully
+- needs_continuation outcome moves task to needs_continuation queue
+
+### 4. Git Failure Scenario Tests (`test_git_failure_scenarios.py`) - 6 tests
+
+**Merge Conflict Scenarios (2 tests)**
+- CONFLICTING PR blocks gatekeeper acceptance; guard rejects task back to incoming
+- gh pr merge failure moves task to failed (not done)
+
+**Push Failure Scenarios (2 tests)**
+- Push branch failure leaves task in claimed (not orphaned)
+- Push with no diff (branch already up-to-date) still reaches provisional
+
+**Rebase Instructions (1 test)**
+- Gatekeeper rejection appends rebase instructions referencing the correct base branch
+
+**Combined Scenarios (1 test)**
+- Reject → re-claim → still CONFLICTING → guard rejects again without getting stuck
+
+### 5. Task Lifecycle Tests (`test_task_lifecycle.py`) - 10 tests
 
 **Basic Lifecycle (3 tests)**
 - Full lifecycle: create → claim → submit → accept → done
@@ -199,7 +234,6 @@ pytest -m "not slow"
 
 **🚧 TODO:**
 - Concurrency tests
-- Mock agent tests
 - Queue utils integration tests
 - Performance benchmarks
 
