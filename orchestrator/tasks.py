@@ -487,6 +487,7 @@ def create_task(
     acceptance_criteria: list[str] | str,
     priority: str = "P1",
     branch: str | None = None,
+    flow: str | None = None,
     created_by: str = "human",
     blocked_by: str | None = None,
     project_id: str | None = None,
@@ -572,7 +573,7 @@ CREATED_BY: {created_by}
             queue=queue,
             branch=branch,
             hooks=hooks_json,
-            flow="project" if project_id else "default",
+            flow=flow if flow is not None else ("project" if project_id else "default"),
             metadata={
                 "created_by": created_by,
                 "blocked_by": blocked_by,

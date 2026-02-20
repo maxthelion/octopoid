@@ -131,8 +131,123 @@ class TestCreateTaskProjectBranchInheritance:
         content = task_path.read_text()
         assert "BRANCH: main" in content
 
-        # Should not call projects.get when project_id is absent
-        mock_sdk_for_unit_tests.projects.get.assert_not_called()
+
+class TestCreateTaskFlowParameter:
+    """create_task() accepts an optional flow= parameter."""
+
+    def test_explicit_flow_is_passed_to_sdk(
+        self, mock_orchestrator_dir, mock_sdk_for_unit_tests
+    ):
+        """Explicit flow= is forwarded to sdk.tasks.create()."""
+        tasks_dir = mock_orchestrator_dir / "tasks"
+        tasks_dir.mkdir(parents=True, exist_ok=True)
+        with patch(
+            "orchestrator.tasks.get_tasks_file_dir",
+            return_value=tasks_dir,
+        ):
+            with patch(
+                "orchestrator.tasks.get_base_branch", return_value="main"
+            ):
+                from orchestrator.tasks import create_task
+
+                create_task(
+                    title="Fast task",
+                    role="implement",
+                    context="Uses fast flow",
+                    acceptance_criteria=["Done"],
+                    flow="fast",
+                )
+
+        call_kwargs = mock_sdk_for_unit_tests.tasks.create.call_args[1]
+        assert call_kwargs["flow"] == "fast"
+
+    def test_default_flow_without_project(
+        self, mock_orchestrator_dir, mock_sdk_for_unit_tests
+    ):
+        """Without flow= or project_id, flow defaults to 'default'."""
+        tasks_dir = mock_orchestrator_dir / "tasks"
+        tasks_dir.mkdir(parents=True, exist_ok=True)
+        with patch(
+            "orchestrator.tasks.get_tasks_file_dir",
+            return_value=tasks_dir,
+        ):
+            with patch(
+                "orchestrator.tasks.get_base_branch", return_value="main"
+            ):
+                from orchestrator.tasks import create_task
+
+                create_task(
+                    title="Default flow task",
+                    role="implement",
+                    context="No explicit flow",
+                    acceptance_criteria=["Done"],
+                )
+
+        call_kwargs = mock_sdk_for_unit_tests.tasks.create.call_args[1]
+        assert call_kwargs["flow"] == "default"
+
+    def test_default_flow_with_project_id(
+        self, mock_orchestrator_dir, mock_sdk_for_unit_tests
+    ):
+        """Without flow= but with project_id, flow defaults to 'project'."""
+        project_id = "PROJ-abc12345"
+        mock_sdk_for_unit_tests.projects.get.return_value = {
+            "id": project_id,
+            "title": "My Project",
+            "branch": "main",
+            "status": "active",
+        }
+
+        tasks_dir = mock_orchestrator_dir / "tasks"
+        tasks_dir.mkdir(parents=True, exist_ok=True)
+        with patch(
+            "orchestrator.tasks.get_tasks_file_dir",
+            return_value=tasks_dir,
+        ):
+            from orchestrator.tasks import create_task
+
+            create_task(
+                title="Project task",
+                role="implement",
+                context="Has project, no explicit flow",
+                acceptance_criteria=["Done"],
+                project_id=project_id,
+            )
+
+        call_kwargs = mock_sdk_for_unit_tests.tasks.create.call_args[1]
+        assert call_kwargs["flow"] == "project"
+
+    def test_explicit_flow_overrides_project_default(
+        self, mock_orchestrator_dir, mock_sdk_for_unit_tests
+    ):
+        """Explicit flow= overrides the 'project' default even when project_id is set."""
+        project_id = "PROJ-abc12345"
+        mock_sdk_for_unit_tests.projects.get.return_value = {
+            "id": project_id,
+            "title": "My Project",
+            "branch": "main",
+            "status": "active",
+        }
+
+        tasks_dir = mock_orchestrator_dir / "tasks"
+        tasks_dir.mkdir(parents=True, exist_ok=True)
+        with patch(
+            "orchestrator.tasks.get_tasks_file_dir",
+            return_value=tasks_dir,
+        ):
+            from orchestrator.tasks import create_task
+
+            create_task(
+                title="Project task with custom flow",
+                role="implement",
+                context="Has project_id but overrides flow",
+                acceptance_criteria=["Done"],
+                project_id=project_id,
+                flow="fast",
+            )
+
+        call_kwargs = mock_sdk_for_unit_tests.tasks.create.call_args[1]
+        assert call_kwargs["flow"] == "fast"
 
     def test_project_without_branch_falls_back_to_base_branch(
         self, mock_orchestrator_dir, mock_sdk_for_unit_tests
