@@ -161,6 +161,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `orchestrator/scheduler.py` spawn failure handler: Passes `ctx.agent_config.get("claim_from", "incoming")` as `source_queue` when calling `_requeue_task()` on spawn failure.
   - `tests/test_lease_expiry.py`: Updated and expanded with 18 tests covering provisional queue handling and direct `_requeue_task` tests.
 
+- **v2 onboarding: 6 issues preventing fresh install from working** ([TASK-b8dd2e59])
+  - `orchestrator/init.py`: `EXAMPLE_AGENTS_YAML` now uses `role: implement` (not `implementer`) so tasks are claimed correctly.
+  - `orchestrator/init.py`: `EXAMPLE_AGENTS_YAML` now includes `spawn_mode: scripts` and `agent_dir: .octopoid/agents/implementer` for the implementer, matching the built-in template.
+  - `orchestrator/init.py`: `init_orchestrator()` now scaffolds the implementer agent directory from the built-in template (same as gatekeeper), so `agent_dir` resolves on first run.
+  - `orchestrator/scheduler.py`: `repo_url` is now omitted from the orchestrator registration payload when not set in config, avoiding 400 errors from the server rejecting empty strings.
+  - `orchestrator/roles/__init__.py`: Removed import of non-existent `sanity_check_gatekeeper` module that crashed every agent process on import.
+  - `orchestrator/flow.py`: `get_all_states()` already includes `"failed"` as a built-in state (was fixed in a prior commit).
+
 ### Added
 
 - **`flow` parameter for `create_task()`** ([TASK-f8148819])
