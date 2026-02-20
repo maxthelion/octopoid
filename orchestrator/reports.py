@@ -55,40 +55,30 @@ def get_project_report(sdk: "OctopoidSDK") -> dict[str, Any]:
 
 
 def _read_live_turns() -> dict[str, int]:
-    """Read live turn counts from tool_counter files for all running agent instances.
+    """Read live turn counts from tool_counter files in task runtime directories.
 
-    Each running agent has a tool_counter file at
-    .octopoid/agents/<instance_name>/tool_counter. A PostToolUse hook appends
-    one byte per tool call, so file size in bytes = number of turns used.
+    Each running agent writes to .octopoid/runtime/tasks/<task-id>/tool_counter
+    via a PostToolUse hook. File size in bytes = number of tool calls = turns used.
 
     Returns:
-        Mapping of {task_id: turn_count} for currently running agent instances.
-        Tasks without a counter file (agent just started) are omitted.
+        Mapping of {task_id: turn_count} for tasks with a counter file.
     """
     try:
-        from .config import get_agents, get_orchestrator_dir
-        from .pool import load_blueprint_pids
+        from .config import get_tasks_dir
 
-        agents_dir = get_orchestrator_dir() / "agents"
-        agents = get_agents()
+        tasks_dir = get_tasks_dir()
+        if not tasks_dir.exists():
+            return {}
+
         result: dict[str, int] = {}
-
-        for agent in agents:
-            blueprint_name = agent.get("blueprint_name", agent["name"])
-            pids = load_blueprint_pids(blueprint_name)
-
-            for pid_info in pids.values():
-                task_id = pid_info.get("task_id")
-                instance_name = pid_info.get("instance_name")
-                if not task_id or not instance_name:
-                    continue
-
-                counter_path = agents_dir / instance_name / "tool_counter"
-                try:
-                    result[task_id] = counter_path.stat().st_size
-                except FileNotFoundError:
-                    pass  # Agent just started, counter not yet created
-
+        for task_dir in tasks_dir.iterdir():
+            if not task_dir.is_dir():
+                continue
+            counter_path = task_dir / "tool_counter"
+            try:
+                result[task_dir.name] = counter_path.stat().st_size
+            except FileNotFoundError:
+                pass
         return result
     except Exception:
         return {}

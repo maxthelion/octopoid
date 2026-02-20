@@ -937,8 +937,36 @@ def invoke_claude(task_dir: Path, agent_config: dict) -> int:
         "--model", model,
     ]
 
+    # Write PostToolUse hook into worktree so the agent tracks turn counts.
+    # File size of tool_counter = number of tool calls = turns used.
+    claude_dir = worktree_path / ".claude"
+    claude_dir.mkdir(parents=True, exist_ok=True)
+    hooks_dir = claude_dir / "hooks"
+    hooks_dir.mkdir(exist_ok=True)
+    hook_script = hooks_dir / "count-tool-use.sh"
+    hook_script.write_text(
+        '#!/bin/bash\n'
+        '[ -n "$OCTOPOID_TASK_DIR" ] && printf x >> "$OCTOPOID_TASK_DIR/tool_counter"\n'
+        'exit 0\n'
+    )
+    hook_script.chmod(0o755)
+    settings_path = claude_dir / "settings.json"
+    settings = {}
+    if settings_path.exists():
+        try:
+            settings = json.loads(settings_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            pass
+    turn_counter_hook = {
+        "matcher": "",
+        "hooks": [{"type": "command", "command": ".claude/hooks/count-tool-use.sh"}],
+    }
+    settings.setdefault("hooks", {}).setdefault("PostToolUse", []).append(turn_counter_hook)
+    settings_path.write_text(json.dumps(settings))
+
     env = os.environ.copy()
     env.pop("CLAUDECODE", None)
+    env["OCTOPOID_TASK_DIR"] = str(task_dir)
     # Source env.sh values using shlex to handle quoted values correctly
     env_sh = task_dir / "env.sh"
     if env_sh.exists():
