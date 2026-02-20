@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `orchestrator/queue_utils.py`: Exported `approve_project_via_flow`.
   - `tests/test_check_project_completion.py`: Rewrote and expanded test suite with 24 unit tests covering flow-based completion detection, script condition pass/fail, manual condition blocking, `_evaluate_project_script_condition`, and `approve_project_via_flow` success/error paths.
 
+- **Integration tests for lease expiry end-to-end recovery** ([TASK-test-2-1])
+  - `tests/integration/test_lease_recovery.py`: Three deterministic integration tests covering the lease monitor (`check_and_requeue_expired_leases`). Tests simulate expiry by patching `lease_expires_at` to a past timestamp (no sleeps). Covers: expired lease → task requeued to `incoming`; expired lease → task is re-claimable after recovery; agent finishes before expiry → lease monitor is a no-op and task stays in its terminal queue.
+
 ### Fixed
 
 - **Guard against spawning agents for empty task descriptions** ([TASK-16ffb5c4])
@@ -29,8 +32,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `orchestrator/scheduler.py`: `check_and_update_finished_agents` only removes a PID from `running_pids.json` when result handling succeeds. On failure the PID is retained so the next scheduler tick retries.
   - `orchestrator/steps.py`: `submit_to_server` step deprecated to a no-op — the engine performs transitions, no step needs to call the API.
   - `.octopoid/flows/default.yaml`: Removed `submit_to_server` from `claimed -> provisional` runs. New list: `[push_branch, run_tests, create_pr]`.
-
-### Added
 
 - **Project completion detection and PR creation** ([TASK-29d97975])
   - `orchestrator/scheduler.py`: Added `check_project_completion()` housekeeping job (60s interval). When all child tasks in an active project reach the `done` queue, the function creates a PR from the project's shared branch to the base branch via `gh pr create`, then updates the project status to `"review"` via `sdk.projects.update()`. Idempotent: skips projects already in `"review"` or `"completed"` status, and reuses existing PRs if one already exists for the branch. Added to `HOUSEKEEPING_JOB_INTERVALS`, `HOUSEKEEPING_JOBS`, and `run_scheduler()`.
