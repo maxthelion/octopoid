@@ -25,7 +25,7 @@ from .config import (
     get_tasks_file_dir,
     is_system_paused,
 )
-from .git_utils import ensure_worktree, get_task_branch, get_worktree_path
+from .git_utils import ensure_worktree, get_task_branch, get_worktree_path, run_git
 from .hook_manager import HookManager
 from .lock_utils import locked_or_skip
 from .port_utils import get_port_env_vars
@@ -656,6 +656,7 @@ HOUSEKEEPING_JOB_INTERVALS: dict[str, int] = {
     "check_project_completion": 60,               # Project completion detection
     "_check_queue_health_throttled": 1800,        # Already self-throttled
     "agent_evaluation_loop": 60,                  # Main remote poll + claim loop
+    "sweep_stale_resources": 1800,                # Worktree + branch cleanup (30 min)
 }
 
 
@@ -2069,6 +2070,123 @@ def _register_orchestrator(orchestrator_registered: bool = False) -> None:
 #
 # Note: process_orchestrator_hooks() is still active and listed below.
 
+def sweep_stale_resources() -> None:
+    """Archive logs and delete worktrees for old done/failed tasks.
+
+    For each task in the 'done' or 'failed' queue that has been there
+    for more than 1 hour:
+    - Archives stdout.log, stderr.log, result.json, prompt.md to
+      .octopoid/runtime/logs/<task-id>/
+    - Deletes the worktree at .octopoid/runtime/tasks/<task-id>/worktree
+    - Deletes the remote branch agent/<task-id> for done tasks only
+    - Runs git worktree prune after deletions
+
+    Idempotent: safe to run multiple times.
+    Failed individual cleanups are logged but do not abort the sweep.
+    """
+    import shutil
+
+    GRACE_PERIOD_SECONDS = 3600  # 1 hour
+
+    try:
+        sdk = queue_utils.get_sdk()
+        done_tasks = sdk.tasks.list(queue="done") or []
+        failed_tasks = sdk.tasks.list(queue="failed") or []
+    except Exception as e:
+        debug_log(f"sweep_stale_resources: failed to fetch tasks: {e}")
+        return
+
+    try:
+        parent_repo = find_parent_project()
+    except Exception as e:
+        debug_log(f"sweep_stale_resources: could not find parent repo: {e}")
+        return
+
+    tasks_dir = get_tasks_dir()
+    logs_dir = get_logs_dir()
+    now = datetime.now(timezone.utc)
+    pruned_any = False
+
+    for task in done_tasks + failed_tasks:
+        task_id = task.get("id")
+        queue = task.get("queue", "")
+        if not task_id:
+            continue
+
+        # Check age: skip if within grace period
+        ts_str = task.get("updated_at") or task.get("completed_at")
+        if not ts_str:
+            continue
+        try:
+            ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+            elapsed = (now - ts).total_seconds()
+        except (ValueError, TypeError):
+            continue
+
+        if elapsed < GRACE_PERIOD_SECONDS:
+            continue
+
+        task_dir = tasks_dir / task_id
+        worktree_path = task_dir / "worktree"
+
+        # Archive logs and delete worktree if it exists
+        if worktree_path.exists():
+            # Archive log files before deleting
+            try:
+                archive_dir = logs_dir / task_id
+                archive_dir.mkdir(parents=True, exist_ok=True)
+                for filename in ("stdout.log", "stderr.log", "result.json", "prompt.md"):
+                    src = task_dir / filename
+                    if src.exists():
+                        shutil.copy2(src, archive_dir / filename)
+            except Exception as e:
+                debug_log(f"sweep_stale_resources: failed to archive logs for {task_id}: {e}")
+
+            # Remove worktree from git tracking and filesystem
+            try:
+                run_git(
+                    ["worktree", "remove", "--force", str(worktree_path)],
+                    cwd=parent_repo,
+                    check=False,
+                )
+                if worktree_path.exists():
+                    shutil.rmtree(worktree_path)
+                pruned_any = True
+                debug_log(f"sweep_stale_resources: deleted worktree for {task_id} ({queue})")
+                print(f"[{datetime.now().isoformat()}] Swept worktree for task {task_id} ({queue})")
+            except Exception as e:
+                debug_log(f"sweep_stale_resources: failed to delete worktree for {task_id}: {e}")
+
+        # Delete remote branch for done (merged) tasks only — not failed
+        if queue == "done":
+            branch = f"agent/{task_id}"
+            try:
+                result = run_git(
+                    ["push", "origin", "--delete", branch],
+                    cwd=parent_repo,
+                    check=False,
+                )
+                if result.returncode == 0:
+                    debug_log(f"sweep_stale_resources: deleted remote branch {branch}")
+                    print(f"[{datetime.now().isoformat()}] Deleted remote branch {branch}")
+                else:
+                    # Already gone or no permissions — non-fatal
+                    debug_log(
+                        f"sweep_stale_resources: remote branch {branch} deletion skipped: "
+                        f"{result.stderr.strip()}"
+                    )
+            except Exception as e:
+                debug_log(f"sweep_stale_resources: failed to delete remote branch {branch}: {e}")
+
+    # Run git worktree prune once after all deletions
+    if pruned_any:
+        try:
+            run_git(["worktree", "prune"], cwd=parent_repo, check=False)
+            debug_log("sweep_stale_resources: ran git worktree prune")
+        except Exception as e:
+            debug_log(f"sweep_stale_resources: git worktree prune failed: {e}")
+
+
 HOUSEKEEPING_JOBS = [
     _register_orchestrator,
     check_and_requeue_expired_leases,
@@ -2076,6 +2194,7 @@ HOUSEKEEPING_JOBS = [
     _check_queue_health_throttled,
     process_orchestrator_hooks,
     check_project_completion,
+    sweep_stale_resources,
 ]
 
 
@@ -2334,6 +2453,7 @@ def run_scheduler() -> None:
     - check_project_completion: every 60s (detect completed projects, create PRs)
     - _check_queue_health_throttled: every 1800s
     - agent_evaluation_loop: every 60s (uses poll queue_counts for backpressure)
+    - sweep_stale_resources: every 1800s (worktree + remote branch cleanup)
 
     One poll() call per 60s tick replaces ~14 individual API calls.
     """
@@ -2371,10 +2491,12 @@ def run_scheduler() -> None:
                               HOUSEKEEPING_JOB_INTERVALS["_check_queue_health_throttled"])
     needs_agents = is_job_due(scheduler_state, "agent_evaluation_loop",
                               HOUSEKEEPING_JOB_INTERVALS["agent_evaluation_loop"])
+    needs_sweep = is_job_due(scheduler_state, "sweep_stale_resources",
+                             HOUSEKEEPING_JOB_INTERVALS["sweep_stale_resources"])
 
     needs_remote = (
         needs_register or needs_requeue or needs_hooks or needs_project_completion
-        or needs_health or needs_agents
+        or needs_health or needs_agents or needs_sweep
     )
 
     # --- Fetch poll data once for all remote jobs ---
@@ -2429,6 +2551,14 @@ def run_scheduler() -> None:
         queue_counts = (poll_data or {}).get("queue_counts")
         _run_agent_evaluation_loop(queue_counts=queue_counts)
         record_job_run(scheduler_state, "agent_evaluation_loop")
+
+    # --- Stale worktree + remote branch sweep (1800s) ---
+    if needs_sweep:
+        try:
+            sweep_stale_resources()
+        except Exception as e:
+            debug_log(f"sweep_stale_resources failed: {e}")
+        record_job_run(scheduler_state, "sweep_stale_resources")
 
     # Persist updated last_run timestamps
     save_scheduler_state(scheduler_state)
