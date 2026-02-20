@@ -694,3 +694,93 @@ class TestIdempotentResultHandling:
             f"Expected task to remain in done after late result processing, "
             f"got {task['queue']}"
         )
+
+
+# ---------------------------------------------------------------------------
+# merge_pr failure / success after gatekeeper approval
+# ---------------------------------------------------------------------------
+
+
+class TestMergePrFlows:
+    """Tests for merge_pr step outcomes after gatekeeper approval.
+
+    Requires TASK-test-4-1 (stateful fake gh) infrastructure.
+    The fake gh binary supports GH_MOCK_MERGE_FAIL to simulate GitHub API
+    errors during gh pr merge.
+    """
+
+    def test_merge_pr_failure_goes_to_failed(
+        self,
+        scoped_sdk,
+        orchestrator_id: str,
+        tmp_path: Path,
+        clean_tasks,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """When merge_pr raises (gh pr merge exits non-zero), task goes to failed."""
+        # Advance task to provisional queue
+        task_id = _make_provisional(scoped_sdk, orchestrator_id)
+
+        # Set pr_number so hook_merge_pr actually calls gh pr merge (not SKIP)
+        scoped_sdk.tasks.update(task_id, pr_number=int(os.environ.get("GH_MOCK_PR_NUMBER", "99")))
+
+        # Tell fake gh to fail on gh pr merge
+        monkeypatch.setenv("GH_MOCK_MERGE_FAIL", "true")
+
+        # Run mock gatekeeper: decision=approve
+        gk_worktree = tmp_path / "gk-worktree"
+        _init_git_repo_basic(gk_worktree)
+        gk_task_dir = tmp_path / "gk-task"
+
+        result = _run_mock_agent(
+            gk_worktree, gk_task_dir,
+            commits=1, decision="approve", comment="LGTM",
+        )
+        assert result.returncode == 0, f"Mock gatekeeper failed: {result.stderr}"
+
+        # Flow runs post_review_comment then merge_pr; merge_pr raises → failed
+        handle_agent_result_via_flow(task_id, "mock-gatekeeper", gk_task_dir)
+
+        task = scoped_sdk.tasks.get(task_id)
+        assert task is not None
+        assert task["queue"] == "failed", (
+            f"Expected failed after merge_pr error, got {task['queue']}"
+        )
+
+    def test_merge_pr_success_goes_to_done(
+        self,
+        scoped_sdk,
+        orchestrator_id: str,
+        tmp_path: Path,
+        clean_tasks,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """When merge_pr succeeds (gh pr merge exits 0), task goes to done."""
+        # Advance task to provisional queue
+        task_id = _make_provisional(scoped_sdk, orchestrator_id)
+
+        # Set pr_number so hook_merge_pr actually calls gh pr merge (not SKIP)
+        scoped_sdk.tasks.update(task_id, pr_number=int(os.environ.get("GH_MOCK_PR_NUMBER", "99")))
+
+        # Ensure fake gh succeeds on gh pr merge (default behaviour)
+        monkeypatch.delenv("GH_MOCK_MERGE_FAIL", raising=False)
+
+        # Run mock gatekeeper: decision=approve
+        gk_worktree = tmp_path / "gk-worktree"
+        _init_git_repo_basic(gk_worktree)
+        gk_task_dir = tmp_path / "gk-task"
+
+        result = _run_mock_agent(
+            gk_worktree, gk_task_dir,
+            commits=1, decision="approve", comment="LGTM",
+        )
+        assert result.returncode == 0, f"Mock gatekeeper failed: {result.stderr}"
+
+        # Flow runs post_review_comment then merge_pr; merge_pr succeeds → done
+        handle_agent_result_via_flow(task_id, "mock-gatekeeper", gk_task_dir)
+
+        task = scoped_sdk.tasks.get(task_id)
+        assert task is not None
+        assert task["queue"] == "done", (
+            f"Expected done after successful merge_pr, got {task['queue']}"
+        )
