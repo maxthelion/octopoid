@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **Dead code removed from `pr_utils.py`** ([TASK-c50c2d63])
+  - Stripped `orchestrator/pr_utils.py` from ~570 lines to just `add_pr_comment()` and `request_pr_changes()`. Removed all file-based PR metadata tracking (`get_pr_dir`, `init_pr_check`, `load_pr_meta`, `save_pr_meta`, `record_check_result`, etc.), PR detection (`detect_new_prs`, `get_pr_info`, `get_pr_diff`), check aggregation (`get_check_results`, `all_checks_complete`, `all_checks_passed`, `get_check_feedback`), and task creation helpers (`create_fix_task`, `approve_pr_for_review`, `get_prs_needing_checks`, `get_pr_status_summary`). None of these were called outside `pr_utils.py` itself.
+
 ### Fixed
 
 - **Flow engine: orchestrator hook loop no longer bypasses flow conditions (GH-143)** ([TASK-89fda8bb])
