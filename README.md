@@ -7,41 +7,170 @@
 Octopoid is a **distributed task orchestration system** that uses Claude AI to automatically implement features, fix bugs, and manage software development workflows. Think of it as CI/CD, but for development itself.
 
 **Key Features:**
-- 🤖 **Multiple AI agents** working in parallel (implementer, gatekeeper, breakdown)
-- 🌐 **Distributed execution** - Run orchestrators on multiple machines (local, VMs, cloud)
-- 📋 **Task queue system** with priorities, dependencies, and state management
-- 🔄 **Automated code review** via gatekeeper agent (multi-round reviews)
-- 📝 **Drafts & Projects** - Organize ideas and multi-task features
-- 🌳 **Task-specific worktrees** - Parallel execution without conflicts
-- 📊 **Turn tracking & logging** - Per-task and per-agent logs
-- ☁️ **Cloudflare Workers** backend - Serverless, globally distributed
+- Multiple AI agents working in parallel (implementer, gatekeeper, breakdown)
+- Distributed execution - run orchestrators on multiple machines (local, VMs, cloud)
+- Task queue with priorities, dependencies, and lease-based state management
+- Automated code review via gatekeeper agent (multi-round reviews)
+- Declarative flow system - YAML-defined state machines for task transitions
+- Agent pool model - configure max instances per blueprint, automatic PID tracking
+- Pure function agents - agents write results, the scheduler handles the rest
+- Task-specific git worktrees on detached HEAD - parallel execution without conflicts
+- Textual TUI dashboard with kanban board, agent status, drafts, and task detail views
+- Cloudflare Workers + D1 backend - serverless, globally distributed
 
 ## Architecture
 
+### Deployment
+
 ```
-┌─────────────────────────────────────────────┐
-│        Cloudflare Workers Server            │
-│  ┌────────────────────────────────────────┐ │
-│  │  REST API (Hono framework)             │ │
-│  │  - Tasks, Projects, Drafts, Orchestrators │
-│  │  - State machine with lease management │ │
-│  └────────────────────────────────────────┘ │
-│  ┌────────────────────────────────────────┐ │
-│  │  D1 Database (SQLite at the edge)      │ │
-│  └────────────────────────────────────────┘ │
-└─────────────────────────────────────────────┘
-             ▲              ▲
-             │              │
-    ┌────────┴───────┐   ┌─┴──────────┐
-    │ Orchestrator 1  │   │ Orchestrator 2 │
-    │ (Laptop)        │   │ (GPU VM)       │
-    │                 │   │                │
-    │ - Scheduler     │   │ - Scheduler    │
-    │ - Agents        │   │ - Agents       │
-    │ - Worktrees     │   │ - Worktrees    │
-    │ - Local tasks   │   │ - Local tasks  │
-    └─────────────────┘   └────────────────┘
++---------------------------------------------+
+|        Cloudflare Workers Server             |
+|  +----------------------------------------+ |
+|  |  REST API (Hono framework)              | |
+|  |  Tasks, Projects, Drafts, Orchestrators | |
+|  |  Lease-based claiming, atomic state     | |
+|  +----------------------------------------+ |
+|  +----------------------------------------+ |
+|  |  D1 Database (SQLite at the edge)       | |
+|  +----------------------------------------+ |
++---------------------------------------------+
+             ^              ^
+             |              |
+    +--------+-------+   +-+------------+
+    | Orchestrator 1  |   | Orchestrator 2 |
+    | (Laptop)        |   | (GPU VM)       |
+    |                 |   |                |
+    | - Scheduler     |   | - Scheduler    |
+    | - Agent pool    |   | - Agent pool   |
+    | - Worktrees     |   | - Worktrees    |
+    | - Python SDK    |   | - Python SDK   |
+    +-----------------+   +----------------+
 ```
+
+### Internal Architecture
+
+The system has four layers: **server** (state storage + API), **SDK** (Python client for the API), **scheduler** (orchestration logic), and **agents** (Claude Code instances that do the work).
+
+#### Pure Function Agents
+
+Agents are **pure functions**. An agent receives a task, does work in a git worktree, and writes a `result.json` file. That's it. The agent never pushes branches, creates PRs, updates task state, or calls the server API. All side effects are handled by the **scheduler** after the agent exits, using flow-defined steps.
+
+```
+Agent writes:   { "outcome": "done" }
+                or { "outcome": "failed", "reason": "..." }
+
+Scheduler runs: push_branch -> run_tests -> create_pr -> submit_to_server
+```
+
+This separation means agents are stateless and testable. The scheduler controls all state transitions.
+
+#### Pool Model
+
+Agents are configured as **blueprints** in `.octopoid/agents.yaml`. Each blueprint defines a role, model, and `max_instances` (how many concurrent copies can run). The scheduler tracks running instances via PID files (`running_pids.json` per blueprint) and only spawns new instances when capacity is available.
+
+```yaml
+agents:
+  implementer:
+    type: implementer
+    max_instances: 2         # up to 2 concurrent implementers
+    interval_seconds: 60
+    max_turns: 150
+    model: sonnet
+
+  sanity-check-gatekeeper:
+    role: gatekeeper
+    spawn_mode: scripts
+    claim_from: provisional  # reviews, not implements
+    interval_seconds: 120
+    max_turns: 50
+    model: sonnet
+    agent_dir: .octopoid/agents/gatekeeper
+    max_instances: 1
+```
+
+Instance naming is automatic: `implementer-1`, `implementer-2`, etc. Dead PIDs are detected via `os.kill(pid, 0)` and cleaned up when results are processed.
+
+#### Flows (Declarative State Machines)
+
+Flows define how tasks move through the system. They're YAML files in `.octopoid/flows/` that specify transitions, conditions, and post-transition steps.
+
+```yaml
+# .octopoid/flows/default.yaml
+name: default
+description: Standard implementation with review
+
+transitions:
+  "incoming -> claimed":
+    agent: implementer
+
+  "claimed -> provisional":
+    runs: [push_branch, run_tests, create_pr, submit_to_server]
+
+  "provisional -> done":
+    conditions:
+      - name: gatekeeper_review
+        type: agent
+        agent: gatekeeper
+        on_fail: incoming       # reject sends task back to incoming
+    runs: [post_review_comment, merge_pr]
+```
+
+Steps are registered in `orchestrator/steps.py` via `@register_step("name")`. Adding a new agent type means creating a flow YAML and registering steps -- no scheduler code changes needed.
+
+See [docs/flows.md](docs/flows.md) for full documentation.
+
+#### Scheduler Pipeline
+
+The scheduler runs as a single tick per invocation (triggered by launchd every 10 seconds). Each tick:
+
+1. **Housekeeping** -- process finished agents, requeue expired leases, run hooks on provisional tasks
+2. **Poll** -- one `GET /api/v1/scheduler/poll` call fetches queue counts, provisional tasks, and registration status
+3. **Evaluate each blueprint** through a guard chain (cheapest checks first):
+
+| Guard | What it checks |
+|-------|----------------|
+| `guard_enabled` | Blueprint not paused |
+| `guard_pool_capacity` | `running_instances < max_instances` |
+| `guard_interval` | Enough time since last spawn |
+| `guard_backpressure` | Queue has claimable tasks |
+| `guard_claim_task` | Atomically claims a task from server |
+| `guard_pr_mergeable` | PR not in CONFLICTING state (gatekeepers) |
+
+If all guards pass, the scheduler spawns an agent instance.
+
+#### Branching Model
+
+Worktrees are **always created on detached HEAD** -- never on a named branch. This prevents git from refusing to check out a branch that's already checked out in another worktree (critical when running multiple agents in parallel).
+
+The named branch (`agent/<task-id>`) is only created at push time, by the `push_branch` step. Branch mismatch detection ensures worktrees are recreated if the base branch changes.
+
+`repo.base_branch` in `.octopoid/config.yaml` controls which branch all tasks branch from (e.g. `main` or a feature branch).
+
+#### Agent Directory Structure
+
+Each agent type has a directory under `.octopoid/agents/` containing everything needed to run it:
+
+```
+.octopoid/agents/implementer/
+  agent.yaml           # role, model, spawn_mode, allowed_tools, max_turns
+  prompt.md            # prompt template ($task_id, $task_content, etc.)
+  instructions.md      # supplementary instructions appended to prompt
+  scripts/
+    run-tests          # test runner wrapper
+    record-progress    # save progress notes
+
+.octopoid/agents/gatekeeper/
+  agent.yaml           # role, model (no Write/Edit in allowed_tools)
+  prompt.md            # review prompt template
+  instructions.md      # review criteria, rejection format
+  scripts/
+    run-tests          # verify tests on PR branch
+    check-scope        # flag unexpected file changes (advisory)
+    check-debug-code   # find leftover debug code (advisory)
+    diff-stats         # diff statistics
+```
+
+The `prompt.md` uses `string.Template` substitution (`$task_id`, `$task_content`, `$global_instructions`, etc.) and is rendered by the scheduler before spawning.
 
 ## Installation
 
@@ -49,7 +178,7 @@ Octopoid is a **distributed task orchestration system** that uses Claude AI to a
 
 The server lives in its own repo: **[octopoid-server](https://github.com/maxthelion/octopoid-server)**
 
-**Option A: One-click deploy** — Use the Deploy button in the octopoid-server repo.
+**Option A: One-click deploy** -- Use the Deploy button in the octopoid-server repo.
 
 **Option B: Manual deploy:**
 
@@ -121,11 +250,12 @@ octopoid init --server https://octopoid-server.your-username.workers.dev --clust
 
 # This creates:
 # .octopoid/
-# ├── config.yaml      # Server connection, cluster settings
-# ├── agents.yaml      # Agent configurations
-# ├── runtime/         # PIDs, locks, orchestrator ID
-# ├── logs/            # Scheduler, agent, and task logs
-# └── worktrees/       # Git worktrees (one per task)
+# +-- config.yaml      # Server connection, cluster settings
+# +-- agents.yaml      # Agent pool configuration (blueprints)
+# +-- agents/           # Agent type directories (prompt, scripts, config)
+# +-- flows/            # Flow definitions (state machines)
+# +-- runtime/          # PIDs, locks, orchestrator ID (don't commit)
+# +-- logs/             # Scheduler, agent, and task logs (don't commit)
 ```
 
 ### Configuration Files
@@ -133,7 +263,7 @@ octopoid init --server https://octopoid-server.your-username.workers.dev --clust
 #### `.octopoid/config.yaml`
 
 ```yaml
-# Server connection (remote mode)
+# Server connection
 server:
   enabled: true
   url: https://octopoid-server.your-username.workers.dev
@@ -143,50 +273,43 @@ server:
 # Repository settings
 repo:
   path: /path/to/your/project
-  base_branch: main
+  base_branch: main  # all task branches fork from here
 
-# Hooks — lifecycle actions run during task processing
-# Default: before_submit: [create_pr]
-# Built-in hooks: rebase_on_main, create_pr, run_tests
+# Hooks -- lifecycle actions run during task processing
 hooks:
   before_submit:
     - rebase_on_main
     - create_pr
-
-# Task type definitions — override hooks per type
-# task_types:
-#   product:
-#     hooks:
-#       before_submit: [rebase_on_main, run_tests, create_pr]
-#   hotfix:
-#     hooks:
-#       before_submit: [run_tests, create_pr]
 ```
 
 #### `.octopoid/agents.yaml`
 
 ```yaml
 agents:
-  - name: implementer-1
-    role: implement
-    model: claude-sonnet-4-20250514
+  implementer:                 # blueprint name
+    type: implementer          # resolves agent directory
+    max_instances: 2           # pool: up to 2 concurrent agents
+    interval_seconds: 60       # minimum seconds between spawns
+    max_turns: 150             # Claude Code turn limit per task
+    model: sonnet              # Claude model to use
+
+  gatekeeper:
+    role: gatekeeper
+    spawn_mode: scripts
+    claim_from: provisional    # claims from provisional queue, not incoming
+    interval_seconds: 120
     max_turns: 50
-    interval_seconds: 300
-    paused: false
+    model: sonnet
+    agent_dir: .octopoid/agents/gatekeeper
+    max_instances: 1
 
-  - name: gatekeeper-1
-    role: review
-    model: claude-opus-4-20250514  # Use Opus for reviews
-    max_turns: 20
-    interval_seconds: 600
-    paused: false
-
-  - name: breakdown-1
-    role: breakdown
-    model: claude-sonnet-4-20250514
-    max_turns: 30
+  github-issue-monitor:
+    type: custom
+    path: .octopoid/agents/github-issue-monitor/
     interval_seconds: 900
-    paused: false
+    lightweight: true          # no worktree, runs in parent project
+    max_instances: 1
+    paused: true               # disabled by default
 ```
 
 ### Set API Key
@@ -199,58 +322,52 @@ export ANTHROPIC_API_KEY="sk-ant-..."
 echo 'export ANTHROPIC_API_KEY="sk-ant-..."' >> ~/.zshrc
 ```
 
-### Flows (Declarative State Machines)
-
-Flows define how tasks move through the system. They're YAML files in `.octopoid/flows/` that specify transitions, conditions, and actions.
-
-`octopoid init` generates default flows:
-- **default.yaml** - Standard implementation flow (incoming → claimed → provisional → done)
-- **project.yaml** - Multi-task project flow with shared branch
-
-See [docs/flows.md](docs/flows.md) for full documentation on creating custom flows, conditions, and task overrides.
-
 ## What Files Does Octopoid Create?
-
-When you run `octopoid init`, these files and directories are created:
 
 ### `.octopoid/` - Main Directory
 
 ```
 .octopoid/
-├── config.yaml          # Server URL, cluster name, machine ID
-├── agents.yaml          # Agent definitions (what roles run)
-├── agents/              # Agent type templates (customizable)
-│   ├── implementer/     # Implementer agent configuration
-│   │   ├── agent.yaml   # Capabilities, model settings
-│   │   ├── prompt.md    # Base prompt template
-│   │   ├── instructions.md  # Agent-specific instructions
-│   │   └── scripts/     # Helper scripts
-│   └── gatekeeper/      # Gatekeeper agent configuration
-│       ├── agent.yaml
-│       ├── prompt.md
-│       ├── instructions.md
-│       └── scripts/
-├── runtime/             # Runtime state (don't commit)
-│   ├── orchestrator_id.txt    # Your registered orchestrator ID
-│   ├── orchestrator.pid       # Process ID when running
-│   └── agents/                # Per-agent state
-│       ├── implementer-1/
-│       │   └── state.json     # Running, last finished, etc.
-│       └── gatekeeper-1/
-│           └── state.json
-├── logs/                # All logs (don't commit)
-│   ├── scheduler-2026-02-11.log    # Scheduler activity
-│   ├── agents/                      # Per-agent logs
-│   │   ├── implementer-1-2026-02-11.log
-│   │   └── gatekeeper-1-2026-02-11.log
-│   └── tasks/                       # Per-task logs (aggregated)
-│       ├── task-123.log
-│       └── task-456.log
-└── worktrees/           # Git worktrees (one per task)
-    ├── task-123/        # Isolated working directory for task-123
-    │   └── .git         # Worktree git metadata
-    └── task-456/        # Isolated working directory for task-456
-        └── .git
++-- config.yaml          # Server URL, cluster name, base branch
++-- agents.yaml          # Agent pool blueprints (dict format)
++-- agents/              # Agent type directories
+|   +-- implementer/     # Implementer agent
+|   |   +-- agent.yaml   # Role, model, spawn_mode, allowed_tools
+|   |   +-- prompt.md    # Prompt template (Template substitution)
+|   |   +-- instructions.md  # Supplementary instructions
+|   |   +-- scripts/     # Helper scripts (run-tests, record-progress)
+|   +-- gatekeeper/      # Gatekeeper (review) agent
+|       +-- agent.yaml
+|       +-- prompt.md
+|       +-- instructions.md
+|       +-- scripts/     # run-tests, check-scope, check-debug-code
++-- flows/               # Declarative state machines
+|   +-- default.yaml     # incoming -> claimed -> provisional -> done
++-- tasks/               # Task description files (TASK-{id}.md)
++-- runtime/             # Runtime state (don't commit)
+|   +-- orchestrator_id.txt
+|   +-- agents/          # Per-blueprint PID tracking
+|   |   +-- implementer/
+|   |   |   +-- running_pids.json   # {pid: {task_id, instance_name}}
+|   |   |   +-- state.json
+|   |   +-- gatekeeper/
+|   |       +-- running_pids.json
+|   |       +-- state.json
+|   +-- tasks/           # Per-task runtime directories
+|       +-- TASK-abc123/
+|           +-- worktree/    # Git worktree (detached HEAD)
+|           +-- task.json    # Task metadata
+|           +-- prompt.md    # Rendered prompt
+|           +-- env.sh       # Environment variables
+|           +-- scripts/     # Copied from agent directory
+|           +-- result.json  # Written by agent, read by scheduler
+|           +-- stdout.log   # Agent output
+|           +-- stderr.log
++-- logs/                # All logs (don't commit)
+    +-- scheduler-YYYY-MM-DD.log
+    +-- dashboard.log
+    +-- tasks/
+        +-- TASK-abc123.log  # Lifecycle events (CREATED, CLAIMED, etc.)
 ```
 
 ### `.gitignore` Updates
@@ -261,7 +378,6 @@ Add these to your `.gitignore`:
 # Octopoid runtime files
 .octopoid/runtime/
 .octopoid/logs/
-.octopoid/worktrees/
 ```
 
 ## Usage
@@ -294,7 +410,7 @@ The scheduler runs a single tick per invocation (evaluate agents, spawn any that
 cp orchestrator/com.octopoid.scheduler.plist ~/Library/LaunchAgents/com.octopoid.scheduler.plist
 ```
 
-2. Edit `~/Library/LaunchAgents/com.octopoid.scheduler.plist` — replace every `/path/to/your/project` with your actual project path and set your `ANTHROPIC_API_KEY`.
+2. Edit `~/Library/LaunchAgents/com.octopoid.scheduler.plist` -- replace every `/path/to/your/project` with your actual project path and set your `ANTHROPIC_API_KEY`.
 
 3. Load the agent:
 
@@ -320,23 +436,9 @@ This fires every 60 seconds. The scheduler lock ensures that if a tick takes lon
 
 #### Pausing / Resuming
 
-The scheduler checks for a `PAUSE` file on each tick. No need to unload launchd or stop cron.
+Set `paused: true` at the top level of `.octopoid/agents.yaml` to pause the entire system. Individual blueprints can be paused with their own `paused: true` flag.
 
-```bash
-# Pause (scheduler skips all ticks while paused)
-./scripts/pause.sh on
-
-# Resume
-./scripts/pause.sh off
-
-# Toggle
-./scripts/pause.sh
-
-# Check current state
-./scripts/pause.sh status
-```
-
-Running agents are not killed when you pause — they finish their current task. Pausing just prevents new agents from being spawned.
+Running agents are not killed when you pause -- they finish their current task. Pausing just prevents new agents from being spawned.
 
 ### CLI Commands
 
@@ -353,20 +455,19 @@ Running agents are not killed when you pause — they finish their current task.
 # Create a task
 octopoid enqueue "Add user authentication" \
   --role implement \
-  --priority P1 \
-  --complexity M
+  --priority P1
 
 # List incoming tasks
 octopoid tasks --queue incoming
 
 # Inspect a specific task
-octopoid task gh-8-2a4ad137 --verbose
+octopoid task TASK-2a4ad137 --verbose
 
 # Requeue a failed task for retry
-octopoid requeue gh-7-3b950eb4
+octopoid requeue TASK-3b950eb4
 
 # Cancel a stuck or unwanted task
-octopoid cancel fae4ad46
+octopoid cancel TASK-fae4ad46
 
 # Clean up orphaned worktrees
 octopoid worktrees-clean --dry-run
@@ -374,15 +475,23 @@ octopoid worktrees-clean --dry-run
 
 ### Dashboard
 
-A terminal UI for monitoring tasks, agents, PRs, and queue state. Reads the server URL from `.octopoid/config.yaml` automatically.
+A Textual TUI for monitoring the system. Polls the server every 5 seconds via the Python SDK.
 
 ```bash
-# Launch dashboard (reads server from config.yaml)
-python -m packages.dashboard
-
-# Or use the convenience wrapper
 ./octopoid-dash
 ```
+
+**Tabs:**
+
+| Tab | Key | Contents |
+|-----|-----|----------|
+| Work | W | Kanban board: Incoming / In Progress / In Review columns with task cards showing agent, status badge, and turn progress bar |
+| Inbox | I | Proposals, messages, and draft summaries |
+| Agents | A | Master-detail: agent list with status badges, detail pane with role, current task, recent work |
+| Done | D | DataTable of completed/failed/recycled tasks (last 7 days) |
+| Drafts | F | Master-detail: draft file list, full markdown content preview |
+
+Click a task card or press Enter to open a detail modal with Diff, Description, Result, and Logs tabs.
 
 ### Manage Drafts
 
@@ -390,8 +499,7 @@ python -m packages.dashboard
 # Create a draft (idea/proposal)
 octopoid draft create "Add dark mode support" \
   --author "Your Name" \
-  --status idea \
-  --domain frontend
+  --status idea
 
 # List drafts
 octopoid draft list --status idea
@@ -406,8 +514,7 @@ octopoid draft update dark-mode-support --status approved
 # Create a project (multi-task container)
 octopoid project create "User Dashboard Redesign" \
   --description "Complete redesign of user dashboard" \
-  --status active \
-  --auto-accept  # Skip gatekeeper for all project tasks
+  --status active
 
 # Show project with all tasks
 octopoid project show user-dashboard-redesign
@@ -418,23 +525,77 @@ octopoid project update user-dashboard-redesign --status completed
 
 ## How It Works
 
-1. **Task Creation**: Create tasks via `octopoid enqueue` or manually edit `.md` files
-2. **Server Sync**: Client syncs tasks to Cloudflare Workers server
-3. **Orchestrator Registration**: Each client registers with the server (cluster + machine ID)
-4. **Scheduler Loop**: Every 60 seconds, scheduler evaluates which agents should run
-5. **Agent Spawning**: Agents claim tasks from server (atomic, lease-based)
-6. **Task Execution**:
-   - Agent creates task-specific worktree (`.octopoid/worktrees/{task_id}/`)
-   - Agent creates feature branch (`agent/{task_id}-timestamp`)
-   - Agent invokes Claude Code to implement the task
-   - Agent commits changes
-   - **Before-submit hooks** run in order (e.g. `rebase_on_main`, `run_tests`, `create_pr`)
-   - If a hook fails with a remediation prompt, Claude attempts to fix and retries
-   - Agent submits completion to server (moves to `provisional` queue)
-7. **Gatekeeper Review**: Gatekeeper agent claims `provisional` tasks, reviews changes
-   - **Accept**: Task moves to `done` queue, PR can be merged
-   - **Reject**: Task returns to `incoming` queue with feedback (up to 3 rounds)
-8. **Cleanup**: Worktree removed after task completion
+### Task Lifecycle
+
+```
+incoming -> claimed -> provisional -> done
+              |                        ^
+              v                        |
+           (agent works)          (gatekeeper approves)
+              |                        |
+              v                        |
+           result.json            merge PR
+              |
+              v
+     scheduler runs steps:
+     push_branch -> run_tests -> create_pr -> submit_to_server
+                                                    |
+                                                    v
+                                              provisional
+                                                    |
+                                                    v
+                                          (gatekeeper reviews)
+                                             /            \
+                                          approve        reject
+                                            |              |
+                                            v              v
+                                          done          incoming (retry)
+```
+
+### Step by Step
+
+1. **Task Creation**: Create tasks via `octopoid enqueue` or the Python SDK. Task description is written to `.octopoid/tasks/TASK-{id}.md` and registered on the server.
+
+2. **Scheduler Tick**: Every 10 seconds, the scheduler runs housekeeping (process finished agents, requeue expired leases) and evaluates each blueprint through the guard chain.
+
+3. **Guard Chain**: Each blueprint is checked: is it enabled? Is there pool capacity? Has enough time passed? Are there tasks to claim? If all guards pass, the scheduler atomically claims a task from the server (lease-based, prevents double-claiming across machines).
+
+4. **Agent Spawning**: The scheduler creates a task runtime directory with a git worktree (detached HEAD from `base_branch`), renders the prompt template, copies scripts, and launches `claude` as a subprocess.
+
+5. **Agent Execution**: The agent (Claude Code) works in its isolated worktree. It reads the task description, implements changes, commits code, and writes `result.json` with `{"outcome": "done"}`. The agent has no access to the server API and cannot push branches or create PRs.
+
+6. **Result Processing**: When the agent process exits, the scheduler reads `result.json` and executes the flow-defined steps for the `claimed -> provisional` transition: `push_branch`, `run_tests`, `create_pr`, `submit_to_server`.
+
+7. **Gatekeeper Review**: A gatekeeper blueprint claims `provisional` tasks, spawns a Claude Code instance with read-only tools, reviews the diff, and writes `result.json` with `{"decision": "approve"}` or `{"decision": "reject", "comment": "..."}`.
+
+8. **Accept or Reject**: On approval, the scheduler posts a review comment, merges the PR, and moves the task to `done`. On rejection, it posts rejection feedback to the PR and moves the task back to `incoming` for the implementer to retry (up to 3 rounds).
+
+### Python SDK
+
+The `OctopoidSDK` (`packages/python-sdk/`) is the Python client for the server API. All orchestrator-server communication goes through it.
+
+```python
+from octopoid_sdk import OctopoidSDK
+
+sdk = OctopoidSDK(server_url="https://...", api_key="...")
+
+# Tasks
+tasks = sdk.tasks.list(queue="incoming")
+task = sdk.tasks.claim(orchestrator_id, agent_name="impl-1")
+sdk.tasks.submit(task_id, commits_count=3, turns_used=45)
+
+# Drafts
+drafts = sdk.drafts.list(status="idea")
+sdk.drafts.create(title="Dark mode", author="human", status="idea")
+
+# Projects
+projects = sdk.projects.list()
+sdk.projects.create(title="Dashboard Redesign", status="active")
+
+# Scheduler batch endpoint (replaces ~14 individual API calls per tick)
+poll_data = sdk.poll(orchestrator_id)
+# Returns: queue_counts, provisional_tasks, orchestrator_registered
+```
 
 ## Multi-Machine Setup
 
@@ -454,14 +615,13 @@ octopoid init --server https://... --cluster prod --machine-id workstation-001
 octopoid start --daemon
 ```
 
-**Result**: All three orchestrators coordinate via the server. Each claims different tasks. No conflicts, no double-claiming.
+All orchestrators coordinate via the server. Task claiming is atomic and lease-based -- no double-claiming, no conflicts.
 
 ## Troubleshooting
 
 ### "ANTHROPIC_API_KEY not found"
 
 ```bash
-# Set API key
 export ANTHROPIC_API_KEY="sk-ant-..."
 ```
 
@@ -470,18 +630,39 @@ export ANTHROPIC_API_KEY="sk-ant-..."
 ```bash
 # Check server status
 curl https://octopoid-server.your-username.workers.dev/api/health
-
-# Test with local mode
-octopoid init --local
-octopoid start
 ```
 
 ### "Worktree already exists"
 
 ```bash
 # Clean up stale worktrees
-rm -rf .octopoid/worktrees/task-123
+octopoid worktrees-clean
 git worktree prune
+```
+
+### `octopoid: command not found` after npm link
+
+Ensure npm's global bin directory is in your PATH:
+
+```bash
+npm config get prefix
+export PATH="$(npm config get prefix)/bin:$PATH"
+source ~/.zshrc
+```
+
+### Dashboard shows no tasks
+
+1. Verify server: `curl http://localhost:8787/api/health`
+2. Check tasks exist: `octopoid tasks --queue incoming`
+3. Clear Python cache: `find packages/dashboard -name '__pycache__' -type d -exec rm -rf {} +`
+
+### Build errors with TypeScript
+
+```bash
+pnpm clean
+rm -rf node_modules packages/*/node_modules
+pnpm install
+pnpm build
 ```
 
 ## License
@@ -492,66 +673,4 @@ MIT License
 
 - **GitHub**: https://github.com/maxthelion/octopoid
 - **Issues**: https://github.com/maxthelion/octopoid/issues
-- **Documentation**: [REQUIREMENTS_ANALYSIS.md](./REQUIREMENTS_ANALYSIS.md)
-
-## Troubleshooting
-
-### `octopoid: command not found` after npm link
-
-Ensure npm's global bin directory is in your PATH:
-
-```bash
-# Check npm global bin location
-npm config get prefix
-
-# Add to PATH (add to ~/.bashrc or ~/.zshrc)
-export PATH="$(npm config get prefix)/bin:$PATH"
-
-# Reload shell
-source ~/.bashrc  # or source ~/.zshrc
-```
-
-### `permission denied` during npm link
-
-Use sudo for npm link:
-
-```bash
-cd packages/client
-sudo npm link
-```
-
-### Dashboard shows no tasks (API mode)
-
-If running dashboard with `--server` flag but seeing empty queues:
-
-1. Verify server connection:
-   ```bash
-   curl http://localhost:8787/api/health
-   ```
-
-2. Check tasks exist on server:
-   ```bash
-   octopoid list --queue incoming
-   ```
-
-3. Ensure dashboard has latest code:
-   ```bash
-   git pull origin feature/client-server-architecture
-   ```
-
-### Build errors with TypeScript
-
-Clear build cache and rebuild:
-
-```bash
-# Clean all packages
-pnpm clean
-
-# Reinstall dependencies
-rm -rf node_modules packages/*/node_modules
-pnpm install
-
-# Rebuild
-pnpm build
-```
-
+- **Flow system docs**: [docs/flows.md](docs/flows.md)
