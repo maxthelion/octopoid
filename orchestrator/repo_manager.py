@@ -309,7 +309,25 @@ class RepoManager:
         else:
             args.extend(["--body", ""])
 
-        result = self._run_gh(args, timeout=60)
+        try:
+            result = self._run_gh(args, timeout=60)
+        except subprocess.CalledProcessError as e:
+            # gh pr create fails if a PR already exists (e.g. the pr view check
+            # above missed it due to a transient API error or rate limit).
+            # Retry pr view before giving up.
+            if "already exists" in (e.stderr or ""):
+                retry = self._run_gh(
+                    ["pr", "view", branch, "--json", "url,number",
+                     "-q", '.url + " " + (.number|tostring)'],
+                    check=False, timeout=30,
+                )
+                if retry.returncode == 0 and retry.stdout.strip():
+                    parts = retry.stdout.strip().rsplit(" ", 1)
+                    url = parts[0]
+                    number = int(parts[1]) if len(parts) > 1 else None
+                    return PrInfo(url=url, number=number, created=False)
+            raise
+
         pr_url = result.stdout.strip()
 
         # Get the PR number from the URL (last path segment)
