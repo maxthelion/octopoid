@@ -9,7 +9,7 @@ from typing import Any, Optional
 
 import yaml
 
-from .config import get_orchestrator_dir
+from .config import get_orchestrator_dir, get_scope
 
 # Global SDK instance (lazy-initialized)
 _sdk: Optional[Any] = None
@@ -44,7 +44,8 @@ def get_sdk():
     env_url = os.environ.get("OCTOPOID_SERVER_URL")
     if env_url:
         api_key = os.getenv("OCTOPOID_API_KEY")
-        _sdk = OctopoidSDK(server_url=env_url, api_key=api_key)
+        scope = get_scope()
+        _sdk = OctopoidSDK(server_url=env_url, api_key=api_key, scope=scope)
         return _sdk
 
     # Load server configuration from config file
@@ -74,8 +75,9 @@ def get_sdk():
             )
 
         api_key = server_config.get("api_key") or os.getenv("OCTOPOID_API_KEY")
+        scope = get_scope()
 
-        _sdk = OctopoidSDK(server_url=server_url, api_key=api_key)
+        _sdk = OctopoidSDK(server_url=server_url, api_key=api_key, scope=scope)
         return _sdk
 
     except Exception as e:

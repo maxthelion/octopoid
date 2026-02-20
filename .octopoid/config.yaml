@@ -8,6 +8,10 @@ server:
   cluster: prod
   machine_id: Maxs-MacBook-Air.local
 
+# Scope — isolates this orchestrator's tasks from other projects on the same server.
+# Must be set. The scheduler will refuse to start if this is missing.
+scope: octopoid
+
 # Repository settings
 repo:
   path: /Users/maxwilliams/dev/octopoid
