@@ -137,6 +137,8 @@ class WorkTab(Widget):
             yield WorkColumn(
                 "IN REVIEW",
                 in_review,
+                show_progress=True,
+                agent_map=agent_map,
                 classes="kanban-column",
                 id="col-in-review",
             )

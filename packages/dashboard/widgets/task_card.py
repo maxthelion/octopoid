@@ -1,5 +1,7 @@
 """Task card widget for display in kanban columns."""
 
+from datetime import datetime, timezone
+
 from textual.app import ComposeResult
 from textual.widgets import Label, ListItem
 from textual.containers import Horizontal, Vertical
@@ -14,6 +16,30 @@ def _progress_bar(value: int, total: int, width: int = 10) -> str:
     filled = min(width, int(width * value / total))
     bar = "█" * filled + "░" * (width - filled)
     return f"[{bar}] {value}/{total}t"
+
+
+def _time_ago(iso_str: str | None) -> str | None:
+    """Convert an ISO timestamp to a relative time string like '5m ago'."""
+    if not iso_str:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(iso_str).replace("Z", "+00:00"))
+        now = datetime.now(timezone.utc)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        mins = int((now - dt).total_seconds() / 60)
+        if mins < 0:
+            return "just now"
+        if mins < 60:
+            return f"{mins}m ago"
+        hours = mins // 60
+        remaining = mins % 60
+        if hours < 24:
+            return f"{hours}h {remaining}m ago"
+        days = hours // 24
+        return f"{days}d {hours % 24}h ago"
+    except (ValueError, TypeError):
+        return None
 
 
 class TaskCard(ListItem):
@@ -55,7 +81,11 @@ class TaskCard(ListItem):
             yield Label(title, classes="task-title")
             if self.show_progress and agent:
                 agent_name = (agent or "")[:12]
-                yield Label(f"  {agent_name}", classes="task-agent dim")
+                claimed_ago = _time_ago(task.get("claimed_at"))
+                agent_label = f"  {agent_name}"
+                if claimed_ago:
+                    agent_label += f"  {claimed_ago}"
+                yield Label(agent_label, classes="task-agent dim")
                 yield Label(
                     _progress_bar(turns, turn_limit),
                     classes="task-progress",

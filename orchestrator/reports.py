@@ -257,6 +257,7 @@ def _format_task(task: dict[str, Any]) -> dict[str, Any]:
         "checks": task.get("checks", []),
         "check_results": task.get("check_results", {}),
         "staging_url": task.get("staging_url"),
+        "claimed_at": task.get("claimed_at"),
     }
 
 
