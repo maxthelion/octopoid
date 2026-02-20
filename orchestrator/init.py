@@ -197,8 +197,7 @@ def init_orchestrator(
                 print("  No management skills found to install")
     else:
         print("  Skipping skill installation.")
-        print("    Run again with --skills to install, or copy from")
-        print("    orchestrator/commands/management/ manually.")
+        print("    Run 'octopoid install-commands' later to install them.")
 
     print()
 

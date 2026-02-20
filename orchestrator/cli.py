@@ -125,6 +125,62 @@ def cmd_worktrees(args: argparse.Namespace) -> None:
     print(f"\n{len(entries)} task dir(s)")
 
 
+def cmd_install_commands(args: argparse.Namespace) -> None:
+    """Install octopoid slash commands to .claude/commands/."""
+    import shutil
+    from .init import find_parent_project, get_orchestrator_submodule
+
+    parent = find_parent_project()
+    submodule = get_orchestrator_submodule()
+    source_dir = submodule / "commands" / "management"
+
+    if not source_dir.exists():
+        print(f"Source commands not found at {source_dir}", file=sys.stderr)
+        sys.exit(1)
+
+    dest_dir = parent / ".claude" / "commands"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    source_files = sorted(source_dir.glob("*.md"))
+    if not source_files:
+        print("No command files found.")
+        return
+
+    installed = []
+    skipped = []
+    for src in source_files:
+        dest = dest_dir / src.name
+        if dest.exists() and not args.force:
+            # Check if content differs
+            if dest.read_text() == src.read_text():
+                skipped.append(src.stem)
+                continue
+        shutil.copy2(src, dest)
+        installed.append(src.stem)
+
+    # Remove outdated commands that are no longer in source
+    outdated = {"proposal-status", "retry-failed", "tune-backpressure", "octopoid-status"}
+    removed = []
+    for name in outdated:
+        old = dest_dir / f"{name}.md"
+        if old.exists():
+            old.unlink()
+            removed.append(name)
+
+    if installed:
+        print(f"Installed {len(installed)} command(s) to .claude/commands/:")
+        for name in installed:
+            print(f"  /{name}")
+    if skipped:
+        print(f"Unchanged: {len(skipped)} command(s)")
+    if removed:
+        print(f"Removed {len(removed)} outdated command(s):")
+        for name in removed:
+            print(f"  /{name}")
+    if not installed and not removed:
+        print("All commands up to date.")
+
+
 def cmd_worktrees_clean(args: argparse.Namespace) -> None:
     """Prune task worktrees for done/deleted tasks."""
     from .git_utils import cleanup_task_worktree
@@ -212,6 +268,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_wtc = sub.add_parser("worktrees-clean", help="Prune stale task worktrees")
     p_wtc.add_argument("--dry-run", action="store_true", help="Show what would be removed")
     p_wtc.set_defaults(func=cmd_worktrees_clean)
+
+    # install-commands
+    p_ic = sub.add_parser("install-commands", help="Install slash commands to .claude/commands/")
+    p_ic.add_argument("--force", "-f", action="store_true", help="Overwrite even if unchanged")
+    p_ic.set_defaults(func=cmd_install_commands)
 
     return parser
 

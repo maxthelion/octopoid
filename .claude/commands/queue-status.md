@@ -9,105 +9,60 @@ Run this Python script to fetch and display queue status:
 ```python
 from orchestrator.queue_utils import get_sdk
 from datetime import datetime, timezone
-import json, os, subprocess
 
 sdk = get_sdk()
 
-now = datetime.now(timezone.utc)
-
-def time_ago(iso_str):
-    if not iso_str:
-        return '?'
-    try:
-        dt = datetime.fromisoformat(iso_str.replace('Z', '+00:00'))
-        mins = int((now - dt).total_seconds() / 60)
-        if mins < 0:
-            return 'future?'
-        if mins < 60:
-            return f'{mins}m ago'
-        if mins < 1440:
-            return f'{mins // 60}h {mins % 60}m ago'
-        return f'{mins // 1440}d ago'
-    except Exception:
-        return '?'
-
-def pid_alive(pid):
-    try:
-        os.kill(pid, 0)
-        return True
-    except (OSError, TypeError):
-        return False
-
-# Load agent states to check PIDs
-agent_pids = {}
+# Get last heartbeat from orchestrator
 try:
-    agents_dir = os.path.expanduser('.octopoid/runtime/agents')
-    if os.path.isdir(agents_dir):
-        for agent_name in os.listdir(agents_dir):
-            state_path = os.path.join(agents_dir, agent_name, 'state.json')
-            if os.path.isfile(state_path):
-                with open(state_path) as f:
-                    st = json.load(f)
-                    pid = st.get('pid')
-                    task_id = st.get('extra', {}).get('current_task_id')
-                    if task_id and pid:
-                        agent_pids[task_id] = {'pid': pid, 'alive': pid_alive(pid), 'agent': agent_name}
+    orchs = sdk._request('GET', '/api/v1/orchestrators')
+    if orchs.get('orchestrators'):
+        last_hb = orchs['orchestrators'][0].get('last_heartbeat')
+        if last_hb:
+            hb_time = datetime.fromisoformat(last_hb.replace('Z', '+00:00'))
+            delta = datetime.now(timezone.utc) - hb_time
+            mins = int(delta.total_seconds() / 60)
+            if mins < 60:
+                ago = f"{mins}m ago"
+            elif mins < 1440:
+                ago = f"{mins // 60}h {mins % 60}m ago"
+            else:
+                ago = f"{mins // 1440}d ago"
+            print(f"Last tick: {ago}")
 except Exception:
     pass
 
 # Fetch and display tasks by queue
-for queue in ['incoming', 'claimed', 'provisional', 'done', 'failed']:
+for queue in ['incoming', 'claimed', 'done', 'failed']:
     tasks = sdk.tasks.list(queue=queue)
-    print(f'\n{queue.upper()} ({len(tasks)} tasks)')
+    print(f"\n{queue.upper()} ({len(tasks)} tasks)")
     if tasks:
         for t in tasks:
-            title = (t.get('title') or t.get('id', '?'))[:45]
+            title = (t.get('title') or t.get('id', '?'))[:50]
             priority = t.get('priority', '?')
             tid = t.get('id', '?')
             extra = ''
             if queue == 'claimed':
-                agent = t.get('claimed_by', '?')
-                claimed_ago = time_ago(t.get('claimed_at'))
-                commits = t.get('commits_count', 0)
-                # Check if agent process is actually running
-                pid_info = agent_pids.get(tid)
-                if pid_info and pid_info['alive']:
-                    status = 'running'
-                elif pid_info and not pid_info['alive']:
-                    status = 'ORPHANED'
-                else:
-                    status = 'no-pid'
-                extra = f' | {agent} | {claimed_ago} | {commits}c | {status}'
-            if queue == 'provisional':
-                pr = t.get('pr_number', '?')
-                submitted_ago = time_ago(t.get('submitted_at'))
-                extra = f' | PR #{pr} | {submitted_ago}'
-            print(f'  {priority} | {tid:<28} | {title}{extra}')
+                extra = f" | {t.get('claimed_by', '?')}"
+            print(f"  {priority} | {tid:<28} | {title}{extra}")
 ```
 
 ## Output Format
 
 ```
-INCOMING (4 tasks)
-  P0 | TASK-300fa689                | Fix broken lease monitor
+Last tick: 5m ago
 
-CLAIMED (2 tasks)
-  P1 | TASK-2b4f120f                | Add worktree sweeper | implementer-1 | 25m ago | 0c | running
-  P1 | TASK-fe10a41c                | Fix scheduler spawn failure | implementer-2 | 1h 30m ago | 0c | ORPHANED
+INCOMING (5 tasks)
+  P1 | gh-9-71fac947              | [GH-9] Add debugging endpoints
 
-PROVISIONAL (1 tasks)
-  P1 | TASK-9438c90d                | Fix dashboard Done tab | PR #27 | 2h ago
+CLAIMED (1 tasks)
+  P1 | gh-11-2f54e962             | [GH-11] Fix file path inconsistency | implementer-2
 
-DONE (10 tasks)
-  P1 | gh-9-4502b83d                | [GH-9] Add debugging endpoints
+DONE (1 tasks)
+  P1 | gh-8-2a4ad137              | [GH-8] Improve octopoid init UX
 
-FAILED (0 tasks)
+FAILED (2 tasks)
+  P1 | gh-7-3b950eb4              | [GH-7] Declare command whitelist
 ```
-
-Claimed tasks show: agent name, time since claimed, commit count, and process status.
-- **running**: agent PID is alive
-- **ORPHANED**: agent PID is dead but task is still claimed (needs requeue)
-- **no-pid**: no PID info found in agent state
 
 ## Related Commands
 

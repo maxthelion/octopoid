@@ -2,80 +2,17 @@
 
 Create a new task in the orchestrator queue.
 
-## Implementation
+## Usage
 
-Use `orchestrator.tasks.create_task()` which handles branch defaulting, file writing, and server registration.
+Run `/enqueue` to interactively create a task, or provide details:
 
-```python
-from orchestrator.tasks import create_task
-
-task_path = create_task(
-    title=title,
-    role=role,
-    context=context,
-    acceptance_criteria=acceptance_criteria,
-    priority=priority,
-    # branch is optional — defaults to get_base_branch() from config.yaml
-    # Only pass branch if the user explicitly specifies one
-)
 ```
-
-If the user specifies a branch explicitly, pass it:
-
-```python
-task_path = create_task(
-    title=title,
-    role=role,
-    context=context,
-    acceptance_criteria=acceptance_criteria,
-    priority=priority,
-    branch=branch,  # only if user specified
-)
+/enqueue "Add rate limiting to API"
 ```
-
-### With an existing task file
-
-If the user provides a path to an existing task file, copy it to `.octopoid/tasks/` first, then register via SDK:
-
-```python
-import shutil
-shutil.copy(source_path, f'.octopoid/tasks/{task_id}.md')
-```
-
-### For project tasks
-
-If creating a task for a project, include `project_id`:
-
-```python
-task_path = create_task(
-    title=title,
-    role=role,
-    context=context,
-    acceptance_criteria=acceptance_criteria,
-    priority=priority,
-    project_id=project_id,
-    blocked_by=blocked_by,  # previous task in chain
-)
-```
-
-## Scope Assessment
-
-Before creating a task, assess whether the work described is a good fit for a **single task** or whether it should be a **project** (multiple sequential tasks).
-
-A task is too large for a single agent if it:
-- Touches more than 2-3 files across different subsystems
-- Requires changes in multiple codebases (e.g. server TypeScript + Python orchestrator)
-- Has more than 3 distinct implementation steps
-- Would need a long task file with multiple code samples
-
-If the work is better served by a project, suggest this to the user:
-> "This looks like it spans multiple subsystems — would you like me to create a project with separate tasks instead? That way each agent gets a focused, achievable piece."
-
-Then use `sdk.projects.create()` and create individual tasks with `project_id` and appropriate `blocked_by` chains.
 
 ## Interactive Mode
 
-When run without arguments, ask for:
+When run without arguments, I'll ask for:
 
 1. **Title** - Brief, descriptive title
 2. **Role** - Who should handle this:
@@ -87,37 +24,68 @@ When run without arguments, ask for:
    - `P1` - High (important features)
    - `P2` - Normal (default)
    - `P3` - Low (nice-to-have)
-4. **Branch** - Base branch (default: `get_base_branch()` from config.yaml). Only ask if the user might want a non-default branch.
-5. **Context** - Background and motivation
-6. **Acceptance Criteria** - Specific requirements
+4. **Context** - Background and motivation
+5. **Acceptance Criteria** - Specific requirements
 
-## Turn Budget
+## Implementation
 
-When creating a task, estimate the appropriate `max_turns` based on the work involved. This overrides the agent's default (150 turns) and saves cost on lightweight tasks.
+Use `create_task()` from `orchestrator.tasks` to create tasks. This function writes the task file to `.octopoid/tasks/` **and** registers it on the server in one step:
 
-Guidelines:
-- **10-20 turns**: Rebases, cherry-picks, trivial one-line fixes
-- **30-50 turns**: Small focused changes (1-2 files), adding a field, writing a test
-- **50-80 turns**: Medium tasks (2-3 files), refactors within one module
-- **80-120 turns**: Larger features, multi-file changes with tests
-- **150 (default)**: Only for complex tasks where you genuinely can't predict scope
+```python
+from orchestrator.tasks import create_task
 
-Set it via `max_turns` on the task. If the user specifies turns explicitly, use their value. Otherwise, make your best estimate based on the task description.
+create_task(
+    title="Add rate limiting to API",
+    role="implement",
+    priority="P1",
+    context="Our API endpoints have no rate limiting...",
+    acceptance_criteria=[
+        "Rate limiting middleware added to all API routes",
+        "Default limit: 100 requests per minute per IP",
+        "Returns 429 Too Many Requests when exceeded",
+    ],
+    # branch is optional — defaults to repo.base_branch from config
+)
+```
 
-**Note:** This requires the per-task max_turns feature (TASK-19bbcaa6). Until that lands, this field will be ignored by the scheduler.
+Do **not** write task files manually or place them in any queue directory. Always use `create_task()`.
 
-## Rules
+## Task File Location
 
-- **Always use `create_task()`** — it handles branch defaulting, file creation, and server registration
-- **Do NOT pass `branch` unless the user explicitly specifies one** — the default comes from `config.yaml`
-- **Always write task files to `.octopoid/tasks/`** — never point at files elsewhere
-- The `file_path` field in the API should be relative to the project root (e.g. `.octopoid/tasks/TASK-abc123.md`)
+Tasks are written to:
+```
+.octopoid/tasks/TASK-{uuid}.md
+```
+
+## Example Task File
+
+```markdown
+# [TASK-f8e7d6c5] Add rate limiting to API
+
+ROLE: implement
+PRIORITY: P1
+BRANCH: feature/client-server-architecture
+CREATED: 2024-01-15T14:30:00Z
+CREATED_BY: human
+
+## Context
+Our API endpoints have no rate limiting, making them vulnerable
+to abuse and DoS attacks. We need to add rate limiting to protect
+the service.
+
+## Acceptance Criteria
+- [ ] Rate limiting middleware added to all API routes
+- [ ] Default limit: 100 requests per minute per IP
+- [ ] Returns 429 Too Many Requests when exceeded
+- [ ] Rate limit headers included in responses
+- [ ] Configuration via environment variables
+```
 
 ## After Creation
 
 The task will be:
-1. Picked up by the scheduler on next tick
-2. Claimed by an agent with matching role
+1. Registered on the server and visible in the queue immediately
+2. Claimed by an agent with matching role on next scheduler tick
 3. Worked on and moved to done/failed
 
 Check status with `/queue-status`.
