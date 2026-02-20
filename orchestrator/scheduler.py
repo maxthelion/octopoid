@@ -646,19 +646,6 @@ def claim_and_prepare_task(
 # Per-job interval management
 # =============================================================================
 
-# Interval in seconds for each housekeeping / evaluation job.
-# The launchd tick is 10s; jobs only run when their interval has elapsed.
-HOUSEKEEPING_JOB_INTERVALS: dict[str, int] = {
-    "check_and_update_finished_agents": 10,       # Local PID checks only — fast
-    "_register_orchestrator": 300,                # Rarely changes
-    "check_and_requeue_expired_leases": 60,       # API call, keep at 60s
-    "process_orchestrator_hooks": 60,             # API call via poll
-    "check_project_completion": 60,               # Project completion detection
-    "_check_queue_health_throttled": 1800,        # Already self-throttled
-    "agent_evaluation_loop": 60,                  # Main remote poll + claim loop
-    "sweep_stale_resources": 1800,                # Worktree + branch cleanup (30 min)
-}
-
 
 def get_scheduler_state_path() -> Path:
     """Get path to the per-job scheduler state file."""
@@ -2445,18 +2432,12 @@ def _run_agent_evaluation_loop(queue_counts: dict | None) -> None:
 def run_scheduler() -> None:
     """Main scheduler loop - evaluate and spawn agents.
 
-    Runs with per-job intervals so individual jobs can run at different rates:
-    - check_and_update_finished_agents: every 10s (local PID checks, no API)
-    - _register_orchestrator: every 300s (uses poll to skip if already registered)
-    - check_and_requeue_expired_leases: every 60s
-    - process_orchestrator_hooks: every 60s (uses poll provisional_tasks list)
-    - check_project_completion: every 60s (detect completed projects, create PRs)
-    - _check_queue_health_throttled: every 1800s
-    - agent_evaluation_loop: every 60s (uses poll queue_counts for backpressure)
-    - sweep_stale_resources: every 1800s (worktree + remote branch cleanup)
-
-    One poll() call per 60s tick replaces ~14 individual API calls.
+    Job intervals and grouping are defined declaratively in .octopoid/jobs.yaml.
+    run_due_jobs() handles the poll-batching optimisation: it fetches poll data
+    once if any remote job is due, avoiding ~14 individual API calls per tick.
     """
+    from .jobs import run_due_jobs
+
     print(f"[{datetime.now().isoformat()}] Scheduler starting")
     debug_log("Scheduler tick starting")
 
@@ -2469,96 +2450,8 @@ def run_scheduler() -> None:
     # Load per-job scheduler state (persists last_run across launchd invocations)
     scheduler_state = load_scheduler_state()
 
-    # --- Fast local job (10s): check if any spawned agents have finished ---
-    if is_job_due(scheduler_state, "check_and_update_finished_agents",
-                  HOUSEKEEPING_JOB_INTERVALS["check_and_update_finished_agents"]):
-        try:
-            check_and_update_finished_agents()
-        except Exception as e:
-            debug_log(f"check_and_update_finished_agents failed: {e}")
-        record_job_run(scheduler_state, "check_and_update_finished_agents")
-
-    # --- Determine which remote jobs are due ---
-    needs_register = is_job_due(scheduler_state, "_register_orchestrator",
-                                HOUSEKEEPING_JOB_INTERVALS["_register_orchestrator"])
-    needs_requeue = is_job_due(scheduler_state, "check_and_requeue_expired_leases",
-                               HOUSEKEEPING_JOB_INTERVALS["check_and_requeue_expired_leases"])
-    needs_hooks = is_job_due(scheduler_state, "process_orchestrator_hooks",
-                             HOUSEKEEPING_JOB_INTERVALS["process_orchestrator_hooks"])
-    needs_project_completion = is_job_due(scheduler_state, "check_project_completion",
-                                          HOUSEKEEPING_JOB_INTERVALS["check_project_completion"])
-    needs_health = is_job_due(scheduler_state, "_check_queue_health_throttled",
-                              HOUSEKEEPING_JOB_INTERVALS["_check_queue_health_throttled"])
-    needs_agents = is_job_due(scheduler_state, "agent_evaluation_loop",
-                              HOUSEKEEPING_JOB_INTERVALS["agent_evaluation_loop"])
-    needs_sweep = is_job_due(scheduler_state, "sweep_stale_resources",
-                             HOUSEKEEPING_JOB_INTERVALS["sweep_stale_resources"])
-
-    needs_remote = (
-        needs_register or needs_requeue or needs_hooks or needs_project_completion
-        or needs_health or needs_agents or needs_sweep
-    )
-
-    # --- Fetch poll data once for all remote jobs ---
-    poll_data: dict | None = None
-    if needs_remote:
-        poll_data = _fetch_poll_data()
-
-    # --- Register orchestrator (300s) ---
-    if needs_register:
-        orchestrator_registered = (poll_data or {}).get("orchestrator_registered", False)
-        try:
-            _register_orchestrator(orchestrator_registered=orchestrator_registered)
-        except Exception as e:
-            debug_log(f"_register_orchestrator failed: {e}")
-        record_job_run(scheduler_state, "_register_orchestrator")
-
-    # --- Requeue expired leases (60s) ---
-    if needs_requeue:
-        try:
-            check_and_requeue_expired_leases()
-        except Exception as e:
-            debug_log(f"check_and_requeue_expired_leases failed: {e}")
-        record_job_run(scheduler_state, "check_and_requeue_expired_leases")
-
-    # --- Process orchestrator hooks on provisional tasks (60s) ---
-    if needs_hooks:
-        provisional_tasks = (poll_data or {}).get("provisional_tasks")
-        try:
-            process_orchestrator_hooks(provisional_tasks=provisional_tasks)
-        except Exception as e:
-            debug_log(f"process_orchestrator_hooks failed: {e}")
-        record_job_run(scheduler_state, "process_orchestrator_hooks")
-
-    # --- Project completion check (60s) ---
-    if needs_project_completion:
-        try:
-            check_project_completion()
-        except Exception as e:
-            debug_log(f"check_project_completion failed: {e}")
-        record_job_run(scheduler_state, "check_project_completion")
-
-    # --- Queue health check (1800s, already self-throttled) ---
-    if needs_health:
-        try:
-            _check_queue_health_throttled()
-        except Exception as e:
-            debug_log(f"_check_queue_health_throttled failed: {e}")
-        record_job_run(scheduler_state, "_check_queue_health_throttled")
-
-    # --- Agent evaluation loop (60s): use poll queue_counts for backpressure ---
-    if needs_agents:
-        queue_counts = (poll_data or {}).get("queue_counts")
-        _run_agent_evaluation_loop(queue_counts=queue_counts)
-        record_job_run(scheduler_state, "agent_evaluation_loop")
-
-    # --- Stale worktree + remote branch sweep (1800s) ---
-    if needs_sweep:
-        try:
-            sweep_stale_resources()
-        except Exception as e:
-            debug_log(f"sweep_stale_resources failed: {e}")
-        record_job_run(scheduler_state, "sweep_stale_resources")
+    # Dispatch all due jobs (declarative — intervals defined in .octopoid/jobs.yaml)
+    run_due_jobs(scheduler_state)
 
     # Persist updated last_run timestamps
     save_scheduler_state(scheduler_state)

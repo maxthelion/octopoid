@@ -1,0 +1,78 @@
+# Declarative scheduler job definitions.
+#
+# Each job runs on a fixed interval (seconds). The launchd tick is 10s;
+# jobs only run when their interval has elapsed since last run.
+#
+# Fields:
+#   name     — job name, must match a @register_job function in jobs.py
+#   interval — minimum seconds between runs
+#   type     — "script" (Python function) or "agent" (spawns a Claude agent)
+#   group    — "local" (no API calls, runs before poll fetch)
+#              "remote" (runs after poll fetch, ctx.poll_data is populated)
+#
+# For type: agent jobs, additional fields are supported:
+#   blueprint    — pool blueprint name (defaults to job name)
+#   max_instances — max concurrent agent instances (default: 1)
+#   agent_config  — dict merged into the AgentContext agent_config
+
+jobs:
+
+  # --------------------------------------------------------------------------
+  # Local jobs — run before the poll fetch, no API calls needed
+  # --------------------------------------------------------------------------
+
+  # Fast PID check: detect finished agents and process their results.
+  # Runs every 10s (local PID checks only — no network I/O).
+  - name: check_and_update_finished_agents
+    interval: 10
+    type: script
+    group: local
+
+  # --------------------------------------------------------------------------
+  # Remote jobs — run after the poll fetch, ctx.poll_data is populated
+  # --------------------------------------------------------------------------
+
+  # Register this orchestrator with the server (idempotent).
+  # Uses poll_data.orchestrator_registered to skip the POST when not needed.
+  - name: _register_orchestrator
+    interval: 300
+    type: script
+    group: remote
+
+  # Requeue tasks whose claim lease has expired (server-side fallback).
+  - name: check_and_requeue_expired_leases
+    interval: 60
+    type: script
+    group: remote
+
+  # Run orchestrator-side hooks (e.g. merge_pr) on provisional tasks.
+  # Uses poll_data.provisional_tasks to skip the sdk.tasks.list() call.
+  - name: process_orchestrator_hooks
+    interval: 60
+    type: script
+    group: remote
+
+  # Detect projects whose children are all done and run flow transitions.
+  - name: check_project_completion
+    interval: 60
+    type: script
+    group: remote
+
+  # Check queue health (already self-throttled internally at 30 min).
+  - name: _check_queue_health_throttled
+    interval: 1800
+    type: script
+    group: remote
+
+  # Main agent evaluation and spawning loop.
+  # Uses poll_data.queue_counts for backpressure without per-agent API calls.
+  - name: agent_evaluation_loop
+    interval: 60
+    type: script
+    group: remote
+
+  # Archive logs and delete worktrees/branches for old done/failed tasks.
+  - name: sweep_stale_resources
+    interval: 1800
+    type: script
+    group: remote

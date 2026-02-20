@@ -17,9 +17,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from orchestrator.backpressure import can_claim_task
+from orchestrator.jobs import load_jobs_yaml
 from orchestrator.scheduler import (
     AgentContext,
-    HOUSEKEEPING_JOB_INTERVALS,
     _register_orchestrator,
     guard_backpressure,
     is_job_due,
@@ -29,6 +29,11 @@ from orchestrator.scheduler import (
     save_scheduler_state,
 )
 from orchestrator.state_utils import AgentState
+
+
+def _get_job_intervals() -> dict[str, int]:
+    """Derive job intervals from .octopoid/jobs.yaml for test assertions."""
+    return {j["name"]: j["interval"] for j in load_jobs_yaml() if "name" in j and "interval" in j}
 
 
 # =============================================================================
@@ -226,7 +231,7 @@ class TestJobIntervalManagement:
         assert "my_job" in state["jobs"]
 
     def test_housekeeping_intervals_defined(self):
-        """All expected jobs have interval entries."""
+        """All expected jobs have interval entries in jobs.yaml."""
         expected = {
             "check_and_update_finished_agents",
             "_register_orchestrator",
@@ -237,15 +242,18 @@ class TestJobIntervalManagement:
             "agent_evaluation_loop",
             "sweep_stale_resources",
         }
-        assert expected == set(HOUSEKEEPING_JOB_INTERVALS.keys())
+        intervals = _get_job_intervals()
+        assert expected == set(intervals.keys())
 
     def test_check_finished_agents_interval_is_10s(self):
         """check_and_update_finished_agents must run every 10s."""
-        assert HOUSEKEEPING_JOB_INTERVALS["check_and_update_finished_agents"] == 10
+        intervals = _get_job_intervals()
+        assert intervals["check_and_update_finished_agents"] == 10
 
     def test_agent_evaluation_loop_interval_is_60s(self):
         """Agent evaluation loop interval must be 60s."""
-        assert HOUSEKEEPING_JOB_INTERVALS["agent_evaluation_loop"] == 60
+        intervals = _get_job_intervals()
+        assert intervals["agent_evaluation_loop"] == 60
 
 
 # =============================================================================
