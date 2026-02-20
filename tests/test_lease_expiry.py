@@ -1,16 +1,20 @@
-"""Tests for check_and_requeue_expired_leases housekeeping job."""
+"""Tests for check_and_requeue_expired_leases and _requeue_task."""
 
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, call, patch
 
 import pytest
 
-from orchestrator.scheduler import check_and_requeue_expired_leases
+from orchestrator.scheduler import _requeue_task, check_and_requeue_expired_leases
 
 
-def _make_task(task_id: str, lease_expires_at: str | None) -> dict:
+def _make_task(
+    task_id: str,
+    lease_expires_at: str | None,
+    claimed_by: str | None = "agent-1",
+) -> dict:
     """Helper to build a minimal task dict."""
-    return {"id": task_id, "lease_expires_at": lease_expires_at}
+    return {"id": task_id, "lease_expires_at": lease_expires_at, "claimed_by": claimed_by}
 
 
 def _expired(minutes_ago: int = 10) -> str:
@@ -28,10 +32,28 @@ def _future(minutes_ahead: int = 10) -> str:
 class TestCheckAndRequeueExpiredLeases:
     """check_and_requeue_expired_leases must requeue tasks whose lease has expired."""
 
-    def _run(self, tasks: list[dict]) -> MagicMock:
-        """Run the function with a mocked SDK and return the mock SDK."""
+    def _run(
+        self,
+        claimed_tasks: list[dict],
+        provisional_tasks: list[dict] | None = None,
+    ) -> MagicMock:
+        """Run the function with a mocked SDK and return the mock SDK.
+
+        Args:
+            claimed_tasks: Tasks returned for sdk.tasks.list(queue="claimed").
+            provisional_tasks: Tasks returned for sdk.tasks.list(queue="provisional").
+                Defaults to [] (no provisional tasks with active claims).
+        """
         mock_sdk = MagicMock()
-        mock_sdk.tasks.list.return_value = tasks
+
+        def _list(queue: str | None = None) -> list[dict]:
+            if queue == "claimed":
+                return claimed_tasks
+            if queue == "provisional":
+                return provisional_tasks or []
+            return []
+
+        mock_sdk.tasks.list.side_effect = _list
 
         with patch("orchestrator.scheduler.queue_utils.get_sdk", return_value=mock_sdk):
             check_and_requeue_expired_leases()
@@ -39,7 +61,7 @@ class TestCheckAndRequeueExpiredLeases:
         return mock_sdk
 
     def test_expired_task_is_requeued(self) -> None:
-        """A task whose lease_expires_at is in the past must be moved to incoming."""
+        """A claimed task whose lease_expires_at is in the past is moved to incoming."""
         task = _make_task("TASK-expired", _expired())
         sdk = self._run([task])
 
@@ -84,10 +106,10 @@ class TestCheckAndRequeueExpiredLeases:
 
         sdk.tasks.update.assert_not_called()
 
-    def test_none_claimed_queue_does_nothing(self) -> None:
-        """When sdk.tasks.list returns None, no updates are made and no exception raised."""
+    def test_none_queues_do_nothing(self) -> None:
+        """When sdk.tasks.list returns None for all queues, no exception raised."""
         mock_sdk = MagicMock()
-        mock_sdk.tasks.list.return_value = None
+        mock_sdk.tasks.list.side_effect = lambda queue=None: None
 
         with patch("orchestrator.scheduler.queue_utils.get_sdk", return_value=mock_sdk):
             check_and_requeue_expired_leases()  # must not raise
@@ -126,7 +148,118 @@ class TestCheckAndRequeueExpiredLeases:
             lease_expires_at=None,
         )
 
-    def test_claimed_list_is_queried(self) -> None:
-        """The function must query the 'claimed' queue."""
+    def test_both_queues_are_queried(self) -> None:
+        """The function must query both 'claimed' and 'provisional' queues."""
         sdk = self._run([])
-        sdk.tasks.list.assert_called_once_with(queue="claimed")
+        queried = {c.kwargs.get("queue") for c in sdk.tasks.list.call_args_list}
+        assert "claimed" in queried
+        assert "provisional" in queried
+
+    # ------------------------------------------------------------------
+    # Provisional queue: gatekeeper review tasks
+    # ------------------------------------------------------------------
+
+    def test_expired_provisional_task_stays_in_provisional(self) -> None:
+        """An actively-claimed provisional task with an expired lease is unclaimed in-place.
+
+        Gatekeeper uses claim_for_review, so the task stays in 'provisional'.
+        On lease expiry we clear claimed_by/lease_expires_at but do NOT move
+        it to 'incoming'.
+        """
+        task = _make_task("TASK-prov-expired", _expired(), claimed_by="gatekeeper-1")
+        sdk = self._run(claimed_tasks=[], provisional_tasks=[task])
+
+        sdk.tasks.update.assert_called_once_with(
+            "TASK-prov-expired",
+            queue="provisional",
+            claimed_by=None,
+            lease_expires_at=None,
+        )
+
+    def test_unclaimed_provisional_task_is_skipped(self) -> None:
+        """A provisional task with no claimed_by must not be touched.
+
+        Unclaimed provisional tasks (waiting for reviewer) have no active claim
+        and therefore no lease to expire.
+        """
+        task = _make_task("TASK-prov-unclaimed", _expired(), claimed_by=None)
+        sdk = self._run(claimed_tasks=[], provisional_tasks=[task])
+
+        sdk.tasks.update.assert_not_called()
+
+    def test_provisional_task_valid_lease_not_requeued(self) -> None:
+        """A claimed provisional task with a valid lease must not be touched."""
+        task = _make_task("TASK-prov-valid", _future(), claimed_by="gatekeeper-1")
+        sdk = self._run(claimed_tasks=[], provisional_tasks=[task])
+
+        sdk.tasks.update.assert_not_called()
+
+    def test_expired_tasks_from_both_queues_are_handled_correctly(self) -> None:
+        """Expired tasks in both 'claimed' and 'provisional' are requeued to correct queues."""
+        claimed_task = _make_task("TASK-claimed-expired", _expired(), claimed_by="impl-1")
+        prov_task = _make_task("TASK-prov-expired", _expired(), claimed_by="gate-1")
+        sdk = self._run(claimed_tasks=[claimed_task], provisional_tasks=[prov_task])
+
+        assert sdk.tasks.update.call_count == 2
+        calls = {c.args[0]: c.kwargs["queue"] for c in sdk.tasks.update.call_args_list}
+        assert calls["TASK-claimed-expired"] == "incoming"
+        assert calls["TASK-prov-expired"] == "provisional"
+
+
+# ===========================================================================
+# _requeue_task unit tests
+# ===========================================================================
+
+
+class TestRequeuTask:
+    """_requeue_task must return a task to the correct source queue."""
+
+    def _run_requeue(self, task_id: str, source_queue: str = "incoming") -> MagicMock:
+        """Run _requeue_task with a mocked SDK and return the mock."""
+        mock_sdk = MagicMock()
+        with patch("orchestrator.scheduler.queue_utils.get_sdk", return_value=mock_sdk):
+            _requeue_task(task_id, source_queue=source_queue)
+        return mock_sdk
+
+    def test_defaults_to_incoming(self) -> None:
+        """With no source_queue argument, task is returned to 'incoming'."""
+        mock_sdk = MagicMock()
+        with patch("orchestrator.scheduler.queue_utils.get_sdk", return_value=mock_sdk):
+            _requeue_task("TASK-abc")
+
+        mock_sdk.tasks.update.assert_called_once_with(
+            "TASK-abc",
+            queue="incoming",
+            claimed_by=None,
+            lease_expires_at=None,
+        )
+
+    def test_incoming_source_queue(self) -> None:
+        """Explicitly passing source_queue='incoming' returns task to incoming."""
+        sdk = self._run_requeue("TASK-impl", source_queue="incoming")
+
+        sdk.tasks.update.assert_called_once_with(
+            "TASK-impl",
+            queue="incoming",
+            claimed_by=None,
+            lease_expires_at=None,
+        )
+
+    def test_provisional_source_queue(self) -> None:
+        """source_queue='provisional' returns gatekeeper task to provisional."""
+        sdk = self._run_requeue("TASK-gate", source_queue="provisional")
+
+        sdk.tasks.update.assert_called_once_with(
+            "TASK-gate",
+            queue="provisional",
+            claimed_by=None,
+            lease_expires_at=None,
+        )
+
+    def test_sdk_exception_is_swallowed(self) -> None:
+        """SDK failure must not propagate out of _requeue_task."""
+        mock_sdk = MagicMock()
+        mock_sdk.tasks.update.side_effect = RuntimeError("network error")
+
+        with patch("orchestrator.scheduler.queue_utils.get_sdk", return_value=mock_sdk):
+            _requeue_task("TASK-fail")  # must not raise

@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `orchestrator/scheduler.py`: `process_orchestrator_hooks()` now skips tasks whose flow has blocking conditions. Previously, tasks moved directly to `provisional` via `sdk.tasks.update()` were immediately auto-accepted by the hook loop, bypassing gatekeeper agents and human approval gates entirely.
   - `tests/test_scheduler_poll.py`: Added `TestHasFlowBlockingConditions` and `TestProcessOrchestratorHooksSkipsBlockedTasks` test classes covering the fix; updated `test_housekeeping_intervals_defined` to include `poll_github_issues`.
 
+- **Requeue expired leases and spawn failures to correct source queue** ([TASK-c5cbdb4f])
+  - `orchestrator/scheduler.py` `check_and_requeue_expired_leases()`: Now also checks the `provisional` queue for tasks with active claims and expired leases (gatekeeper review tasks). Expired `provisional` tasks are unclaimed in-place (cleared `claimed_by`/`lease_expires_at`, queue stays `provisional`) instead of incorrectly being moved to `incoming`.
+  - `orchestrator/scheduler.py` `_requeue_task()`: Added `source_queue: str = "incoming"` parameter. Tasks claimed from `provisional` (gatekeeper) are now returned to `provisional`; tasks from `incoming` (implementer) continue to return to `incoming`.
+  - `orchestrator/scheduler.py` spawn failure handler: Passes `ctx.agent_config.get("claim_from", "incoming")` as `source_queue` when calling `_requeue_task()` on spawn failure.
+  - `tests/test_lease_expiry.py`: Updated and expanded with 18 tests covering provisional queue handling and direct `_requeue_task` tests.
+
 ### Added
 
 - **`flow` parameter for `create_task()`** ([TASK-f8148819])
