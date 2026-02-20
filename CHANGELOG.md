@@ -18,16 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Flow engine: `Condition.evaluate()` for type: script conditions** ([TASK-test-5-1])
-  - `orchestrator/flow.py`: Added `Condition.evaluate(cwd=None)` method. For `type=script` conditions, runs the script as a shell command (via `subprocess.run(shell=True)`) and returns `True` if exit code is 0, `False` otherwise. `skip=True` short-circuits to `True` without running the script. Agent/manual conditions raise `NotImplementedError` — they are evaluated externally by the scheduler.
-  - `tests/integration/test_flow_conditions.py`: Integration tests for script conditions — 8 condition-evaluation tests (no server required) and 2 end-to-end tests with SDK task state transitions (`scoped_sdk`).
+- **Integration tests: backpressure prevents over-claiming** ([TASK-test-6-1])
+  - `tests/integration/test_backpressure.py`: 6 tests verifying `can_claim_task()` blocks claiming when `claimed >= max_claimed` or `provisional >= max_provisional`, releases capacity after a task completes, and uses pre-fetched `queue_counts` without making extra API calls.
 
 - **Project completion detection and PR creation** ([TASK-29d97975])
   - `orchestrator/scheduler.py`: Added `check_project_completion()` housekeeping job (60s interval). When all child tasks in an active project reach the `done` queue, the function creates a PR from the project's shared branch to the base branch via `gh pr create`, then updates the project status to `"review"` via `sdk.projects.update()`. Idempotent: skips projects already in `"review"` or `"completed"` status, and reuses existing PRs if one already exists for the branch. Added to `HOUSEKEEPING_JOB_INTERVALS`, `HOUSEKEEPING_JOBS`, and `run_scheduler()`.
   - `tests/test_check_project_completion.py`: 11 unit tests covering no-projects, incomplete tasks, all-done happy path, existing PR reuse, status skip guards, missing branch, SDK error resilience, PR creation failure, and multi-project isolation.
-
-- **Integration tests for custom queue flows** ([TASK-test-5-3])
-  - `tests/integration/test_custom_queue_flows.py`: Two end-to-end tests verifying extensible queue validation. `test_task_moves_through_custom_queues` registers a flow with `testing` and `staging` states via `sdk.flows.register()` then moves a task through all queues asserting each transition. `test_invalid_queue_rejected` asserts the server returns 400 when a task is moved to a queue not declared in the registered flow.
 
 - **Extensible queue validation — relax TaskQueue types and sync flows to server** ([TASK-26ff1030])
   - `orchestrator/config.py`: `TaskQueue` is now `str` (validated at runtime by server); replaced `Literal` union with `BUILT_IN_QUEUES` set. `ACTIVE_QUEUES`, `PENDING_QUEUES`, `TERMINAL_QUEUES` now typed as `list[str]`.
