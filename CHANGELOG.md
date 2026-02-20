@@ -113,6 +113,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Data refreshes automatically every 5 seconds via a background thread worker.
   - Added `textual>=8.0.0` to `requirements.txt`.
 
+- **Mock agent test infrastructure — step 4** ([TASK-mock-4])
+  - `tests/integration/test_git_failure_scenarios.py`: 6 integration tests covering git failure error paths. Tests: `test_pr_merge_conflict_blocks_acceptance` (guard_pr_mergeable rejects CONFLICTING PR back to incoming), `test_merge_fails_at_merge_time` (gh pr merge failure → task moves to failed), `test_push_branch_failure` (deleted remote → task stays in claimed), `test_push_branch_no_diff` (already-pushed branch → graceful "up-to-date" success → provisional), `test_rejected_task_gets_rebase_instructions` (rejection reason includes git rebase with correct base branch), `test_conflict_after_rejection` (reject cycle → re-claim → still conflicting → back to incoming, no stuck state).
+
+- **Mock agent test infrastructure — step 3** ([TASK-mock-3])
+  - `tests/integration/test_scheduler_mock.py`: 7 integration tests exercising full scheduler lifecycles using mock agents against the real local test server. No Claude API calls, no real GitHub API (uses fake `gh`). Tests cover: happy-path full cycle (implementer → provisional → gatekeeper approve → done), agent failure/crash → failed queue, gatekeeper reject → incoming, multiple rejections, edge cases (minimal commits, needs_continuation).
+  - Uses `clean_tasks` fixture to avoid stale-task interference (claim endpoint does not filter by scope, so tasks from previous tests must be deleted before each test).
+
+- **Mock agent test infrastructure — step 2** ([TASK-mock-2])
+  - `tests/fixtures/conftest_mock.py`: pytest fixtures for local git repos — `test_repo` (bare remote + working clone), `conflicting_repo` (diverging branches on same file), `task_dir` (full scheduler task directory structure).
+  - `tests/fixtures/mock_helpers.py`: `run_mock_agent()` helper that runs `mock-agent.sh` with configurable `MOCK_*` and `GH_MOCK_*` env vars and fake `gh` on PATH.
+  - `tests/test_mock_fixtures.py`: expanded to 20 smoke tests covering all fixture combinations.
+
+- **Mock agent test infrastructure — step 1** ([TASK-mock-1])
+  - `tests/fixtures/mock-agent.sh`: configurable shell script that simulates agent behavior (implementer and gatekeeper modes) without calling Claude. Controlled via `MOCK_OUTCOME`, `MOCK_DECISION`, `MOCK_COMMENT`, `MOCK_REASON`, `MOCK_COMMITS`, `MOCK_CRASH`, and `MOCK_SLEEP` env vars.
+  - `tests/fixtures/bin/gh`: fake `gh` CLI that returns controlled responses for `pr create`, `pr view`, `pr merge`, and `pr list`. Logs all calls to `GH_MOCK_LOG` when set.
+  - `tests/test_mock_fixtures.py`: 15 smoke tests covering all outcome/decision combinations, commit counts, crash mode, and all fake gh commands.
+
 ### Fixed
 
 - **Pool model: prevent duplicate instances working the same task** ([TASK-pool-dedup-claim])

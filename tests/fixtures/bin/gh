@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# Fake gh CLI for testing — returns controlled responses via environment variables.
+#
+# Variables:
+#   GH_MOCK_PR_NUMBER    PR number to return (default: 99)
+#   GH_MOCK_MERGE_STATUS mergeStateStatus / mergeable value for gh pr view (default: CLEAN)
+#   GH_MOCK_MERGE_FAIL   if "true", gh pr merge exits non-zero (default: false)
+#   GH_MOCK_PR_EXISTS    if "true", gh pr view <branch> -q .url returns the URL (default: false)
+#   GH_MOCK_LOG          if set, all calls are appended to this file
+
+GH_MOCK_PR_NUMBER="${GH_MOCK_PR_NUMBER:-99}"
+GH_MOCK_MERGE_STATUS="${GH_MOCK_MERGE_STATUS:-CLEAN}"
+GH_MOCK_MERGE_FAIL="${GH_MOCK_MERGE_FAIL:-false}"
+GH_MOCK_PR_EXISTS="${GH_MOCK_PR_EXISTS:-false}"
+MOCK_REPO="mock/repo"
+
+# Log the call if GH_MOCK_LOG is set
+if [ -n "${GH_MOCK_LOG:-}" ]; then
+    echo "gh $*" >> "$GH_MOCK_LOG"
+fi
+
+if [ $# -lt 2 ]; then
+    echo "fake-gh: not enough arguments" >&2
+    exit 1
+fi
+
+subcmd="$1"
+subcmd2="$2"
+shift 2
+
+case "$subcmd $subcmd2" in
+    "pr create")
+        # gh pr create --base <base> --head <branch> --title <title> --body <body>
+        # Output: PR URL
+        echo "https://github.com/${MOCK_REPO}/pull/${GH_MOCK_PR_NUMBER}"
+        ;;
+
+    "pr view")
+        # Two patterns:
+        #   gh pr view <num_or_branch> --json mergeable          → full JSON
+        #   gh pr view <num_or_branch> --json url -q .url        → just the URL (or fail)
+        HAS_Q=false
+        for arg in "$@"; do
+            if [ "$arg" = "-q" ]; then
+                HAS_Q=true
+                break
+            fi
+        done
+
+        if $HAS_Q; then
+            # Called with -q to extract a specific field — used to check if a PR
+            # already exists for a branch. Fail unless GH_MOCK_PR_EXISTS=true.
+            if [ "${GH_MOCK_PR_EXISTS}" = "true" ]; then
+                echo "https://github.com/${MOCK_REPO}/pull/${GH_MOCK_PR_NUMBER}"
+            else
+                echo "no pull requests found for branch" >&2
+                exit 1
+            fi
+        else
+            # Return full JSON with merge status fields
+            printf '{"number":%s,"url":"https://github.com/%s/pull/%s","mergeable":"%s","mergeStateStatus":"%s"}\n' \
+                "$GH_MOCK_PR_NUMBER" "$MOCK_REPO" "$GH_MOCK_PR_NUMBER" \
+                "$GH_MOCK_MERGE_STATUS" "$GH_MOCK_MERGE_STATUS"
+        fi
+        ;;
+
+    "pr merge")
+        # gh pr merge <num> [--squash|--merge|--rebase] ...
+        if [ "${GH_MOCK_MERGE_FAIL}" = "true" ]; then
+            echo "error: pull request merge failed" >&2
+            exit 1
+        fi
+        echo "Merged pull request #${GH_MOCK_PR_NUMBER}"
+        ;;
+
+    "pr list")
+        # gh pr list --state open --json number [--label <label>]
+        echo "[]"
+        ;;
+
+    "issue comment")
+        # gh issue comment <number> --body "..."
+        echo "Created comment on issue"
+        ;;
+
+    *)
+        echo "fake-gh: unhandled command: $subcmd $subcmd2 $*" >&2
+        exit 1
+        ;;
+esac

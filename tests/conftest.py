@@ -7,6 +7,9 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
+# Make git-repo and task-dir fixtures available to all unit tests
+pytest_plugins = ["tests.fixtures.conftest_mock"]
+
 
 @pytest.fixture
 def temp_dir():
