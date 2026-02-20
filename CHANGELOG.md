@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Remove regressions from previous agent PR** ([TASK-401995d0])
+  - `orchestrator/roles/__init__.py`: Removed broken import of `SanityCheckGatekeeperRole` (module does not exist, caused crash on import).
+  - `orchestrator/scheduler.py`: Fixed `_register_orchestrator` to omit `repo_url` from payload when empty (was sending `""`, causing 400 errors from server).
+  - `orchestrator/init.py`: Fixed `EXAMPLE_AGENTS_YAML` implementer config: restored `role: implement`, `spawn_mode: scripts`, and `agent_dir: .octopoid/agents/implementer`.
+
 - **Fix spawn_mode default to prevent agent failures** ([TASK-401995d0])
   - `orchestrator/scheduler.py`: Changed default `spawn_mode` from `"worktree"` to `"scripts"` in `guard_claim_task()`, `guard_task_description_nonempty()`, and `get_spawn_strategy()`. The `"worktree"` mode referenced deleted `orchestrator.roles.*` modules (only `base.py` and `__init__.py` remain), causing agents to crash with `No module named orchestrator.roles.implementer`. The `"scripts"` mode (Claude Code with prompt files) is the only live code path.
 
