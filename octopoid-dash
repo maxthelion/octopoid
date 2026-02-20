@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
-# Octopoid dashboard — convenience wrapper for python -m packages.dashboard
+# Octopoid Dashboard — Textual TUI for monitoring the orchestrator.
 set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+export PYTHONPATH="$SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}"
 exec python3 -m packages.dashboard "$@"

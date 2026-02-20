@@ -59,7 +59,7 @@ Agents are **pure functions**. An agent receives a task, does work in a git work
 Agent writes:   { "outcome": "done" }
                 or { "outcome": "failed", "reason": "..." }
 
-Scheduler runs: push_branch -> run_tests -> create_pr -> submit_to_server
+Scheduler runs: push_branch -> run_tests -> create_pr
 ```
 
 This separation means agents are stateless and testable. The scheduler controls all state transitions.
@@ -71,7 +71,7 @@ Agents are configured as **blueprints** in `.octopoid/agents.yaml`. Each bluepri
 ```yaml
 agents:
   implementer:
-    type: implementer
+    role: implementer
     max_instances: 2         # up to 2 concurrent implementers
     interval_seconds: 60
     max_turns: 150
@@ -104,7 +104,7 @@ transitions:
     agent: implementer
 
   "claimed -> provisional":
-    runs: [push_branch, run_tests, create_pr, submit_to_server]
+    runs: [push_branch, run_tests, create_pr]
 
   "provisional -> done":
     conditions:
@@ -273,6 +273,7 @@ server:
 # Repository settings
 repo:
   path: /path/to/your/project
+  url: https://github.com/your-org/your-repo.git  # used for orchestrator registration
   base_branch: main  # all task branches fork from here
 
 # Hooks -- lifecycle actions run during task processing
@@ -287,30 +288,50 @@ hooks:
 ```yaml
 agents:
   implementer:                 # blueprint name
-    type: implementer          # resolves agent directory
+    role: implementer          # agent role (resolves agent directory)
     max_instances: 2           # pool: up to 2 concurrent agents
     interval_seconds: 60       # minimum seconds between spawns
     max_turns: 150             # Claude Code turn limit per task
     model: sonnet              # Claude model to use
 
-  gatekeeper:
+  sanity-check-gatekeeper:
     role: gatekeeper
     spawn_mode: scripts
     claim_from: provisional    # claims from provisional queue, not incoming
     interval_seconds: 120
-    max_turns: 50
+    max_turns: 100
     model: sonnet
     agent_dir: .octopoid/agents/gatekeeper
     max_instances: 1
 
   github-issue-monitor:
-    type: custom
+    role: custom
     path: .octopoid/agents/github-issue-monitor/
     interval_seconds: 900
     lightweight: true          # no worktree, runs in parent project
     max_instances: 1
     paused: true               # disabled by default
 ```
+
+### Install Slash Commands
+
+Octopoid ships management skills (slash commands) for Claude Code. Install them to your project's `.claude/commands/`:
+
+```bash
+octopoid install-commands
+```
+
+This installs commands like `/enqueue`, `/queue-status`, `/agent-status`, `/draft-idea`, etc. Run it again after upgrading Octopoid to pick up new or updated commands.
+
+### Dashboard
+
+`octopoid init` installs an `octopoid-dash` wrapper script in your project root. Run it to launch the Textual TUI:
+
+```bash
+./octopoid-dash
+```
+
+Requires Python dependencies (`textual`, `httpx`, etc.). The wrapper sets `PYTHONPATH` to the octopoid submodule so imports resolve correctly.
 
 ### Set API Key
 
@@ -450,6 +471,7 @@ Running agents are not killed when you pause -- they finish their current task. 
 | `octopoid cancel <id>` | Delete a task | `--force` / `-f` skip confirmation |
 | `octopoid worktrees` | List task worktrees | |
 | `octopoid worktrees-clean` | Prune stale task worktrees | `--dry-run` preview only |
+| `octopoid install-commands` | Install/update slash commands to `.claude/commands/` | `--force` / `-f` overwrite all |
 
 ```bash
 # Create a task
@@ -485,11 +507,11 @@ A Textual TUI for monitoring the system. Polls the server every 5 seconds via th
 
 | Tab | Key | Contents |
 |-----|-----|----------|
-| Work | W | Kanban board: Incoming / In Progress / In Review columns with task cards showing agent, status badge, and turn progress bar |
+| Work | W | Kanban board: Incoming / In Progress / In Review columns with task cards showing agent, claim duration, and turn progress bar |
 | Inbox | I | Proposals, messages, and draft summaries |
 | Agents | A | Master-detail: agent list with status badges, detail pane with role, current task, recent work |
-| Done | D | DataTable of completed/failed/recycled tasks (last 7 days) |
-| Drafts | F | Master-detail: draft file list, full markdown content preview |
+| Tasks | T | DataTable of completed/failed/recycled tasks (last 7 days) with Done/Failed/Proposed sub-tabs |
+| Drafts | F | Server-backed draft list with status filter buttons and markdown content preview |
 
 Click a task card or press Enter to open a detail modal with Diff, Description, Result, and Logs tabs.
 
@@ -538,10 +560,10 @@ incoming -> claimed -> provisional -> done
               |
               v
      scheduler runs steps:
-     push_branch -> run_tests -> create_pr -> submit_to_server
-                                                    |
-                                                    v
-                                              provisional
+     push_branch -> run_tests -> create_pr
+                                      |
+                                      v
+                                provisional
                                                     |
                                                     v
                                           (gatekeeper reviews)
@@ -564,7 +586,7 @@ incoming -> claimed -> provisional -> done
 
 5. **Agent Execution**: The agent (Claude Code) works in its isolated worktree. It reads the task description, implements changes, commits code, and writes `result.json` with `{"outcome": "done"}`. The agent has no access to the server API and cannot push branches or create PRs.
 
-6. **Result Processing**: When the agent process exits, the scheduler reads `result.json` and executes the flow-defined steps for the `claimed -> provisional` transition: `push_branch`, `run_tests`, `create_pr`, `submit_to_server`.
+6. **Result Processing**: When the agent process exits, the scheduler reads `result.json` and executes the flow-defined steps for the `claimed -> provisional` transition: `push_branch`, `run_tests`, `create_pr`. The flow engine then performs the state transition automatically.
 
 7. **Gatekeeper Review**: A gatekeeper blueprint claims `provisional` tasks, spawns a Claude Code instance with read-only tools, reviews the diff, and writes `result.json` with `{"decision": "approve"}` or `{"decision": "reject", "comment": "..."}`.
 
