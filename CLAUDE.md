@@ -26,6 +26,7 @@ If you skip this, the scheduler may keep running old code from stale `.pyc` file
 
 ## Task & PR lifecycle rules
 
+- **Always use `create_task()` from `orchestrator.tasks`** to create tasks. Never bypass it with raw `sdk.tasks.create()` or `requests.post()` calls. `create_task()` handles file placement (`.octopoid/tasks/TASK-{id}.md`), server registration with the correct `file_path`, and branch defaulting via `get_base_branch()`. Bypassing it causes file path mismatches that make agents fail.
 - When manually approving a task, use `approve_and_merge(task_id)` from `orchestrator.queue_utils` — not raw `sdk.tasks.update(queue='done')`. This runs the `before_merge` hooks (merges PR, etc).
 - When closing or merging PRs, never use `--delete-branch`. We may need to go back and check the branch later.
 - When rejecting a task, post the rejection feedback as a comment on the PR (not just in the task body).
