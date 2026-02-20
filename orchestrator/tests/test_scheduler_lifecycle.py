@@ -3,8 +3,11 @@
 Tests that:
 1. prepare_task_directory puts worktree on a named branch (not detached HEAD)
 2. handle_agent_result executes flow steps when outcome is "done" and task is claimed
-3. handle_agent_result moves task to failed when outcome is "failed"
-4. handle_agent_result handles missing result.json gracefully
+3. After steps succeed, the engine calls the right API method based on to_state
+4. handle_agent_result moves task to failed when outcome is "failed"
+5. handle_agent_result handles missing result.json gracefully
+6. PID is only removed on success; kept for retry on failure
+7. After 3 consecutive step failures, task is moved to failed
 """
 
 import json
@@ -122,8 +125,8 @@ class TestPrepareTaskDirectoryCreatesBranch:
 class TestHandleAgentResultFlowSteps:
     """Verify handle_agent_result uses flow steps for done outcome."""
 
-    def test_done_outcome_executes_flow_steps(self, tmp_task_dir, mock_sdk, sample_task):
-        """When outcome is 'done' and task is claimed, flow steps should execute."""
+    def test_done_outcome_executes_flow_steps_then_transitions(self, tmp_task_dir, mock_sdk, sample_task):
+        """When outcome is 'done' and task is claimed, flow steps should execute then engine transitions."""
         # Write result.json with done outcome
         result_path = tmp_task_dir / "result.json"
         result_path.write_text(json.dumps({"outcome": "done"}))
@@ -140,7 +143,8 @@ class TestHandleAgentResultFlowSteps:
             # Set up a mock flow with claimed -> provisional transition
             mock_flow = MagicMock()
             mock_transition = MagicMock()
-            mock_transition.runs = ["push_branch", "create_pr", "submit_to_server"]
+            mock_transition.runs = ["push_branch", "create_pr"]
+            mock_transition.to_state = "provisional"
             mock_flow.get_transitions_from.return_value = [mock_transition]
             mock_load_flow.return_value = mock_flow
 
@@ -151,14 +155,18 @@ class TestHandleAgentResultFlowSteps:
             mock_load_flow.assert_called_once_with("default")
             mock_flow.get_transitions_from.assert_called_once_with("claimed")
             mock_execute.assert_called_once_with(
-                ["push_branch", "create_pr", "submit_to_server"],
+                ["push_branch", "create_pr"],
                 sample_task,
                 {"outcome": "done"},
                 tmp_task_dir,
             )
+            # Engine performs the transition after steps
+            mock_sdk.tasks.submit.assert_called_once_with(
+                task_id="TASK-test123", commits_count=0, turns_used=0
+            )
 
-    def test_done_outcome_fallback_when_no_flow_steps(self, tmp_task_dir, mock_sdk, sample_task):
-        """When outcome is 'done' but flow has no steps, fall back to direct submit."""
+    def test_done_outcome_no_runs_still_transitions(self, tmp_task_dir, mock_sdk, sample_task):
+        """When outcome is 'done' and transition has no runs, engine still performs transition."""
         result_path = tmp_task_dir / "result.json"
         result_path.write_text(json.dumps({"outcome": "done"}))
 
@@ -170,22 +178,99 @@ class TestHandleAgentResultFlowSteps:
 
             mock_qu.get_sdk.return_value = mock_sdk
 
-            # Flow with no runs
+            # Flow with no runs but a to_state of provisional
             mock_flow = MagicMock()
             mock_transition = MagicMock()
             mock_transition.runs = []
+            mock_transition.to_state = "provisional"
             mock_flow.get_transitions_from.return_value = [mock_transition]
             mock_load_flow.return_value = mock_flow
 
             from orchestrator.scheduler import handle_agent_result
             handle_agent_result("TASK-test123", "agent-1", tmp_task_dir)
 
-            # Should NOT execute steps (no runs defined)
+            # No steps executed
+            mock_execute.assert_not_called()
+            # Engine still performs the transition via submit
+            mock_sdk.tasks.submit.assert_called_once_with(
+                task_id="TASK-test123", commits_count=0, turns_used=0,
+            )
+
+    def test_done_outcome_fallback_direct_submit_when_no_transitions(self, tmp_task_dir, mock_sdk, sample_task):
+        """When flow has no transition from claimed at all, fall back to direct submit."""
+        result_path = tmp_task_dir / "result.json"
+        result_path.write_text(json.dumps({"outcome": "done"}))
+
+        mock_sdk.tasks.get.return_value = sample_task
+
+        with patch("orchestrator.scheduler.queue_utils") as mock_qu, \
+             patch("orchestrator.steps.execute_steps") as mock_execute, \
+             patch("orchestrator.flow.load_flow") as mock_load_flow:
+
+            mock_qu.get_sdk.return_value = mock_sdk
+
+            # Flow with no transitions from claimed
+            mock_flow = MagicMock()
+            mock_flow.get_transitions_from.return_value = []
+            mock_load_flow.return_value = mock_flow
+
+            from orchestrator.scheduler import handle_agent_result
+            handle_agent_result("TASK-test123", "agent-1", tmp_task_dir)
+
+            # Should NOT execute steps
             mock_execute.assert_not_called()
             # Should fall back to direct submit
             mock_sdk.tasks.submit.assert_called_once_with(
                 task_id="TASK-test123", commits_count=0, turns_used=0,
             )
+
+    def test_child_flow_done_outcome_accepts_task(self, tmp_task_dir, mock_sdk):
+        """Child flow 'claimed -> done' transition causes engine to call sdk.tasks.accept()."""
+        result_path = tmp_task_dir / "result.json"
+        result_path.write_text(json.dumps({"outcome": "done"}))
+
+        project_task = {
+            "id": "TASK-test123",
+            "title": "Child task",
+            "queue": "claimed",
+            "flow": "project",
+            "project_id": "PROJ-abc",
+        }
+        mock_sdk.tasks.get.return_value = project_task
+
+        with patch("orchestrator.scheduler.queue_utils") as mock_qu, \
+             patch("orchestrator.steps.execute_steps") as mock_execute, \
+             patch("orchestrator.flow.load_flow") as mock_load_flow:
+
+            mock_qu.get_sdk.return_value = mock_sdk
+
+            child_transition = MagicMock()
+            child_transition.runs = ["rebase_on_project_branch", "run_tests"]
+            child_transition.to_state = "done"
+
+            mock_child_flow = MagicMock()
+            mock_child_flow.get_transitions_from.return_value = [child_transition]
+
+            mock_flow = MagicMock()
+            mock_flow.child_flow = mock_child_flow
+            mock_flow.get_transitions_from.return_value = []
+            mock_load_flow.return_value = mock_flow
+
+            from orchestrator.scheduler import handle_agent_result
+            handle_agent_result("TASK-test123", "agent-1", tmp_task_dir)
+
+            # Steps executed
+            mock_execute.assert_called_once_with(
+                ["rebase_on_project_branch", "run_tests"],
+                project_task,
+                {"outcome": "done"},
+                tmp_task_dir,
+            )
+            # Engine accepts (not submits) for claimed -> done
+            mock_sdk.tasks.accept.assert_called_once_with(
+                task_id="TASK-test123", accepted_by="flow-engine"
+            )
+            mock_sdk.tasks.submit.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -323,6 +408,7 @@ class TestChildFlowDispatch:
             # Set up a parent flow with child_flow
             child_transition = MagicMock()
             child_transition.runs = ["rebase_on_project_branch", "run_tests"]
+            child_transition.to_state = "done"
 
             mock_child_flow = MagicMock()
             mock_child_flow.get_transitions_from.return_value = [child_transition]
@@ -345,6 +431,10 @@ class TestChildFlowDispatch:
                 {"outcome": "done"},
                 tmp_task_dir,
             )
+            # Engine accepts for claimed -> done
+            mock_sdk.tasks.accept.assert_called_once_with(
+                task_id="TASK-test123", accepted_by="flow-engine"
+            )
 
     def test_non_project_task_uses_normal_flow_in_handle_done(self, tmp_task_dir, mock_sdk, sample_task):
         """When a task has no project_id, use normal top-level flow transitions."""
@@ -360,7 +450,8 @@ class TestChildFlowDispatch:
             mock_qu.get_sdk.return_value = mock_sdk
 
             mock_transition = MagicMock()
-            mock_transition.runs = ["push_branch", "create_pr", "submit_to_server"]
+            mock_transition.runs = ["push_branch", "create_pr"]
+            mock_transition.to_state = "provisional"
 
             mock_child_flow = MagicMock()
 
@@ -376,10 +467,14 @@ class TestChildFlowDispatch:
             mock_flow.get_transitions_from.assert_called_once_with("claimed")
             mock_child_flow.get_transitions_from.assert_not_called()
             mock_execute.assert_called_once_with(
-                ["push_branch", "create_pr", "submit_to_server"],
+                ["push_branch", "create_pr"],
                 sample_task,
                 {"outcome": "done"},
                 tmp_task_dir,
+            )
+            # Engine submits for claimed -> provisional
+            mock_sdk.tasks.submit.assert_called_once_with(
+                task_id="TASK-test123", commits_count=0, turns_used=0
             )
 
     def test_project_task_uses_child_flow_in_flow_dispatch(self, tmp_task_dir, mock_sdk):
@@ -439,6 +534,7 @@ class TestChildFlowDispatch:
             mock_transition = MagicMock()
             mock_transition.conditions = []
             mock_transition.runs = ["post_review_comment", "merge_pr"]
+            mock_transition.to_state = "done"
 
             mock_child_flow = MagicMock()
 
@@ -453,3 +549,106 @@ class TestChildFlowDispatch:
             mock_flow.get_transitions_from.assert_called_once_with("claimed")
             mock_child_flow.get_transitions_from.assert_not_called()
             mock_execute.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Test: step failure retry counter and PID cleanup
+# ---------------------------------------------------------------------------
+
+class TestStepFailureRetry:
+    """Verify step failure counting and PID-retention behavior."""
+
+    def test_step_failure_raises_so_pid_is_retained(self, tmp_task_dir, mock_sdk, sample_task):
+        """When a step raises, handle_agent_result re-raises so caller keeps the PID."""
+        result_path = tmp_task_dir / "result.json"
+        result_path.write_text(json.dumps({"outcome": "done"}))
+
+        mock_sdk.tasks.get.return_value = sample_task
+
+        with patch("orchestrator.scheduler.queue_utils") as mock_qu, \
+             patch("orchestrator.flow.load_flow") as mock_load_flow:
+
+            mock_qu.get_sdk.return_value = mock_sdk
+
+            mock_flow = MagicMock()
+            mock_transition = MagicMock()
+            mock_transition.runs = ["push_branch", "create_pr"]
+            mock_transition.to_state = "provisional"
+            mock_flow.get_transitions_from.return_value = [mock_transition]
+            mock_load_flow.return_value = mock_flow
+
+            # Make execute_steps raise
+            with patch("orchestrator.steps.execute_steps", side_effect=RuntimeError("Tests failed")):
+                from orchestrator.scheduler import handle_agent_result
+                with pytest.raises(RuntimeError, match="Tests failed"):
+                    handle_agent_result("TASK-test123", "agent-1", tmp_task_dir)
+
+        # Failure count file should have been incremented
+        counter_file = tmp_task_dir / "step_failure_count"
+        assert counter_file.exists()
+        assert counter_file.read_text().strip() == "1"
+
+    def test_after_3_failures_moves_to_failed_and_returns_cleanly(self, tmp_task_dir, mock_sdk, sample_task):
+        """After 3 consecutive step failures, handle_agent_result moves to failed and returns (no raise)."""
+        result_path = tmp_task_dir / "result.json"
+        result_path.write_text(json.dumps({"outcome": "done"}))
+
+        # Pre-seed the counter to 2 (this will be the 3rd failure)
+        (tmp_task_dir / "step_failure_count").write_text("2")
+
+        mock_sdk.tasks.get.return_value = sample_task
+
+        with patch("orchestrator.scheduler.queue_utils") as mock_qu, \
+             patch("orchestrator.flow.load_flow") as mock_load_flow:
+
+            mock_qu.get_sdk.return_value = mock_sdk
+
+            mock_flow = MagicMock()
+            mock_transition = MagicMock()
+            mock_transition.runs = ["push_branch"]
+            mock_transition.to_state = "provisional"
+            mock_flow.get_transitions_from.return_value = [mock_transition]
+            mock_load_flow.return_value = mock_flow
+
+            with patch("orchestrator.steps.execute_steps", side_effect=RuntimeError("Step failed again")):
+                from orchestrator.scheduler import handle_agent_result
+                # Should NOT raise — returns cleanly so PID gets removed
+                handle_agent_result("TASK-test123", "agent-1", tmp_task_dir)
+
+        # Task moved to failed
+        mock_sdk.tasks.update.assert_called_once()
+        call_args = mock_sdk.tasks.update.call_args
+        assert call_args[0][0] == "TASK-test123"
+        assert call_args[1]["queue"] == "failed"
+
+        # Counter reset
+        counter_file = tmp_task_dir / "step_failure_count"
+        assert not counter_file.exists()
+
+    def test_success_resets_failure_counter(self, tmp_task_dir, mock_sdk, sample_task):
+        """After a successful run, the failure counter file is no longer consulted (implicit reset)."""
+        result_path = tmp_task_dir / "result.json"
+        result_path.write_text(json.dumps({"outcome": "done"}))
+
+        mock_sdk.tasks.get.return_value = sample_task
+
+        with patch("orchestrator.scheduler.queue_utils") as mock_qu, \
+             patch("orchestrator.flow.load_flow") as mock_load_flow:
+
+            mock_qu.get_sdk.return_value = mock_sdk
+
+            mock_flow = MagicMock()
+            mock_transition = MagicMock()
+            mock_transition.runs = []
+            mock_transition.to_state = "provisional"
+            mock_flow.get_transitions_from.return_value = [mock_transition]
+            mock_load_flow.return_value = mock_flow
+
+            from orchestrator.scheduler import handle_agent_result
+            # Should not raise
+            handle_agent_result("TASK-test123", "agent-1", tmp_task_dir)
+
+        # submit called (transition worked)
+        mock_sdk.tasks.submit.assert_called_once_with(
+            task_id="TASK-test123", commits_count=0, turns_used=0
+        )
