@@ -235,6 +235,7 @@ class TestJobIntervalManagement:
             "check_project_completion",
             "_check_queue_health_throttled",
             "agent_evaluation_loop",
+            "sweep_stale_resources",
         }
         assert expected == set(HOUSEKEEPING_JOB_INTERVALS.keys())
 
