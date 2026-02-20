@@ -9,8 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Integration tests: double-processing guard (idempotent result handling)** ([TASK-test-2-3])
-  - `tests/integration/test_scheduler_mock.py`: Added `TestIdempotentResultHandling` class with two tests verifying that `handle_agent_result()` is safe to call multiple times without causing duplicate transitions, errors, or data corruption. `test_double_processing_is_idempotent` confirms a second call on a task already in "provisional" is a no-op. `test_processing_result_for_done_task` confirms calling `handle_agent_result()` on a fully completed ("done") task leaves it unchanged.
+- **Integration tests for pool capacity limits** ([TASK-test-3-1])
+  - `tests/integration/test_pool_concurrency.py`: Two tests verifying pool capacity enforcement end-to-end. `TestPoolCapacityRespected` confirms `guard_pool_capacity` blocks at `max_instances` and allows spawning after a slot frees. `TestCountOnlyAlivePids` confirms `count_running_instances` counts only alive PIDs, ignoring dead ones. Both use real filesystem pool tracking with `tmp_path` and patch `get_agents_runtime_dir`.
 
 - **Project completion detection and PR creation** ([TASK-29d97975])
   - `orchestrator/scheduler.py`: Added `check_project_completion()` housekeeping job (60s interval). When all child tasks in an active project reach the `done` queue, the function creates a PR from the project's shared branch to the base branch via `gh pr create`, then updates the project status to `"review"` via `sdk.projects.update()`. Idempotent: skips projects already in `"review"` or `"completed"` status, and reuses existing PRs if one already exists for the branch. Added to `HOUSEKEEPING_JOB_INTERVALS`, `HOUSEKEEPING_JOBS`, and `run_scheduler()`.
