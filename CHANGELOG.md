@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Fix test suite health issues** ([TASK-89cf1633])
+  - `orchestrator/scheduler.py`: Fixed silent ImportError — `from .config import load_config` corrected to `from .config import _load_project_config as load_config`. This was silently breaking orchestrator registration.
+  - `tests/integration/test_api_server.py`, `test_task_lifecycle.py`, `test_hooks.py`, `test_backpressure.py`, `test_claim_content.py`: Added `branch="main"` to all `sdk.tasks.create()` calls (46 calls) to match server requirement added 2026-02-17.
+  - `tests/test_init.py`: Updated `test_skills_skipped_shows_hint` to assert `"install-commands"` instead of `"--skills"` to match current init output.
+  - Removed `tests/test_queue_diagnostics.py` and `tests/test_queue_auto_fixes.py` (16 dead tests for a `diagnose_queue_health` script that no longer exists; replaced by `tests/integration/test_queue_health_diagnostics.py`).
+
 - **Guard against spawning agents for empty task descriptions** ([TASK-16ffb5c4])
   - `orchestrator/scheduler.py`: Added `guard_task_description_nonempty` guard to `AGENT_GUARDS`. For scripts-mode agents, after claiming a task, the guard checks that `task["content"]` is non-empty and non-whitespace. If the task file is missing or empty, the task is moved to `failed` with a clear reason (e.g. "Task description is empty — no file at .octopoid/tasks/TASK-xxx.md") and no agent is spawned.
   - `orchestrator/tests/test_scheduler_lifecycle.py`: 8 unit tests covering all guard paths — no task, non-scripts mode, valid content, whitespace-only content, missing content field, empty file, reason message formatting, and SDK failure resilience.

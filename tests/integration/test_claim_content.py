@@ -55,6 +55,7 @@ class TestClaimReturnsContent:
             title="Test task with real content",
             role="implement",
             priority="P1",
+            branch="main",
         )
 
         # Patch tasks dir and orchestrator ID (SDK already patched by conftest)
@@ -105,6 +106,7 @@ class TestClaimReturnsContent:
             title="Missing file test",
             role="implement",
             priority="P1",
+            branch="main",
         )
 
         import orchestrator.queue_utils as qu

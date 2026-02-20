@@ -115,7 +115,8 @@ class TestTaskCRUD:
             title="Test Task",
             role="implement",
             priority="P1",
-            queue="incoming"
+            queue="incoming",
+            branch="main",
         )
         assert task['id'] == "test-001"
         assert task['queue'] == "incoming"
@@ -130,7 +131,8 @@ class TestTaskCRUD:
             id="test-002",
             file_path="/tmp/test-002.md",
             title="Get Test",
-            role="implement"
+            role="implement",
+            branch="main",
         )
 
         # Get it back
@@ -151,13 +153,15 @@ class TestTaskCRUD:
             id="test-003",
             file_path="/tmp/test-003.md",
             title="Task 3",
-            role="implement"
+            role="implement",
+            branch="main",
         )
         sdk.tasks.create(
             id="test-004",
             file_path="/tmp/test-004.md",
             title="Task 4",
-            role="implement"
+            role="implement",
+            branch="main",
         )
 
         # List all
@@ -173,14 +177,16 @@ class TestTaskCRUD:
             file_path="/tmp/test-005.md",
             title="Incoming Task",
             role="implement",
-            queue="incoming"
+            queue="incoming",
+            branch="main",
         )
         sdk.tasks.create(
             id="test-006",
             file_path="/tmp/test-006.md",
             title="Claimed Task",
             role="implement",
-            queue="claimed"
+            queue="claimed",
+            branch="main",
         )
 
         # List by queue
@@ -197,7 +203,8 @@ class TestTaskCRUD:
             file_path="/tmp/test-007.md",
             title="Old Title",
             role="implement",
-            priority="P2"
+            priority="P2",
+            branch="main",
         )
 
         # Update it
@@ -212,7 +219,8 @@ class TestTaskCRUD:
             id="test-008",
             file_path="/tmp/test-008.md",
             title="To Delete",
-            role="implement"
+            role="implement",
+            branch="main",
         )
 
         # Delete it
@@ -232,7 +240,8 @@ class TestTaskCreationValidation:
         task = sdk.tasks.create(
             id="test-009",
             file_path="/tmp/test-009.md",
-            role="implement"
+            role="implement",
+            branch="main",
         )
         assert task['id'] == "test-009"
         assert task['role'] == "implement"
@@ -243,7 +252,8 @@ class TestTaskCreationValidation:
         sdk.tasks.create(
             id="test-010",
             file_path="/tmp/test-010.md",
-            role="implement"
+            role="implement",
+            branch="main",
         )
 
         # Try to create duplicate - should raise error
@@ -251,7 +261,8 @@ class TestTaskCreationValidation:
             sdk.tasks.create(
                 id="test-010",
                 file_path="/tmp/test-010-dup.md",
-                role="implement"
+                role="implement",
+                branch="main",
             )
 
     def test_create_task_with_metadata(self, sdk, clean_tasks):
@@ -260,7 +271,8 @@ class TestTaskCreationValidation:
             id="test-011",
             file_path="/tmp/test-011.md",
             role="implement",
-            metadata={"custom_field": "custom_value"}
+            metadata={"custom_field": "custom_value"},
+            branch="main",
         )
         assert task['id'] == "test-011"
         # Metadata should be preserved

@@ -309,7 +309,7 @@ class TestInitSkillInstallation:
 
         output = capsys.readouterr().out
         assert "Skipping skill installation" in output
-        assert "--skills" in output
+        assert "install-commands" in output
 
 
 class TestInitGitignore:

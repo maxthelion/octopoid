@@ -63,6 +63,7 @@ class TestTaskTypeAPI:
             title="Product Feature",
             role="implement",
             type="product",
+            branch="main",
         )
         assert task["id"] == "hooks-type-001"
         assert task.get("type") == "product"
@@ -74,6 +75,7 @@ class TestTaskTypeAPI:
             file_path="/tmp/hooks-notype-001.md",
             title="Untyped Task",
             role="implement",
+            branch="main",
         )
         assert task["id"] == "hooks-notype-001"
         assert task.get("type") is None
@@ -85,6 +87,7 @@ class TestTaskTypeAPI:
             file_path="/tmp/hooks-persist-001.md",
             title="Persist Type",
             type="infrastructure",
+            branch="main",
         )
         task = sdk.tasks.get("hooks-persist-001")
         assert task.get("type") == "infrastructure"
@@ -96,6 +99,7 @@ class TestTaskTypeAPI:
             file_path="/tmp/hooks-update-001.md",
             title="Update Type",
             type="product",
+            branch="main",
         )
         updated = sdk.tasks.update("hooks-update-001", type="hotfix")
         assert updated.get("type") == "hotfix"
@@ -108,6 +112,7 @@ class TestTaskTypeAPI:
             title="Lifecycle Type",
             role="implement",
             type="product",
+            branch="main",
         )
 
         # Claim
@@ -288,6 +293,7 @@ class TestServerHooks:
             title="Hooks Server Test",
             role="implement",
             hooks=hooks,
+            branch="main",
         )
         assert task["id"] == "hooks-server-001"
         stored = task.get("hooks")
@@ -309,6 +315,7 @@ class TestServerHooks:
             title="Hooks Persist Lifecycle",
             role="implement",
             hooks=hooks,
+            branch="main",
         )
         claimed = sdk.tasks.claim(
             orchestrator_id=orchestrator_id,
@@ -343,6 +350,7 @@ class TestServerHooks:
             file_path="/tmp/hooks-evidence-001.md",
             title="Hook Evidence Test",
             hooks=hooks,
+            branch="main",
         )
 
         resp = requests.post(
@@ -371,6 +379,7 @@ class TestServerHooks:
             file_path="/tmp/hooks-unknown-001.md",
             title="Unknown Hook Test",
             hooks=hooks,
+            branch="main",
         )
         resp = requests.post(
             "http://localhost:9787/api/v1/tasks/hooks-unknown-001/hooks/nonexistent/complete",
@@ -391,6 +400,7 @@ class TestServerHooks:
             file_path="/tmp/hooks-invalid-001.md",
             title="Invalid Status Test",
             hooks=hooks,
+            branch="main",
         )
         resp = requests.post(
             "http://localhost:9787/api/v1/tasks/hooks-invalid-001/hooks/run_tests/complete",
@@ -410,6 +420,7 @@ class TestServerHooks:
             file_path="/tmp/hooks-patch-001.md",
             title="Hooks Patch Test",
             hooks=hooks,
+            branch="main",
         )
         new_hooks = json.dumps([
             {"name": "run_tests", "point": "before_submit", "type": "agent", "status": "passed"},
@@ -424,5 +435,6 @@ class TestServerHooks:
             id="hooks-none-001",
             file_path="/tmp/hooks-none-001.md",
             title="No Hooks Task",
+            branch="main",
         )
         assert task.get("hooks") is None
