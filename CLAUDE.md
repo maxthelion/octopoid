@@ -16,13 +16,13 @@ Read `docs/flows.md` for how the declarative flow system works — this is the c
 
 ## Scheduler and Python caching
 
-The scheduler runs via launchd using `/opt/homebrew/bin/python3`. Python caches compiled bytecode in `__pycache__/` directories. After editing or replacing Python files in `orchestrator/`, clear the cache so the scheduler picks up changes:
+The scheduler automatically clears all `__pycache__` directories under `orchestrator/` on every startup (via `_clear_pycache()` in `scheduler.py`), and `orchestrator/__init__.py` sets `sys.dont_write_bytecode = True` so that no process importing the orchestrator package will write new `.pyc` files.
+
+You no longer need to manually clear the cache after editing orchestrator files. If you suspect stale bytecode from a non-orchestrator process, a one-time manual clear is still available:
 
 ```bash
 find orchestrator -name '__pycache__' -type d -exec rm -rf {} +
 ```
-
-If you skip this, the scheduler may keep running old code from stale `.pyc` files — even if the source file has been completely rewritten.
 
 ## Task & PR lifecycle rules
 
