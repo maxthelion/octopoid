@@ -21,6 +21,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Pass message history to agents at spawn time** ([TASK-9e529433])
+  - `orchestrator/scheduler.py`: Added `_fetch_task_messages()` and `_format_message_thread()` helpers.
+  - Scheduler fetches task history via `sdk.messages.list(task_id=...)` before spawning an agent.
+  - Rejection reasons and other activity are formatted as a readable markdown thread included in the agent prompt via `$message_history`.
+  - Updated `packages/client/agents/implementer/prompt.md` to include the `$message_history` section.
+  - Gracefully handles empty history (first-time tasks) and unavailable server endpoints.
+  - Server (`submodules/server`): Added `GET /api/v1/tasks/:id/messages` endpoint returning task history events. Rejection reasons now stored in `task_history.details` via the state machine.
+  - `packages/python-sdk`: Updated `MessagesAPI.list(task_id=...)` to call task-scoped endpoint.
+
 - **MessagesAPI added to Python SDK** ([TASK-24c48219])
   - `packages/python-sdk/octopoid_sdk/client.py`: Added `MessagesAPI` class with `create()` and `list()` methods.
   - `sdk.messages.create(task_id, from_actor, type, content, to_actor=None)` posts to `/api/v1/messages`.
