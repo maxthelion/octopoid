@@ -25,6 +25,13 @@ You no longer need to manually clear the cache after editing orchestrator files.
 find orchestrator -name '__pycache__' -type d -exec rm -rf {} +
 ```
 
+If you skip this, the scheduler may keep running old code from stale `.pyc` files — even if the source file has been completely rewritten.
+
+## Projects
+
+When the user asks to enqueue multiple related tasks, ask if they want a project (shared feature branch + single PR). When enqueuing a big piece of work, suggest a project. The rationale: projects keep work out of `main` until the whole feature is ready. Individual tasks on separate branches create scattered PRs that are hard to consolidate.
+
+
 ## Task & PR lifecycle rules
 
 - **Always use `create_task()` from `orchestrator.tasks`** to create tasks. Never bypass it with raw `sdk.tasks.create()` or `requests.post()` calls. `create_task()` handles file placement (`.octopoid/tasks/TASK-{id}.md`), server registration with the correct `file_path`, and branch defaulting via `get_base_branch()`. Bypassing it causes file path mismatches that make agents fail.
