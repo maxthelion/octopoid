@@ -154,6 +154,7 @@ def accept_completion(
 ) -> dict:
     """Accept a provisional task via API (moves to done queue)."""
     from .task_notes import cleanup_task_notes
+    from .task_thread import cleanup_thread
 
     sdk = get_sdk()
     result = sdk.tasks.accept(task_id, accepted_by=accepted_by or "unknown")
@@ -165,6 +166,7 @@ def accept_completion(
     cleanup_task_worktree(task_id, push_commits=True)
 
     cleanup_task_notes(task_id)
+    cleanup_thread(task_id)
     return result
 
 def reject_completion(
@@ -198,7 +200,14 @@ def review_reject_task(
     rejected_by: str | None = None,
     max_rejections: int = 3,
 ) -> tuple[str, str]:
-    """Reject a provisional task with review feedback."""
+    """Reject a provisional task with review feedback.
+
+    Posts the feedback as a rejection message on the task thread instead of
+    rewriting the task file. The original task instructions are preserved
+    unmodified; the next agent receives them alongside the full message thread.
+    """
+    from .task_thread import post_message
+
     rejection_count = 0
     try:
         sdk = get_sdk()
@@ -210,38 +219,16 @@ def review_reject_task(
 
     escalated = rejection_count >= max_rejections
 
-    tasks_dir = get_tasks_file_dir()
-    task_file = tasks_dir / f"TASK-{task_id}.md"
-
-    if task_file.exists():
-        original_content = task_file.read_text()
-
-        feedback_section = f"## Rejection Notice (rejection #{rejection_count})\n\n"
-        feedback_section += "**WARNING: This task was previously attempted but the work was rejected.**\n"
-        feedback_section += "**Existing code on the branch does NOT satisfy the acceptance criteria.**\n"
-        feedback_section += "**You MUST make new commits to address the feedback below.**\n\n"
-        feedback_section += f"{feedback}\n\n"
-        feedback_section += f"REVIEW_REJECTED_AT: {datetime.now().isoformat()}\n"
-        if rejected_by:
-            feedback_section += f"REVIEW_REJECTED_BY: {rejected_by}\n"
-
-        # Strip existing rejection notices, find insertion point, insert feedback
-        content = re.sub(r'\n*## Rejection Notice.*?(?=\n## |\Z)', '', original_content, flags=re.DOTALL)
-        content = re.sub(r'\n*## Review Feedback \(rejection #\d+\).*?(?=\n## |\Z)', '', content, flags=re.DOTALL)
-        lines = content.split('\n')
-        insert_idx = None
-        for i, line in enumerate(lines):
-            if line.startswith('## '):
-                insert_idx = i
-                break
-        if insert_idx is not None:
-            feedback_lines = feedback_section.rstrip('\n').split('\n')
-            lines = lines[:insert_idx] + feedback_lines + ['', ''] + lines[insert_idx:]
-        else:
-            lines.append('')
-            lines.extend(feedback_section.rstrip('\n').split('\n'))
-        new_content = '\n'.join(lines)
-        task_file.write_text(new_content)
+    # Post feedback as a thread message — do NOT rewrite the task file
+    try:
+        post_message(
+            task_id,
+            role="rejection",
+            content=feedback,
+            author=rejected_by or "reviewer",
+        )
+    except Exception as e:
+        print(f"Warning: Failed to post rejection message for task {task_id}: {e}")
 
     try:
         sdk = get_sdk()
@@ -628,6 +615,7 @@ def approve_and_merge(
     """Approve a task and merge its PR via BEFORE_MERGE hooks."""
     from .hooks import HookContext, HookPoint, HookStatus, run_hooks
     from .task_notes import cleanup_task_notes
+    from .task_thread import cleanup_thread
 
     sdk = get_sdk()
     task = sdk.tasks.get(task_id)
@@ -671,5 +659,6 @@ def approve_and_merge(
     sdk.tasks.accept(task_id, accepted_by="scheduler")
 
     cleanup_task_notes(task_id)
+    cleanup_thread(task_id)
 
     return result

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Task message thread: rejection feedback preserved without rewriting task files** ([TASK-142f1c04])
+  - `orchestrator/task_thread.py`: New module for storing task-specific messages as JSONL files. Provides `post_message()`, `get_thread()`, `format_thread_for_prompt()`, and `cleanup_thread()`.
+  - `orchestrator/steps.py`: `reject_with_feedback()` now posts a rejection message to the task thread in addition to calling `sdk.tasks.reject()`. Task files are no longer rewritten.
+  - `orchestrator/tasks.py`: `review_reject_task()` now posts feedback as a thread message instead of inserting a rejection notice into the task file. Task files stay unmodified across rejections.
+  - `orchestrator/scheduler.py`: `prepare_task_directory()` loads the task's message thread and passes it as `$review_section` in the agent prompt, so the next agent sees original instructions plus full rejection history.
+  - `orchestrator/tasks.py`: `accept_completion()` and `approve_and_merge()` now clean up the thread file when a task completes.
+  - `.octopoid/agents/gatekeeper/prompt.md`: Removed the "Rewrite the Task File on Rejection" instruction — the orchestrator now handles feedback propagation via the message thread.
+  - `tests/test_task_thread.py`: Tests covering all public functions in the new module.
+
 ### Removed
 
 - **Dead code removed from `pr_utils.py`** ([TASK-c50c2d63])

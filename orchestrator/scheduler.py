@@ -935,6 +935,17 @@ def prepare_task_directory(
                 lines.append(f"{i}. {name}")
         required_steps = "\n".join(lines)
 
+    # Load task message thread for review_section
+    review_section = ""
+    task_id_for_thread = task.get("id", "")
+    if task_id_for_thread:
+        try:
+            from .task_thread import get_thread, format_thread_for_prompt
+            thread_messages = get_thread(task_id_for_thread)
+            review_section = format_thread_for_prompt(thread_messages)
+        except Exception as e:
+            debug_log(f"Failed to load task thread for {task_id_for_thread}: {e}")
+
     # Perform template substitution
     from string import Template
     template = Template(prompt_template)
@@ -948,7 +959,7 @@ def prepare_task_directory(
         scripts_dir="../scripts",
         global_instructions=global_instructions,
         required_steps=required_steps,
-        review_section="",
+        review_section=review_section,
         continuation_section="",
     )
 
