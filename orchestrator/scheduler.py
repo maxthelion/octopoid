@@ -962,6 +962,12 @@ def invoke_claude(task_dir: Path, agent_config: dict) -> int:
         "hooks": [{"type": "command", "command": ".claude/hooks/count-tool-use.sh"}],
     }
     settings.setdefault("hooks", {}).setdefault("PostToolUse", []).append(turn_counter_hook)
+    # Restrict file operations to the worktree (project-relative patterns).
+    # Prevents agents from writing to the main tree via absolute paths.
+    settings.setdefault("permissions", {})["allow"] = [
+        "Bash(*)", "Read(/**)", "Write(/**)", "Edit(/**)",
+        "Glob", "Grep", "Skill",
+    ]
     settings_path.write_text(json.dumps(settings))
 
     env = os.environ.copy()
