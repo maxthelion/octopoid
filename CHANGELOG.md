@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Dashboard header/tab styling regression from PR #154** ([TASK-f7226824])
+  - Scoped global `Tabs`/`Tab` CSS rules to `#tabs > Tabs` so they only affect the outer tab bar, restoring the title bar and proper tab spacing.
+  - Fixed draft list items to display the draft's actual server ID instead of a sequential 1/2/3 index.
+  - Fixed `.draft-filter-active` styling: removed duplicate selectors that overrode the cyan highlight, so active filter buttons now show clear visual feedback.
+
 ### Added
 
 - **MessagesAPI added to Python SDK** ([TASK-24c48219])
