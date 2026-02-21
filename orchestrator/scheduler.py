@@ -4,6 +4,7 @@
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 from collections.abc import Callable
@@ -2635,10 +2636,23 @@ def _check_venv_integrity() -> None:
         sys.exit(1)
 
 
+def _clear_pycache() -> None:
+    """Remove all __pycache__ directories under the orchestrator package.
+
+    This ensures the scheduler never loads stale bytecode written by other
+    processes (tests, dashboard, manual imports) that ran before the source
+    was updated.
+    """
+    orchestrator_dir = Path(__file__).parent
+    for cache_dir in orchestrator_dir.rglob("__pycache__"):
+        shutil.rmtree(cache_dir, ignore_errors=True)
+
+
 def main() -> None:
     """Entry point for scheduler."""
     global DEBUG
 
+    _clear_pycache()
     _check_venv_integrity()
 
     parser = argparse.ArgumentParser(description="Run the orchestrator scheduler")

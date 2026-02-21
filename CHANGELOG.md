@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Stale Python bytecode in scheduler** ([TASK-83d87eb8])
+  - `orchestrator/__init__.py`: Added `sys.dont_write_bytecode = True` at module load time so no process importing the orchestrator package writes `.pyc` files.
+  - `orchestrator/scheduler.py`: Added `_clear_pycache()` called at the very start of `main()` (before `_check_venv_integrity()`) — removes all `__pycache__` dirs under `orchestrator/` on every scheduler startup.
+  - `CLAUDE.md`: Updated "Scheduler and Python caching" section to reflect that cache clearing is now automated.
+
 ### Added
 
 - **Dashboard refactor: Textual theme + shared utils + TabBase** ([TASK-cbd3c1c2])
