@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime
-
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.message import Message
@@ -11,30 +9,9 @@ from textual.widget import Widget
 from textual.widgets import Label, ListItem, ListView
 from textual.containers import Horizontal, Vertical, VerticalScroll
 
+from ..utils import format_age
 from ..widgets.status_badge import StatusBadge
-
-
-def _format_age(iso_str: str | None) -> str:
-    """Format an ISO timestamp as a human-readable age like '2h', '15m'."""
-    if not iso_str:
-        return ""
-    try:
-        dt = datetime.fromisoformat(str(iso_str).replace("Z", "+00:00"))
-        if dt.tzinfo:
-            dt = dt.replace(tzinfo=None)
-        delta = datetime.now() - dt
-        secs = delta.total_seconds()
-        if secs < 0:
-            return "now"
-        if secs < 60:
-            return f"{int(secs)}s"
-        if secs < 3600:
-            return f"{int(secs // 60)}m"
-        if secs < 86400:
-            return f"{int(secs // 3600)}h"
-        return f"{int(secs // 86400)}d"
-    except (ValueError, TypeError):
-        return ""
+from .base import TabBase
 
 
 class AgentItem(ListItem):
@@ -104,7 +81,7 @@ class AgentDetail(Widget):
                 status_text = "PAUSED"
                 status_class = "status--paused"
             elif status == "running":
-                age = _format_age(last_started)
+                age = format_age(last_started)
                 age_suffix = f" · {age} elapsed" if age else ""
                 # Look up turns from work data
                 turns_text = ""
@@ -125,7 +102,7 @@ class AgentDetail(Widget):
                 status_text = f"BLOCKED · {reason}"
                 status_class = "status--blocked"
             else:
-                age = _format_age(last_started)
+                age = format_age(last_started)
                 age_suffix = f" · last run {age} ago" if age else ""
                 status_text = f"IDLE{age_suffix}"
                 status_class = "status--idle"
@@ -205,23 +182,13 @@ class AgentDetail(Widget):
         self.refresh(recompose=True)
 
 
-class AgentsTab(Widget):
+class AgentsTab(TabBase):
     """Master-detail agents view: list on left, detail on right."""
 
     BINDINGS = [
         Binding("j", "cursor_down", "Down", show=False),
         Binding("k", "cursor_up", "Up", show=False),
     ]
-
-    DEFAULT_CSS = """
-    AgentsTab {
-        height: 100%;
-    }
-    """
-
-    def __init__(self, report: dict | None = None, **kwargs: object) -> None:
-        super().__init__(**kwargs)
-        self._report = report or {}
 
     def compose(self) -> ComposeResult:
         agents = self._report.get("agents", [])
@@ -260,7 +227,5 @@ class AgentsTab(Widget):
         except Exception:
             pass
 
-    def update_data(self, report: dict) -> None:
-        """Replace the report and recompose the agents view."""
-        self._report = report
+    def _refresh(self) -> None:
         self.refresh(recompose=True)

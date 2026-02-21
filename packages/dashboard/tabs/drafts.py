@@ -2,17 +2,15 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 from pathlib import Path
 
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.widget import Widget
 from textual.widgets import Button, Label, ListItem, ListView, Markdown
 from textual.containers import Horizontal, Vertical, VerticalScroll
 
-from .done import _format_age
+from .base import TabBase
 
 
 # Status tag labels and colors
@@ -77,19 +75,13 @@ class _DraftItem(ListItem):
         yield Label(label_text, classes="draft-list-label")
 
 
-class DraftsTab(Widget):
+class DraftsTab(TabBase):
     """Master-detail drafts view: filter buttons + list on left, file content on right."""
 
     BINDINGS = [
         Binding("j", "cursor_down", "Down", show=False),
         Binding("k", "cursor_up", "Up", show=False),
     ]
-
-    DEFAULT_CSS = """
-    DraftsTab {
-        height: 100%;
-    }
-    """
 
     def __init__(self, report: dict | None = None, **kwargs: object) -> None:
         super().__init__(**kwargs)

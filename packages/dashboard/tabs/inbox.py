@@ -5,7 +5,9 @@ from __future__ import annotations
 from textual.app import ComposeResult
 from textual.widget import Widget
 from textual.widgets import Label, ListItem, ListView
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal
+
+from .base import TabBase
 
 
 class _InboxItem(ListItem):
@@ -76,18 +78,8 @@ class _InboxColumn(Widget):
             return title, ""
 
 
-class InboxTab(Widget):
+class InboxTab(TabBase):
     """Three-column inbox: Proposals | Messages | Drafts."""
-
-    DEFAULT_CSS = """
-    InboxTab {
-        height: 100%;
-    }
-    """
-
-    def __init__(self, report: dict | None = None, **kwargs: object) -> None:
-        super().__init__(**kwargs)
-        self._report = report or {}
 
     def compose(self) -> ComposeResult:
         proposals = self._report.get("proposals", [])
@@ -117,7 +109,5 @@ class InboxTab(Widget):
                 id="inbox-drafts",
             )
 
-    def update_data(self, report: dict) -> None:
-        """Replace the report and recompose the inbox columns."""
-        self._report = report
+    def _refresh(self) -> None:
         self.refresh(recompose=True)

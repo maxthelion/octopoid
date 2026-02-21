@@ -1,35 +1,36 @@
-/* Octopoid Dashboard — dark theme matching the curses color palette.
+/* Octopoid Dashboard — dark theme using Textual theme variables.
  *
- * Color mapping from octopoid-dash.py:
- *   HEADER  → #4fc3f7  (bright cyan-blue)
- *   RUNNING → #66bb6a  (bright green)
- *   SUCCESS → #66bb6a  (bright green)
- *   FAILURE → #ef5350  (bright red)
- *   WARNING → #ffa726  (bright orange/yellow)
- *   PAUSED  → #ce93d8  (bright magenta/purple)
- *   BORDER  → #29b6f6  (bright cyan)
- *   P0      → #ef5350  (red)
- *   P1      → #ffa726  (yellow/orange)
- *   P2      → #e0e0e0  (white)
- *   DIM     → #616161  (bright black / gray)
+ * Color mapping from original hardcoded hex values:
+ *   #4fc3f7  (cyan accent)   → $accent
+ *   #ef5350  (red/error)     → $error
+ *   #ffa726  (orange/warn)   → $warning
+ *   #66bb6a  (green/success) → $success
+ *   #ce93d8  (purple/paused) → $secondary
+ *   #e0e0e0  (text)          → $text
+ *   #616161  (dim text)      → $text-muted
+ *   #1a1a2e  (dark bg)       → $surface
+ *   #0f3460  (header bg)     → $panel
+ *   #16213e  (card bg)       → $surface-darken-1
+ *   #1f2f5e  (hover bg)      → $surface-lighten-1
+ *   #2a5298  (borders)       → $border
  */
 
 /* ─── App shell ─────────────────────────────────────────────────────────── */
 
 OctopoidDashboard {
-    background: #1a1a2e;
-    color: #e0e0e0;
+    background: $surface;
+    color: $text;
 }
 
 Header {
-    background: #0f3460;
-    color: #4fc3f7;
+    background: $panel;
+    color: $accent;
     text-style: bold;
 }
 
 Footer {
-    background: #0f3460;
-    color: #4fc3f7;
+    background: $panel;
+    color: $accent;
 }
 
 /* ─── Tab bar ────────────────────────────────────────────────────────────── */
@@ -41,30 +42,30 @@ TabbedContent {
 #tabs > Tabs {
     height: 3;
     padding: 0;
-    background: #0f3460;
+    background: $panel;
 }
 
 #tabs > Tabs > Tab {
-    color: #b0b0b0;
+    color: $text-muted;
     padding: 0 2;
-    background: #0f3460;
+    background: $panel;
 }
 
 #tabs > Tabs > Tab:hover {
-    color: #e0e0e0;
-    background: #16213e;
+    color: $text;
+    background: $surface-darken-1;
 }
 
 #tabs > Tabs > Tab.-active {
-    color: #4fc3f7;
+    color: $accent;
     text-style: bold;
-    background: #1a1a2e;
+    background: $surface;
 }
 
 TabPane {
     padding: 0;
     height: 1fr;
-    background: #1a1a2e;
+    background: $surface;
     height: 1fr;
 }
 
@@ -77,7 +78,7 @@ TabPane {
 .kanban-column {
     width: 1fr;
     height: 100%;
-    border-right: solid #2a5298;
+    border-right: solid $border;
     padding: 0 1;
 }
 
@@ -86,8 +87,8 @@ TabPane {
 }
 
 .column-header {
-    background: #0f3460;
-    color: #4fc3f7;
+    background: $panel;
+    color: $accent;
     text-style: bold;
     width: 100%;
     padding: 0 1;
@@ -104,20 +105,20 @@ TabPane {
 
 /* ListItem default overrides */
 ListView > ListItem {
-    background: #16213e;
-    border: solid #2a5298;
+    background: $surface-darken-1;
+    border: solid $border;
     margin: 0 0 1 0;
     padding: 0;
 }
 
 ListView > ListItem:hover {
-    background: #1f2f5e;
-    border: solid #4fc3f7;
+    background: $surface-lighten-1;
+    border: solid $accent;
 }
 
 ListView > ListItem.-highlighted {
-    background: #1f2f5e;
-    border: solid #4fc3f7;
+    background: $surface-lighten-1;
+    border: solid $accent;
 }
 
 /* ─── Task card internals ────────────────────────────────────────────────── */
@@ -132,51 +133,51 @@ ListView > ListItem.-highlighted {
 }
 
 .task-id {
-    color: #616161;
+    color: $text-muted;
 }
 
 .task-title {
-    color: #e0e0e0;
+    color: $text;
     text-style: bold;
     overflow: hidden;
 }
 
 .task-agent {
-    color: #616161;
+    color: $text-muted;
 }
 
 .task-progress {
-    color: #66bb6a;
+    color: $success;
 }
 
 /* ─── Priority colors ────────────────────────────────────────────────────── */
 
 .priority-p0 {
-    color: #ef5350;
+    color: $error;
     text-style: bold;
 }
 
 .priority-badge.priority-p0 {
-    color: #ef5350;
+    color: $error;
     text-style: bold;
 }
 
 .priority-p1 {
-    color: #ffa726;
+    color: $warning;
     text-style: bold;
 }
 
 .priority-badge.priority-p1 {
-    color: #ffa726;
+    color: $warning;
     text-style: bold;
 }
 
 .priority-p2 {
-    color: #e0e0e0;
+    color: $text;
 }
 
 .priority-badge.priority-p2 {
-    color: #616161;
+    color: $text-muted;
 }
 
 /* ─── Status badges ──────────────────────────────────────────────────────── */
@@ -188,30 +189,30 @@ ListView > ListItem.-highlighted {
 }
 
 .badge--running {
-    color: #66bb6a;
+    color: $success;
 }
 
 .badge--paused {
-    color: #ce93d8;
+    color: $secondary;
 }
 
 .badge--blocked {
-    color: #ffa726;
+    color: $warning;
 }
 
 .badge--orphaned {
-    color: #ef5350;
+    color: $error;
 }
 
 .badge--idle {
-    color: #66bb6a;
+    color: $success;
 }
 
 /* ─── Placeholder tabs ───────────────────────────────────────────────────── */
 
 .placeholder {
     padding: 2 4;
-    color: #616161;
+    color: $text-muted;
     text-align: center;
     content-align: center middle;
     height: 100%;
@@ -220,8 +221,8 @@ ListView > ListItem.-highlighted {
 /* ─── Shared section styles ──────────────────────────────────────────────── */
 
 .section-header {
-    background: #0f3460;
-    color: #4fc3f7;
+    background: $panel;
+    color: $accent;
     text-style: bold;
     width: 100%;
     padding: 0 1;
@@ -229,20 +230,20 @@ ListView > ListItem.-highlighted {
 }
 
 .dim-text {
-    color: #616161;
+    color: $text-muted;
 }
 
 /* ─── DataTable shared styles ────────────────────────────────────────────── */
 
 DataTable > .datatable--header {
-    background: #0f3460;
-    color: #4fc3f7;
+    background: $panel;
+    color: $accent;
     text-style: bold;
 }
 
 DataTable > .datatable--cursor {
-    background: #1f2f5e;
-    color: #e0e0e0;
+    background: $surface-lighten-1;
+    color: $text;
 }
 
 /* ─── Inbox tab ──────────────────────────────────────────────────────────── */
@@ -254,7 +255,7 @@ DataTable > .datatable--cursor {
 .inbox-column {
     width: 1fr;
     height: 100%;
-    border-right: solid #2a5298;
+    border-right: solid $border;
     padding: 0 1;
 }
 
@@ -273,11 +274,11 @@ DataTable > .datatable--cursor {
 }
 
 .message--error {
-    color: #ef5350;
+    color: $error;
 }
 
 .message--warning {
-    color: #ffa726;
+    color: $warning;
 }
 
 /* ─── Agents tab ─────────────────────────────────────────────────────────── */
@@ -289,7 +290,7 @@ DataTable > .datatable--cursor {
 .agent-list-panel {
     width: 24;
     height: 100%;
-    border-right: solid #2a5298;
+    border-right: solid $border;
 }
 
 .agent-listview {
@@ -305,7 +306,7 @@ DataTable > .datatable--cursor {
 
 .agent-name {
     width: 1fr;
-    color: #e0e0e0;
+    color: $text;
 }
 
 .agent-detail-panel {
@@ -315,45 +316,45 @@ DataTable > .datatable--cursor {
 }
 
 .agent-detail-name {
-    color: #4fc3f7;
+    color: $accent;
     text-style: bold;
     margin-bottom: 1;
 }
 
 .detail-section-header {
-    color: #4fc3f7;
+    color: $accent;
     text-style: bold;
     margin-top: 1;
 }
 
 .agent-detail-row {
-    color: #e0e0e0;
+    color: $text;
 }
 
 .status--running {
-    color: #66bb6a;
+    color: $success;
     text-style: bold;
 }
 
 .status--paused {
-    color: #ce93d8;
+    color: $secondary;
     text-style: bold;
 }
 
 .status--blocked {
-    color: #ffa726;
+    color: $warning;
     text-style: bold;
 }
 
 .status--idle {
-    color: #66bb6a;
+    color: $success;
 }
 
 /* ─── Done / Tasks tab ───────────────────────────────────────────────────── */
 
 .done-table {
     height: 1fr;
-    background: #1a1a2e;
+    background: $surface;
 }
 
 /* Inner TabbedContent inside TasksTab needs full height */
@@ -383,7 +384,7 @@ FailedTab > Vertical {
 .draft-list-panel {
     width: 30%;
     height: 100%;
-    border-right: solid #2a5298;
+    border-right: solid $border;
 }
 
 /* Filter button row */
@@ -397,21 +398,21 @@ FailedTab > Vertical {
     height: 1;
     min-width: 8;
     margin-right: 1;
-    background: #16213e;
-    color: #b0b0b0;
-    border: tall #2a5298;
+    background: $surface-darken-1;
+    color: $text-muted;
+    border: tall $border;
     padding: 0 1;
 }
 
 .draft-filter-btn:hover {
-    background: #1f2f5e;
-    color: #e0e0e0;
+    background: $surface-lighten-1;
+    color: $text;
 }
 
 .draft-filter-btn.draft-filter-active {
-    color: #4fc3f7;
-    background: #1f2f5e;
-    border: tall #4fc3f7;
+    color: $accent;
+    background: $surface-lighten-1;
+    border: tall $accent;
 }
 
 .draft-listview {
@@ -430,18 +431,18 @@ FailedTab > Vertical {
 }
 
 .draft-listview > ListItem.-highlighted {
-    background: #1f2f5e;
+    background: $surface-lighten-1;
     border: none;
 }
 
 .draft-listview > ListItem:hover {
-    background: #1f2f5e;
+    background: $surface-lighten-1;
     border: none;
 }
 
 .draft-list-label {
     padding: 0;
-    color: #e0e0e0;
+    color: $text;
     height: 1;
 }
 
@@ -452,6 +453,66 @@ FailedTab > Vertical {
 }
 
 .draft-content-text {
-    color: #e0e0e0;
+    color: $text;
     padding: 0 1;
+}
+
+/* ─── Task detail modal ──────────────────────────────────────────────────── */
+
+TaskDetailModal {
+    align: center middle;
+}
+
+#detail-dialog {
+    width: 85%;
+    height: 85%;
+    background: $surface-darken-1;
+    border: solid $accent;
+    padding: 0;
+}
+
+.modal-title {
+    color: $accent;
+    text-style: bold;
+    text-align: center;
+    width: 100%;
+    padding: 0 2;
+    background: $panel;
+}
+
+#detail-meta {
+    height: auto;
+    padding: 0 2;
+    border-bottom: solid $border;
+}
+
+.detail-meta-title {
+    color: $accent;
+    text-style: bold;
+}
+
+.detail-meta-row {
+    color: $text-muted;
+}
+
+#detail-tabs {
+    height: 1fr;
+}
+
+#detail-tabs TabPane {
+    height: 1fr;
+    padding: 0;
+}
+
+#detail-tabs VerticalScroll {
+    height: 1fr;
+    padding: 1 2;
+}
+
+.tab-content-label {
+    color: $text;
+}
+
+.detail-agent-badge {
+    margin-left: 11;
 }

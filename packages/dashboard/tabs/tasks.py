@@ -2,20 +2,18 @@
 
 from __future__ import annotations
 
-from datetime import datetime
-
-from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.widget import Widget
 from textual.widgets import DataTable, Label, TabbedContent, TabPane
 from textual.containers import Vertical
 
+from ..utils import format_age
+from .base import TabBase
 from .done import DoneTab
 from .work import TaskSelected
 
 
-class FailedTab(Widget):
+class FailedTab(TabBase):
     """Filtered view of tasks that ended in the failed queue (last 7 days)."""
 
     BINDINGS = [
@@ -23,40 +21,12 @@ class FailedTab(Widget):
         Binding("k", "cursor_up", "Up", show=False),
     ]
 
-    DEFAULT_CSS = """
-    FailedTab {
-        height: 100%;
-    }
-    """
-
     def __init__(self, report: dict | None = None, **kwargs: object) -> None:
-        super().__init__(**kwargs)
-        self._report = report or {}
+        super().__init__(report=report, **kwargs)
         self._tasks: list[dict] = [
             t for t in self._report.get("done_tasks", [])
             if t.get("final_queue") == "failed"
         ]
-
-    def _format_age(self, iso_str: str | None) -> str:
-        if not iso_str:
-            return ""
-        try:
-            dt = datetime.fromisoformat(str(iso_str).replace("Z", "+00:00"))
-            if dt.tzinfo:
-                dt = dt.replace(tzinfo=None)
-            delta = datetime.now() - dt
-            secs = delta.total_seconds()
-            if secs < 0:
-                return "now"
-            if secs < 60:
-                return f"{int(secs)}s"
-            if secs < 3600:
-                return f"{int(secs // 60)}m"
-            if secs < 86400:
-                return f"{int(secs // 3600)}h"
-            return f"{int(secs // 86400)}d"
-        except (ValueError, TypeError):
-            return ""
 
     def compose(self) -> ComposeResult:
         n = len(self._tasks)
@@ -85,7 +55,7 @@ class FailedTab(Widget):
             turns = int(task.get("turns") or 0)
             turn_limit = int(task.get("turn_limit") or 100)
             completed_at = task.get("completed_at")
-            age = self._format_age(completed_at)
+            age = format_age(completed_at)
             table.add_row(
                 task_id,
                 title[:50],
@@ -126,18 +96,8 @@ class FailedTab(Widget):
         self._populate_table()
 
 
-class TasksTab(Widget):
+class TasksTab(TabBase):
     """Tasks tab with nested Done / Failed / Proposed sub-tabs."""
-
-    DEFAULT_CSS = """
-    TasksTab {
-        height: 100%;
-    }
-    """
-
-    def __init__(self, report: dict | None = None, **kwargs: object) -> None:
-        super().__init__(**kwargs)
-        self._report = report or {}
 
     def compose(self) -> ComposeResult:
         with TabbedContent(id="tasks-inner-tabs"):

@@ -137,13 +137,6 @@ class TaskDetail(Widget):
     commits, PR link, and (for done tasks) outcome / merge info.
     """
 
-    DEFAULT_CSS = """
-    TaskDetail {
-        height: 100%;
-        padding: 0 1;
-    }
-    """
-
     def __init__(
         self,
         task: dict,
@@ -243,56 +236,6 @@ class TaskDetailModal(ModalScreen):
     """
 
     BINDINGS = [Binding("escape", "dismiss", "Close", show=True)]
-
-    DEFAULT_CSS = """
-    TaskDetailModal {
-        align: center middle;
-    }
-    #detail-dialog {
-        width: 85%;
-        height: 85%;
-        background: #16213e;
-        border: solid #4fc3f7;
-        padding: 0;
-    }
-    .modal-title {
-        color: #4fc3f7;
-        text-style: bold;
-        text-align: center;
-        width: 100%;
-        padding: 0 2;
-        background: #0f3460;
-    }
-    #detail-meta {
-        height: auto;
-        padding: 0 2;
-        border-bottom: solid #2a5298;
-    }
-    .detail-meta-title {
-        color: #4fc3f7;
-        text-style: bold;
-    }
-    .detail-meta-row {
-        color: #616161;
-    }
-    #detail-tabs {
-        height: 1fr;
-    }
-    #detail-tabs TabPane {
-        height: 1fr;
-        padding: 0;
-    }
-    #detail-tabs VerticalScroll {
-        height: 1fr;
-        padding: 1 2;
-    }
-    .tab-content-label {
-        color: #e0e0e0;
-    }
-    .detail-agent-badge {
-        margin-left: 11;
-    }
-    """
 
     def __init__(
         self,
