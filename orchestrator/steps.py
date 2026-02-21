@@ -438,22 +438,3 @@ def merge_project_pr(project: dict, result: dict, project_dir: Path) -> None:
     print(f"merge_project_pr: merged PR #{pr_number} for {project_id}")
 
 
-@register_step("submit_to_server")
-def submit_to_server(task: dict, result: dict, task_dir: Path) -> None:
-    """DEPRECATED: The flow engine now owns task transitions.
-
-    This step used to submit a task to provisional via the server API. The
-    engine now calls sdk.tasks.submit() automatically after steps complete,
-    based on the flow YAML's to_state. This step is a no-op kept only for
-    backwards compatibility with any existing flow YAML that still lists it.
-
-    Remove from flow YAML `runs:` lists — it does nothing.
-    """
-    import warnings
-    warnings.warn(
-        "submit_to_server step is deprecated — the flow engine performs transitions "
-        "automatically after steps complete. Remove it from your flow YAML runs list.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    print(f"submit_to_server step: DEPRECATED no-op for task {task['id']} (engine owns transitions now)")

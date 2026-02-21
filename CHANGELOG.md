@@ -62,6 +62,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `orchestrator/reports.py`: Removed v1.x DB fallback block from `_gather_done_tasks`, removed `_get_accepted_by()`, `_gather_prs()`, `_get_recent_tasks_for_agent()`.
   - Updated all affected tests to remove stale patches and test classes for deleted symbols.
 
+- **Dead proposal/curator model code removed** ([TASK-72116952])
+  - `orchestrator/config.py`: Removed `get_model_type()`, `get_proposal_limits()`, `get_voice_weights()`, `get_voice_weight()`, `get_curator_scoring()`, `get_proposers()`, `get_curators()` — all dead code from the abandoned proposal-driven model. Removed associated constants (`DEFAULT_PROPOSAL_LIMITS`, `DEFAULT_VOICE_WEIGHTS`, `DEFAULT_CURATOR_SCORING`) and `ModelType` type alias.
+  - `orchestrator/proposal_utils.py`: Removed `can_create_proposal()` and `score_proposal()` — the only callers of the deleted config functions. Removed their dead imports.
+  - `orchestrator/steps.py`: Removed `submit_to_server` step — already a no-op since the flow engine owns transitions. Not referenced in any flow YAML.
+  - `orchestrator/hook_manager.py`: Cleaned up `record_evidence()` docstring to remove misleading "Phase 2" language; the PATCH-based implementation is the actual implementation.
+  - `tests/test_steps.py`, `tests/integration/test_flow.py`: Removed stale `submit_to_server` references.
+
 ### Changed
 
 - **Migrate remaining hardcoded state transitions to flow system** ([TASK-498853bf])

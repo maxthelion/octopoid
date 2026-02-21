@@ -409,12 +409,12 @@ class TestImplementerFlow:
         """All implementer flow steps are registered in STEP_REGISTRY."""
         from orchestrator.steps import STEP_REGISTRY
 
-        expected_steps = ["push_branch", "run_tests", "create_pr", "submit_to_server"]
+        expected_steps = ["push_branch", "run_tests", "create_pr"]
         for step in expected_steps:
             assert step in STEP_REGISTRY, f"Step '{step}' not registered in STEP_REGISTRY"
 
     def test_flow_claimed_to_provisional_runs(self):
-        """Default flow defines push_branch, run_tests, create_pr, submit_to_server for claimed→provisional."""
+        """Default flow defines push_branch, run_tests, create_pr for claimed→provisional."""
         import os
         from pathlib import Path
 
@@ -431,7 +431,7 @@ class TestImplementerFlow:
             transitions = flow.get_transitions_from("claimed")
             assert len(transitions) > 0, "No transitions from 'claimed' in default flow"
             transition = transitions[0]
-            expected = ["push_branch", "run_tests", "create_pr", "submit_to_server"]
+            expected = ["push_branch", "run_tests", "create_pr"]
             assert transition.runs == expected, (
                 f"Expected runs {expected}, got {transition.runs}"
             )
