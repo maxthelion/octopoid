@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Dashboard smart polling: reduce API calls from ~8/tick to 1/tick** ([TASK-30d6a4e7])
+  - `packages/dashboard/data.py`: Added `DataManager.poll_sync()` — calls `sdk.poll()` to get queue counts in a single API call.
+  - `packages/dashboard/app.py`: `_fetch_data()` now accepts a `force` keyword argument. On each interval tick, it polls first and only does a full report fetch when queue counts change. Startup (`on_mount`) and manual refresh (`r` key) always force a full fetch, then poll once to establish the baseline for subsequent ticks.
+  - If the poll endpoint is unavailable (older server), the dashboard falls back to a full fetch transparently.
+
 ### Fixed
 
 - **Scheduler heartbeat: Python scheduler now sends periodic heartbeats** ([TASK-6a76d62b])

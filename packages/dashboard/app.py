@@ -48,6 +48,7 @@ class OctopoidDashboard(App):
         super().__init__(**kwargs)
         self._data_manager = DataManager()
         self._report: dict = {}
+        self._last_queue_counts: dict | None = None
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -65,11 +66,11 @@ class OctopoidDashboard(App):
         yield Footer()
 
     def on_mount(self) -> None:
-        self._fetch_data()
+        self._fetch_data(force=True)
         self.set_interval(5, self._fetch_data)
 
     def action_refresh(self) -> None:
-        self._fetch_data()
+        self._fetch_data(force=True)
 
     def action_show_tab(self, tab_id: str) -> None:
         try:
@@ -78,9 +79,32 @@ class OctopoidDashboard(App):
             pass
 
     @work(thread=True)
-    def _fetch_data(self) -> None:
-        """Fetch the project report in a background thread."""
+    def _fetch_data(self, *, force: bool = False) -> None:
+        """Fetch project data in a background thread.
+
+        When force=False (normal interval tick), polls the lightweight /scheduler/poll
+        endpoint first. Only fetches the full task report if queue counts changed.
+        When force=True (startup or manual refresh), always fetches the full report.
+        """
         import logging
+
+        do_full_fetch = force
+
+        if not force:
+            # Poll to check whether anything has changed
+            try:
+                poll_result = self._data_manager.poll_sync()
+                new_counts = poll_result.get("queue_counts", {})
+                if new_counts == self._last_queue_counts:
+                    # Nothing changed — skip the full fetch
+                    return
+                # Counts differ — record them and proceed to full fetch
+                self._last_queue_counts = new_counts
+                do_full_fetch = True
+            except Exception:
+                # Poll failed (e.g. older server without endpoint) — fall back to full fetch
+                do_full_fetch = True
+
         try:
             report = self._data_manager.fetch_sync()
         except Exception as exc:
@@ -92,6 +116,16 @@ class OctopoidDashboard(App):
                 timeout=4,
             )
             return
+
+        # After a forced full fetch, poll once to establish the baseline so
+        # subsequent interval ticks can correctly detect changes.
+        if force:
+            try:
+                poll_result = self._data_manager.poll_sync()
+                self._last_queue_counts = poll_result.get("queue_counts", {})
+            except Exception:
+                pass
+
         self.call_from_thread(self._apply_report, report)
 
     def _apply_report(self, report: dict) -> None:
