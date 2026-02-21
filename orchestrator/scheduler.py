@@ -796,6 +796,70 @@ def _get_server_url_from_config() -> str:
     return ""
 
 
+def _fetch_task_messages(task_id: str) -> list[dict]:
+    """Fetch message history for a task from the server.
+
+    Returns an empty list if the messages API is unavailable or returns no messages.
+
+    Args:
+        task_id: Task ID to fetch messages for
+
+    Returns:
+        List of message dicts ordered by creation time (oldest first)
+    """
+    try:
+        sdk = queue_utils.get_sdk()
+        return sdk.messages.list(task_id)
+    except Exception as e:
+        debug_log(f"Failed to fetch messages for task {task_id}: {e}")
+        return []
+
+
+def _format_message_thread(messages: list[dict]) -> str:
+    """Format a list of task messages into a readable thread string.
+
+    Args:
+        messages: List of message dicts from sdk.messages.list()
+
+    Returns:
+        Formatted markdown string, or empty string if no messages
+    """
+    if not messages:
+        return ""
+
+    lines = ["## Message History", ""]
+    lines.append("Previous activity on this task:")
+    lines.append("")
+
+    for msg in messages:
+        event = msg.get("event", "unknown")
+        author = msg.get("author") or "system"
+        content = msg.get("content")
+        created_at = msg.get("created_at", "")
+
+        # Format timestamp (truncate to date+time if ISO format)
+        if created_at and "T" in created_at:
+            created_at = created_at.replace("T", " ")[:16]
+
+        if event == "rejected" and content:
+            lines.append(f"**[{created_at}] Rejection by {author}:**")
+            lines.append(f"> {content}")
+            lines.append("")
+        elif event == "submitted":
+            lines.append(f"**[{created_at}] Submitted by {author}**")
+            if content:
+                lines.append(f"> {content}")
+                lines.append("")
+            else:
+                lines.append("")
+        elif event in ("claimed", "requeued"):
+            lines.append(f"**[{created_at}] {event.capitalize()} by {author}**")
+            lines.append("")
+        # Skip low-signal events like accepted/unblocked
+
+    return "\n".join(lines).rstrip()
+
+
 def prepare_task_directory(
     task: dict,
     agent_name: str,
@@ -935,11 +999,16 @@ def prepare_task_directory(
                 lines.append(f"{i}. {name}")
         required_steps = "\n".join(lines)
 
+    # Fetch message history for this task (previous attempts, rejections, feedback)
+    task_id = task.get("id", "")
+    messages = _fetch_task_messages(task_id) if task_id else []
+    message_history = _format_message_thread(messages)
+
     # Perform template substitution
     from string import Template
     template = Template(prompt_template)
     prompt = template.safe_substitute(
-        task_id=task.get("id", "unknown"),
+        task_id=task_id or "unknown",
         task_title=task.get("title", "Untitled"),
         task_content=task.get("content", ""),
         task_priority=task.get("priority", "P2"),
@@ -950,6 +1019,7 @@ def prepare_task_directory(
         required_steps=required_steps,
         review_section="",
         continuation_section="",
+        message_history=message_history,
     )
 
     (task_dir / "prompt.md").write_text(prompt)

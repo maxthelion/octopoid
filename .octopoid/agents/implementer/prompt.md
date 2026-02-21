@@ -11,6 +11,8 @@ $review_section
 
 $continuation_section
 
+$message_history
+
 ## Global Instructions
 
 $global_instructions
