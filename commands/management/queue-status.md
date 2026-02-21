@@ -43,7 +43,14 @@ for queue in ['incoming', 'claimed', 'done', 'failed']:
             extra = ''
             if queue == 'claimed':
                 extra = f" | {t.get('claimed_by', '?')}"
-            print(f"  {priority} | {tid:<28} | {title}{extra}")
+            requeue_count = t.get('requeue_count') or 0
+            last_error = t.get('last_error') or ''
+            health = ''
+            if requeue_count > 0:
+                health += f" | requeued:{requeue_count}"
+            if last_error:
+                health += f" | err:{last_error[:60]}"
+            print(f"  {priority} | {tid:<28} | {title}{extra}{health}")
 ```
 
 ## Output Format
@@ -61,7 +68,7 @@ DONE (1 tasks)
   P1 | gh-8-2a4ad137              | [GH-8] Improve octopoid init UX
 
 FAILED (2 tasks)
-  P1 | gh-7-3b950eb4              | [GH-7] Declare command whitelist
+  P1 | gh-7-3b950eb4              | [GH-7] Declare command whitelist | requeued:3 | err:Step failure after 3 attempts: ...
 ```
 
 ## Related Commands

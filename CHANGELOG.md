@@ -32,6 +32,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Task health tracking: requeue_count and last_error fields** ([TASK-1a4e2556])
+  - `orchestrator/scheduler.py`: `check_and_requeue_expired_leases()` now sets `requeue_count` (incremented) and `last_error="Lease expired"` when requeueing expired leases.
+  - `orchestrator/scheduler.py`: `_requeue_task()` now accepts an optional `task` dict and sets `requeue_count` (incremented) and `last_error="Spawn failed"` when requeueing after spawn failure.
+  - `orchestrator/scheduler.py`: `_handle_fail_outcome()` now sets `last_error` with the failure reason when moving a task to the failed queue.
+  - `orchestrator/scheduler.py`: `handle_agent_result()` now sets `last_error` when moving a task to failed after repeated step failures.
+  - `orchestrator/scheduler.py`: `handle_agent_result_via_flow()` now sets `last_error` on agent failure outcomes and on flow dispatch exceptions.
+  - `commands/management/queue-status.md`: Updated `/queue-status` to display `requeue_count` and `last_error` inline for tasks in all queues.
+
 - **CONTRIBUTING.md: added basic dev setup instructions** ([TASK-45685e57])
   - Prerequisites (Node, pnpm, Python, Claude Code)
   - Clone, install, link, and local server setup steps
