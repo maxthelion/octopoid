@@ -3,6 +3,7 @@ You may:
 - Rewrite large sections of code if it simplifies the system
 - Ignore backwards compatibility unless explicitly required
 
+Do NOT implement fixes or write code unless explicitly asked. When discussing issues or investigating problems, just report findings and wait for instructions.
 
 Save plans to the filesystem in project-management/drafts
 
