@@ -24,6 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Test suite instructions pointing to `docs/testing.md`
   - Commit style and PR submission guide
 
+- **Scheduler tick complete message now includes queue count summary** ([TASK-754c1d8b])
+  - `run_due_jobs()` in `orchestrator/jobs.py` now returns the fetched `poll_data`.
+  - `run_scheduler()` in `orchestrator/scheduler.py` uses the returned `queue_counts` to append a count summary (e.g. `claimed: 2, incoming: 5`) to the "Scheduler tick complete" log line when poll data is available.
+
 - **Task message thread: rejection feedback preserved without rewriting task files** ([TASK-142f1c04])
   - `orchestrator/task_thread.py`: New module for storing task-specific messages as JSONL files. Provides `post_message()`, `get_thread()`, `format_thread_for_prompt()`, and `cleanup_thread()`.
   - `orchestrator/steps.py`: `reject_with_feedback()` now posts a rejection message to the task thread in addition to calling `sdk.tasks.reject()`. Task files are no longer rewritten.

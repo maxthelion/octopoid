@@ -2470,12 +2470,19 @@ def run_scheduler() -> None:
     scheduler_state = load_scheduler_state()
 
     # Dispatch all due jobs (declarative — intervals defined in .octopoid/jobs.yaml)
-    run_due_jobs(scheduler_state)
+    poll_data = run_due_jobs(scheduler_state)
 
     # Persist updated last_run timestamps
     save_scheduler_state(scheduler_state)
 
-    print(f"[{datetime.now().isoformat()}] Scheduler tick complete")
+    queue_counts: dict = (poll_data or {}).get("queue_counts") or {}
+    if queue_counts:
+        counts_str = ", ".join(
+            f"{k}: {v}" for k, v in sorted(queue_counts.items())
+        )
+        print(f"[{datetime.now().isoformat()}] Scheduler tick complete ({counts_str})")
+    else:
+        print(f"[{datetime.now().isoformat()}] Scheduler tick complete")
     debug_log("Scheduler tick complete")
 
 

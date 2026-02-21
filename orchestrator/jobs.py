@@ -93,7 +93,7 @@ def load_jobs_yaml() -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
-def run_due_jobs(scheduler_state: dict) -> None:
+def run_due_jobs(scheduler_state: dict) -> dict | None:
     """Dispatch all due jobs for one scheduler tick.
 
     Preserves the poll-batching optimisation: a single poll() call fetches
@@ -108,6 +108,10 @@ def run_due_jobs(scheduler_state: dict) -> None:
         scheduler_state: Mutable dict loaded from scheduler_state.json.
                          is_job_due / record_job_run operate on this dict.
                          Caller is responsible for saving it afterwards.
+
+    Returns:
+        The poll_data dict fetched during this tick (contains queue_counts etc.),
+        or None if no remote jobs were due or the poll call failed.
     """
     from .scheduler import is_job_due, record_job_run, _fetch_poll_data
 
@@ -145,6 +149,8 @@ def run_due_jobs(scheduler_state: dict) -> None:
         ctx = JobContext(scheduler_state=scheduler_state, poll_data=poll_data)
         _run_job(job_def, ctx)
         record_job_run(scheduler_state, name)
+
+    return poll_data
 
 
 def _run_job(job_def: dict, ctx: JobContext) -> None:
