@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Scheduler startup config logging: logs scope, base branch, and configured agents to debug log** ([TASK-b106368e])
+  - `orchestrator/scheduler.py`: `run_scheduler()` now emits `debug_log` entries for scope, base branch, and the list of configured agents on each tick.
+
 - **Task message thread: rejection feedback preserved without rewriting task files** ([TASK-142f1c04])
   - `orchestrator/task_thread.py`: New module for storing task-specific messages as JSONL files. Provides `post_message()`, `get_thread()`, `format_thread_for_prompt()`, and `cleanup_thread()`.
   - `orchestrator/steps.py`: `reject_with_feedback()` now posts a rejection message to the task thread in addition to calling `sdk.tasks.reject()`. Task files are no longer rewritten.
