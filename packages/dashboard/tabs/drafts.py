@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import json
+
 from rich.text import Text
 from textual import work
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.widgets import Button, Label, ListItem, ListView, Markdown
+from textual.widgets import Button, Input, Label, ListItem, ListView, Markdown
 from textual.containers import Horizontal, Vertical, VerticalScroll
 
 from .base import TabBase
@@ -89,6 +91,8 @@ class DraftsTab(TabBase):
         self._drafts: list[dict] = []
         self._filters: dict[str, bool] = dict(_DEFAULT_FILTERS)
         self._selected_draft: dict | None = None
+        # Maps button ID -> {action_id, entity_type, entity_id, command}
+        self._btn_context: dict[str, dict] = {}
 
     def compose(self) -> ComposeResult:
         with Horizontal(classes="drafts-layout"):
@@ -134,26 +138,81 @@ class DraftsTab(TabBase):
             self._refresh_list()
             return
 
-        if btn_id.startswith("action-"):
-            action_id = btn_id[len("action-"):]
-            self._execute_action(action_id)
+        if btn_id in self._btn_context:
+            ctx = self._btn_context[btn_id]
+            self._post_action_command(ctx)
+            return
+
+        if btn_id == "draft-other-send":
+            try:
+                inp = self.query_one("#draft-other-input", Input)
+                text = inp.value.strip()
+                if text and self._selected_draft:
+                    self._post_action_freetext(text)
+                    inp.value = ""
+            except Exception:
+                pass
 
     @work(thread=True)
-    def _execute_action(self, action_id: str) -> None:
-        """Execute a draft action in a background thread."""
+    def _post_action_command(self, ctx: dict) -> None:
+        """Post a button command as an action_command message in a background thread."""
         try:
             from orchestrator.sdk import get_sdk
             sdk = get_sdk()
-            sdk.actions.execute(action_id)
+            content = json.dumps({
+                "entity_type": ctx["entity_type"],
+                "entity_id": ctx["entity_id"],
+                "action_id": ctx["action_id"],
+                "command": ctx["command"],
+            })
+            sdk.messages.create(
+                task_id=ctx["entity_id"],
+                from_actor="human",
+                to_actor="worker",
+                type="action_command",
+                content=content,
+            )
             self.app.call_from_thread(
                 self.app.notify,
-                "Action requested",
+                "Command sent",
                 timeout=3,
             )
         except Exception as exc:
             self.app.call_from_thread(
                 self.app.notify,
                 f"Action failed: {exc}",
+                severity="error",
+                timeout=4,
+            )
+
+    @work(thread=True)
+    def _post_action_freetext(self, text: str) -> None:
+        """Post free text as an action_freetext message in a background thread."""
+        try:
+            from orchestrator.sdk import get_sdk
+            sdk = get_sdk()
+            draft_id = str(self._selected_draft.get("id", "")) if self._selected_draft else ""
+            content = json.dumps({
+                "entity_type": "draft",
+                "entity_id": draft_id,
+                "text": text,
+            })
+            sdk.messages.create(
+                task_id=draft_id,
+                from_actor="human",
+                to_actor="worker",
+                type="action_freetext",
+                content=content,
+            )
+            self.app.call_from_thread(
+                self.app.notify,
+                "Message sent",
+                timeout=3,
+            )
+        except Exception as exc:
+            self.app.call_from_thread(
+                self.app.notify,
+                f"Message failed: {exc}",
                 severity="error",
                 timeout=4,
             )
@@ -176,30 +235,58 @@ class DraftsTab(TabBase):
                 lv.append(_DraftItem(draft, num=draft.get("id", idx)))
 
     def _refresh_action_bar(self) -> None:
-        """Rebuild the action bar for the currently selected draft."""
+        """Rebuild the action bar for the currently selected draft.
+
+        Renders one Button per entry in each action's action_data["buttons"],
+        plus an "Other" free-text input at the end.
+        """
         try:
             bar = self.query_one("#draft-action-bar", Horizontal)
         except Exception:
             return
 
         bar.remove_children()
+        self._btn_context.clear()
 
         if not self._selected_draft:
             return
 
+        draft_id = str(self._selected_draft.get("id", ""))
         actions = self._selected_draft.get("actions") or []
+
         for action in actions:
             action_id = action.get("id")
-            label = action.get("label") or action.get("action_type") or "Action"
             if not action_id:
                 continue
-            bar.mount(
-                Button(
-                    label,
-                    id=f"action-{action_id}",
-                    classes="draft-action-btn",
-                )
+
+            action_data = action.get("action_data") or {}
+            if isinstance(action_data, str):
+                try:
+                    action_data = json.loads(action_data)
+                except (json.JSONDecodeError, TypeError):
+                    action_data = {}
+
+            buttons = action_data.get("buttons", [])
+            for idx, btn_def in enumerate(buttons):
+                btn_id = f"draft-btn-{action_id}-{idx}"
+                label = btn_def.get("label") or "Action"
+                command = btn_def.get("command", "")
+                self._btn_context[btn_id] = {
+                    "action_id": action_id,
+                    "entity_type": "draft",
+                    "entity_id": draft_id,
+                    "command": command,
+                }
+                bar.mount(Button(label, id=btn_id, classes="draft-action-btn"))
+
+        bar.mount(
+            Input(
+                placeholder="Other...",
+                id="draft-other-input",
+                classes="draft-action-input",
             )
+        )
+        bar.mount(Button("Send", id="draft-other-send", classes="draft-action-btn"))
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         """Update the content pane when a draft is selected."""
