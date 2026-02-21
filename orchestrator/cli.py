@@ -4,6 +4,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from . import __version__
 from .config import get_tasks_dir
 from .queue_utils import get_sdk
 
@@ -235,6 +236,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="octopoid",
         description="Octopoid task management CLI",
+    )
+    parser.add_argument(
+        "--version", "-V",
+        action="version",
+        version=f"%(prog)s {__version__}",
     )
     sub = parser.add_subparsers(dest="command")
 
