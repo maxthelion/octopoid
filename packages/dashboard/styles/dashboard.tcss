@@ -39,34 +39,10 @@ TabbedContent {
     height: 1fr;
 }
 
-#tabs > Tabs {
-    height: 3;
-    padding: 0;
-    background: $panel;
-}
-
-#tabs > Tabs > Tab {
-    color: $text-muted;
-    padding: 0 2;
-    background: $panel;
-}
-
-#tabs > Tabs > Tab:hover {
-    color: $text;
-    background: $surface-darken-1;
-}
-
-#tabs > Tabs > Tab.-active {
-    color: $accent;
-    text-style: bold;
-    background: $surface;
-}
-
 TabPane {
     padding: 0;
     height: 1fr;
     background: $surface;
-    height: 1fr;
 }
 
 /* ─── Kanban board ───────────────────────────────────────────────────────── */
@@ -389,30 +365,25 @@ FailedTab > Vertical {
 
 /* Filter button row */
 .draft-filters {
-    height: 3;
-    padding: 0 1;
-    margin-bottom: 1;
+    height: 1;
+    padding: 0;
 }
 
 .draft-filter-btn {
     height: 1;
-    min-width: 8;
-    margin-right: 1;
+    min-width: 6;
     background: $surface-darken-1;
     color: $text-muted;
-    border: tall $border;
+    border: none;
     padding: 0 1;
 }
 
 .draft-filter-btn:hover {
-    background: $surface-lighten-1;
     color: $text;
 }
 
 .draft-filter-btn.draft-filter-active {
     color: $accent;
-    background: $surface-lighten-1;
-    border: tall $accent;
 }
 
 .draft-listview {
