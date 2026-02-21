@@ -134,7 +134,6 @@ The scheduler runs as a single tick per invocation (triggered by launchd every 1
 | `guard_interval` | Enough time since last spawn |
 | `guard_backpressure` | Queue has claimable tasks |
 | `guard_claim_task` | Atomically claims a task from server |
-| `guard_pr_mergeable` | PR not in CONFLICTING state (gatekeepers) |
 
 If all guards pass, the scheduler spawns an agent instance.
 

@@ -286,71 +286,6 @@ def guard_task_description_nonempty(ctx: AgentContext) -> tuple[bool, str]:
     return (False, f"empty_description: {reason}")
 
 
-def guard_pr_mergeable(ctx: AgentContext) -> tuple[bool, str]:
-    """Check that the claimed task's PR has no merge conflicts.
-
-    Only runs when a task has been claimed (ctx.claimed_task is set) and the
-    task has a pr_number. Calls `gh pr view --json mergeable` to check the
-    GitHub merge status. If the PR is CONFLICTING, the claim is released, the
-    task is rejected back to incoming with a rebase request, and the guard
-    returns False so the agent is not spawned.
-
-    This prevents the gatekeeper from entering an infinite loop where it
-    re-claims and re-approves a task whose PR can never be merged.
-
-    Args:
-        ctx: AgentContext containing the claimed task
-
-    Returns:
-        (should_proceed, reason_if_blocked)
-    """
-    import json as _json
-
-    if not ctx.claimed_task:
-        return (True, "")
-
-    pr_number = ctx.claimed_task.get("pr_number")
-    if not pr_number:
-        return (True, "")
-
-    try:
-        result = subprocess.run(
-            ["gh", "pr", "view", str(pr_number), "--json", "mergeable"],
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-        if result.returncode != 0:
-            # gh command failed — don't block, let the agent discover the issue
-            debug_log(f"guard_pr_mergeable: gh pr view failed for PR #{pr_number}: {result.stderr.strip()}")
-            return (True, "")
-
-        data = _json.loads(result.stdout)
-        mergeable = data.get("mergeable", "UNKNOWN")
-    except (subprocess.TimeoutExpired, _json.JSONDecodeError, Exception) as e:
-        debug_log(f"guard_pr_mergeable: error checking PR #{pr_number}: {e}")
-        return (True, "")
-
-    if mergeable != "CONFLICTING":
-        return (True, "")
-
-    # PR has conflicts — release the claim and reject back to incoming
-    task_id = ctx.claimed_task["id"]
-    debug_log(f"guard_pr_mergeable: PR #{pr_number} for {task_id} has conflicts, releasing claim")
-
-    try:
-        sdk = queue_utils.get_sdk()
-        feedback = (
-            f"PR #{pr_number} has merge conflicts and cannot be merged automatically. "
-            f"Please rebase the branch onto the target branch to resolve conflicts."
-        )
-        sdk.tasks.reject(task_id, reason=feedback, rejected_by="scheduler-guard")
-    except Exception as e:
-        debug_log(f"guard_pr_mergeable: failed to reject task {task_id}: {e}")
-
-    return (False, f"pr_conflicts: PR #{pr_number} needs rebase")
-
-
 # Guard chain: cheapest checks first, expensive checks last
 AGENT_GUARDS = [
     guard_enabled,
@@ -360,7 +295,6 @@ AGENT_GUARDS = [
     guard_pre_check,
     guard_claim_task,
     guard_task_description_nonempty,
-    guard_pr_mergeable,
 ]
 
 
