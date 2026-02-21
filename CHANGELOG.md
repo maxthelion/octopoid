@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Sweeper timezone bug: naive timestamps now treated as UTC** ([TASK-855568c1])
+  - `sweep_stale_resources` in `orchestrator/scheduler.py` now checks if the parsed timestamp is timezone-naive and attaches UTC if so.
+  - Previously, API timestamps like `"2026-02-21 08:58:20"` (no Z suffix) caused a `TypeError` on subtraction with the UTC-aware `now`, silently skipped via `except (ValueError, TypeError): continue` — causing zero worktrees to ever be cleaned up.
+  - The broad except now logs the parsing error before skipping, so future timestamp bugs are visible.
+
 - **Atomic PID cleanup: tasks no longer orphaned in "claimed"** ([TASK-8c78de2e])
   - `handle_agent_result`, `handle_agent_result_via_flow`, and their private outcome helpers now return `bool` indicating whether the task was actually transitioned.
   - `check_and_update_finished_agents` only removes a PID from `running_pids.json` when the handler returns `True` (task transitioned or gone). If the handler returns `False` (task not transitioned), the PID is kept for retry on the next tick.
