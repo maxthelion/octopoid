@@ -519,6 +519,64 @@ def _forward_github_issue_to_server(issue: dict, cwd: Path) -> bool:
 
 
 @register_job
+def process_actions(ctx: JobContext) -> None:
+    """Poll for execute_requested actions and dispatch to registered handlers.
+
+    This is a pure dispatcher — no business logic lives here.  Each action_type
+    maps to a handler registered in orchestrator/actions.py via
+    @register_action_handler.
+
+    Outcome for each action:
+      - Handler returns → sdk.actions.complete(action_id, result)
+      - Handler raises  → sdk.actions.fail(action_id, error_message)
+      - No handler found → sdk.actions.fail(action_id, "unknown action_type: <type>")
+    """
+    from .sdk import get_sdk
+    from .actions import get_handler
+
+    sdk = get_sdk()
+
+    try:
+        actions = sdk.actions.list(status="execute_requested")
+    except Exception as e:
+        _debug_log(f"process_actions: failed to fetch actions: {e}")
+        return
+
+    if not actions:
+        return
+
+    _debug_log(f"process_actions: {len(actions)} action(s) to dispatch")
+
+    for action in actions:
+        action_id: str = action.get("id", "")
+        action_type: str = action.get("action_type", "")
+
+        handler = get_handler(action_type)
+        if handler is None:
+            error_msg = f"unknown action_type: {action_type}"
+            _debug_log(f"process_actions: {error_msg}")
+            try:
+                sdk.actions.fail(action_id, {"error": error_msg})
+            except Exception as e:
+                _debug_log(f"process_actions: failed to mark action {action_id} as failed: {e}")
+            continue
+
+        try:
+            result = handler(action, sdk)
+            try:
+                sdk.actions.complete(action_id, result)
+            except Exception as e:
+                _debug_log(f"process_actions: failed to mark action {action_id} complete: {e}")
+        except Exception as handler_err:
+            error_msg = str(handler_err)
+            _debug_log(f"process_actions: {action_type} (id={action_id}) failed: {error_msg}")
+            try:
+                sdk.actions.fail(action_id, {"error": error_msg})
+            except Exception as e:
+                _debug_log(f"process_actions: failed to mark action {action_id} as failed: {e}")
+
+
+@register_job
 def poll_github_issues(ctx: JobContext) -> None:
     """Poll GitHub issues and create tasks for new ones.
 

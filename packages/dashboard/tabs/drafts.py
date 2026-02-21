@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from rich.text import Text
+from textual import work
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.widgets import Button, Label, ListItem, ListView, Markdown
@@ -87,6 +88,7 @@ class DraftsTab(TabBase):
         super().__init__(**kwargs)
         self._drafts: list[dict] = []
         self._filters: dict[str, bool] = dict(_DEFAULT_FILTERS)
+        self._selected_draft: dict | None = None
 
     def compose(self) -> ComposeResult:
         with Horizontal(classes="drafts-layout"):
@@ -105,6 +107,7 @@ class DraftsTab(TabBase):
 
             with VerticalScroll(id="draft-content-panel", classes="draft-content-panel"):
                 yield Label(" CONTENT ", classes="section-header")
+                yield Horizontal(id="draft-action-bar", classes="draft-action-bar")
                 yield Markdown(
                     "_No draft selected._",
                     id="draft-content",
@@ -115,20 +118,45 @@ class DraftsTab(TabBase):
         self._refresh_list()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Toggle a filter button on/off."""
+        """Handle filter toggle and action button presses."""
         btn_id = event.button.id or ""
-        if not btn_id.startswith("filter-"):
+
+        if btn_id.startswith("filter-"):
+            status = btn_id[len("filter-"):]
+            if status not in self._filters:
+                return
+            self._filters[status] = not self._filters[status]
+            btn = event.button
+            if self._filters[status]:
+                btn.add_class("draft-filter-active")
+            else:
+                btn.remove_class("draft-filter-active")
+            self._refresh_list()
             return
-        status = btn_id[len("filter-"):]
-        if status not in self._filters:
-            return
-        self._filters[status] = not self._filters[status]
-        btn = event.button
-        if self._filters[status]:
-            btn.add_class("draft-filter-active")
-        else:
-            btn.remove_class("draft-filter-active")
-        self._refresh_list()
+
+        if btn_id.startswith("action-"):
+            action_id = btn_id[len("action-"):]
+            self._execute_action(action_id)
+
+    @work(thread=True)
+    def _execute_action(self, action_id: str) -> None:
+        """Execute a draft action in a background thread."""
+        try:
+            from orchestrator.sdk import get_sdk
+            sdk = get_sdk()
+            sdk.actions.execute(action_id)
+            self.app.call_from_thread(
+                self.app.notify,
+                "Action requested",
+                timeout=3,
+            )
+        except Exception as exc:
+            self.app.call_from_thread(
+                self.app.notify,
+                f"Action failed: {exc}",
+                severity="error",
+                timeout=4,
+            )
 
     def _refresh_list(self) -> None:
         """Repopulate the list with currently filtered drafts."""
@@ -147,17 +175,45 @@ class DraftsTab(TabBase):
             for idx, draft in enumerate(filtered, start=1):
                 lv.append(_DraftItem(draft, num=draft.get("id", idx)))
 
+    def _refresh_action_bar(self) -> None:
+        """Rebuild the action bar for the currently selected draft."""
+        try:
+            bar = self.query_one("#draft-action-bar", Horizontal)
+        except Exception:
+            return
+
+        bar.remove_children()
+
+        if not self._selected_draft:
+            return
+
+        actions = self._selected_draft.get("actions") or []
+        for action in actions:
+            action_id = action.get("id")
+            label = action.get("label") or action.get("action_type") or "Action"
+            if not action_id:
+                continue
+            bar.mount(
+                Button(
+                    label,
+                    id=f"action-{action_id}",
+                    classes="draft-action-btn",
+                )
+            )
+
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         """Update the content pane when a draft is selected."""
         if not isinstance(event.item, _DraftItem):
             return
         draft = event.item.draft_data
+        self._selected_draft = draft
         content = _load_draft_content(draft)
         try:
             md = self.query_one("#draft-content", Markdown)
             md.update(content or "_empty_")
         except Exception:
             pass
+        self._refresh_action_bar()
 
     def action_cursor_down(self) -> None:
         try:
@@ -174,4 +230,12 @@ class DraftsTab(TabBase):
     def update_data(self, report: dict) -> None:
         """Update drafts from report and refresh the list."""
         self._drafts = report.get("drafts", [])
+        # Keep the selected draft's actions up-to-date if one is selected
+        if self._selected_draft is not None:
+            selected_id = self._selected_draft.get("id")
+            for d in self._drafts:
+                if d.get("id") == selected_id:
+                    self._selected_draft = d
+                    self._refresh_action_bar()
+                    break
         self._refresh_list()
