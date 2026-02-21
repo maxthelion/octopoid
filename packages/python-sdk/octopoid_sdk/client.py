@@ -398,24 +398,35 @@ class MessagesAPI:
         to_actor: Optional[str] = None,
         type: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """List messages with optional filters
+        """List messages for a task.
+
+        When task_id is provided, fetches from the task-scoped messages endpoint
+        (GET /api/v1/tasks/:id/messages) which returns task history events
+        including rejection reasons, submissions, and other activity.
 
         Args:
-            task_id: Filter by task ID
-            to_actor: Filter by recipient actor
-            type: Filter by message type
+            task_id: Task ID to fetch messages for (required for history lookup)
+            to_actor: Filter by recipient actor (unused in task-scoped endpoint)
+            type: Filter by message type (unused in task-scoped endpoint)
 
         Returns:
-            List of message dictionaries
+            List of message dictionaries with keys: id, task_id, event, author, content, created_at
         """
-        params: Dict[str, Any] = {}
         if task_id:
-            params['task_id'] = task_id
+            response = self._client._request('GET', f'/api/v1/tasks/{task_id}/messages')
+            if isinstance(response, dict):
+                return response.get('messages', [])
+            return response if isinstance(response, list) else []
+
+        params: Dict[str, Any] = {}
         if to_actor:
             params['to_actor'] = to_actor
         if type:
             params['type'] = type
-        return self._client._request('GET', '/api/v1/messages', params=params).get('messages', [])
+        response = self._client._request('GET', '/api/v1/messages', params=params)
+        if isinstance(response, dict):
+            return response.get('messages', [])
+        return response if isinstance(response, list) else []
 
 
 class StatusAPI:
