@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **`guard_pr_mergeable` removed from scheduler guard chain** ([TASK-8a02dd06])
+  - Removed `guard_pr_mergeable` function from `orchestrator/scheduler.py` and the `AGENT_GUARDS` list.
+  - This guard ran after `guard_claim_task`, meaning tasks were already claimed on the server when the conflict check fired. When it found conflicts it tried to `sdk.tasks.reject()`, but claimed tasks can't be rejected (that transition only works from provisional), causing 409 errors and leaving orphaned claimed tasks with no running agent.
+  - The gatekeeper agent already handles merge conflicts correctly by rejecting with feedback. The guard was redundant for gatekeepers and harmful for implementers (it blocked them from claiming tasks they need to rebase).
+
 ### Changed
 
 - **Dashboard smart polling: reduce API calls from ~8/tick to 1/tick** ([TASK-30d6a4e7])

@@ -20,12 +20,9 @@ from pathlib import Path
 import pytest
 
 from orchestrator.scheduler import (
-    AgentContext,
-    guard_pr_mergeable,
     handle_agent_result,
     handle_agent_result_via_flow,
 )
-from orchestrator.state_utils import AgentState
 
 # ---------------------------------------------------------------------------
 # Paths to test fixtures
@@ -179,18 +176,6 @@ def _make_provisional(
     return task_id
 
 
-def _make_agent_ctx(task: dict, tmp_path: Path) -> AgentContext:
-    """Build a minimal AgentContext with the given task as claimed_task."""
-    return AgentContext(
-        agent_config={},
-        agent_name="mock-gatekeeper",
-        role="review",
-        interval=300,
-        state=AgentState(),
-        state_path=tmp_path / "state.json",
-        claimed_task=task,
-    )
-
 
 # ---------------------------------------------------------------------------
 # Merge conflict scenarios
@@ -199,50 +184,6 @@ def _make_agent_ctx(task: dict, tmp_path: Path) -> AgentContext:
 
 class TestMergeConflictScenarios:
     """Tests for PR merge conflict detection and handling."""
-
-    def test_pr_merge_conflict_blocks_acceptance(
-        self,
-        scoped_sdk,
-        orchestrator_id: str,
-        tmp_path: Path,
-        clean_tasks,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """Task in provisional with CONFLICTING PR → guard_pr_mergeable rejects back to incoming.
-
-        Simulates the guard chain reaching guard_pr_mergeable after claim_task
-        has already moved the task to claimed.  The guard detects the conflict
-        via the fake gh CLI and calls sdk.tasks.reject, which moves the task
-        back to incoming.
-        """
-        task_id = _make_provisional(scoped_sdk, orchestrator_id)
-
-        # Give the task a PR number so guard_pr_mergeable actually checks it
-        scoped_sdk.tasks.update(task_id, pr_number=99)
-
-        # Fake gh returns CONFLICTING for all pr view calls
-        monkeypatch.setenv("GH_MOCK_MERGE_STATUS", "CONFLICTING")
-
-        # Fetch the updated task and simulate the guard having claimed it
-        task = scoped_sdk.tasks.get(task_id)
-        ctx = _make_agent_ctx(task, tmp_path)
-
-        # Call the guard directly (mirrors what evaluate_agent does)
-        should_proceed, reason = guard_pr_mergeable(ctx)
-
-        assert not should_proceed, (
-            "guard_pr_mergeable should block when PR is CONFLICTING"
-        )
-        assert "pr_conflicts" in reason or "rebase" in reason.lower(), (
-            f"Expected conflict reason, got: {reason!r}"
-        )
-
-        # Task must be back in incoming so the implementer can rebase
-        final_task = scoped_sdk.tasks.get(task_id)
-        assert final_task is not None
-        assert final_task["queue"] == "incoming", (
-            f"Expected incoming after conflict guard, got {final_task['queue']}"
-        )
 
     def test_merge_fails_at_merge_time(
         self,
@@ -491,100 +432,6 @@ class TestRebaseInstructions:
         )
         assert base_branch in reason, (
             f"Rejection reason should reference base branch '{base_branch}'; got: {reason!r}"
-        )
-
-
-# ---------------------------------------------------------------------------
-# Combined scenarios
-# ---------------------------------------------------------------------------
-
-
-class TestCombinedScenarios:
-    """Tests for chained error paths (reject → re-claim → still conflicting)."""
-
-    def test_conflict_after_rejection(
-        self,
-        scoped_sdk,
-        orchestrator_id: str,
-        tmp_path: Path,
-        clean_tasks,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """Task rejected → re-claimed → PR still CONFLICTING → guard rejects again.
-
-        Verifies the cycle works correctly without the task getting stuck in any
-        intermediate state:
-
-            incoming → (reject) → incoming → (guard conflict) → incoming
-
-        The task must end in incoming each time, never stuck in provisional
-        or claimed.
-        """
-        task_id = _make_task_id()
-        scoped_sdk.tasks.create(
-            id=task_id,
-            file_path=f".octopoid/tasks/{task_id}.md",
-            title="Conflict after rejection test",
-            role="implement",
-            branch="main",
-        )
-
-        # --- Round 1: implementer submits, gatekeeper rejects ---
-        scoped_sdk.tasks.claim(
-            orchestrator_id=orchestrator_id,
-            agent_name="mock-implementer",
-            role_filter="implement",
-        )
-        scoped_sdk.tasks.submit(task_id, commits_count=1, turns_used=3)
-
-        gk_worktree1 = tmp_path / "gk-worktree-1"
-        _init_git_repo_basic(gk_worktree1)
-        gk_task_dir1 = tmp_path / "gk-task-1"
-
-        result = _run_mock_agent(
-            gk_worktree1, gk_task_dir1,
-            commits=1, decision="reject", comment="Not ready",
-        )
-        assert result.returncode == 0, f"First gatekeeper failed: {result.stderr}"
-
-        handle_agent_result_via_flow(task_id, "mock-gatekeeper", gk_task_dir1)
-
-        task_after_reject = scoped_sdk.tasks.get(task_id)
-        assert task_after_reject is not None
-        assert task_after_reject["queue"] == "incoming", (
-            f"Expected incoming after first rejection, got {task_after_reject['queue']}"
-        )
-
-        # --- Round 2: re-claim and re-submit to provisional (simulating re-attempt) ---
-        scoped_sdk.tasks.claim(
-            orchestrator_id=orchestrator_id,
-            agent_name="mock-implementer",
-            role_filter="implement",
-        )
-        scoped_sdk.tasks.submit(task_id, commits_count=1, turns_used=3)
-
-        # Attach a PR number so guard_pr_mergeable actually fires
-        scoped_sdk.tasks.update(task_id, pr_number=99)
-
-        # PR is still CONFLICTING after the re-submit
-        monkeypatch.setenv("GH_MOCK_MERGE_STATUS", "CONFLICTING")
-
-        # Simulate guard_claim_task claiming the task (moving it to claimed state)
-        # then guard_pr_mergeable detecting the conflict.
-        task = scoped_sdk.tasks.get(task_id)
-        ctx = _make_agent_ctx(task, tmp_path)
-
-        should_proceed, reason = guard_pr_mergeable(ctx)
-
-        assert not should_proceed, (
-            "guard_pr_mergeable should block on CONFLICTING even after a rejection cycle"
-        )
-
-        final_task = scoped_sdk.tasks.get(task_id)
-        assert final_task is not None
-        assert final_task["queue"] == "incoming", (
-            f"Task must cycle back to incoming after second conflict guard, "
-            f"got {final_task['queue']}"
         )
 
 
