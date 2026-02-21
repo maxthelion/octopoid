@@ -2142,8 +2142,11 @@ def sweep_stale_resources() -> None:
             continue
         try:
             ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
             elapsed = (now - ts).total_seconds()
-        except (ValueError, TypeError):
+        except (ValueError, TypeError) as e:
+            debug_log(f"sweep_stale_resources: could not parse timestamp {ts_str!r} for task {task_id}: {e}")
             continue
 
         if elapsed < GRACE_PERIOD_SECONDS:
