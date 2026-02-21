@@ -55,15 +55,17 @@ class TestActionsAPICreate:
         sdk.actions.create(
             entity_type="draft",
             entity_id="42",
-            action_type="archive_draft",
             label="Archive",
-            payload={"reason": "obsolete"},
+            description="Archive this draft",
+            action_data={"buttons": [{"label": "Archive", "command": "archive"}]},
+            action_type="archive_draft",
             proposed_by="gatekeeper",
             expires_at="2026-12-31T00:00:00Z",
         )
 
         call_json = sdk._request.call_args[1]["json"]
-        assert call_json["payload"] == {"reason": "obsolete"}
+        assert call_json["action_data"] == {"buttons": [{"label": "Archive", "command": "archive"}]}
+        assert call_json["description"] == "Archive this draft"
         assert call_json["proposed_by"] == "gatekeeper"
         assert call_json["expires_at"] == "2026-12-31T00:00:00Z"
 
@@ -74,12 +76,12 @@ class TestActionsAPICreate:
         sdk.actions.create(
             entity_type="task",
             entity_id="T-1",
-            action_type="requeue_task",
             label="Requeue",
         )
 
         call_json = sdk._request.call_args[1]["json"]
-        assert "payload" not in call_json
+        assert "action_data" not in call_json
+        assert "description" not in call_json
         assert "proposed_by" not in call_json
         assert "expires_at" not in call_json
 
