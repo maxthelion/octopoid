@@ -281,6 +281,7 @@ def guard_task_description_nonempty(ctx: AgentContext) -> tuple[bool, str]:
         sdk.tasks.update(task_id, queue=fail_target, claimed_by=None)
         debug_log(f"Moved task {task_id} to {fail_target}: {reason}")
     except Exception as e:
+        print(f"[{datetime.now().isoformat()}] ERROR: move-to-failed failed for {task_id}: {e}")
         debug_log(f"guard_task_description_nonempty: failed to update task {task_id}: {e}")
 
     return (False, f"empty_description: {reason}")
@@ -1108,6 +1109,7 @@ def handle_agent_result_via_flow(task_id: str, agent_name: str, task_dir: Path, 
 
     except Exception as e:
         import traceback
+        print(f"[{datetime.now().isoformat()}] ERROR: handle_agent_result_via_flow failed for {task_id}: {e}")
         debug_log(f"Error in handle_agent_result_via_flow for {task_id}: {e}")
         debug_log(traceback.format_exc())
         try:
@@ -1117,7 +1119,8 @@ def handle_agent_result_via_flow(task_id: str, agent_name: str, task_dir: Path, 
             # cannot consult the flow to find the target because the flow machinery is
             # what just failed.  "failed" is the only safe terminal state here.
             sdk.tasks.update(task_id, queue='failed', execution_notes=f'Flow dispatch error: {e}')
-        except Exception:
+        except Exception as inner_e:
+            print(f"[{datetime.now().isoformat()}] ERROR: move-to-failed failed for {task_id}: {inner_e}")
             debug_log(f"Failed to move {task_id} to failed queue")
         return True  # Task moved to terminal state (or already gone) — PID safe to remove
 
@@ -1433,6 +1436,7 @@ def handle_agent_result(task_id: str, agent_name: str, task_dir: Path) -> bool:
                     execution_notes=f"Step failure after {failure_count} attempts: {e}",
                 )
             except Exception as update_err:
+                print(f"[{datetime.now().isoformat()}] ERROR: move-to-failed failed for {task_id}: {update_err}")
                 debug_log(f"handle_agent_result: failed to update {task_id} to failed: {update_err}")
             _reset_step_failure_count(task_dir)
             return True  # Task moved to terminal state — PID safe to remove
@@ -1542,6 +1546,7 @@ def process_orchestrator_hooks(provisional_tasks: list | None = None) -> None:
                     print(f"[{datetime.now().isoformat()}] Accepted task {task_id} (all hooks passed)")
 
     except Exception as e:
+        print(f"[{datetime.now().isoformat()}] ERROR: process_orchestrator_hooks failed: {e}")
         debug_log(f"Error processing orchestrator hooks: {e}")
 
 def check_and_update_finished_agents() -> None:
@@ -2314,6 +2319,7 @@ def _requeue_task(task_id: str, source_queue: str = "incoming", task: dict | Non
 
         debug_log(f"Requeued task {task_id} back to {source_queue}")
     except Exception as e:
+        print(f"[{datetime.now().isoformat()}] ERROR: requeue failed for {task_id}: {e}")
         debug_log(f"Failed to requeue task {task_id}: {e}")
 
 

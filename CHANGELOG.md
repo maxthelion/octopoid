@@ -32,6 +32,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Loud failures for server state change errors in scheduler** ([TASK-b750874a])
+  - `orchestrator/scheduler.py`: All except blocks that catch server API failures (move-to-failed, requeue, flow dispatch) now `print()` an ERROR message to stdout in addition to `debug_log()`.
+  - Affected sites: `guard_task_description_nonempty`, `handle_agent_result_via_flow` (outer + inner fallback), `handle_agent_result` (inner update_err), `process_orchestrator_hooks`, and `_requeue_task`.
+  - Format: `[TIMESTAMP] ERROR: <operation> failed for <task_id>: <error>`.
+
 - **Scheduler heartbeat: Python scheduler now sends periodic heartbeats** ([TASK-6a76d62b])
   - Added `send_heartbeat()` to `orchestrator/scheduler.py` — POSTs to `/api/v1/orchestrators/{id}/heartbeat` every 60s.
   - Registered as a `@register_job` handler in `orchestrator/jobs.py`.
