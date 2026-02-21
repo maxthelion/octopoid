@@ -97,3 +97,16 @@ jobs:
     interval: 900
     type: script
     group: local
+
+  # Daily codebase analyst: scans for large/complex files and proposes refactoring.
+  # Guard script runs first inside the agent — skips if a pending proposal already exists.
+  - name: codebase_analyst
+    interval: 86400
+    type: agent
+    group: remote
+    max_instances: 1
+    agent_config:
+      role: analyse
+      spawn_mode: scripts
+      lightweight: true
+      agent_dir: .octopoid/agents/codebase-analyst

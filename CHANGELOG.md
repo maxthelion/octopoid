@@ -23,6 +23,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Codebase analyst agent** ([TASK-6bc0fd72])
+  - `.octopoid/agents/codebase-analyst/agent.yaml`: Agent config with daily interval (86400s), `role: analyse`, `lightweight: true`, and scripts spawn mode.
+  - `.octopoid/agents/codebase-analyst/scripts/guard.sh`: Guard script that checks for existing `codebase-analyst` drafts with `status=idea` via the SDK. Outputs `SKIP` if any exist so the agent exits early without duplicating proposals.
+  - `.octopoid/agents/codebase-analyst/scripts/find-large-files.sh`: Analysis script that finds the 30 largest source files (`.py`, `.ts`, `.tsx`, `.js`, `.sh`) by line count, excluding `node_modules`, `.git`, `__pycache__`, `dist`, `build`, `.octopoid/runtime`, and virtualenvs.
+  - `.octopoid/agents/codebase-analyst/prompt.md`: Agent instructions — run guard first, run analysis, pick top candidate, create a draft via `sdk.drafts.create(author="codebase-analyst")`, attach actions with `action_data` JSON (Enqueue refactor / Dismiss buttons), post `action_proposal` message to user inbox.
+  - `.octopoid/agents/codebase-analyst/instructions.md`: Analysis guidelines for picking candidates and writing clear proposals.
+  - `.octopoid/jobs.yaml`: Added `codebase_analyst` job entry (`type: agent`, `interval: 86400`, `group: remote`).
+
 - **Dashboard refactor: Textual theme + shared utils + TabBase** ([TASK-cbd3c1c2])
   - `packages/dashboard/utils.py`: New module with `format_age()` and `time_ago()` — replaces duplicated implementations in agents.py, done.py, prs.py, tasks.py, and task_card.py.
   - `packages/dashboard/tabs/base.py`: New `TabBase` class extending `Widget` with shared `__init__`, `update_data`, and `_refresh` pattern. All five main tabs now inherit from `TabBase`.
