@@ -83,6 +83,13 @@ jobs:
     type: script
     group: remote
 
+  # Poll for unprocessed inbox messages (to_actor=worker) and spawn worker agents.
+  # Fast interval so user-triggered actions feel responsive.
+  - name: process_inbox
+    interval: 30
+    type: script
+    group: remote
+
   # Poll GitHub issues and create tasks for new ones.
   # Rate budget: 1 gh issue list call per run = 4 calls/hour (< 0.1% of 5000/hour limit).
   # Issues labelled 'server' are forwarded to maxthelion/octopoid-server instead.

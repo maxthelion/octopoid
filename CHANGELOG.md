@@ -37,6 +37,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `.octopoid/agents/codebase-analyst/prompt.md`: Agent instructions — run guard first, run analysis, pick top candidate, create a draft via `sdk.drafts.create(author="codebase-analyst")`, attach actions with `action_data` JSON (Enqueue refactor / Dismiss buttons), post `action_proposal` message to user inbox.
   - `.octopoid/agents/codebase-analyst/instructions.md`: Analysis guidelines for picking candidates and writing clear proposals.
   - `.octopoid/jobs.yaml`: Added `codebase_analyst` job entry (`type: agent`, `interval: 86400`, `group: remote`).
+- **Inbox processor scheduler job** ([TASK-1069a831])
+  - `orchestrator/jobs.py`: Added `process_inbox` job, `_load_inbox_state`, `_save_inbox_state`, and `_spawn_inbox_worker` helpers.
+  - `process_inbox` polls for messages where `to_actor="worker"`, builds a prompt from the message content, and spawns a lightweight Claude worker agent for each unprocessed message.
+  - Processed message IDs are tracked in `.octopoid/runtime/inbox_processor_state.json` so messages are not re-processed across ticks.
+  - Worker agents run in the parent project directory (no worktree/PR/gatekeeper) and post result messages back via the SDK.
+  - `.octopoid/jobs.yaml`: Added `process_inbox` entry with 30s interval.
 
 - **Dashboard refactor: Textual theme + shared utils + TabBase** ([TASK-cbd3c1c2])
   - `packages/dashboard/utils.py`: New module with `format_age()` and `time_ago()` — replaces duplicated implementations in agents.py, done.py, prs.py, tasks.py, and task_card.py.
