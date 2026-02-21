@@ -11,6 +11,7 @@ from orchestrator.reports import (
     _extract_staging_url,
     _format_task,
     _gather_agents,
+    _gather_drafts,
     _gather_health,
     _gather_messages,
     _gather_proposals,
@@ -235,6 +236,107 @@ class TestIsRecent:
         }
         cutoff = datetime.now() - timedelta(days=7)
         assert _is_recent(task, cutoff) is True
+
+
+# ---------------------------------------------------------------------------
+# Drafts
+# ---------------------------------------------------------------------------
+
+
+class TestGatherDrafts:
+    """Tests for _gather_drafts() — verifies bulk action fetch and grouping."""
+
+    def test_returns_drafts_with_actions_field(self):
+        sdk = MagicMock()
+        sdk.drafts.list.return_value = [
+            {"id": "1", "title": "Draft A", "status": "idea", "file_path": "/tmp/a.md", "created_at": "2026-01-01"},
+            {"id": "2", "title": "Draft B", "status": "active", "file_path": "/tmp/b.md", "created_at": "2026-01-02"},
+        ]
+        sdk.actions.list.return_value = [
+            {"id": "act-1", "entity_id": "1", "entity_type": "draft", "action_type": "archive_draft", "label": "Archive", "status": "pending"},
+            {"id": "act-2", "entity_id": "1", "entity_type": "draft", "action_type": "update_draft_status", "label": "Mark active", "status": "pending"},
+        ]
+
+        result = _gather_drafts(sdk)
+
+        assert len(result) == 2
+        draft_a = next(d for d in result if d["id"] == "1")
+        assert len(draft_a["actions"]) == 2
+        assert draft_a["actions"][0]["id"] == "act-1"
+        assert draft_a["actions"][1]["id"] == "act-2"
+        draft_b = next(d for d in result if d["id"] == "2")
+        assert draft_b["actions"] == []
+
+    def test_fetches_actions_with_single_api_call(self):
+        """Actions must be fetched in one bulk call, not one per draft."""
+        sdk = MagicMock()
+        sdk.drafts.list.return_value = [
+            {"id": str(i), "title": f"Draft {i}", "status": "idea", "file_path": None, "created_at": None}
+            for i in range(10)
+        ]
+        sdk.actions.list.return_value = []
+
+        _gather_drafts(sdk)
+
+        # actions.list must be called exactly once regardless of draft count
+        sdk.actions.list.assert_called_once_with(entity_type="draft", status="pending")
+
+    def test_actions_grouped_by_entity_id(self):
+        sdk = MagicMock()
+        sdk.drafts.list.return_value = [
+            {"id": "10", "title": "Draft X", "status": "partial", "file_path": None, "created_at": None},
+            {"id": "20", "title": "Draft Y", "status": "active", "file_path": None, "created_at": None},
+        ]
+        sdk.actions.list.return_value = [
+            {"id": "a1", "entity_id": "20", "entity_type": "draft", "action_type": "archive_draft", "label": "Archive", "status": "pending"},
+        ]
+
+        result = _gather_drafts(sdk)
+
+        draft_x = next(d for d in result if d["id"] == "10")
+        draft_y = next(d for d in result if d["id"] == "20")
+        assert draft_x["actions"] == []
+        assert len(draft_y["actions"]) == 1
+        assert draft_y["actions"][0]["id"] == "a1"
+
+    def test_returns_empty_list_when_drafts_api_fails(self):
+        sdk = MagicMock()
+        sdk.drafts.list.side_effect = Exception("network error")
+
+        result = _gather_drafts(sdk)
+
+        assert result == []
+
+    def test_returns_drafts_without_actions_when_actions_api_fails(self):
+        sdk = MagicMock()
+        sdk.drafts.list.return_value = [
+            {"id": "5", "title": "Draft Z", "status": "idea", "file_path": None, "created_at": None},
+        ]
+        sdk.actions.list.side_effect = Exception("actions unavailable")
+
+        result = _gather_drafts(sdk)
+
+        assert len(result) == 1
+        assert result[0]["id"] == "5"
+        assert result[0]["actions"] == []
+
+    def test_includes_expected_draft_fields(self):
+        sdk = MagicMock()
+        sdk.drafts.list.return_value = [
+            {"id": "99", "title": "My Draft", "status": "complete", "file_path": "/path/to/draft.md", "created_at": "2026-02-01T12:00:00"},
+        ]
+        sdk.actions.list.return_value = []
+
+        result = _gather_drafts(sdk)
+
+        assert len(result) == 1
+        d = result[0]
+        assert d["id"] == "99"
+        assert d["title"] == "My Draft"
+        assert d["status"] == "complete"
+        assert d["file_path"] == "/path/to/draft.md"
+        assert d["created_at"] == "2026-02-01T12:00:00"
+        assert d["actions"] == []
 
 
 # ---------------------------------------------------------------------------
