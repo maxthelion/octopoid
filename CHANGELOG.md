@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Circuit breaker: stop infinite requeue loops after 3 failures** ([TASK-13aec649])
+  - `orchestrator/scheduler.py`: Added `_get_circuit_breaker_threshold()` — reads `agents.circuit_breaker_threshold` from `.octopoid/config.yaml`, defaults to 3.
+  - `check_and_requeue_expired_leases()` now increments `attempt_count` on the task when requeuing claimed→incoming. If `attempt_count` reaches the threshold, the task is moved to `failed` instead of `incoming`. Provisional lease expiry is unaffected (no `attempt_count` change).
+  - `_requeue_task()` applies the same logic for spawn failures. Accepts an optional `task` dict to avoid an extra API call.
+  - Both functions print `CIRCUIT BREAKER: <task_id> moved to failed after N <reason>s` to stdout when the breaker trips (visible in `launchd-stdout.log`).
+  - Added `project-management/tasks/octopoid-server/add-execution-notes-to-patch.md` — server task to add `execution_notes` to the PATCH endpoint so failure reasons are persisted.
+
 ### Removed
 
 - **`guard_pr_mergeable` removed from scheduler guard chain** ([TASK-8a02dd06])
