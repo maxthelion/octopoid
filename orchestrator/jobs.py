@@ -311,6 +311,13 @@ def sweep_stale_resources(ctx: JobContext) -> None:
     _impl()
 
 
+@register_job
+def send_heartbeat(ctx: JobContext) -> None:
+    """Send a heartbeat to the API server to update last_heartbeat."""
+    from .scheduler import send_heartbeat as _impl
+    _impl()
+
+
 # ---------------------------------------------------------------------------
 # GitHub issue poller
 # ---------------------------------------------------------------------------

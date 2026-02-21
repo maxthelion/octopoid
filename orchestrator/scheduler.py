@@ -2104,6 +2104,22 @@ def _register_orchestrator(orchestrator_registered: bool = False) -> None:
         debug_log(f"Flow sync failed (non-fatal): {e}")
 
 
+def send_heartbeat() -> None:
+    """Send a heartbeat to the API server to update last_heartbeat.
+
+    POSTs to /api/v1/orchestrators/{orchestrator_id}/heartbeat.
+    Failures are non-fatal: errors are logged but never crash the scheduler.
+    """
+    try:
+        from .queue_utils import get_sdk, get_orchestrator_id
+        sdk = get_sdk()
+        orch_id = get_orchestrator_id()
+        sdk._request("POST", f"/api/v1/orchestrators/{orch_id}/heartbeat")
+        debug_log(f"Heartbeat sent for orchestrator: {orch_id}")
+    except Exception as e:
+        debug_log(f"Heartbeat failed (non-fatal): {e}")
+
+
 def sweep_stale_resources() -> None:
     """Archive logs and delete worktrees for old done/failed tasks.
 

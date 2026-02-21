@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Scheduler heartbeat: Python scheduler now sends periodic heartbeats** ([TASK-6a76d62b])
+  - Added `send_heartbeat()` to `orchestrator/scheduler.py` — POSTs to `/api/v1/orchestrators/{id}/heartbeat` every 60s.
+  - Registered as a `@register_job` handler in `orchestrator/jobs.py`.
+  - Added `send_heartbeat` entry to `.octopoid/jobs.yaml` (interval: 60s, group: remote).
+  - `/queue-status` now shows a recent "Last tick" timestamp while the scheduler is running.
+  - Heartbeat failures are non-fatal (logged, never crash the scheduler).
+
 ### Added
 
 - **Task message thread: rejection feedback preserved without rewriting task files** ([TASK-142f1c04])

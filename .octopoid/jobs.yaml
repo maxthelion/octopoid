@@ -39,6 +39,12 @@ jobs:
     type: script
     group: remote
 
+  # Send a heartbeat to the server so queue-status shows a recent "Last tick".
+  - name: send_heartbeat
+    interval: 60
+    type: script
+    group: remote
+
   # Requeue tasks whose claim lease has expired (server-side fallback).
   - name: check_and_requeue_expired_leases
     interval: 60
