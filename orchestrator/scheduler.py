@@ -311,8 +311,10 @@ def evaluate_agent(ctx: AgentContext) -> bool:
     for guard in AGENT_GUARDS:
         proceed, reason = guard(ctx)
         if not proceed:
-            debug_log(f"Agent {ctx.agent_name}: blocked by {guard.__name__}: {reason}")
+            debug_log(f"Agent {ctx.agent_name}: BLOCKED by {guard.__name__}: {reason}")
             return False
+        debug_log(f"Agent {ctx.agent_name}: {guard.__name__} passed")
+    debug_log(f"Agent {ctx.agent_name}: all guards passed, spawning")
     return True
 
 
@@ -2651,6 +2653,15 @@ def main() -> None:
         help="Run once and exit (don't wait for lock)",
     )
     args = parser.parse_args()
+
+    # Fix __main__ double-import: when run via `python -m orchestrator.scheduler`,
+    # this module is loaded as __main__. Other modules (jobs.py) import it as
+    # orchestrator.scheduler — which would create a separate module object with
+    # its own DEBUG=False. Pre-register __main__ as the canonical name so all
+    # imports share the same module (and the same DEBUG/_log_file globals).
+    import sys
+    if "orchestrator.scheduler" not in sys.modules:
+        sys.modules["orchestrator.scheduler"] = sys.modules["__main__"]
 
     DEBUG = args.debug
     if DEBUG:

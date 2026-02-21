@@ -116,10 +116,12 @@ def run_due_jobs(scheduler_state: dict) -> dict | None:
     from .scheduler import is_job_due, record_job_run, _fetch_poll_data
 
     jobs = load_jobs_yaml()
+    _debug_log(f"Loaded {len(jobs)} job definitions from YAML")
 
     # Classify which jobs are due by group
     due_local: list[dict] = []
     due_remote: list[dict] = []
+    skipped: list[str] = []
 
     for job_def in jobs:
         name = job_def.get("name", "")
@@ -130,6 +132,13 @@ def run_due_jobs(scheduler_state: dict) -> dict | None:
                 due_local.append(job_def)
             else:
                 due_remote.append(job_def)
+        else:
+            skipped.append(name)
+
+    _debug_log(
+        f"Due: {len(due_local)} local, {len(due_remote)} remote. "
+        f"Skipped (not due): {', '.join(skipped) if skipped else 'none'}"
+    )
 
     # Run local jobs first — no API calls needed
     for job_def in due_local:
@@ -158,6 +167,8 @@ def _run_job(job_def: dict, ctx: JobContext) -> None:
     name = job_def.get("name", "unknown")
     job_type = job_def.get("type", "script")
 
+    _debug_log(f"Running job: {name} (type={job_type})")
+
     try:
         if job_type == "script":
             func = JOB_REGISTRY.get(name)
@@ -165,12 +176,14 @@ def _run_job(job_def: dict, ctx: JobContext) -> None:
                 _debug_log(f"No job function registered for: {name}")
                 return
             func(ctx)
+            _debug_log(f"Job {name} completed OK")
         elif job_type == "agent":
             _run_agent_job(job_def, ctx)
+            _debug_log(f"Agent job {name} completed OK")
         else:
             _debug_log(f"Unknown job type '{job_type}' for job '{name}'")
     except Exception as e:
-        _debug_log(f"{name} failed: {e}")
+        _debug_log(f"{name} FAILED: {e}")
 
 
 def _run_agent_job(job_def: dict, ctx: JobContext) -> None:
