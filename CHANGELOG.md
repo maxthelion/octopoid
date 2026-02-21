@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Integration tests for the Messages API** ([TASK-9497e3e9])
+  - `tests/integration/test_messages.py`: Full integration test suite covering create, list-by-task, list-by-actor, list-by-type, `/tasks/:id/messages` endpoint, append-only enforcement, scope isolation, agent result posting (success and failure), multi-result ordering, full orchestrator↔implementer↔gatekeeper thread, and edge cases (broadcast, empty content).
+  - `packages/python-sdk/octopoid_sdk/client.py`: Extended `MessagesAPI` with `create()`, updated `list()` to accept optional `task_id`, `to_actor`, and `type` filters via `GET /api/v1/messages`, and added `list_for_task()` for the `/api/v1/tasks/:id/messages` endpoint.
+
 - **MessagesAPI added to Python SDK** ([TASK-24c48219])
   - `packages/python-sdk/octopoid_sdk/client.py`: Added `MessagesAPI` class with `create()` and `list()` methods.
   - `sdk.messages.create(task_id, from_actor, type, content, to_actor=None)` posts to `/api/v1/messages`.

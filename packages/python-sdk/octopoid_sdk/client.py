@@ -360,7 +360,7 @@ class MessagesAPI:
     """Messages API endpoints"""
 
     def __init__(self, client: 'OctopoidSDK'):
-        self._client = client
+        self.client = client
 
     def create(
         self,
@@ -370,27 +370,28 @@ class MessagesAPI:
         content: str,
         to_actor: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Create a new message
+        """Create a new message.
 
         Args:
-            task_id: Task ID this message belongs to
-            from_actor: Actor sending the message (e.g., 'agent', 'human')
-            type: Message type (e.g., 'comment', 'question')
-            content: Message content
-            to_actor: Optional recipient actor
+            task_id: Task ID this message is associated with
+            from_actor: Sender actor name (e.g., 'implementer', 'orchestrator')
+            type: Message type (e.g., 'instruction', 'result', 'feedback')
+            content: Message content (JSON string or plain text)
+            to_actor: Target actor name (optional; omit for broadcast messages)
 
         Returns:
-            Created message dictionary
+            Created message dict with id, task_id, from_actor, to_actor,
+            type, content, and created_at
         """
-        payload: Dict[str, Any] = {
+        data: Dict[str, Any] = {
             'task_id': task_id,
             'from_actor': from_actor,
             'type': type,
             'content': content,
         }
-        if to_actor:
-            payload['to_actor'] = to_actor
-        return self._client._request('POST', '/api/v1/messages', json=payload)
+        if to_actor is not None:
+            data['to_actor'] = to_actor
+        return self.client._request('POST', '/api/v1/messages', json=data)
 
     def list(
         self,
@@ -398,24 +399,42 @@ class MessagesAPI:
         to_actor: Optional[str] = None,
         type: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """List messages with optional filters
+        """List messages with optional filters via GET /api/v1/messages.
 
         Args:
             task_id: Filter by task ID
-            to_actor: Filter by recipient actor
+            to_actor: Filter by target actor
             type: Filter by message type
 
         Returns:
-            List of message dictionaries
+            List of message dicts ordered by created_at ascending
         """
-        params: Dict[str, Any] = {}
-        if task_id:
+        params: Dict[str, str] = {}
+        if task_id is not None:
             params['task_id'] = task_id
-        if to_actor:
+        if to_actor is not None:
             params['to_actor'] = to_actor
-        if type:
+        if type is not None:
             params['type'] = type
-        return self._client._request('GET', '/api/v1/messages', params=params).get('messages', [])
+
+        response = self.client._request('GET', '/api/v1/messages', params=params)
+        if isinstance(response, dict) and 'messages' in response:
+            return response['messages']
+        return response if isinstance(response, list) else []
+
+    def list_for_task(self, task_id: str) -> List[Dict[str, Any]]:
+        """List messages for a task via GET /api/v1/tasks/:id/messages.
+
+        Args:
+            task_id: Task ID to fetch messages for
+
+        Returns:
+            List of message dicts ordered by created_at ascending
+        """
+        response = self.client._request('GET', f'/api/v1/tasks/{task_id}/messages')
+        if isinstance(response, dict) and 'messages' in response:
+            return response['messages']
+        return response if isinstance(response, list) else []
 
 
 class StatusAPI:
