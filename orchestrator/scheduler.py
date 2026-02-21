@@ -2459,6 +2459,10 @@ def run_scheduler() -> None:
         )
         sys.exit(1)
     debug_log(f"Scope: {scope}")
+    debug_log(f"Base branch: {get_base_branch()}")
+    agents = get_agents()
+    agent_names = [a.get("name", a.get("blueprint_name", "?")) for a in agents]
+    debug_log(f"Agents configured ({len(agents)}): {agent_names}")
 
     # Check global pause flag
     if is_system_paused():
