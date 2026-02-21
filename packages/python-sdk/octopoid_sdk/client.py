@@ -428,9 +428,10 @@ class ActionsAPI:
         self,
         entity_type: str,
         entity_id: str,
-        action_type: str,
         label: str,
-        payload: Optional[Dict[str, Any]] = None,
+        description: Optional[str] = None,
+        action_data: Optional[Dict[str, Any]] = None,
+        action_type: str = "proposal",
         proposed_by: Optional[str] = None,
         expires_at: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -439,9 +440,11 @@ class ActionsAPI:
         Args:
             entity_type: Type of entity (e.g., 'task', 'draft')
             entity_id: ID of the entity
-            action_type: Action type (e.g., 'archive_draft', 'requeue_task')
             label: Human-readable label for the action
-            payload: Optional dict of additional data for the handler
+            description: Optional description of the action
+            action_data: Optional dict containing button definitions, e.g.
+                         {"buttons": [{"label": "Approve", "command": "approve"}]}
+            action_type: Action type (default: 'proposal')
             proposed_by: Optional actor proposing the action
             expires_at: Optional ISO8601 expiry timestamp
 
@@ -451,11 +454,13 @@ class ActionsAPI:
         data: Dict[str, Any] = {
             'entity_type': entity_type,
             'entity_id': entity_id,
-            'action_type': action_type,
             'label': label,
+            'action_type': action_type,
         }
-        if payload is not None:
-            data['payload'] = payload
+        if description is not None:
+            data['description'] = description
+        if action_data is not None:
+            data['action_data'] = action_data
         if proposed_by is not None:
             data['proposed_by'] = proposed_by
         if expires_at is not None:
