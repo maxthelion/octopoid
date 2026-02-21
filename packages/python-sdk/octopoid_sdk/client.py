@@ -418,6 +418,120 @@ class MessagesAPI:
         return self._client._request('GET', '/api/v1/messages', params=params).get('messages', [])
 
 
+class ActionsAPI:
+    """Actions API endpoints"""
+
+    def __init__(self, client: 'OctopoidSDK'):
+        self.client = client
+
+    def create(
+        self,
+        entity_type: str,
+        entity_id: str,
+        action_type: str,
+        label: str,
+        payload: Optional[Dict[str, Any]] = None,
+        proposed_by: Optional[str] = None,
+        expires_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Create a new action.
+
+        Args:
+            entity_type: Type of entity (e.g., 'task', 'draft')
+            entity_id: ID of the entity
+            action_type: Action type (e.g., 'archive_draft', 'requeue_task')
+            label: Human-readable label for the action
+            payload: Optional dict of additional data for the handler
+            proposed_by: Optional actor proposing the action
+            expires_at: Optional ISO8601 expiry timestamp
+
+        Returns:
+            Created action dictionary
+        """
+        data: Dict[str, Any] = {
+            'entity_type': entity_type,
+            'entity_id': entity_id,
+            'action_type': action_type,
+            'label': label,
+        }
+        if payload is not None:
+            data['payload'] = payload
+        if proposed_by is not None:
+            data['proposed_by'] = proposed_by
+        if expires_at is not None:
+            data['expires_at'] = expires_at
+        return self.client._request('POST', '/api/v1/actions', json=data)
+
+    def list(
+        self,
+        entity_type: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        status: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """List actions with optional filters.
+
+        Args:
+            entity_type: Filter by entity type
+            entity_id: Filter by entity ID
+            status: Filter by status (e.g., 'pending', 'execute_requested', 'completed', 'failed')
+
+        Returns:
+            List of action dictionaries
+        """
+        params: Dict[str, Any] = {}
+        if entity_type is not None:
+            params['entity_type'] = entity_type
+        if entity_id is not None:
+            params['entity_id'] = entity_id
+        if status is not None:
+            params['status'] = status
+        response = self.client._request('GET', '/api/v1/actions', params=params)
+        if isinstance(response, dict) and 'actions' in response:
+            return response['actions']
+        return response if isinstance(response, list) else []
+
+    def execute(self, action_id: str) -> Dict[str, Any]:
+        """Request execution of an action (sets status to execute_requested).
+
+        Args:
+            action_id: Action ID
+
+        Returns:
+            Updated action dictionary
+        """
+        return self.client._request('POST', f'/api/v1/actions/{action_id}/execute', json={})
+
+    def complete(self, action_id: str, result: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Mark an action as completed.
+
+        Args:
+            action_id: Action ID
+            result: Optional result dict to store with the action
+
+        Returns:
+            Updated action dictionary
+        """
+        data: Dict[str, Any] = {}
+        if result is not None:
+            data['result'] = result
+        return self.client._request('POST', f'/api/v1/actions/{action_id}/complete', json=data)
+
+    def fail(self, action_id: str, result: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Mark an action as failed.
+
+        Args:
+            action_id: Action ID
+            result: Optional result dict (e.g., error info) to store with the action
+
+        Returns:
+            Updated action dictionary
+        """
+        data: Dict[str, Any] = {}
+        if result is not None:
+            data['result'] = result
+        return self.client._request('POST', f'/api/v1/actions/{action_id}/fail', json=data)
+
+
 class StatusAPI:
     """Status and health API endpoints"""
 
@@ -465,6 +579,7 @@ class OctopoidSDK:
         self.projects = ProjectsAPI(self)
         self.flows = FlowsAPI(self)
         self.messages = MessagesAPI(self)
+        self.actions = ActionsAPI(self)
         self.status = StatusAPI(self)
 
     def _request(
