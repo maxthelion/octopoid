@@ -296,7 +296,7 @@ class TestHandleAgentResultFailed:
             from orchestrator.scheduler import handle_agent_result
             handle_agent_result("TASK-test123", "agent-1", tmp_task_dir)
 
-            mock_sdk.tasks.update.assert_called_once_with("TASK-test123", queue="failed")
+            mock_sdk.tasks.update.assert_called_once_with("TASK-test123", queue="failed", last_error="Tests don't pass")
 
     def test_error_outcome_moves_to_failed(self, tmp_task_dir, mock_sdk, sample_task):
         """When result.json is invalid, task should move to failed queue."""
@@ -311,7 +311,7 @@ class TestHandleAgentResultFailed:
             from orchestrator.scheduler import handle_agent_result
             handle_agent_result("TASK-test123", "agent-1", tmp_task_dir)
 
-            mock_sdk.tasks.update.assert_called_once_with("TASK-test123", queue="failed")
+            mock_sdk.tasks.update.assert_called_once_with("TASK-test123", queue="failed", last_error="Invalid result.json")
 
 
 # ---------------------------------------------------------------------------
@@ -331,7 +331,7 @@ class TestHandleAgentResultNoResult:
             from orchestrator.scheduler import handle_agent_result
             handle_agent_result("TASK-test123", "agent-1", tmp_task_dir)
 
-            mock_sdk.tasks.update.assert_called_once_with("TASK-test123", queue="failed")
+            mock_sdk.tasks.update.assert_called_once_with("TASK-test123", queue="failed", last_error="No result.json produced")
 
     def test_no_result_json_with_notes_continues(self, tmp_task_dir, mock_sdk, sample_task):
         """No result.json but has notes = needs_continuation."""
