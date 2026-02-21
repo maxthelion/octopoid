@@ -863,8 +863,8 @@ def prepare_task_directory(
                 lines.append(f"{i}. Run tests: `../scripts/run-tests`")
             elif name == "rebase_on_main":
                 lines.append(
-                    f"{i}. Rebase on main: "
-                    "`git fetch origin main && git rebase origin/main`"
+                    f"{i}. Rebase on base branch: "
+                    f"`git fetch origin {base_branch} && git rebase origin/{base_branch}`"
                 )
             elif name == "create_pr":
                 # Scheduler handles PR creation — skip this hook for the agent

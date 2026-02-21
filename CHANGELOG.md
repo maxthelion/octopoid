@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Fix rebase_on_main prompt to use task base branch** ([TASK-3b56ab0b])
+  - `orchestrator/scheduler.py`: Changed `rebase_on_main` hook prompt to use `base_branch` variable (already computed in `_prepare_task_directory`) instead of hardcoded `origin/main`. Tasks targeting feature branches now receive correct rebase instructions.
+
 - **Stale Python bytecode in scheduler** ([TASK-83d87eb8])
   - `orchestrator/__init__.py`: Added `sys.dont_write_bytecode = True` at module load time so no process importing the orchestrator package writes `.pyc` files.
   - `orchestrator/scheduler.py`: Added `_clear_pycache()` called at the very start of `main()` (before `_check_venv_integrity()`) — removes all `__pycache__` dirs under `orchestrator/` on every scheduler startup.
