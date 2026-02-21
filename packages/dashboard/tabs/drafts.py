@@ -153,7 +153,7 @@ class DraftsTab(Widget):
             lv.append(ListItem(Label("No drafts match filters.", classes="dim-text")))
         else:
             for idx, draft in enumerate(filtered, start=1):
-                lv.append(_DraftItem(draft, num=idx))
+                lv.append(_DraftItem(draft, num=draft.get("id", idx)))
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         """Update the content pane when a draft is selected."""

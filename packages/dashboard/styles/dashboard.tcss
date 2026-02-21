@@ -38,24 +38,24 @@ TabbedContent {
     height: 1fr;
 }
 
-Tabs {
+#tabs > Tabs {
     height: 3;
     padding: 0;
     background: #0f3460;
 }
 
-Tab {
+#tabs > Tabs > Tab {
     color: #b0b0b0;
     padding: 0 2;
     background: #0f3460;
 }
 
-Tab:hover {
+#tabs > Tabs > Tab:hover {
     color: #e0e0e0;
     background: #16213e;
 }
 
-Tab.-active {
+#tabs > Tabs > Tab.-active {
     color: #4fc3f7;
     text-style: bold;
     background: #1a1a2e;
@@ -410,16 +410,8 @@ FailedTab > Vertical {
 
 .draft-filter-btn.draft-filter-active {
     color: #4fc3f7;
-    border: tall #4fc3f7;
-}
-
-/* Per-status active colors */
-.draft-filter-btn.draft-filter-active.draft-filter-active {
-    color: #e0e0e0;
-}
-
-.draft-filter-btn.draft-filter-active.draft-filter-active {
     background: #1f2f5e;
+    border: tall #4fc3f7;
 }
 
 .draft-listview {
