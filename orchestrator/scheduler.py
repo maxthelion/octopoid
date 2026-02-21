@@ -1251,6 +1251,24 @@ def _reset_step_failure_count(task_dir: Path) -> None:
         pass
 
 
+# Default number of requeue cycles before the circuit breaker trips
+_DEFAULT_CIRCUIT_BREAKER_THRESHOLD = 3
+
+
+def _get_circuit_breaker_threshold() -> int:
+    """Return the configured requeue threshold before circuit breaker trips.
+
+    Reads ``agents.circuit_breaker_threshold`` from .octopoid/config.yaml.
+    Defaults to 3 if not set.
+    """
+    try:
+        from .config import _load_project_config
+        config = _load_project_config()
+        return int(config.get("agents", {}).get("circuit_breaker_threshold", _DEFAULT_CIRCUIT_BREAKER_THRESHOLD))
+    except Exception:
+        return _DEFAULT_CIRCUIT_BREAKER_THRESHOLD
+
+
 def _handle_done_outcome(sdk: object, task_id: str, task: dict, result: dict, task_dir: Path) -> bool:
     """Execute flow steps for a successfully-completed task, then perform the transition.
 
@@ -1949,6 +1967,8 @@ def check_and_requeue_expired_leases() -> None:
             "provisional": "provisional",
         }
 
+        threshold = _get_circuit_breaker_threshold()
+
         for queue_name, target_queue in queues_to_check.items():
             tasks = sdk.tasks.list(queue=queue_name)
             for task in tasks or []:
@@ -1965,7 +1985,44 @@ def check_and_requeue_expired_leases() -> None:
                     expires_at = datetime.fromisoformat(lease_expires.replace('Z', '+00:00'))
                     if expires_at < now:
                         task_id = task["id"]
-                        sdk.tasks.update(task_id, queue=target_queue, claimed_by=None, lease_expires_at=None)
+
+                        # Circuit breaker: only apply to claimed→incoming transitions,
+                        # not provisional→provisional (which just clears the claim).
+                        if queue_name == "claimed":
+                            current_attempt_count = task.get("attempt_count", 0)
+                            new_attempt_count = current_attempt_count + 1
+
+                            if new_attempt_count >= threshold:
+                                reason = (
+                                    f"Circuit breaker: lease expired {new_attempt_count} time(s) "
+                                    f"(threshold={threshold}). Task failed to complete within the lease window."
+                                )
+                                sdk.tasks.update(
+                                    task_id,
+                                    queue="failed",
+                                    claimed_by=None,
+                                    lease_expires_at=None,
+                                    attempt_count=new_attempt_count,
+                                    execution_notes=reason,
+                                )
+                                print(
+                                    f"[{datetime.now().isoformat()}] CIRCUIT BREAKER: {task_id} moved to failed "
+                                    f"after {new_attempt_count} lease expiries (threshold={threshold})"
+                                )
+                                debug_log(f"Circuit breaker tripped for {task_id}: {reason}")
+                                continue
+
+                            sdk.tasks.update(
+                                task_id,
+                                queue=target_queue,
+                                claimed_by=None,
+                                lease_expires_at=None,
+                                attempt_count=new_attempt_count,
+                            )
+                        else:
+                            # Provisional: just clear the claim, no attempt_count increment
+                            sdk.tasks.update(task_id, queue=target_queue, claimed_by=None, lease_expires_at=None)
+
                         debug_log(f"Requeued expired lease: {task_id} → {target_queue} (expired {lease_expires})")
                         print(f"[{datetime.now().isoformat()}] Requeued expired lease: {task_id} → {target_queue}")
                 except (ValueError, TypeError):
@@ -2198,19 +2255,63 @@ def run_housekeeping() -> None:
 # Spawn Strategies
 # =============================================================================
 
-def _requeue_task(task_id: str, source_queue: str = "incoming") -> None:
+def _requeue_task(task_id: str, source_queue: str = "incoming", task: dict | None = None) -> None:
     """Requeue a task back to its source queue after spawn failure.
+
+    Increments attempt_count on the server. If attempt_count reaches the
+    circuit breaker threshold, moves the task to failed instead of requeuing.
 
     Args:
         task_id: Task to requeue.
         source_queue: Queue the task should return to. For tasks claimed from
             'incoming' (implementer), this is 'incoming'. For tasks claimed
             in-place from 'provisional' (gatekeeper), this is 'provisional'.
+        task: Optional task dict with current state (used to read attempt_count
+            without an extra API call).
     """
     try:
         from .queue_utils import get_sdk
         sdk = get_sdk()
-        sdk.tasks.update(task_id, queue=source_queue, claimed_by=None, lease_expires_at=None)
+
+        # Circuit breaker only applies to claimed→incoming transitions
+        if source_queue == "incoming":
+            if task is None:
+                task = sdk.tasks.get(task_id) or {}
+            current_attempt_count = task.get("attempt_count", 0)
+            new_attempt_count = current_attempt_count + 1
+            threshold = _get_circuit_breaker_threshold()
+
+            if new_attempt_count >= threshold:
+                reason = (
+                    f"Circuit breaker: spawn failed {new_attempt_count} time(s) "
+                    f"(threshold={threshold}). Task could not be started."
+                )
+                sdk.tasks.update(
+                    task_id,
+                    queue="failed",
+                    claimed_by=None,
+                    lease_expires_at=None,
+                    attempt_count=new_attempt_count,
+                    execution_notes=reason,
+                )
+                print(
+                    f"[{datetime.now().isoformat()}] CIRCUIT BREAKER: {task_id} moved to failed "
+                    f"after {new_attempt_count} spawn failures (threshold={threshold})"
+                )
+                debug_log(f"Circuit breaker tripped for {task_id}: {reason}")
+                return
+
+            sdk.tasks.update(
+                task_id,
+                queue=source_queue,
+                claimed_by=None,
+                lease_expires_at=None,
+                attempt_count=new_attempt_count,
+            )
+        else:
+            # Provisional: just clear the claim, no attempt_count increment
+            sdk.tasks.update(task_id, queue=source_queue, claimed_by=None, lease_expires_at=None)
+
         debug_log(f"Requeued task {task_id} back to {source_queue}")
     except Exception as e:
         debug_log(f"Failed to requeue task {task_id}: {e}")
@@ -2368,7 +2469,7 @@ def _run_agent_evaluation_loop(queue_counts: dict | None) -> None:
                 debug_log(f"Spawn failed for {agent_name}: {e}")
                 if ctx.claimed_task:
                     source_queue = ctx.agent_config.get("claim_from", "incoming")
-                    _requeue_task(ctx.claimed_task["id"], source_queue=source_queue)
+                    _requeue_task(ctx.claimed_task["id"], source_queue=source_queue, task=ctx.claimed_task)
 
 
 def run_scheduler() -> None:

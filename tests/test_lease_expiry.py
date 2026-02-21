@@ -12,9 +12,15 @@ def _make_task(
     task_id: str,
     lease_expires_at: str | None,
     claimed_by: str | None = "agent-1",
+    attempt_count: int = 0,
 ) -> dict:
     """Helper to build a minimal task dict."""
-    return {"id": task_id, "lease_expires_at": lease_expires_at, "claimed_by": claimed_by}
+    return {
+        "id": task_id,
+        "lease_expires_at": lease_expires_at,
+        "claimed_by": claimed_by,
+        "attempt_count": attempt_count,
+    }
 
 
 def _expired(minutes_ago: int = 10) -> str:
@@ -36,6 +42,7 @@ class TestCheckAndRequeueExpiredLeases:
         self,
         claimed_tasks: list[dict],
         provisional_tasks: list[dict] | None = None,
+        threshold: int = 3,
     ) -> MagicMock:
         """Run the function with a mocked SDK and return the mock SDK.
 
@@ -43,6 +50,7 @@ class TestCheckAndRequeueExpiredLeases:
             claimed_tasks: Tasks returned for sdk.tasks.list(queue="claimed").
             provisional_tasks: Tasks returned for sdk.tasks.list(queue="provisional").
                 Defaults to [] (no provisional tasks with active claims).
+            threshold: Circuit breaker threshold (default 3).
         """
         mock_sdk = MagicMock()
 
@@ -55,14 +63,17 @@ class TestCheckAndRequeueExpiredLeases:
 
         mock_sdk.tasks.list.side_effect = _list
 
-        with patch("orchestrator.scheduler.queue_utils.get_sdk", return_value=mock_sdk):
+        with (
+            patch("orchestrator.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("orchestrator.scheduler._get_circuit_breaker_threshold", return_value=threshold),
+        ):
             check_and_requeue_expired_leases()
 
         return mock_sdk
 
     def test_expired_task_is_requeued(self) -> None:
         """A claimed task whose lease_expires_at is in the past is moved to incoming."""
-        task = _make_task("TASK-expired", _expired())
+        task = _make_task("TASK-expired", _expired(), attempt_count=0)
         sdk = self._run([task])
 
         sdk.tasks.update.assert_called_once_with(
@@ -70,6 +81,7 @@ class TestCheckAndRequeueExpiredLeases:
             queue="incoming",
             claimed_by=None,
             lease_expires_at=None,
+            attempt_count=1,
         )
 
     def test_valid_lease_task_is_not_requeued(self) -> None:
@@ -111,7 +123,10 @@ class TestCheckAndRequeueExpiredLeases:
         mock_sdk = MagicMock()
         mock_sdk.tasks.list.side_effect = lambda queue=None: None
 
-        with patch("orchestrator.scheduler.queue_utils.get_sdk", return_value=mock_sdk):
+        with (
+            patch("orchestrator.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("orchestrator.scheduler._get_circuit_breaker_threshold", return_value=3),
+        ):
             check_and_requeue_expired_leases()  # must not raise
 
         mock_sdk.tasks.update.assert_not_called()
@@ -128,7 +143,10 @@ class TestCheckAndRequeueExpiredLeases:
         mock_sdk = MagicMock()
         mock_sdk.tasks.list.side_effect = RuntimeError("network error")
 
-        with patch("orchestrator.scheduler.queue_utils.get_sdk", return_value=mock_sdk):
+        with (
+            patch("orchestrator.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("orchestrator.scheduler._get_circuit_breaker_threshold", return_value=3),
+        ):
             check_and_requeue_expired_leases()  # must not raise
 
     def test_z_suffix_timestamp_is_parsed(self) -> None:
@@ -138,7 +156,7 @@ class TestCheckAndRequeueExpiredLeases:
         # Format with 'Z' suffix (not '+00:00')
         lease = expired_dt.strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
 
-        task = _make_task("TASK-z-suffix", lease)
+        task = _make_task("TASK-z-suffix", lease, attempt_count=0)
         sdk = self._run([task])
 
         sdk.tasks.update.assert_called_once_with(
@@ -146,6 +164,7 @@ class TestCheckAndRequeueExpiredLeases:
             queue="incoming",
             claimed_by=None,
             lease_expires_at=None,
+            attempt_count=1,
         )
 
     def test_both_queues_are_queried(self) -> None:
@@ -205,6 +224,63 @@ class TestCheckAndRequeueExpiredLeases:
         assert calls["TASK-claimed-expired"] == "incoming"
         assert calls["TASK-prov-expired"] == "provisional"
 
+    # ------------------------------------------------------------------
+    # Circuit breaker tests
+    # ------------------------------------------------------------------
+
+    def test_circuit_breaker_trips_on_threshold_reached(self) -> None:
+        """When attempt_count + 1 >= threshold, move task to failed instead of incoming."""
+        # attempt_count=2, threshold=3 → new_attempt_count=3 >= 3 → trip
+        task = _make_task("TASK-cb", _expired(), attempt_count=2)
+        sdk = self._run([task], threshold=3)
+
+        sdk.tasks.update.assert_called_once()
+        call_kwargs = sdk.tasks.update.call_args
+        assert call_kwargs.args[0] == "TASK-cb"
+        assert call_kwargs.kwargs["queue"] == "failed"
+        assert call_kwargs.kwargs["attempt_count"] == 3
+
+    def test_circuit_breaker_does_not_trip_below_threshold(self) -> None:
+        """When attempt_count + 1 < threshold, task is returned to incoming."""
+        # attempt_count=1, threshold=3 → new_attempt_count=2 < 3 → requeue
+        task = _make_task("TASK-no-cb", _expired(), attempt_count=1)
+        sdk = self._run([task], threshold=3)
+
+        sdk.tasks.update.assert_called_once()
+        call_kwargs = sdk.tasks.update.call_args
+        assert call_kwargs.args[0] == "TASK-no-cb"
+        assert call_kwargs.kwargs["queue"] == "incoming"
+        assert call_kwargs.kwargs["attempt_count"] == 2
+
+    def test_circuit_breaker_increments_attempt_count_on_requeue(self) -> None:
+        """Each requeue increments attempt_count on the server."""
+        task = _make_task("TASK-incr", _expired(), attempt_count=0)
+        sdk = self._run([task], threshold=3)
+
+        sdk.tasks.update.assert_called_once()
+        assert sdk.tasks.update.call_args.kwargs["attempt_count"] == 1
+
+    def test_circuit_breaker_no_attempt_increment_for_provisional(self) -> None:
+        """Provisional lease expiry never increments attempt_count."""
+        task = _make_task("TASK-prov-cb", _expired(), claimed_by="gate-1", attempt_count=99)
+        sdk = self._run(claimed_tasks=[], provisional_tasks=[task], threshold=3)
+
+        sdk.tasks.update.assert_called_once_with(
+            "TASK-prov-cb",
+            queue="provisional",
+            claimed_by=None,
+            lease_expires_at=None,
+        )
+
+    def test_circuit_breaker_threshold_configurable(self) -> None:
+        """Circuit breaker threshold is respected when set to a custom value."""
+        # With threshold=1, the very first expiry should trip the breaker
+        task = _make_task("TASK-custom-threshold", _expired(), attempt_count=0)
+        sdk = self._run([task], threshold=1)
+
+        sdk.tasks.update.assert_called_once()
+        assert sdk.tasks.update.call_args.kwargs["queue"] == "failed"
+
 
 # ===========================================================================
 # _requeue_task unit tests
@@ -214,35 +290,54 @@ class TestCheckAndRequeueExpiredLeases:
 class TestRequeuTask:
     """_requeue_task must return a task to the correct source queue."""
 
-    def _run_requeue(self, task_id: str, source_queue: str = "incoming") -> MagicMock:
+    def _run_requeue(
+        self,
+        task_id: str,
+        source_queue: str = "incoming",
+        task: dict | None = None,
+        threshold: int = 3,
+    ) -> MagicMock:
         """Run _requeue_task with a mocked SDK and return the mock."""
         mock_sdk = MagicMock()
-        with patch("orchestrator.scheduler.queue_utils.get_sdk", return_value=mock_sdk):
-            _requeue_task(task_id, source_queue=source_queue)
+        mock_sdk.tasks.get.return_value = task or {"attempt_count": 0}
+
+        with (
+            patch("orchestrator.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("orchestrator.scheduler._get_circuit_breaker_threshold", return_value=threshold),
+        ):
+            _requeue_task(task_id, source_queue=source_queue, task=task)
+
         return mock_sdk
 
     def test_defaults_to_incoming(self) -> None:
         """With no source_queue argument, task is returned to 'incoming'."""
         mock_sdk = MagicMock()
-        with patch("orchestrator.scheduler.queue_utils.get_sdk", return_value=mock_sdk):
-            _requeue_task("TASK-abc")
+        mock_sdk.tasks.get.return_value = {"attempt_count": 0}
+
+        with (
+            patch("orchestrator.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("orchestrator.scheduler._get_circuit_breaker_threshold", return_value=3),
+        ):
+            _requeue_task("TASK-abc", task={"attempt_count": 0})
 
         mock_sdk.tasks.update.assert_called_once_with(
             "TASK-abc",
             queue="incoming",
             claimed_by=None,
             lease_expires_at=None,
+            attempt_count=1,
         )
 
     def test_incoming_source_queue(self) -> None:
         """Explicitly passing source_queue='incoming' returns task to incoming."""
-        sdk = self._run_requeue("TASK-impl", source_queue="incoming")
+        sdk = self._run_requeue("TASK-impl", source_queue="incoming", task={"attempt_count": 0})
 
         sdk.tasks.update.assert_called_once_with(
             "TASK-impl",
             queue="incoming",
             claimed_by=None,
             lease_expires_at=None,
+            attempt_count=1,
         )
 
     def test_provisional_source_queue(self) -> None:
@@ -260,6 +355,73 @@ class TestRequeuTask:
         """SDK failure must not propagate out of _requeue_task."""
         mock_sdk = MagicMock()
         mock_sdk.tasks.update.side_effect = RuntimeError("network error")
+        mock_sdk.tasks.get.return_value = {"attempt_count": 0}
 
-        with patch("orchestrator.scheduler.queue_utils.get_sdk", return_value=mock_sdk):
-            _requeue_task("TASK-fail")  # must not raise
+        with (
+            patch("orchestrator.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("orchestrator.scheduler._get_circuit_breaker_threshold", return_value=3),
+        ):
+            _requeue_task("TASK-fail", task={"attempt_count": 0})  # must not raise
+
+    # ------------------------------------------------------------------
+    # Circuit breaker tests for _requeue_task
+    # ------------------------------------------------------------------
+
+    def test_circuit_breaker_trips_on_spawn_failure(self) -> None:
+        """When attempt_count reaches threshold, move to failed instead of incoming."""
+        # attempt_count=2, threshold=3 → new=3 >= 3 → trip
+        sdk = self._run_requeue(
+            "TASK-spawn-cb",
+            source_queue="incoming",
+            task={"attempt_count": 2},
+            threshold=3,
+        )
+
+        sdk.tasks.update.assert_called_once()
+        call_kwargs = sdk.tasks.update.call_args.kwargs
+        assert call_kwargs["queue"] == "failed"
+        assert call_kwargs["attempt_count"] == 3
+
+    def test_circuit_breaker_does_not_trip_below_threshold(self) -> None:
+        """Below threshold, task goes back to incoming."""
+        sdk = self._run_requeue(
+            "TASK-spawn-ok",
+            source_queue="incoming",
+            task={"attempt_count": 1},
+            threshold=3,
+        )
+
+        call_kwargs = sdk.tasks.update.call_args.kwargs
+        assert call_kwargs["queue"] == "incoming"
+        assert call_kwargs["attempt_count"] == 2
+
+    def test_circuit_breaker_fetches_task_if_not_provided(self) -> None:
+        """When no task dict is provided, fetches task from server."""
+        mock_sdk = MagicMock()
+        mock_sdk.tasks.get.return_value = {"attempt_count": 0}
+
+        with (
+            patch("orchestrator.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("orchestrator.scheduler._get_circuit_breaker_threshold", return_value=3),
+        ):
+            _requeue_task("TASK-fetch", source_queue="incoming")
+
+        mock_sdk.tasks.get.assert_called_once_with("TASK-fetch")
+        assert mock_sdk.tasks.update.call_args.kwargs["attempt_count"] == 1
+
+    def test_circuit_breaker_not_applied_for_provisional(self) -> None:
+        """Provisional requeues never trigger circuit breaker (no attempt_count change)."""
+        sdk = self._run_requeue(
+            "TASK-prov",
+            source_queue="provisional",
+            task={"attempt_count": 99},
+            threshold=1,
+        )
+
+        # Even with threshold=1 and attempt_count=99, provisional should not trip
+        sdk.tasks.update.assert_called_once_with(
+            "TASK-prov",
+            queue="provisional",
+            claimed_by=None,
+            lease_expires_at=None,
+        )
