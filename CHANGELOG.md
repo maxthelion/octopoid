@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Performance
+
+- **Fix N+1 action queries in dashboard report** ([TASK-1f675c20])
+  - `orchestrator/reports.py`: Replaced per-draft `_fetch_draft_actions()` N+1 pattern in `_gather_drafts()` with a single `sdk.actions.list(entity_type="draft", status="pending")` call. Actions are now grouped client-side by `entity_id`. With 50 drafts, this reduces 50 API calls to 1 on every dashboard refresh, and stays at 1 regardless of draft count.
+  - Each draft dict now includes an `actions` field (list of pending action objects) so the dashboard can display action buttons.
+  - `tests/test_reports.py`: Added `TestGatherDrafts` with 6 tests covering correct grouping, single-call guarantee, error handling, and field completeness.
+
 ### Fixed
 
 - **Stale Python bytecode in scheduler** ([TASK-83d87eb8])

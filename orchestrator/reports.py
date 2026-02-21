@@ -355,21 +355,39 @@ def _store_staging_url(pr_number: int, staging_url: str, *, branch_name: str | N
 
 
 def _gather_drafts(sdk: "OctopoidSDK") -> list[dict[str, Any]]:
-    """Gather drafts from the API server."""
+    """Gather drafts from the API server, including pending actions for each draft.
+
+    Actions are fetched in a single bulk call (not one per draft) and grouped
+    client-side by entity_id to avoid N+1 API requests.
+    """
     try:
         drafts = sdk.drafts.list()
-        return [
-            {
-                "id": d.get("id"),
-                "title": d.get("title"),
-                "status": d.get("status", "idea"),
-                "file_path": d.get("file_path"),
-                "created_at": d.get("created_at"),
-            }
-            for d in drafts
-        ]
     except Exception:
         return []
+
+    # Fetch all pending draft actions in a single call, then group by entity_id.
+    # This replaces N individual GET /api/v1/actions calls (one per draft) with 1.
+    try:
+        all_actions = sdk.actions.list(entity_type="draft", status="pending")
+        actions_by_draft: dict[str, list[dict[str, Any]]] = {}
+        for action in all_actions:
+            eid = str(action.get("entity_id", ""))
+            if eid:
+                actions_by_draft.setdefault(eid, []).append(action)
+    except Exception:
+        actions_by_draft = {}
+
+    return [
+        {
+            "id": d.get("id"),
+            "title": d.get("title"),
+            "status": d.get("status", "idea"),
+            "file_path": d.get("file_path"),
+            "created_at": d.get("created_at"),
+            "actions": actions_by_draft.get(str(d.get("id", "")), []),
+        }
+        for d in drafts
+    ]
 
 
 # ---------------------------------------------------------------------------
