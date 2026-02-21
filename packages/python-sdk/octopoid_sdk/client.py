@@ -236,6 +236,59 @@ class TasksAPI:
         return self.client._request('POST', f'/api/v1/tasks/{task_id}/requeue', json={})
 
 
+class ActionsAPI:
+    """Actions API endpoints — pending actions on entities (drafts, tasks, etc.)"""
+
+    def __init__(self, client: 'OctopoidSDK'):
+        self.client = client
+
+    def list(
+        self,
+        entity_type: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        status: Optional[str] = None,
+        **filters,
+    ) -> List[Dict[str, Any]]:
+        """List actions with optional filters.
+
+        Args:
+            entity_type: Entity type to filter by (e.g., 'draft', 'task')
+            entity_id: Entity ID to filter by
+            status: Action status to filter by (e.g., 'pending', 'execute_requested')
+            **filters: Additional filter params
+
+        Returns:
+            List of action dicts
+        """
+        params: Dict[str, Any] = {}
+        if entity_type:
+            params['entity_type'] = entity_type
+        if entity_id:
+            params['entity_id'] = entity_id
+        if status:
+            params['status'] = status
+        params.update(filters)
+
+        response = self.client._request('GET', '/api/v1/actions', params=params)
+        if isinstance(response, dict) and 'actions' in response:
+            return response['actions']
+        return response if isinstance(response, list) else []
+
+    def execute(self, action_id: str) -> Dict[str, Any]:
+        """Request execution of an action.
+
+        Sets the action status to 'execute_requested' so the scheduler
+        can pick it up and run the appropriate handler.
+
+        Args:
+            action_id: Action ID to execute
+
+        Returns:
+            Updated action dict
+        """
+        return self.client._request('POST', f'/api/v1/actions/{action_id}/execute', json={})
+
+
 class DraftsAPI:
     """Drafts API endpoints"""
 
@@ -466,6 +519,7 @@ class OctopoidSDK:
         self.flows = FlowsAPI(self)
         self.messages = MessagesAPI(self)
         self.status = StatusAPI(self)
+        self.actions = ActionsAPI(self)
 
     def _request(
         self,

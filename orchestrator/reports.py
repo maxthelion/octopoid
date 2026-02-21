@@ -365,19 +365,38 @@ def _store_staging_url(pr_number: int, staging_url: str, *, branch_name: str | N
 
 
 def _gather_drafts(sdk: "OctopoidSDK") -> list[dict[str, Any]]:
-    """Gather drafts from the API server."""
+    """Gather drafts from the API server, including pending actions per draft."""
     try:
         drafts = sdk.drafts.list()
-        return [
-            {
-                "id": d.get("id"),
-                "title": d.get("title"),
-                "status": d.get("status", "idea"),
-                "file_path": d.get("file_path"),
-                "created_at": d.get("created_at"),
-            }
-            for d in drafts
-        ]
+        result = []
+        for d in drafts:
+            draft_id = d.get("id")
+            actions = _fetch_draft_actions(sdk, draft_id)
+            result.append(
+                {
+                    "id": draft_id,
+                    "title": d.get("title"),
+                    "status": d.get("status", "idea"),
+                    "file_path": d.get("file_path"),
+                    "created_at": d.get("created_at"),
+                    "actions": actions,
+                }
+            )
+        return result
+    except Exception:
+        return []
+
+
+def _fetch_draft_actions(sdk: "OctopoidSDK", draft_id: Any) -> list[dict[str, Any]]:
+    """Fetch pending actions for a single draft. Returns empty list on failure."""
+    if draft_id is None:
+        return []
+    try:
+        return sdk.actions.list(
+            entity_type="draft",
+            entity_id=str(draft_id),
+            status="pending",
+        )
     except Exception:
         return []
 

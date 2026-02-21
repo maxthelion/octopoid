@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Dashboard action buttons on draft detail view** ([TASK-e981df58])
+  - `packages/python-sdk/octopoid_sdk/client.py`: Added `ActionsAPI` with `list()` (filter by entity_type, entity_id, status) and `execute(action_id)` methods. Registered as `sdk.actions` on `OctopoidSDK`.
+  - `orchestrator/reports.py`: `_gather_drafts()` now fetches pending actions per draft via `sdk.actions.list(entity_type='draft', entity_id=..., status='pending')` and attaches them under `actions` key. Failures are silently swallowed so reports still work without server-side actions support.
+  - `packages/dashboard/tabs/drafts.py`: Draft detail view now renders action buttons in a bar below the content header when the selected draft has pending actions. Button click calls `sdk.actions.execute()` in a background thread (`@work(thread=True)`) and shows a "Action requested" notification on success.
+  - `packages/dashboard/styles/dashboard.tcss`: Added `.draft-action-bar` and `.draft-action-btn` styles for the action button row.
+
 - **Circuit breaker: stop infinite requeue loops after 3 failures** ([TASK-13aec649])
   - `orchestrator/scheduler.py`: Added `_get_circuit_breaker_threshold()` — reads `agents.circuit_breaker_threshold` from `.octopoid/config.yaml`, defaults to 3.
   - `check_and_requeue_expired_leases()` now increments `attempt_count` on the task when requeuing claimed→incoming. If `attempt_count` reaches the threshold, the task is moved to `failed` instead of `incoming`. Provisional lease expiry is unaffected (no `attempt_count` change).
