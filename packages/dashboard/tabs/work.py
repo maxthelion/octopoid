@@ -10,6 +10,7 @@ from textual.widgets import Label, ListView
 from textual.containers import Horizontal
 
 from ..widgets.task_card import TaskCard
+from .base import TabBase
 
 
 class TaskSelected(Message):
@@ -96,18 +97,8 @@ class WorkColumn(Widget):
             pass
 
 
-class WorkTab(Widget):
+class WorkTab(TabBase):
     """Kanban board with Incoming, In Progress, and In Review columns."""
-
-    DEFAULT_CSS = """
-    WorkTab {
-        height: 100%;
-    }
-    """
-
-    def __init__(self, report: dict | None = None, **kwargs: object) -> None:
-        super().__init__(**kwargs)
-        self._report = report or {}
 
     def compose(self) -> ComposeResult:
         work = self._report.get("work", {})
@@ -159,7 +150,5 @@ class WorkTab(Widget):
         except Exception:
             pass
 
-    def update_data(self, report: dict) -> None:
-        """Replace the report and recompose the board."""
-        self._report = report
+    def _refresh(self) -> None:
         self.refresh(recompose=True)

@@ -10,6 +10,7 @@ from pathlib import Path
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual.theme import Theme
 from textual.widgets import Footer, Header, TabbedContent, TabPane
 
 from .data import DataManager
@@ -19,6 +20,26 @@ from .tabs.inbox import InboxTab
 from .tabs.tasks import TasksTab
 from .tabs.work import TaskSelected, WorkTab
 from .widgets.task_detail import TaskDetailModal
+
+# Custom dark theme that maps to the Textual CSS variable names used in dashboard.tcss
+_OCTOPOID_THEME = Theme(
+    name="octopoid-dark",
+    primary="#4fc3f7",
+    secondary="#ce93d8",
+    warning="#ffa726",
+    error="#ef5350",
+    success="#66bb6a",
+    accent="#4fc3f7",
+    foreground="#e0e0e0",
+    background="#1a1a2e",
+    surface="#1a1a2e",
+    panel="#0f3460",
+    dark=True,
+    variables={
+        "text-muted": "#616161",
+        "border": "#2a5298",
+    },
+)
 
 
 class OctopoidDashboard(App):
@@ -66,6 +87,8 @@ class OctopoidDashboard(App):
         yield Footer()
 
     def on_mount(self) -> None:
+        self.register_theme(_OCTOPOID_THEME)
+        self.theme = "octopoid-dark"
         self._fetch_data(force=True)
         self.set_interval(5, self._fetch_data)
 

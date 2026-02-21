@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Dashboard refactor: Textual theme + shared utils + TabBase** ([TASK-cbd3c1c2])
+  - `packages/dashboard/utils.py`: New module with `format_age()` and `time_ago()` — replaces duplicated implementations in agents.py, done.py, prs.py, tasks.py, and task_card.py.
+  - `packages/dashboard/tabs/base.py`: New `TabBase` class extending `Widget` with shared `__init__`, `update_data`, and `_refresh` pattern. All five main tabs now inherit from `TabBase`.
+  - `packages/dashboard/styles/dashboard.tcss`: Replaced all hardcoded hex colors with Textual theme variables (`$accent`, `$error`, `$warning`, `$success`, `$secondary`, `$text`, `$text-muted`, `$surface`, `$panel`, `$border`, etc.). Also moved `TaskDetailModal`/`TaskDetail` DEFAULT_CSS into the file.
+  - `packages/dashboard/app.py`: Registers a custom `octopoid-dark` Textual theme with the exact color palette used by the dashboard, applied on mount.
+  - `packages/dashboard/widgets/task_detail.py`: Removed `DEFAULT_CSS` blocks (now in dashboard.tcss).
+
 - **Action handler registry and SDK ActionsAPI** ([TASK-f1c3b9d4])
   - `packages/python-sdk/octopoid_sdk/client.py`: Added `ActionsAPI` class with `create`, `list`, `execute`, `complete`, and `fail` methods. Exposed as `sdk.actions` on `OctopoidSDK`.
   - `orchestrator/actions.py`: New module — handler registry (`_HANDLER_REGISTRY` dict), `@register_action_handler(action_type)` decorator, and `get_handler(action_type)` lookup.
