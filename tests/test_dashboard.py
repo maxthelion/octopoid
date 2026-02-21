@@ -127,16 +127,16 @@ class TestDataManager:
 
 
 # ---------------------------------------------------------------------------
-# _format_age utility tests (agents tab)
+# format_age utility tests (shared utils module)
 # ---------------------------------------------------------------------------
 
 
 class TestFormatAge:
-    """Tests for _format_age() in packages/dashboard/tabs/agents.py."""
+    """Tests for format_age() in packages/dashboard/utils.py."""
 
     def _fmt(self, ts: str | None) -> str:
-        from packages.dashboard.tabs.agents import _format_age
-        return _format_age(ts)
+        from packages.dashboard.utils import format_age
+        return format_age(ts)
 
     def test_none_returns_empty(self):
         assert self._fmt(None) == ""
