@@ -48,6 +48,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **Python action handler registry removed** ([TASK-39a33501])
+  - Deleted `orchestrator/actions.py` — `_HANDLER_REGISTRY`, `@register_action_handler`, `get_handler`, and built-in handlers are gone.
+  - Removed `process_actions` job from `orchestrator/jobs.py` and `.octopoid/jobs.yaml`.
+  - Removed handler registry tests from `tests/test_actions.py` (SDK ActionsAPI tests remain).
+
 - **`guard_pr_mergeable` removed from scheduler guard chain** ([TASK-8a02dd06])
   - Removed `guard_pr_mergeable` function from `orchestrator/scheduler.py` and the `AGENT_GUARDS` list.
   - This guard ran after `guard_claim_task`, meaning tasks were already claimed on the server when the conflict check fired. When it found conflicts it tried to `sdk.tasks.reject()`, but claimed tasks can't be rejected (that transition only works from provisional), causing 409 errors and leaving orphaned claimed tasks with no running agent.
