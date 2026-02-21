@@ -1075,6 +1075,7 @@ def handle_agent_result_via_flow(task_id: str, agent_name: str, task_dir: Path, 
             # Agent couldn't complete — find on_fail state from agent condition
             message = result.get("message", "Agent could not complete review")
             debug_log(f"Flow dispatch: agent failure for {task_id}: {message}")
+            sdk.tasks.update(task_id, last_error=message)
             for condition in transition.conditions:
                 if condition.type == "agent" and condition.on_fail:
                     debug_log(f"Flow dispatch: rejecting {task_id} back to {condition.on_fail}")
@@ -1116,7 +1117,7 @@ def handle_agent_result_via_flow(task_id: str, agent_name: str, task_dir: Path, 
             # the flow system itself crashes (load_flow, execute_steps, etc.).  We
             # cannot consult the flow to find the target because the flow machinery is
             # what just failed.  "failed" is the only safe terminal state here.
-            sdk.tasks.update(task_id, queue='failed', execution_notes=f'Flow dispatch error: {e}')
+            sdk.tasks.update(task_id, queue='failed', execution_notes=f'Flow dispatch error: {e}', last_error=str(e))
         except Exception:
             debug_log(f"Failed to move {task_id} to failed queue")
         return True  # Task moved to terminal state (or already gone) — PID safe to remove
@@ -1314,7 +1315,7 @@ def _handle_fail_outcome(sdk: object, task_id: str, task: dict, reason: str, cur
     """
     if current_queue == "claimed":
         fail_target = _get_fail_target_from_flow(task, current_queue)
-        sdk.tasks.update(task_id, queue=fail_target)
+        sdk.tasks.update(task_id, queue=fail_target, last_error=reason)
         debug_log(f"Task {task_id}: failed (claimed → {fail_target}): {reason}")
         return True
     else:
@@ -1413,6 +1414,7 @@ def handle_agent_result(task_id: str, agent_name: str, task_dir: Path) -> bool:
                     task_id,
                     queue="failed",
                     execution_notes=f"Step failure after {failure_count} attempts: {e}",
+                    last_error=str(e),
                 )
             except Exception as update_err:
                 debug_log(f"handle_agent_result: failed to update {task_id} to failed: {update_err}")
@@ -1965,7 +1967,15 @@ def check_and_requeue_expired_leases() -> None:
                     expires_at = datetime.fromisoformat(lease_expires.replace('Z', '+00:00'))
                     if expires_at < now:
                         task_id = task["id"]
-                        sdk.tasks.update(task_id, queue=target_queue, claimed_by=None, lease_expires_at=None)
+                        current_requeue_count = task.get("requeue_count") or 0
+                        sdk.tasks.update(
+                            task_id,
+                            queue=target_queue,
+                            claimed_by=None,
+                            lease_expires_at=None,
+                            requeue_count=current_requeue_count + 1,
+                            last_error="Lease expired",
+                        )
                         debug_log(f"Requeued expired lease: {task_id} → {target_queue} (expired {lease_expires})")
                         print(f"[{datetime.now().isoformat()}] Requeued expired lease: {task_id} → {target_queue}")
                 except (ValueError, TypeError):
@@ -2198,7 +2208,7 @@ def run_housekeeping() -> None:
 # Spawn Strategies
 # =============================================================================
 
-def _requeue_task(task_id: str, source_queue: str = "incoming") -> None:
+def _requeue_task(task_id: str, source_queue: str = "incoming", task: dict | None = None) -> None:
     """Requeue a task back to its source queue after spawn failure.
 
     Args:
@@ -2206,11 +2216,20 @@ def _requeue_task(task_id: str, source_queue: str = "incoming") -> None:
         source_queue: Queue the task should return to. For tasks claimed from
             'incoming' (implementer), this is 'incoming'. For tasks claimed
             in-place from 'provisional' (gatekeeper), this is 'provisional'.
+        task: Full task dict (if available) to read current requeue_count from.
     """
     try:
         from .queue_utils import get_sdk
         sdk = get_sdk()
-        sdk.tasks.update(task_id, queue=source_queue, claimed_by=None, lease_expires_at=None)
+        current_requeue_count = (task or {}).get("requeue_count") or 0
+        sdk.tasks.update(
+            task_id,
+            queue=source_queue,
+            claimed_by=None,
+            lease_expires_at=None,
+            requeue_count=current_requeue_count + 1,
+            last_error="Spawn failed",
+        )
         debug_log(f"Requeued task {task_id} back to {source_queue}")
     except Exception as e:
         debug_log(f"Failed to requeue task {task_id}: {e}")
@@ -2368,7 +2387,7 @@ def _run_agent_evaluation_loop(queue_counts: dict | None) -> None:
                 debug_log(f"Spawn failed for {agent_name}: {e}")
                 if ctx.claimed_task:
                     source_queue = ctx.agent_config.get("claim_from", "incoming")
-                    _requeue_task(ctx.claimed_task["id"], source_queue=source_queue)
+                    _requeue_task(ctx.claimed_task["id"], source_queue=source_queue, task=ctx.claimed_task)
 
 
 def run_scheduler() -> None:
