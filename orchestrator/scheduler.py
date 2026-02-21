@@ -1053,7 +1053,7 @@ def read_result_json(task_dir: Path) -> dict:
 
 
 
-def handle_agent_result_via_flow(task_id: str, agent_name: str, task_dir: Path, expected_queue: str | None = None) -> None:
+def handle_agent_result_via_flow(task_id: str, agent_name: str, task_dir: Path, expected_queue: str | None = None) -> bool:
     """Handle agent result using the task's flow definition.
 
     Replaces the hardcoded if/else dispatch for agent roles. Reads the flow,
@@ -1063,6 +1063,10 @@ def handle_agent_result_via_flow(task_id: str, agent_name: str, task_dir: Path, 
       {"status": "success", "decision": "approve"/"reject", "comment": "<markdown>"}
     or on failure:
       {"status": "failure", "message": "<reason>"}
+
+    Returns:
+        True if the task was transitioned or is gone (PID safe to remove).
+        False if the task was not transitioned and the PID should be kept for retry.
 
     Args:
         task_id: Task identifier
@@ -1086,7 +1090,7 @@ def handle_agent_result_via_flow(task_id: str, agent_name: str, task_dir: Path, 
         task = sdk.tasks.get(task_id)
         if not task:
             debug_log(f"Flow dispatch: task {task_id} not found on server, skipping")
-            return
+            return True  # Nothing to track — PID safe to remove
 
         current_queue = task.get("queue", "unknown")
 
@@ -1101,7 +1105,7 @@ def handle_agent_result_via_flow(task_id: str, agent_name: str, task_dir: Path, 
                 f"Flow dispatch: task {task_id} moved from expected '{expected_queue}' "
                 f"to '{current_queue}', discarding stale result from {agent_name}"
             )
-            return
+            return True  # Task already moved on — PID safe to remove
 
         lookup_queue = expected_queue if expected_queue else current_queue
         flow_name = task.get("flow", "default")
@@ -1115,7 +1119,7 @@ def handle_agent_result_via_flow(task_id: str, agent_name: str, task_dir: Path, 
 
         if not transitions:
             debug_log(f"Flow dispatch: no transition from '{current_queue}' in flow '{flow_name}' for task {task_id}")
-            return
+            return True  # No transition defined — nothing to retry, PID safe to remove
 
         transition = transitions[0]  # Take first matching transition
 
@@ -1130,21 +1134,21 @@ def handle_agent_result_via_flow(task_id: str, agent_name: str, task_dir: Path, 
                 if condition.type == "agent" and condition.on_fail:
                     debug_log(f"Flow dispatch: rejecting {task_id} back to {condition.on_fail}")
                     sdk.tasks.reject(task_id, reason=message, rejected_by=agent_name)
-                    return
+                    return True  # Task transitioned — PID safe to remove
             # Default: reject back to incoming
             sdk.tasks.reject(task_id, reason=message, rejected_by=agent_name)
-            return
+            return True  # Task transitioned — PID safe to remove
 
         # Agent-specific decision handling (approve/reject for gatekeeper)
         if decision == "reject":
             debug_log(f"Flow dispatch: agent rejected task {task_id}")
             reject_with_feedback(task, result, task_dir)
             print(f"[{datetime.now().isoformat()}] Agent {agent_name} rejected task {task_id}")
-            return
+            return True  # Task transitioned — PID safe to remove
 
         if decision != "approve":
             debug_log(f"Flow dispatch: unknown decision '{decision}' for {task_id}, leaving in {current_queue} for human review")
-            return
+            return True  # Cannot act — human review needed, retrying won't help
 
         # Execute the transition's runs (approve path — only reached on explicit "approve")
         if transition.runs:
@@ -1154,6 +1158,8 @@ def handle_agent_result_via_flow(task_id: str, agent_name: str, task_dir: Path, 
         else:
             # No runs defined — just log
             debug_log(f"Flow dispatch: no runs defined for transition from '{current_queue}', task {task_id}")
+
+        return True  # Steps executed (or no steps needed) — PID safe to remove
 
     except Exception as e:
         import traceback
@@ -1168,6 +1174,7 @@ def handle_agent_result_via_flow(task_id: str, agent_name: str, task_dir: Path, 
             sdk.tasks.update(task_id, queue='failed', execution_notes=f'Flow dispatch error: {e}')
         except Exception:
             debug_log(f"Failed to move {task_id} to failed queue")
+        return True  # Task moved to terminal state (or already gone) — PID safe to remove
 
 
 def _read_or_infer_result(task_dir: Path) -> dict:
@@ -1299,22 +1306,28 @@ def _reset_step_failure_count(task_dir: Path) -> None:
         pass
 
 
-def _handle_done_outcome(sdk: object, task_id: str, task: dict, result: dict, task_dir: Path) -> None:
+def _handle_done_outcome(sdk: object, task_id: str, task: dict, result: dict, task_dir: Path) -> bool:
     """Execute flow steps for a successfully-completed task, then perform the transition.
 
     The engine owns the transition:
     1. Look up the flow transition from "claimed"
     2. Run pre-transition steps (push_branch, run_tests, create_pr, etc.)
     3. Engine calls the right API method based on the transition's to_state
+
+    Returns:
+        True if the task was transitioned (PID safe to remove).
+        False if the task was not transitioned and the PID should be kept for retry.
     """
     from .flow import load_flow
     from .steps import execute_steps
 
     current_queue = task.get("queue", "unknown")
     if current_queue != "claimed":
-        # Task already moved past claimed — skip to avoid double-submitting.
+        # Task is not in "claimed" — do not transition. Return False so the
+        # caller keeps the PID and retries next tick. This prevents orphaning
+        # a task that is still claimed but was observed in a transient state.
         debug_log(f"Task {task_id}: outcome=done but queue={current_queue}, skipping")
-        return
+        return False
 
     flow_name = task.get("flow", "default")
     flow = load_flow(flow_name)
@@ -1328,7 +1341,7 @@ def _handle_done_outcome(sdk: object, task_id: str, task: dict, result: dict, ta
         # Fallback: direct submit if no transition defined in flow
         sdk.tasks.submit(task_id=task_id, commits_count=0, turns_used=0)
         debug_log(f"Task {task_id}: no flow transition from claimed, used direct submit")
-        return
+        return True
 
     transition = transitions[0]
 
@@ -1340,40 +1353,53 @@ def _handle_done_outcome(sdk: object, task_id: str, task: dict, result: dict, ta
     # Engine performs the transition — the step list no longer needs a "move" step
     _perform_transition(sdk, task_id, transition.to_state)
     print(f"[{datetime.now().isoformat()}] Task {task_id} transitioned to {transition.to_state} via flow")
+    return True
 
 
-def _handle_fail_outcome(sdk: object, task_id: str, task: dict, reason: str, current_queue: str) -> None:
+def _handle_fail_outcome(sdk: object, task_id: str, task: dict, reason: str, current_queue: str) -> bool:
     """Move a failed task to the appropriate queue, consulting the flow for the target.
 
     Loads the task's flow to find any on_fail target defined on conditions for
     the current transition. Falls back to "failed" if the flow defines no
     failure path.
+
+    Returns:
+        True if the task was transitioned (PID safe to remove).
+        False if the task was not transitioned and the PID should be kept for retry.
     """
     if current_queue == "claimed":
         fail_target = _get_fail_target_from_flow(task, current_queue)
         sdk.tasks.update(task_id, queue=fail_target)
         debug_log(f"Task {task_id}: failed (claimed → {fail_target}): {reason}")
+        return True
     else:
         debug_log(f"Task {task_id}: outcome=failed but queue={current_queue}, skipping")
+        return False
 
 
-def _handle_continuation_outcome(sdk: object, task_id: str, task: dict, agent_name: str, current_queue: str) -> None:
+def _handle_continuation_outcome(sdk: object, task_id: str, task: dict, agent_name: str, current_queue: str) -> bool:
     """Move a task to the continuation queue, consulting the flow for the target.
 
     Loads the task's flow to find any continuation routing defined there.
     Currently flows have no dedicated continuation concept, so this always
     falls back to "needs_continuation". When flows gain on_continuation
     support, _get_continuation_target_from_flow will return that target.
+
+    Returns:
+        True if the task was transitioned (PID safe to remove).
+        False if the task was not transitioned and the PID should be kept for retry.
     """
     if current_queue == "claimed":
         continuation_target = _get_continuation_target_from_flow(task, current_queue)
         sdk.tasks.update(task_id, queue=continuation_target)
         debug_log(f"Task {task_id}: needs continuation by {agent_name} (→ {continuation_target})")
+        return True
     else:
         debug_log(f"Task {task_id}: outcome=needs_continuation but queue={current_queue}, skipping")
+        return False
 
 
-def handle_agent_result(task_id: str, agent_name: str, task_dir: Path) -> None:
+def handle_agent_result(task_id: str, agent_name: str, task_dir: Path) -> bool:
     """Handle the result of a script-based agent run.
 
     Reads result.json and transitions the task using flow steps:
@@ -1386,8 +1412,13 @@ def handle_agent_result(task_id: str, agent_name: str, task_dir: Path) -> None:
 
     Raises on step failure so the caller (check_and_update_finished_agents) knows
     NOT to delete the PID — the next tick will retry. After 3 consecutive failures
-    for the same task, the task is moved to failed and the function returns cleanly
+    for the same task, the task is moved to failed and the function returns True
     (so the PID is removed).
+
+    Returns:
+        True if the task was transitioned or is gone (PID safe to remove).
+        False if the task was not transitioned and the PID should be kept for retry.
+        Raises on transient step failure (caller keeps PID for retry).
 
     Args:
         task_id: Task identifier
@@ -1403,20 +1434,20 @@ def handle_agent_result(task_id: str, agent_name: str, task_dir: Path) -> None:
     task = sdk.tasks.get(task_id)
     if not task:
         debug_log(f"Task {task_id}: not found on server, skipping result handling")
-        return
+        return True  # Nothing to track — PID safe to remove
 
     current_queue = task.get("queue", "unknown")
     debug_log(f"Task {task_id}: current queue = {current_queue}, outcome = {outcome}")
 
     try:
         if outcome in ("done", "submitted"):
-            _handle_done_outcome(sdk, task_id, task, result, task_dir)
+            return _handle_done_outcome(sdk, task_id, task, result, task_dir)
         elif outcome in ("failed", "error"):
-            _handle_fail_outcome(sdk, task_id, task, result.get("reason", "Agent reported failure"), current_queue)
+            return _handle_fail_outcome(sdk, task_id, task, result.get("reason", "Agent reported failure"), current_queue)
         elif outcome == "needs_continuation":
-            _handle_continuation_outcome(sdk, task_id, task, agent_name, current_queue)
+            return _handle_continuation_outcome(sdk, task_id, task, agent_name, current_queue)
         else:
-            _handle_fail_outcome(sdk, task_id, task, f"Unknown outcome: {outcome}", current_queue)
+            return _handle_fail_outcome(sdk, task_id, task, f"Unknown outcome: {outcome}", current_queue)
     except Exception as e:
         import traceback
         failure_count = _increment_step_failure_count(task_dir)
@@ -1441,7 +1472,7 @@ def handle_agent_result(task_id: str, agent_name: str, task_dir: Path) -> None:
             except Exception as update_err:
                 debug_log(f"handle_agent_result: failed to update {task_id} to failed: {update_err}")
             _reset_step_failure_count(task_dir)
-            return  # Return cleanly so the caller removes the PID
+            return True  # Task moved to terminal state — PID safe to remove
 
         raise  # Re-raise so caller leaves PID in tracking for retry
 
@@ -1605,13 +1636,21 @@ def check_and_update_finished_agents() -> None:
                     try:
                         if claim_from != "incoming":
                             # Review agents (claim from provisional, etc.) use flow dispatch
-                            handle_agent_result_via_flow(task_id, instance_name, task_dir, expected_queue=claim_from)
+                            transitioned = handle_agent_result_via_flow(task_id, instance_name, task_dir, expected_queue=claim_from)
                         else:
                             # Implementers (claim from incoming) use outcome dispatch
-                            handle_agent_result(task_id, instance_name, task_dir)
-                        # Only remove PID on success — failed handling keeps PID for retry
-                        del pids[pid]
-                        print(f"[{datetime.now().isoformat()}] Instance {instance_name} (PID {pid}) finished")
+                            transitioned = handle_agent_result(task_id, instance_name, task_dir)
+                        # Only remove PID when the handler confirmed a state transition
+                        # (or the task is gone). If transitioned=False, the task was not
+                        # moved — keep the PID so the next tick retries.
+                        if transitioned:
+                            del pids[pid]
+                            print(f"[{datetime.now().isoformat()}] Instance {instance_name} (PID {pid}) finished")
+                        else:
+                            debug_log(
+                                f"Instance {instance_name} (PID {pid}): handler returned False "
+                                f"(task not transitioned), keeping PID for retry"
+                            )
                     except Exception as e:
                         print(
                             f"[{datetime.now().isoformat()}] Instance {instance_name} (PID {pid}) "

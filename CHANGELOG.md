@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Atomic PID cleanup: tasks no longer orphaned in "claimed"** ([TASK-8c78de2e])
+  - `handle_agent_result`, `handle_agent_result_via_flow`, and their private outcome helpers now return `bool` indicating whether the task was actually transitioned.
+  - `check_and_update_finished_agents` only removes a PID from `running_pids.json` when the handler returns `True` (task transitioned or gone). If the handler returns `False` (task not transitioned), the PID is kept for retry on the next tick.
+  - Key fix: `_handle_done_outcome` returns `False` when `current_queue != "claimed"`, preventing the race condition where a dead PID was cleaned up but the task was left stuck in "claimed" with no agent tracking it.
+
 - **Dashboard header/tab styling regression from PR #154** ([TASK-f7226824])
   - Scoped global `Tabs`/`Tab` CSS rules to `#tabs > Tabs` so they only affect the outer tab bar, restoring the title bar and proper tab spacing.
   - Fixed draft list items to display the draft's actual server ID instead of a sequential 1/2/3 index.
