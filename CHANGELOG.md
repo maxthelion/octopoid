@@ -51,6 +51,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `packages/dashboard/app.py`: Registers a custom `octopoid-dark` Textual theme with the exact color palette used by the dashboard, applied on mount.
   - `packages/dashboard/widgets/task_detail.py`: Removed `DEFAULT_CSS` blocks (now in dashboard.tcss).
 
+- **action_data JSON field support for draft actions** ([TASK-d829e1c7])
+  - `packages/python-sdk/octopoid_sdk/client.py`: Updated `ActionsAPI.create()` to accept `action_data` (dict of button definitions) and `description` parameters. Made `action_type` optional with default `"proposal"`. Removed `payload` parameter.
+  - `orchestrator/reports.py`: `_fetch_draft_actions` now parses `action_data` from a JSON string to a dict if needed, so dashboard consumers can access `action_data["buttons"]` directly.
+  - `packages/dashboard/tabs/drafts.py`: Action bar now renders one button per entry in `action_data["buttons"]` instead of one per action. Clicking posts the button command as `sdk.messages.create(type="action_command")`. Added "Other" free-text input that posts `type="action_freetext"` messages with draft entity context.
+
 - **Action handler registry and SDK ActionsAPI** ([TASK-f1c3b9d4])
   - `packages/python-sdk/octopoid_sdk/client.py`: Added `ActionsAPI` class with `create`, `list`, `execute`, `complete`, and `fail` methods. Exposed as `sdk.actions` on `OctopoidSDK`.
   - `orchestrator/actions.py`: New module — handler registry (`_HANDLER_REGISTRY` dict), `@register_action_handler(action_type)` decorator, and `get_handler(action_type)` lookup.
