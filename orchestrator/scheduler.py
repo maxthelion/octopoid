@@ -1583,6 +1583,54 @@ def process_orchestrator_hooks(provisional_tasks: list | None = None) -> None:
         print(f"[{datetime.now().isoformat()}] ERROR: process_orchestrator_hooks failed: {e}")
         debug_log(f"Error processing orchestrator hooks: {e}")
 
+
+def _log_pid_snapshot(agents_dir: Path) -> None:
+    """Log a snapshot of all tracked PIDs to a JSONL file for diagnostics.
+
+    Called at the start of each check_and_update_finished_agents run. Produces
+    one JSON line per tick with all blueprint PIDs, their alive/dead status,
+    and associated task IDs.
+    """
+    import json as _json
+
+    snapshot: dict[str, list] = {}
+    for agent_dir in agents_dir.iterdir():
+        if not agent_dir.is_dir():
+            continue
+        pids_path = agent_dir / "running_pids.json"
+        if not pids_path.exists():
+            continue
+        try:
+            pids = load_blueprint_pids(agent_dir.name)
+        except Exception:
+            continue
+        if not pids:
+            continue
+        snapshot[agent_dir.name] = [
+            {
+                "pid": pid,
+                "task_id": info.get("task_id", ""),
+                "instance": info.get("instance_name", ""),
+                "alive": is_process_running(pid),
+            }
+            for pid, info in pids.items()
+        ]
+
+    if not snapshot:
+        return
+
+    log_path = get_logs_dir() / "pid_snapshot.jsonl"
+    try:
+        entry = {
+            "ts": datetime.now(tz=timezone.utc).isoformat(),
+            "pids": snapshot,
+        }
+        with open(log_path, "a") as f:
+            f.write(_json.dumps(entry) + "\n")
+    except OSError:
+        pass
+
+
 def check_and_update_finished_agents() -> None:
     """Check for agents that have finished and update their state.
 
@@ -1592,6 +1640,9 @@ def check_and_update_finished_agents() -> None:
     agents_dir = get_agents_runtime_dir()
     if not agents_dir.exists():
         return
+
+    # Snapshot current PIDs for diagnostics — helps trace orphan creation
+    _log_pid_snapshot(agents_dir)
 
     # Pre-fetch agent configs to look up claim_from per blueprint
     try:
