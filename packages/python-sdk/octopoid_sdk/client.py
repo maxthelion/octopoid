@@ -429,6 +429,66 @@ class StatusAPI:
         return self.client._request('GET', '/api/health')
 
 
+class ActionsAPI:
+    """Actions API endpoints — list and resolve orchestrator-side actions."""
+
+    def __init__(self, client: 'OctopoidSDK'):
+        self.client = client
+
+    def list(self, status: Optional[str] = None, **filters) -> List[Dict[str, Any]]:
+        """List actions with optional filters.
+
+        Args:
+            status: Filter by status (e.g., 'execute_requested', 'completed', 'failed')
+            **filters: Additional filter parameters
+
+        Returns:
+            List of action dictionaries, each with at minimum 'id' and 'action_type'
+        """
+        params: Dict[str, Any] = {}
+        if status:
+            params['status'] = status
+        params.update(filters)
+
+        response = self.client._request('GET', '/api/v1/actions', params=params)
+        if isinstance(response, dict) and 'actions' in response:
+            return response['actions']
+        return response if isinstance(response, list) else []
+
+    def complete(self, action_id: str, result: Optional[Any] = None) -> Dict[str, Any]:
+        """Mark an action as completed with an optional result payload.
+
+        Args:
+            action_id: Action ID
+            result: Serialisable result from the handler (stored on the action record)
+
+        Returns:
+            Updated action dictionary
+        """
+        data: Dict[str, Any] = {}
+        if result is not None:
+            data['result'] = result
+        return self.client._request(
+            'POST', f'/api/v1/actions/{action_id}/complete', json=data
+        )
+
+    def fail(self, action_id: str, error: str) -> Dict[str, Any]:
+        """Mark an action as failed with an error message.
+
+        Args:
+            action_id: Action ID
+            error: Human-readable error description
+
+        Returns:
+            Updated action dictionary
+        """
+        return self.client._request(
+            'POST',
+            f'/api/v1/actions/{action_id}/fail',
+            json={'error': error},
+        )
+
+
 class OctopoidSDK:
     """
     Main Octopoid SDK client
@@ -466,6 +526,7 @@ class OctopoidSDK:
         self.flows = FlowsAPI(self)
         self.messages = MessagesAPI(self)
         self.status = StatusAPI(self)
+        self.actions = ActionsAPI(self)
 
     def _request(
         self,

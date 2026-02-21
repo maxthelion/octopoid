@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`process_actions` scheduler job — action dispatcher** ([TASK-a5b2bc2c])
+  - `orchestrator/actions.py`: New module with `ACTION_REGISTRY` dict and `@register_action(action_type)` decorator. Pure dispatcher pattern — handlers are registered here and called by the job.
+  - `orchestrator/jobs.py`: `process_actions` job registered with `@register_job`. Polls `sdk.actions.list(status='execute_requested')`, dispatches each action to the matching handler, then calls `sdk.actions.complete()` or `sdk.actions.fail()`. Unknown action_types are marked failed with `"unknown action_type: <type>"`.
+  - `.octopoid/jobs.yaml`: `process_actions` registered with `interval: 10`, `type: script`, `group: remote`.
+  - `packages/python-sdk/octopoid_sdk/client.py`: `ActionsAPI` class added with `list()`, `complete()`, and `fail()` methods. `OctopoidSDK` now exposes `sdk.actions`.
+
 - **Circuit breaker: stop infinite requeue loops after 3 failures** ([TASK-13aec649])
   - `orchestrator/scheduler.py`: Added `_get_circuit_breaker_threshold()` — reads `agents.circuit_breaker_threshold` from `.octopoid/config.yaml`, defaults to 3.
   - `check_and_requeue_expired_leases()` now increments `attempt_count` on the task when requeuing claimed→incoming. If `attempt_count` reaches the threshold, the task is moved to `failed` instead of `incoming`. Provisional lease expiry is unaffected (no `attempt_count` change).
