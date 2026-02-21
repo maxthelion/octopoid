@@ -41,6 +41,8 @@ If you skip this, the scheduler may keep running old code from stale `.pyc` file
 
 **Commit fixes immediately.** Don't leave fixes as uncommitted working-tree edits. Uncommitted changes are fragile — any stash, reset, or branch switch can lose them. A small standalone commit is always safer.
 
+**After resolving any merge conflict, search for leftover conflict markers.** Run `grep -rn '<<<<<<< \|=======\|>>>>>>> ' <file>` on every file that had conflicts. Do NOT rely on the diff looking correct — a stray marker in a part of the file you didn't read will break everything.
+
 **Use `git reflog` and `git stash list` for forensics.** When changes seem to have disappeared — the history doesn't match expectations, or a fix that was "definitely made" isn't in the log — check reflog and stash list. Reflog tracks every HEAD movement including rebases and resets. Stash list reveals forgotten stashed work.
 
 ## Worktree rules
@@ -69,9 +71,11 @@ When a PR has merge conflicts (mergeStateStatus: CONFLICTING or DIRTY), fix it i
 
 ## Investigating issues
 
+- **Check the issues log first.** Before deep-diving into a problem, read `project-management/issues-log.md` — many issues recur and the fix is already documented.
 - **Pull before investigating or writing tasks.** Before exploring the state of the codebase, diagnosing an issue, checking whether something is implemented, or creating a new task, run `git pull --recurse-submodules` to ensure you're looking at the latest code. Agents push to the remote constantly — without pulling first, you will make wrong conclusions about what exists and create duplicate work.
 - Don't assume problems are known. When you encounter a systemic issue (e.g. a silent failure, a missing transition, a broken pipeline), always note it — either write a quick draft via `/draft-idea` or flag it to the user explicitly.
 - Don't hand-wave with "the server didn't get the update" — investigate *why* and document the root cause or at least the symptoms.
+- **Write a postmortem for significant incidents.** When you diagnose and fix a non-trivial issue (especially one involving data loss, stuck tasks, or multi-hour outages), write a postmortem in `project-management/postmortems/` and add the symptoms to `project-management/issues-log.md` so the next person (or agent) can find the fix quickly.
 
 ## Plan verification rule
 
