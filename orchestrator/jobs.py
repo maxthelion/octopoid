@@ -338,6 +338,19 @@ def send_heartbeat(ctx: JobContext) -> None:
     _impl()
 
 
+@register_job
+def dispatch_action_messages(ctx: JobContext) -> None:
+    """Poll for action_command messages and spawn action agents.
+
+    Each call processes at most one pending message (serial). The action agent
+    runs synchronously (blocking) and posts its result to the human inbox.
+    Local state tracks processed messages since the server does not expose
+    per-message status updates.
+    """
+    from .message_dispatcher import dispatch_action_messages as _impl
+    _impl()
+
+
 # ---------------------------------------------------------------------------
 # GitHub issue poller
 # ---------------------------------------------------------------------------

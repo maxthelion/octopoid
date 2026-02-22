@@ -246,6 +246,7 @@ class TestJobIntervalManagement:
             "poll_github_issues",
             "send_heartbeat",
             "codebase_analyst",
+            "dispatch_action_messages",
         }
         intervals = _get_job_intervals()
         assert expected == set(intervals.keys())
