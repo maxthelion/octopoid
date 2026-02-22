@@ -42,7 +42,7 @@ def get_project_report(sdk: "OctopoidSDK") -> dict[str, Any]:
         "done_tasks": _gather_done_tasks(sdk),
         "prs": [],  # Disabled — _gather_prs was burning 22k+ gh API calls/hour
         "proposals": _gather_proposals(),
-        "messages": _gather_messages(),
+        "messages": _gather_messages(sdk),
         "agents": _gather_agents(),
         "health": _gather_health(sdk),
         "drafts": _gather_drafts(sdk),
@@ -478,20 +478,13 @@ def _gather_proposals() -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
-def _gather_messages() -> list[dict[str, Any]]:
-    """Gather pending messages from agents."""
+def _gather_messages(sdk: "OctopoidSDK") -> list[dict[str, Any]]:
+    """Gather inbox messages addressed to the human from the server API."""
     try:
-        from .message_utils import list_messages
-
-        messages = list_messages()
-        return [
-            {
-                "filename": m.get("filename"),
-                "type": m.get("type"),
-                "created": m.get("created"),
-            }
-            for m in messages
-        ]
+        messages = sdk.messages.list(to_actor="human")
+        # Sort newest first (server may return in any order)
+        messages.sort(key=lambda m: m.get("created_at", ""), reverse=True)
+        return messages
     except Exception:
         return []
 

@@ -21,6 +21,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `packages/dashboard/styles/dashboard.tcss`: Added CSS rules to give the nested `TabbedContent` full height within the draft list panel.
   - `tests/test_reports.py`: Extended `TestGatherDrafts` to assert `author` field is present and passes through correctly for human, agent, and missing-author drafts.
 
+- **Human inbox tab with server messages and action buttons** ([TASK-a40d1ed3])
+  - `packages/dashboard/tabs/inbox.py`: Replaced the old three-column layout with a master-detail view. Left panel shows a scrollable list of server messages (newest first) with type tag, from_actor, and content preview. Right panel renders full message content as Markdown. Fixed action bar at the bottom shows up to 3 buttons parsed from the message's content JSON `actions` array, plus a free-text Other... input. Clicking an action button posts an `action_command` message back to the server via `sdk.messages.create()`.
+  - `orchestrator/reports.py`: `_gather_messages()` now accepts an SDK parameter and fetches messages from `sdk.messages.list(to_actor="human")` instead of the local filesystem. Messages are sorted newest-first client-side.
+  - `orchestrator/tasks.py`: Escalation warning now posted via `sdk.messages.create()` (type=`warning`, to_actor=`human`) instead of `message_utils.warning()`.
+  - `packages/dashboard/tabs/drafts.py`: Draft action button handler now posts via `sdk.messages.create()` (type=`action_command`, to_actor=`agent`) instead of writing to the local inbox directory. `_post_inbox_message()` now takes `draft_id` as first argument.
+  - `packages/dashboard/styles/dashboard.tcss`: Replaced old inbox column CSS with new master-detail layout classes (`.inbox-layout`, `.inbox-list-panel`, `.inbox-msg-listview`, `.inbox-content-panel`, `.inbox-action-bar`, etc.).
+  - `orchestrator/message_utils.py`: Removed — all callers migrated to `sdk.messages.create()`.
+  - `tests/test_reports.py`: Updated `TestGatherMessages` to test the new SDK-based implementation.
+
 - **Default draft actions and Other... free-text input in Drafts tab** ([TASK-abeed963])
   - `orchestrator/reports.py`: `_gather_drafts()` now injects three synthetic default actions — Enqueue, Process, Archive — client-side when a draft has no server-provided actions. Drafts with proposer-created actions continue to show those instead.
   - `packages/dashboard/tabs/drafts.py`: Added a fixed action bar at the bottom of the right-hand content pane. Shows up to 3 action buttons ([A]/[B]/[C] hotkeys) drawn from the draft's `actions` list, plus an Other... text input. Clicking a button posts the corresponding message to the local inbox; submitting Other... posts the user's free-form text. Action bar is updated (not re-mounted) on each draft selection to avoid DuplicateId errors. Re-selecting the same draft is a no-op.

@@ -63,11 +63,18 @@ def _load_draft_content(draft: dict) -> str:
         return "(could not read file)"
 
 
-def _post_inbox_message(message: str) -> None:
-    """Write a message to the local inbox messages directory."""
+def _post_inbox_message(draft_id: int | str, message: str) -> None:
+    """Post a draft action command message via sdk.messages.create()."""
     try:
-        from orchestrator.message_utils import create_message
-        create_message("info", message[:60], message, agent_name="human")
+        from orchestrator.sdk import get_sdk
+        sdk = get_sdk()
+        sdk.messages.create(
+            task_id=str(draft_id),
+            from_actor="human",
+            type="action_command",
+            content=message,
+            to_actor="agent",
+        )
     except Exception:
         pass
 
@@ -253,7 +260,7 @@ class DraftsTab(TabBase):
                 action = actions[idx]
                 draft_id = self._selected_draft.get("id", "")
                 message = _action_message(action, draft_id)
-                _post_inbox_message(message)
+                _post_inbox_message(draft_id, message)
                 self.app.notify(f"Sent: {message}", timeout=3)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
@@ -268,7 +275,7 @@ class DraftsTab(TabBase):
             return
         draft_id = self._selected_draft.get("id", "")
         message = f"[Draft {draft_id}] {text}"
-        _post_inbox_message(message)
+        _post_inbox_message(draft_id, message)
         self.app.notify(f"Sent: {message}", timeout=3)
         event.input.value = ""
 

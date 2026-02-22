@@ -532,21 +532,27 @@ class TestGatherProposals:
 class TestGatherMessages:
     """Tests for _gather_messages()."""
 
-    @patch("orchestrator.message_utils.list_messages")
-    def test_returns_formatted_messages(self, mock_list):
-        mock_list.return_value = [
-            {"filename": "warning-20260207-test.md", "type": "warning", "created": 1234567890.0},
+    def test_returns_messages_from_sdk(self):
+        mock_sdk = MagicMock()
+        mock_sdk.messages.list.return_value = [
+            {"id": 1, "type": "worker_result", "from_actor": "agent", "to_actor": "human",
+             "content": "Done", "created_at": "2026-02-22T10:00:00Z"},
+            {"id": 2, "type": "action_proposal", "from_actor": "agent", "to_actor": "human",
+             "content": "Proposal", "created_at": "2026-02-22T11:00:00Z"},
         ]
 
-        messages = _gather_messages()
+        messages = _gather_messages(mock_sdk)
 
-        assert len(messages) == 1
-        assert messages[0]["filename"] == "warning-20260207-test.md"
-        assert messages[0]["type"] == "warning"
+        mock_sdk.messages.list.assert_called_once_with(to_actor="human")
+        # Newest first
+        assert len(messages) == 2
+        assert messages[0]["id"] == 2
+        assert messages[1]["id"] == 1
 
-    @patch("orchestrator.message_utils.list_messages", side_effect=Exception("no dir"))
-    def test_returns_empty_on_error(self, mock_list):
-        messages = _gather_messages()
+    def test_returns_empty_on_error(self):
+        mock_sdk = MagicMock()
+        mock_sdk.messages.list.side_effect = Exception("server error")
+        messages = _gather_messages(mock_sdk)
         assert messages == []
 
 
