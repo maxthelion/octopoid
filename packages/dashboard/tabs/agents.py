@@ -1,10 +1,9 @@
-"""Agents tab — master-detail view of all configured agents."""
+"""Agents tab — master-detail view of all configured agents and jobs."""
 
 from __future__ import annotations
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Label, ListItem, ListView
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -15,7 +14,7 @@ from .base import TabBase
 
 
 class AgentItem(ListItem):
-    """A single agent row in the agent list panel."""
+    """A single agent or job row in the list panel."""
 
     def __init__(self, agent: dict, **kwargs: object) -> None:
         super().__init__(**kwargs)
@@ -28,18 +27,29 @@ class AgentItem(ListItem):
     def compose(self) -> ComposeResult:
         agent = self._agent
         name = agent.get("name", "?")
-        status = agent.get("status", "idle")
-        paused = agent.get("paused", False)
-
-        badge_status = "paused" if paused else status
+        agent_type = agent.get("agent_type", "flow")
 
         with Horizontal(classes="agent-list-item"):
             yield Label(name, classes="agent-name")
-            yield StatusBadge(badge_status)
+            if agent_type == "flow":
+                status = agent.get("status", "idle")
+                paused = agent.get("paused", False)
+                badge_status = "paused" if paused else status
+                yield StatusBadge(badge_status)
+            else:
+                # Job agent — show interval as a compact indicator
+                interval = agent.get("interval", 0)
+                if interval >= 3600:
+                    interval_str = f"{interval // 3600}h"
+                elif interval >= 60:
+                    interval_str = f"{interval // 60}m"
+                else:
+                    interval_str = f"{interval}s"
+                yield Label(interval_str, classes="agent-job-interval dim-text")
 
 
 class AgentDetail(Widget):
-    """Detail pane showing full info for the currently selected agent."""
+    """Detail pane showing full info for the currently selected agent or job."""
 
     DEFAULT_CSS = """
     AgentDetail {
@@ -58,6 +68,14 @@ class AgentDetail(Widget):
             yield Label("No agent selected.", classes="dim-text")
             return
 
+        agent_type = self._agent.get("agent_type", "flow")
+        if agent_type == "job":
+            yield from self._compose_job_detail()
+        else:
+            yield from self._compose_flow_detail()
+
+    def _compose_flow_detail(self) -> ComposeResult:
+        """Render detail for a flow agent (implementer, gatekeeper, etc.)."""
         agent = self._agent
         report = self._report
         name = agent.get("name", "?")
@@ -72,6 +90,9 @@ class AgentDetail(Widget):
         with VerticalScroll():
             # Agent name header
             yield Label(name, classes="agent-detail-name")
+
+            # Type indicator
+            yield Label("Type: flow agent", classes="agent-detail-row dim-text")
 
             # Role
             yield Label(f"Role: {role}", classes="agent-detail-row")
@@ -175,6 +196,77 @@ class AgentDetail(Widget):
                 yield Label("NOTES", classes="detail-section-header")
                 yield Label(notes, classes="agent-detail-row dim-text")
 
+    def _compose_job_detail(self) -> ComposeResult:
+        """Render detail for a job agent (scheduler background job)."""
+        agent = self._agent
+        name = agent.get("name", "?")
+        job_type = agent.get("job_type", "script")
+        group = agent.get("group", "remote")
+        interval = agent.get("interval", 0)
+        last_run = agent.get("last_run")
+        next_run = agent.get("next_run")
+
+        with VerticalScroll():
+            # Job name header
+            yield Label(name, classes="agent-detail-name")
+
+            # Type indicator
+            yield Label("Type: background job", classes="agent-detail-row dim-text")
+
+            yield Label("")  # spacer
+
+            # Schedule section
+            yield Label("SCHEDULE", classes="detail-section-header")
+
+            # Interval
+            if interval >= 3600:
+                interval_str = f"{interval // 3600}h ({interval}s)"
+            elif interval >= 60:
+                interval_str = f"{interval // 60}m ({interval}s)"
+            else:
+                interval_str = f"{interval}s"
+            yield Label(f"Interval: {interval_str}", classes="agent-detail-row")
+
+            # Execution type and group
+            yield Label(f"Exec type: {job_type}", classes="agent-detail-row dim-text")
+            yield Label(f"Group: {group}", classes="agent-detail-row dim-text")
+
+            yield Label("")  # spacer
+
+            # Run history section
+            yield Label("RUN STATUS", classes="detail-section-header")
+
+            if last_run:
+                age = format_age(last_run)
+                age_text = f" ({age} ago)" if age else ""
+                yield Label(f"Last run: {last_run[:19]}{age_text}", classes="agent-detail-row")
+            else:
+                yield Label("Last run: (never)", classes="agent-detail-row dim-text")
+
+            if next_run:
+                from datetime import datetime
+                try:
+                    next_dt = datetime.fromisoformat(next_run)
+                    now = datetime.now()
+                    diff = (next_dt - now).total_seconds()
+                    if diff <= 0:
+                        due_text = "due now"
+                        due_class = "status--running"
+                    elif diff < 60:
+                        due_text = f"in {int(diff)}s"
+                        due_class = "agent-detail-row"
+                    elif diff < 3600:
+                        due_text = f"in {int(diff // 60)}m"
+                        due_class = "agent-detail-row"
+                    else:
+                        due_text = f"in {int(diff // 3600)}h"
+                        due_class = "agent-detail-row"
+                    yield Label(f"Next run: {due_text}", classes=f"agent-detail-row {due_class}")
+                except (ValueError, TypeError):
+                    yield Label(f"Next run: {next_run[:19]}", classes="agent-detail-row dim-text")
+            else:
+                yield Label("Next run: (unknown)", classes="agent-detail-row dim-text")
+
     def update_agent(self, agent: dict | None, report: dict) -> None:
         """Switch to a new agent and recompose the detail pane."""
         self._agent = agent
@@ -183,7 +275,12 @@ class AgentDetail(Widget):
 
 
 class AgentsTab(TabBase):
-    """Master-detail agents view: list on left, detail on right."""
+    """Master-detail agents view: list on left, detail on right.
+
+    Shows two sections in the list panel:
+    - Flow agents (implementer, gatekeeper) — claim tasks from queues
+    - Job agents — background jobs that run on a schedule
+    """
 
     BINDINGS = [
         Binding("j", "cursor_down", "Down", show=False),
@@ -192,14 +289,24 @@ class AgentsTab(TabBase):
 
     def compose(self) -> ComposeResult:
         agents = self._report.get("agents", [])
-        selected = agents[0] if agents else None
+        jobs = self._report.get("jobs", [])
+        all_items = agents + jobs
+        selected = all_items[0] if all_items else None
 
         with Horizontal(classes="agents-layout"):
             with Vertical(classes="agent-list-panel", id="agent-list-panel"):
-                yield Label(" AGENTS ", classes="section-header")
+                # Flow agents section
+                yield Label(" FLOW AGENTS ", classes="section-header")
                 with ListView(id="agent-listview", classes="agent-listview"):
                     for agent in agents:
                         yield AgentItem(agent)
+
+                # Job agents section
+                yield Label(" JOBS ", classes="section-header")
+                with ListView(id="job-listview", classes="agent-listview"):
+                    for job in jobs:
+                        yield AgentItem(job)
+
             yield AgentDetail(
                 agent=selected,
                 report=self._report,
@@ -208,12 +315,22 @@ class AgentsTab(TabBase):
             )
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
-        """Update the detail pane when an agent is selected."""
+        """Update the detail pane when an agent or job is selected."""
         if isinstance(event.item, AgentItem):
             detail = self.query_one("#agent-detail", AgentDetail)
             detail.update_agent(event.item.agent_data, self._report)
 
     def action_cursor_down(self) -> None:
+        # Try focused listview first, then fall back to agent-listview
+        for lv_id in ("#agent-listview", "#job-listview"):
+            try:
+                lv = self.query_one(lv_id, ListView)
+                if lv.has_focus:
+                    lv.action_cursor_down()
+                    return
+            except Exception:
+                pass
+        # No focused listview — move in the first one
         try:
             lv = self.query_one("#agent-listview", ListView)
             lv.action_cursor_down()
@@ -221,6 +338,14 @@ class AgentsTab(TabBase):
             pass
 
     def action_cursor_up(self) -> None:
+        for lv_id in ("#agent-listview", "#job-listview"):
+            try:
+                lv = self.query_one(lv_id, ListView)
+                if lv.has_focus:
+                    lv.action_cursor_up()
+                    return
+            except Exception:
+                pass
         try:
             lv = self.query_one("#agent-listview", ListView)
             lv.action_cursor_up()

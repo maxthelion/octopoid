@@ -348,6 +348,11 @@ DataTable > .datatable--cursor {
     color: $text;
 }
 
+.agent-job-interval {
+    width: auto;
+    text-align: right;
+}
+
 .agent-detail-panel {
     width: 1fr;
     height: 100%;
