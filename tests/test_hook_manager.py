@@ -22,17 +22,17 @@ def _sdk():
 YAML_PROJECT = (
     "hooks:\n"
     "  before_submit:\n"
-    "    - rebase_on_main\n"
     "    - run_tests\n"
     "    - create_pr\n"
     "  before_merge:\n"
+    "    - rebase_on_base\n"
     "    - merge_pr\n"
 )
 
 YAML_TYPE_OVERRIDE = (
     "hooks:\n"
     "  before_submit:\n"
-    "    - rebase_on_main\n"
+    "    - run_tests\n"
     "    - create_pr\n"
     "task_types:\n"
     "  hotfix:\n"
@@ -53,9 +53,9 @@ class TestResolveHooksForTask:
         (d / "config.yaml").write_text(YAML_PROJECT)
         with patch("orchestrator.config.find_parent_project", return_value=tmp_path):
             hooks = HookManager(_sdk()).resolve_hooks_for_task(task_type=None)
-        assert [h["name"] for h in hooks] == ["rebase_on_main", "run_tests", "create_pr", "merge_pr"]
+        assert [h["name"] for h in hooks] == ["run_tests", "create_pr", "rebase_on_base", "merge_pr"]
         for h in hooks:
-            assert h["type"] == ("orchestrator" if h["name"] == "merge_pr" else "agent")
+            assert h["type"] == ("orchestrator" if h["name"] in ("merge_pr", "rebase_on_base") else "agent")
             assert h["status"] == "pending"
 
     def test_task_type_parameter_ignored(self, tmp_path):
@@ -66,7 +66,7 @@ class TestResolveHooksForTask:
         with patch("orchestrator.config.find_parent_project", return_value=tmp_path):
             result = HookManager(_sdk()).resolve_hooks_for_task(task_type="hotfix")
         # Should use project-level hooks, not type-specific ones
-        assert [h["name"] for h in result] == ["rebase_on_main", "create_pr"]
+        assert [h["name"] for h in result] == ["run_tests", "create_pr"]
 
     def test_unknown_type_falls_through(self, tmp_path):
         d = tmp_path / ".octopoid"
@@ -166,11 +166,13 @@ class TestRunOrchestratorHook:
         assert ev.status == "passed" and "skipped" in ev.message.lower()
 
     def test_unknown_hook(self):
+        """Unknown orchestrator hooks are skipped gracefully (not failed)."""
         ev = HookManager(_sdk()).run_orchestrator_hook(
             _task(),
             {"name": "x", "point": "before_merge", "type": "orchestrator"},
         )
-        assert ev.status == "failed"
+        assert ev.status == "passed"
+        assert "skipped" in ev.message.lower()
 
 
 class TestRecordEvidence:
