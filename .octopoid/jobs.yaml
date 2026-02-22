@@ -91,6 +91,14 @@ jobs:
     type: script
     group: local
 
+  # Message dispatcher: poll action_command messages and spawn action agents.
+  # Processes one message per tick (serial). Runs every 30s so unprocessed
+  # messages are handled promptly. Agent runs synchronously (max 3 minutes).
+  - name: dispatch_action_messages
+    interval: 30
+    type: script
+    group: remote
+
   # Daily codebase analyst: scans for large/complex files and proposes refactoring.
   # Guard script runs first inside the agent — skips if a pending proposal already exists.
   - name: codebase_analyst

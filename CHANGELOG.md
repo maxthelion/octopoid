@@ -26,6 +26,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Message dispatcher: scheduler polls inbox and spawns action agents** ([TASK-906a8ebf])
+  - `orchestrator/message_dispatcher.py`: New module that polls for `action_command` messages addressed to the "agent" actor, spawns a lightweight Claude agent synchronously to handle each command, and posts a `worker_result` message back to the human inbox. Local state file (`message_dispatch_state.json`) tracks processed message IDs (done/failed/processing) since the server messages API does not expose per-message status updates. Includes stuck-message detection: messages stuck in "processing" for > 5 minutes are automatically marked failed.
+  - `orchestrator/jobs.py`: Registered `dispatch_action_messages` job handler.
+  - `.octopoid/jobs.yaml`: Added `dispatch_action_messages` job (interval: 30s, group: remote).
+  - `tests/test_message_dispatcher.py`: Unit tests covering state I/O, prompt building, success/failure paths, serial processing, stuck-message reset, and SDK failure handling.
+
 - **Animated spinner on claimed task cards in kanban board** ([TASK-defad79d])
   - `packages/dashboard/widgets/status_badge.py`: `StatusBadge` now animates when `status == "running"`. Uses `set_interval(0.1, ...)` on mount to cycle through braille spinner frames (`⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏`) and updates the badge text to `"⠋ RUN"`, `"⠙ RUN"`, etc. every 100ms. All other statuses remain static.
 
