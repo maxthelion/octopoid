@@ -29,12 +29,15 @@ You are reviewing this task's implementation to determine if it should be approv
 - PR doesn't exist or is in draft state
 - Changes don't match the acceptance criteria
 - Critical functionality is missing or broken
-- Merge conflicts exist
 
 ### Advisory (Not Blocking):
 - Scope issues: CHANGELOG/README edits when not required by the task
 - Debug code: `console.log`, `print()`, `TODO`, `FIXME`, `debugger` statements
 - Diff size seems large for the stated change (investigate, but may be legitimate)
+
+### Not Your Concern:
+- **Merge conflicts** — the orchestrator rebases onto the latest base branch at merge time.
+  Do not reject for merge state (CONFLICTING, DIRTY). Focus on whether the *changes* are correct.
 
 ### Approve If:
 - All acceptance criteria are met
@@ -94,7 +97,6 @@ Your `comment` should follow this format:
 - [x] Tests pass (N/N)
 - [x] No lint errors
 - [ ] Advisory: Debug code found in diff (see below)
-- [x] No merge conflicts
 - [x] PR is open and ready
 
 ### Diff Statistics
