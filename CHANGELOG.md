@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Agents tab: two-tier TabbedContent with Flow Agents and Background Agents** ([TASK-d3ba7e63])
+  - `packages/dashboard/tabs/agents.py`: Replaced the two-section list panel with a `TabbedContent` containing "Flow Agents" and "Background Agents" sub-tabs. Flow Agents shows implementer/gatekeeper agents with status badge; Background Agents shows autonomous background agents (non-flow roles) and scheduler jobs, both with interval indicators. `AgentDetail` now dispatches to a new `_compose_background_detail()` for `agent_type: "background"` entries, showing role, interval, last run, and recent output. `_compose_job_detail()` label updated to "scheduler job". Navigation bindings (j/k) route to the listview in the active sub-tab.
+  - `orchestrator/reports.py`: `_gather_agents()` now classifies agents by role — agents with role `implement` or `gatekeeper` get `agent_type: "flow"`; all others get `agent_type: "background"`. Also includes `interval_seconds` from agent config in the returned dicts.
+  - `packages/dashboard/styles/dashboard.tcss`: Widened `.agent-list-panel` from `width: 24` to `width: 36` to accommodate the two tab labels.
+
 - **`/approve-task` skill and proposed task support in `/enqueue`** ([TASK-4ad270f1])
   - `.claude/commands/approve-task.md`: New skill that fetches a task, validates `blocked_by == "awaiting-approval"`, and clears the field via `PATCH /api/v1/tasks/{id}` so agents can claim it.
   - `.claude/commands/enqueue.md`: Updated to document the `blocked_by="awaiting-approval"` option. When the user describes a task as "proposed", "not yet ready", "needs approval", or similar, the skill now instructs passing `blocked_by="awaiting-approval"` to `create_task()`.

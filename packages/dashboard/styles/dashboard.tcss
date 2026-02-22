@@ -327,7 +327,7 @@ DataTable > .datatable--cursor {
 }
 
 .agent-list-panel {
-    width: 24;
+    width: 36;
     height: 100%;
     border-right: solid $border;
 }
