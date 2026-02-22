@@ -16,6 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Taskless agent job spawn (codebase_analyst)** ([TASK-19140cfb])
+  - `orchestrator/config.py`: Added `get_jobs_dir()` returning `.octopoid/runtime/jobs/`.
+  - `orchestrator/scheduler.py`: Added `prepare_job_directory()` for taskless agents — creates workdir, copies scripts, writes `env.sh` without task-specific fields (`TASK_ID`, `TASK_BRANCH`), renders prompt.
+  - `orchestrator/scheduler.py`: Added `spawn_job_agent()` — uses `prepare_job_directory()` and registers PID with empty `task_id` so the finished-agent checker cleans it up without processing a task result.
+  - `orchestrator/scheduler.py`: `get_spawn_strategy()` now dispatches to `spawn_job_agent` when `ctx.claimed_task is None` (job agents) and to `spawn_implementer` when a task is claimed.
+  - `orchestrator/jobs.py`: `_run_agent_job()` re-raises spawn exceptions so `_run_job()` logs the failure correctly instead of logging "completed OK".
+
 - **Stale Python bytecode in scheduler** ([TASK-83d87eb8])
   - `orchestrator/__init__.py`: Added `sys.dont_write_bytecode = True` at module load time so no process importing the orchestrator package writes `.pyc` files.
   - `orchestrator/scheduler.py`: Added `_clear_pycache()` called at the very start of `main()` (before `_check_venv_integrity()`) — removes all `__pycache__` dirs under `orchestrator/` on every scheduler startup.
