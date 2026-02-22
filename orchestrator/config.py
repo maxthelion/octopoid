@@ -164,6 +164,15 @@ def get_agents_runtime_dir() -> Path:
     return get_runtime_dir() / "agents"
 
 
+def get_jobs_dir() -> Path:
+    """Get the jobs runtime directory for taskless agent job runs.
+
+    Returns:
+        Path to .octopoid/runtime/jobs/ where taskless agent job directories are created
+    """
+    return get_runtime_dir() / "jobs"
+
+
 def get_tasks_dir() -> Path:
     """Get the tasks directory for ephemeral task worktrees.
 

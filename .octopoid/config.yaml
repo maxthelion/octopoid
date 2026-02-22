@@ -18,6 +18,7 @@ repo:
   base_branch: main
 
 # Agent configuration
+paused: true
 agents:
   max_concurrent: 3
   max_breakdown_depth: 1  # Maximum levels of task re-breakdown

@@ -25,6 +25,13 @@ You no longer need to manually clear the cache after editing orchestrator files.
 find orchestrator -name '__pycache__' -type d -exec rm -rf {} +
 ```
 
+If you skip this, the scheduler may keep running old code from stale `.pyc` files — even if the source file has been completely rewritten.
+
+## Projects
+
+When the user asks to enqueue multiple related tasks, ask if they want a project (shared feature branch + single PR). When enqueuing a big piece of work, suggest a project. The rationale: projects keep work out of `main` until the whole feature is ready. Individual tasks on separate branches create scattered PRs that are hard to consolidate.
+
+
 ## Task & PR lifecycle rules
 
 - **Always use `create_task()` from `orchestrator.tasks`** to create tasks. Never bypass it with raw `sdk.tasks.create()` or `requests.post()` calls. `create_task()` handles file placement (`.octopoid/tasks/TASK-{id}.md`), server registration with the correct `file_path`, and branch defaulting via `get_base_branch()`. Bypassing it causes file path mismatches that make agents fail.
@@ -77,6 +84,10 @@ When a PR has merge conflicts (mergeStateStatus: CONFLICTING or DIRTY), fix it i
 - Don't assume problems are known. When you encounter a systemic issue (e.g. a silent failure, a missing transition, a broken pipeline), always note it — either write a quick draft via `/draft-idea` or flag it to the user explicitly.
 - Don't hand-wave with "the server didn't get the update" — investigate *why* and document the root cause or at least the symptoms.
 - **Write a postmortem for significant incidents.** When you diagnose and fix a non-trivial issue (especially one involving data loss, stuck tasks, or multi-hour outages), write a postmortem in `project-management/postmortems/` and add the symptoms to `project-management/issues-log.md` so the next person (or agent) can find the fix quickly.
+
+## Error handling rule
+
+**Never swallow errors.** Every `except` block must either re-raise, log the error visibly, or return a meaningful error value. Bare `except: pass`, `except Exception: pass`, and patterns like `except Exception as e: debug_log(f"failed: {e}")` followed by falling through to a success path are all forbidden. If an operation fails, the caller must know it failed. Silent failures cause hours of debugging — the `codebase_analyst` spawn crash was logged as "completed OK" because the error was caught and discarded.
 
 ## Plan verification rule
 

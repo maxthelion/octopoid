@@ -18,6 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Fix rebase_on_main prompt to use task base branch** ([TASK-3b56ab0b])
   - `orchestrator/scheduler.py`: Changed `rebase_on_main` hook prompt to use `base_branch` variable (already computed in `_prepare_task_directory`) instead of hardcoded `origin/main`. Tasks targeting feature branches now receive correct rebase instructions.
+- **Taskless agent job spawn (codebase_analyst)** ([TASK-19140cfb])
+  - `orchestrator/config.py`: Added `get_jobs_dir()` returning `.octopoid/runtime/jobs/`.
+  - `orchestrator/scheduler.py`: Added `prepare_job_directory()` for taskless agents — creates workdir, copies scripts, writes `env.sh` without task-specific fields (`TASK_ID`, `TASK_BRANCH`), renders prompt.
+  - `orchestrator/scheduler.py`: Added `spawn_job_agent()` — uses `prepare_job_directory()` and registers PID with empty `task_id` so the finished-agent checker cleans it up without processing a task result.
+  - `orchestrator/scheduler.py`: `get_spawn_strategy()` now dispatches to `spawn_job_agent` when `ctx.claimed_task is None` (job agents) and to `spawn_implementer` when a task is claimed.
+  - `orchestrator/jobs.py`: `_run_agent_job()` re-raises spawn exceptions so `_run_job()` logs the failure correctly instead of logging "completed OK".
 
 - **Stale Python bytecode in scheduler** ([TASK-83d87eb8])
   - `orchestrator/__init__.py`: Added `sys.dont_write_bytecode = True` at module load time so no process importing the orchestrator package writes `.pyc` files.
@@ -26,12 +32,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Codebase analyst agent** ([TASK-6bc0fd72])
+  - `.octopoid/agents/codebase-analyst/agent.yaml`: Agent config with daily interval (86400s), `role: analyse`, `lightweight: true`, and scripts spawn mode.
+  - `.octopoid/agents/codebase-analyst/scripts/guard.sh`: Guard script that checks for existing `codebase-analyst` drafts with `status=idea` via the SDK. Outputs `SKIP` if any exist so the agent exits early without duplicating proposals.
+  - `.octopoid/agents/codebase-analyst/scripts/find-large-files.sh`: Analysis script that finds the 30 largest source files (`.py`, `.ts`, `.tsx`, `.js`, `.sh`) by line count, excluding `node_modules`, `.git`, `__pycache__`, `dist`, `build`, `.octopoid/runtime`, and virtualenvs.
+  - `.octopoid/agents/codebase-analyst/prompt.md`: Agent instructions — run guard first, run analysis, pick top candidate, create a draft via `sdk.drafts.create(author="codebase-analyst")`, attach actions with `action_data` JSON (Enqueue refactor / Dismiss buttons), post `action_proposal` message to user inbox.
+  - `.octopoid/agents/codebase-analyst/instructions.md`: Analysis guidelines for picking candidates and writing clear proposals.
+  - `.octopoid/jobs.yaml`: Added `codebase_analyst` job entry (`type: agent`, `interval: 86400`, `group: remote`).
+- **Inbox processor scheduler job** ([TASK-1069a831])
+  - `orchestrator/jobs.py`: Added `process_inbox` job, `_load_inbox_state`, `_save_inbox_state`, and `_spawn_inbox_worker` helpers.
+  - `process_inbox` polls for messages where `to_actor="worker"`, builds a prompt from the message content, and spawns a lightweight Claude worker agent for each unprocessed message.
+  - Processed message IDs are tracked in `.octopoid/runtime/inbox_processor_state.json` so messages are not re-processed across ticks.
+  - Worker agents run in the parent project directory (no worktree/PR/gatekeeper) and post result messages back via the SDK.
+  - `.octopoid/jobs.yaml`: Added `process_inbox` entry with 30s interval.
+
 - **Dashboard refactor: Textual theme + shared utils + TabBase** ([TASK-cbd3c1c2])
   - `packages/dashboard/utils.py`: New module with `format_age()` and `time_ago()` — replaces duplicated implementations in agents.py, done.py, prs.py, tasks.py, and task_card.py.
   - `packages/dashboard/tabs/base.py`: New `TabBase` class extending `Widget` with shared `__init__`, `update_data`, and `_refresh` pattern. All five main tabs now inherit from `TabBase`.
   - `packages/dashboard/styles/dashboard.tcss`: Replaced all hardcoded hex colors with Textual theme variables (`$accent`, `$error`, `$warning`, `$success`, `$secondary`, `$text`, `$text-muted`, `$surface`, `$panel`, `$border`, etc.). Also moved `TaskDetailModal`/`TaskDetail` DEFAULT_CSS into the file.
   - `packages/dashboard/app.py`: Registers a custom `octopoid-dark` Textual theme with the exact color palette used by the dashboard, applied on mount.
   - `packages/dashboard/widgets/task_detail.py`: Removed `DEFAULT_CSS` blocks (now in dashboard.tcss).
+
+- **action_data JSON field support for draft actions** ([TASK-d829e1c7])
+  - `packages/python-sdk/octopoid_sdk/client.py`: Updated `ActionsAPI.create()` to accept `action_data` (dict of button definitions) and `description` parameters. Made `action_type` optional with default `"proposal"`. Removed `payload` parameter.
+  - `orchestrator/reports.py`: `_fetch_draft_actions` now parses `action_data` from a JSON string to a dict if needed, so dashboard consumers can access `action_data["buttons"]` directly.
+  - `packages/dashboard/tabs/drafts.py`: Action bar now renders one button per entry in `action_data["buttons"]` instead of one per action. Clicking posts the button command as `sdk.messages.create(type="action_command")`. Added "Other" free-text input that posts `type="action_freetext"` messages with draft entity context.
 
 - **Action handler registry and SDK ActionsAPI** ([TASK-f1c3b9d4])
   - `packages/python-sdk/octopoid_sdk/client.py`: Added `ActionsAPI` class with `create`, `list`, `execute`, `complete`, and `fail` methods. Exposed as `sdk.actions` on `OctopoidSDK`.
@@ -50,6 +75,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added `project-management/tasks/octopoid-server/add-execution-notes-to-patch.md` — server task to add `execution_notes` to the PATCH endpoint so failure reasons are persisted.
 
 ### Removed
+
+- **Python action handler registry removed** ([TASK-39a33501])
+  - Deleted `orchestrator/actions.py` — `_HANDLER_REGISTRY`, `@register_action_handler`, `get_handler`, and built-in handlers are gone.
+  - Removed `process_actions` job from `orchestrator/jobs.py` and `.octopoid/jobs.yaml`.
+  - Removed handler registry tests from `tests/test_actions.py` (SDK ActionsAPI tests remain).
 
 - **`guard_pr_mergeable` removed from scheduler guard chain** ([TASK-8a02dd06])
   - Removed `guard_pr_mergeable` function from `orchestrator/scheduler.py` and the `AGENT_GUARDS` list.
