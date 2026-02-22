@@ -87,6 +87,10 @@ jobs:
         with:
           submodules: recursive
 
+      # Always test against the latest deployed server, not the pinned submodule commit.
+      - name: Update server submodule to latest
+        run: git -C submodules/server fetch origin main && git -C submodules/server checkout origin/main
+
       - uses: pnpm/action-setup@v2
         with:
           version: 9
