@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Default draft actions and Other... free-text input in Drafts tab** ([TASK-abeed963])
+  - `orchestrator/reports.py`: `_gather_drafts()` now injects three synthetic default actions — Enqueue, Process, Archive — client-side when a draft has no server-provided actions. Drafts with proposer-created actions continue to show those instead.
+  - `packages/dashboard/tabs/drafts.py`: Added a fixed action bar at the bottom of the right-hand content pane. Shows up to 3 action buttons ([A]/[B]/[C] hotkeys) drawn from the draft's `actions` list, plus an Other... text input. Clicking a button posts the corresponding message to the local inbox; submitting Other... posts the user's free-form text. Action bar is updated (not re-mounted) on each draft selection to avoid DuplicateId errors. Re-selecting the same draft is a no-op.
+  - `packages/dashboard/styles/dashboard.tcss`: Added CSS classes for `.draft-content-panel` (now a `Vertical`), `.draft-content-scroll` (inner scrollable markdown area), `.draft-action-bar`, `.draft-action-btn`, and `.draft-action-input`.
+
 ### Changed
 
 - **Move rebase from before_submit to before_merge** ([TASK-c0ef5fd2])

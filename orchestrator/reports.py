@@ -353,12 +353,23 @@ def _store_staging_url(pr_number: int, staging_url: str, *, branch_name: str | N
 # Drafts
 # ---------------------------------------------------------------------------
 
+# Default actions injected client-side when no proposer has created actions
+# for a draft. These are synthetic — not stored on the server.
+_DEFAULT_DRAFT_ACTIONS: list[dict[str, Any]] = [
+    {"id": "default-enqueue", "label": "Enqueue", "action_type": "enqueue_draft"},
+    {"id": "default-process", "label": "Process", "action_type": "process_draft"},
+    {"id": "default-archive", "label": "Archive", "action_type": "archive_draft"},
+]
+
 
 def _gather_drafts(sdk: "OctopoidSDK") -> list[dict[str, Any]]:
     """Gather drafts from the API server, including pending actions for each draft.
 
     Actions are fetched in a single bulk call (not one per draft) and grouped
     client-side by entity_id to avoid N+1 API requests.
+
+    When a draft has no server-side actions, the three default actions
+    (Enqueue, Process, Archive) are injected client-side.
     """
     try:
         drafts = sdk.drafts.list()
@@ -377,17 +388,21 @@ def _gather_drafts(sdk: "OctopoidSDK") -> list[dict[str, Any]]:
     except Exception:
         actions_by_draft = {}
 
-    return [
-        {
-            "id": d.get("id"),
+    result = []
+    for d in drafts:
+        draft_id = d.get("id")
+        server_actions = actions_by_draft.get(str(draft_id) if draft_id is not None else "", [])
+        # Use server-provided actions if present; otherwise fall back to defaults.
+        actions = server_actions if server_actions else list(_DEFAULT_DRAFT_ACTIONS)
+        result.append({
+            "id": draft_id,
             "title": d.get("title"),
             "status": d.get("status", "idea"),
             "file_path": d.get("file_path"),
             "created_at": d.get("created_at"),
-            "actions": actions_by_draft.get(str(d.get("id", "")), []),
-        }
-        for d in drafts
-    ]
+            "actions": actions,
+        })
+    return result
 
 
 # ---------------------------------------------------------------------------
