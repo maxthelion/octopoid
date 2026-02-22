@@ -26,8 +26,8 @@ agents:
 # Default: before_submit: [create_pr]
 hooks:
   before_submit:
-    - rebase_on_main
     - run_tests
     - create_pr
   before_merge:
+    - rebase_on_base
     - merge_pr
