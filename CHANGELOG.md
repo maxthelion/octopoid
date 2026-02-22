@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Gatekeeper: merge conflicts are no longer a rejection reason** ([TASK-34138f84])
+  - `.octopoid/agents/gatekeeper/prompt.md`: Removed "Merge conflicts exist" from the "Reject If" section. Added a "Not Your Concern" section explaining that the orchestrator rebases onto the latest base branch at merge time. Removed the "No merge conflicts" checkbox from the review comment template. Gatekeepers should now focus solely on whether the *changes* are correct, not on transient merge state.
+
 - **Move rebase from before_submit to before_merge** ([TASK-c0ef5fd2])
   - `.octopoid/config.yaml`: Removed `rebase_on_main` from `before_submit` hooks; added `rebase_on_base` to `before_merge` hooks. Rebasing now happens orchestrator-side, just before merge, eliminating the race condition where agents rebase too early and the base moves before merge.
   - `orchestrator/hooks.py`: Replaced `hook_rebase_on_main` with `hook_rebase_on_base`. New hook fetches origin, rebases, and force-pushes the agent branch. Updated `BUILTIN_HOOKS` registry.
