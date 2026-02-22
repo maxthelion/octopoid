@@ -48,11 +48,24 @@ def post_review_comment(task: dict, result: dict, task_dir: Path) -> None:
 
 @register_step("merge_pr")
 def merge_pr(task: dict, result: dict, task_dir: Path) -> None:
-    """Approve and merge the task's PR. Raises RuntimeError on failure."""
+    """Approve and merge the task's PR. Raises RuntimeError on failure.
+
+    When the error indicates merge conflicts (CONFLICTING/DIRTY), sets
+    needs_rebase=True on the task so it can be routed for rebasing.
+    """
     from . import queue_utils
     outcome = queue_utils.approve_and_merge(task["id"])
     if outcome and "error" in outcome:
-        raise RuntimeError(f"merge_pr failed: {outcome['error']}")
+        error_msg = outcome["error"]
+        # If the failure is due to merge conflicts, flag the task for rebase
+        _CONFLICT_SIGNALS = ("CONFLICTING", "DIRTY", "conflict", "cannot be rebased", "merge failed")
+        if any(sig in error_msg for sig in _CONFLICT_SIGNALS):
+            try:
+                sdk = queue_utils.get_sdk()
+                sdk.tasks.update(task["id"], needs_rebase=True)
+            except Exception:
+                pass  # Best-effort — don't mask the real error
+        raise RuntimeError(f"merge_pr failed: {error_msg}")
 
 
 @register_step("reject_with_feedback")

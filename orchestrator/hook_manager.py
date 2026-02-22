@@ -138,16 +138,26 @@ class HookManager:
     def can_transition(self, task: dict, target_point: str) -> tuple[bool, list[str]]:
         """Check if all hooks for a transition point are satisfied.
 
+        Returns False if any relevant hook has failed status (Draft 45 fix).
+        A failed hook is not "pending" but still blocks the transition —
+        the original bug returned True here because it only checked for
+        pending hooks (failed != pending → empty list → True).
+
         Args:
             task: Task dict from API
             target_point: The hook point to check (e.g. "before_submit", "before_merge")
 
         Returns:
-            Tuple of (can_proceed, list of pending hook names).
+            Tuple of (can_proceed, list of blocking hook names).
+            can_proceed is False if any relevant hook has failed or is still pending.
         """
-        pending = self.get_pending_hooks(task, point=target_point)
-        pending_names = [h["name"] for h in pending]
-        return len(pending) == 0, pending_names
+        hooks = self._get_hooks(task)
+        relevant = [h for h in hooks if h.get("point") == target_point]
+        failed = [h for h in relevant if h.get("status") == "failed"]
+        if failed:
+            return False, [h["name"] for h in failed]
+        pending = [h for h in relevant if h.get("status") == "pending"]
+        return len(pending) == 0, [h["name"] for h in pending]
 
     def run_orchestrator_hook(
         self,
