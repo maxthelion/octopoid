@@ -336,7 +336,7 @@ class TestGatherDrafts:
     def test_includes_expected_draft_fields(self):
         sdk = MagicMock()
         sdk.drafts.list.return_value = [
-            {"id": "99", "title": "My Draft", "status": "complete", "file_path": "/path/to/draft.md", "created_at": "2026-02-01T12:00:00"},
+            {"id": "99", "title": "My Draft", "status": "complete", "author": "human", "file_path": "/path/to/draft.md", "created_at": "2026-02-01T12:00:00"},
         ]
         sdk.actions.list.return_value = []
 
@@ -347,6 +347,7 @@ class TestGatherDrafts:
         assert d["id"] == "99"
         assert d["title"] == "My Draft"
         assert d["status"] == "complete"
+        assert d["author"] == "human"
         assert d["file_path"] == "/path/to/draft.md"
         assert d["created_at"] == "2026-02-01T12:00:00"
         # No server-side actions → defaults injected
@@ -354,6 +355,23 @@ class TestGatherDrafts:
         assert {a["action_type"] for a in d["actions"]} == {
             "enqueue_draft", "process_draft", "archive_draft"
         }
+
+    def test_includes_author_field_for_agent_drafts(self):
+        sdk = MagicMock()
+        sdk.drafts.list.return_value = [
+            {"id": "10", "title": "Agent Draft", "status": "idea", "author": "agent", "file_path": None, "created_at": None},
+            {"id": "11", "title": "User Draft", "status": "active", "author": "human", "file_path": None, "created_at": None},
+            {"id": "12", "title": "No Author Draft", "status": "partial", "file_path": None, "created_at": None},
+        ]
+        sdk.actions.list.return_value = []
+
+        result = _gather_drafts(sdk)
+
+        assert len(result) == 3
+        by_id = {d["id"]: d for d in result}
+        assert by_id["10"]["author"] == "agent"
+        assert by_id["11"]["author"] == "human"
+        assert by_id["12"]["author"] is None
 
 
 # ---------------------------------------------------------------------------

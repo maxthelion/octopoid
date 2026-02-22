@@ -398,6 +398,7 @@ def _gather_drafts(sdk: "OctopoidSDK") -> list[dict[str, Any]]:
             "id": draft_id,
             "title": d.get("title"),
             "status": d.get("status", "idea"),
+            "author": d.get("author"),
             "file_path": d.get("file_path"),
             "created_at": d.get("created_at"),
             "actions": actions,

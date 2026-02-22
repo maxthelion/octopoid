@@ -363,6 +363,16 @@ FailedTab > Vertical {
     border-right: solid $border;
 }
 
+/* Inner TabbedContent inside draft-list-panel needs full height */
+.draft-list-panel > TabbedContent {
+    height: 1fr;
+}
+
+.draft-list-panel > TabbedContent > TabPane {
+    padding: 0;
+    height: 1fr;
+}
+
 /* Filter button row */
 .draft-filters {
     height: 1;
