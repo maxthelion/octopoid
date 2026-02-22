@@ -134,7 +134,7 @@ class TestHandleAgentResultFlowSteps:
         # Mock the SDK to return a claimed task
         mock_sdk.tasks.get.return_value = sample_task
 
-        with patch("orchestrator.scheduler.queue_utils") as mock_qu, \
+        with patch("orchestrator.result_handler.queue_utils") as mock_qu, \
              patch("orchestrator.steps.execute_steps") as mock_execute, \
              patch("orchestrator.flow.load_flow") as mock_load_flow:
 
@@ -172,7 +172,7 @@ class TestHandleAgentResultFlowSteps:
 
         mock_sdk.tasks.get.return_value = sample_task
 
-        with patch("orchestrator.scheduler.queue_utils") as mock_qu, \
+        with patch("orchestrator.result_handler.queue_utils") as mock_qu, \
              patch("orchestrator.steps.execute_steps") as mock_execute, \
              patch("orchestrator.flow.load_flow") as mock_load_flow:
 
@@ -203,7 +203,7 @@ class TestHandleAgentResultFlowSteps:
 
         mock_sdk.tasks.get.return_value = sample_task
 
-        with patch("orchestrator.scheduler.queue_utils") as mock_qu, \
+        with patch("orchestrator.result_handler.queue_utils") as mock_qu, \
              patch("orchestrator.steps.execute_steps") as mock_execute, \
              patch("orchestrator.flow.load_flow") as mock_load_flow:
 
@@ -238,7 +238,7 @@ class TestHandleAgentResultFlowSteps:
         }
         mock_sdk.tasks.get.return_value = project_task
 
-        with patch("orchestrator.scheduler.queue_utils") as mock_qu, \
+        with patch("orchestrator.result_handler.queue_utils") as mock_qu, \
              patch("orchestrator.steps.execute_steps") as mock_execute, \
              patch("orchestrator.flow.load_flow") as mock_load_flow:
 
@@ -290,7 +290,7 @@ class TestHandleAgentResultFailed:
 
         mock_sdk.tasks.get.return_value = sample_task
 
-        with patch("orchestrator.scheduler.queue_utils") as mock_qu:
+        with patch("orchestrator.result_handler.queue_utils") as mock_qu:
             mock_qu.get_sdk.return_value = mock_sdk
 
             from orchestrator.scheduler import handle_agent_result
@@ -305,7 +305,7 @@ class TestHandleAgentResultFailed:
 
         mock_sdk.tasks.get.return_value = sample_task
 
-        with patch("orchestrator.scheduler.queue_utils") as mock_qu:
+        with patch("orchestrator.result_handler.queue_utils") as mock_qu:
             mock_qu.get_sdk.return_value = mock_sdk
 
             from orchestrator.scheduler import handle_agent_result
@@ -325,7 +325,7 @@ class TestHandleAgentResultNoResult:
         """No result.json and no notes = failure."""
         mock_sdk.tasks.get.return_value = sample_task
 
-        with patch("orchestrator.scheduler.queue_utils") as mock_qu:
+        with patch("orchestrator.result_handler.queue_utils") as mock_qu:
             mock_qu.get_sdk.return_value = mock_sdk
 
             from orchestrator.scheduler import handle_agent_result
@@ -339,7 +339,7 @@ class TestHandleAgentResultNoResult:
 
         mock_sdk.tasks.get.return_value = sample_task
 
-        with patch("orchestrator.scheduler.queue_utils") as mock_qu:
+        with patch("orchestrator.result_handler.queue_utils") as mock_qu:
             mock_qu.get_sdk.return_value = mock_sdk
 
             from orchestrator.scheduler import handle_agent_result
@@ -362,7 +362,7 @@ class TestHandleAgentResultNoResult:
         }
         mock_sdk.tasks.get.return_value = task
 
-        with patch("orchestrator.scheduler.queue_utils") as mock_qu, \
+        with patch("orchestrator.result_handler.queue_utils") as mock_qu, \
              patch("orchestrator.steps.execute_steps") as mock_execute, \
              patch("orchestrator.flow.load_flow") as mock_load_flow:
 
@@ -399,7 +399,7 @@ class TestChildFlowDispatch:
         }
         mock_sdk.tasks.get.return_value = project_task
 
-        with patch("orchestrator.scheduler.queue_utils") as mock_qu, \
+        with patch("orchestrator.result_handler.queue_utils") as mock_qu, \
              patch("orchestrator.steps.execute_steps") as mock_execute, \
              patch("orchestrator.flow.load_flow") as mock_load_flow:
 
@@ -443,7 +443,7 @@ class TestChildFlowDispatch:
 
         mock_sdk.tasks.get.return_value = sample_task
 
-        with patch("orchestrator.scheduler.queue_utils") as mock_qu, \
+        with patch("orchestrator.result_handler.queue_utils") as mock_qu, \
              patch("orchestrator.steps.execute_steps") as mock_execute, \
              patch("orchestrator.flow.load_flow") as mock_load_flow:
 
@@ -493,7 +493,7 @@ class TestChildFlowDispatch:
         }
         mock_sdk.tasks.get.return_value = project_task
 
-        with patch("orchestrator.scheduler.queue_utils") as mock_qu, \
+        with patch("orchestrator.result_handler.queue_utils") as mock_qu, \
              patch("orchestrator.steps.execute_steps") as mock_execute, \
              patch("orchestrator.flow.load_flow") as mock_load_flow:
 
@@ -525,7 +525,7 @@ class TestChildFlowDispatch:
 
         mock_sdk.tasks.get.return_value = sample_task
 
-        with patch("orchestrator.scheduler.queue_utils") as mock_qu, \
+        with patch("orchestrator.result_handler.queue_utils") as mock_qu, \
              patch("orchestrator.steps.execute_steps") as mock_execute, \
              patch("orchestrator.flow.load_flow") as mock_load_flow:
 
@@ -565,7 +565,7 @@ class TestStepFailureRetry:
 
         mock_sdk.tasks.get.return_value = sample_task
 
-        with patch("orchestrator.scheduler.queue_utils") as mock_qu, \
+        with patch("orchestrator.result_handler.queue_utils") as mock_qu, \
              patch("orchestrator.flow.load_flow") as mock_load_flow:
 
             mock_qu.get_sdk.return_value = mock_sdk
@@ -598,7 +598,7 @@ class TestStepFailureRetry:
 
         mock_sdk.tasks.get.return_value = sample_task
 
-        with patch("orchestrator.scheduler.queue_utils") as mock_qu, \
+        with patch("orchestrator.result_handler.queue_utils") as mock_qu, \
              patch("orchestrator.flow.load_flow") as mock_load_flow:
 
             mock_qu.get_sdk.return_value = mock_sdk
@@ -632,7 +632,7 @@ class TestStepFailureRetry:
 
         mock_sdk.tasks.get.return_value = sample_task
 
-        with patch("orchestrator.scheduler.queue_utils") as mock_qu, \
+        with patch("orchestrator.result_handler.queue_utils") as mock_qu, \
              patch("orchestrator.flow.load_flow") as mock_load_flow:
 
             mock_qu.get_sdk.return_value = mock_sdk
