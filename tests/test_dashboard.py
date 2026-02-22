@@ -358,6 +358,84 @@ class TestWorkTabFlowGrouping:
 
 
 # ---------------------------------------------------------------------------
+# _order_states_by_transitions tests
+# ---------------------------------------------------------------------------
+
+
+class TestOrderStatesByTransitions:
+    """Tests for the _order_states_by_transitions() helper in work.py."""
+
+    def _order(self, states: list, transitions: list) -> list:
+        from packages.dashboard.tabs.work import _order_states_by_transitions
+        return _order_states_by_transitions(states, transitions)
+
+    def test_lifecycle_order_from_transitions(self):
+        """Server returns states alphabetically; transitions define lifecycle order."""
+        states = ["claimed", "done", "failed", "incoming", "provisional"]
+        transitions = [
+            {"from": "incoming", "to": "claimed"},
+            {"from": "claimed", "to": "provisional"},
+            {"from": "provisional", "to": "done"},
+        ]
+        result = self._order(states, transitions)
+        # Main chain first, in lifecycle order
+        assert result[:4] == ["incoming", "claimed", "provisional", "done"]
+        # "failed" not in any transition → appended at end
+        assert result[4] == "failed"
+
+    def test_isolated_states_appended_at_end(self):
+        """States not in any transition are appended after the main chain."""
+        states = ["a", "b", "c", "orphan"]
+        transitions = [
+            {"from": "a", "to": "b"},
+            {"from": "b", "to": "c"},
+        ]
+        result = self._order(states, transitions)
+        assert result == ["a", "b", "c", "orphan"]
+
+    def test_empty_transitions_preserves_original_order(self):
+        """When no transitions, all states are isolated and returned in input order."""
+        states = ["incoming", "claimed", "done"]
+        result = self._order(states, [])
+        assert result == ["incoming", "claimed", "done"]
+
+    def test_empty_states_returns_empty(self):
+        result = self._order([], [{"from": "a", "to": "b"}])
+        assert result == []
+
+    def test_single_state_no_transitions(self):
+        result = self._order(["incoming"], [])
+        assert result == ["incoming"]
+
+    def test_transitions_referencing_unknown_states_ignored(self):
+        """Transitions with states not in the states list are ignored."""
+        states = ["incoming", "done"]
+        transitions = [
+            {"from": "incoming", "to": "claimed"},  # "claimed" not in states
+            {"from": "claimed", "to": "done"},       # "claimed" not in states
+        ]
+        # "incoming" appears in "from" of a transition but "claimed" isn't in states
+        # so "incoming" is connected (appears as "from"), "done" is not reachable
+        result = self._order(states, transitions)
+        # Both states remain; "incoming" is connected (appears in transitions as from)
+        # but its neighbor "claimed" is not in states, so "incoming" has in_degree=0
+        # and "done" is isolated
+        assert set(result) == {"incoming", "done"}
+
+    def test_multiple_isolated_states(self):
+        """Multiple disconnected states all appear after the main chain."""
+        states = ["incoming", "claimed", "failed", "recycled"]
+        transitions = [{"from": "incoming", "to": "claimed"}]
+        result = self._order(states, transitions)
+        assert result[:2] == ["incoming", "claimed"]
+        assert set(result[2:]) == {"failed", "recycled"}
+
+    def test_importable_from_work_module(self):
+        from packages.dashboard.tabs.work import _order_states_by_transitions
+        assert callable(_order_states_by_transitions)
+
+
+# ---------------------------------------------------------------------------
 # Wrapper script test
 # ---------------------------------------------------------------------------
 

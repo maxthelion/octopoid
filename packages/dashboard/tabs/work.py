@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections import deque
+
 from textual.app import ComposeResult
 from textual.events import Key
 from textual.message import Message
@@ -97,6 +99,53 @@ class WorkColumn(Widget):
             pass
 
 
+def _order_states_by_transitions(states: list[str], transitions: list[dict]) -> list[str]:
+    """Order states by lifecycle using topological sort on the transition graph.
+
+    States that appear in at least one transition are sorted in lifecycle order.
+    States not connected to the transition graph (e.g. "failed") are appended at the end.
+    """
+    # Determine which states are connected to the transition graph
+    connected: set[str] = set()
+    for t in transitions:
+        if t.get("from") in states:
+            connected.add(t["from"])
+        if t.get("to") in states:
+            connected.add(t["to"])
+
+    chain_states = [s for s in states if s in connected]
+    isolated_states = [s for s in states if s not in connected]
+
+    # Kahn's algorithm topological sort on connected states
+    graph: dict[str, list[str]] = {s: [] for s in chain_states}
+    in_degree: dict[str, int] = {s: 0 for s in chain_states}
+    for t in transitions:
+        f = t.get("from")
+        to = t.get("to")
+        if f in graph and to in graph:
+            graph[f].append(to)
+            in_degree[to] += 1
+
+    queue: deque[str] = deque(s for s in chain_states if in_degree[s] == 0)
+    ordered: list[str] = []
+    while queue:
+        state = queue.popleft()
+        ordered.append(state)
+        for neighbor in graph[state]:
+            in_degree[neighbor] -= 1
+            if in_degree[neighbor] == 0:
+                queue.append(neighbor)
+
+    # Append any chain states not reached (cycle or disconnected subgraph)
+    for s in chain_states:
+        if s not in ordered:
+            ordered.append(s)
+
+    # Isolated states at the end
+    ordered.extend(isolated_states)
+    return ordered
+
+
 class FlowKanban(Widget):
     """Kanban board for a single flow: one column per state."""
 
@@ -120,9 +169,11 @@ class FlowKanban(Widget):
 
     def compose(self) -> ComposeResult:
         states = self._flow.get("states", [])
+        transitions = self._flow.get("transitions", [])
+        ordered_states = _order_states_by_transitions(states, transitions)
         flow_name = self._flow.get("name", "default")
         with Horizontal(classes="kanban-board"):
-            for state in states:
+            for state in ordered_states:
                 tasks = self._tasks_by_queue.get(state, [])
                 show_progress = state not in ("incoming", "done")
                 yield WorkColumn(
