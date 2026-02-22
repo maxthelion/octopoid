@@ -1,4 +1,4 @@
-"""Tests for ActionsAPI (SDK)."""
+"""Tests for ActionsAPI (SDK) and orchestrator action handler registry."""
 
 from unittest.mock import MagicMock, call, patch
 
@@ -55,17 +55,15 @@ class TestActionsAPICreate:
         sdk.actions.create(
             entity_type="draft",
             entity_id="42",
-            label="Archive",
-            description="Archive this draft",
-            action_data={"buttons": [{"label": "Archive", "command": "archive"}]},
             action_type="archive_draft",
+            label="Archive",
+            payload={"reason": "obsolete"},
             proposed_by="gatekeeper",
             expires_at="2026-12-31T00:00:00Z",
         )
 
         call_json = sdk._request.call_args[1]["json"]
-        assert call_json["action_data"] == {"buttons": [{"label": "Archive", "command": "archive"}]}
-        assert call_json["description"] == "Archive this draft"
+        assert call_json["payload"] == {"reason": "obsolete"}
         assert call_json["proposed_by"] == "gatekeeper"
         assert call_json["expires_at"] == "2026-12-31T00:00:00Z"
 
@@ -76,12 +74,12 @@ class TestActionsAPICreate:
         sdk.actions.create(
             entity_type="task",
             entity_id="T-1",
+            action_type="requeue_task",
             label="Requeue",
         )
 
         call_json = sdk._request.call_args[1]["json"]
-        assert "action_data" not in call_json
-        assert "description" not in call_json
+        assert "payload" not in call_json
         assert "proposed_by" not in call_json
         assert "expires_at" not in call_json
 
@@ -186,3 +184,144 @@ class TestSDKHasActionsAttribute:
         assert hasattr(sdk, "actions")
         assert isinstance(sdk.actions, ActionsAPI)
 
+
+# ---------------------------------------------------------------------------
+# Handler registry tests
+# ---------------------------------------------------------------------------
+
+
+class TestHandlerRegistry:
+    def test_register_and_get_handler(self):
+        from orchestrator.actions import get_handler, register_action_handler
+
+        @register_action_handler("_test_custom_action")
+        def my_handler(action: dict, sdk) -> dict:
+            return {"done": True}
+
+        handler = get_handler("_test_custom_action")
+        assert handler is not None
+        assert handler({"entity_id": "x"}, None) == {"done": True}
+
+    def test_get_handler_returns_none_for_unknown(self):
+        from orchestrator.actions import get_handler
+
+        result = get_handler("nonexistent_action_xyz")
+        assert result is None
+
+    def test_decorator_returns_function_unchanged(self):
+        from orchestrator.actions import register_action_handler
+
+        @register_action_handler("_test_return_fn")
+        def my_fn(action: dict, sdk) -> dict:
+            return {}
+
+        # The decorator should return the original function
+        assert callable(my_fn)
+        assert my_fn({}, None) == {}
+
+
+# ---------------------------------------------------------------------------
+# archive_draft handler
+# ---------------------------------------------------------------------------
+
+
+class TestArchiveDraftHandler:
+    def test_archive_draft_calls_patch(self):
+        from orchestrator.actions import get_handler
+
+        sdk = MagicMock()
+        action = {
+            "entity_type": "draft",
+            "entity_id": "42",
+            "action_type": "archive_draft",
+            "payload": None,
+        }
+
+        handler = get_handler("archive_draft")
+        result = handler(action, sdk)
+
+        sdk._request.assert_called_once_with(
+            "PATCH", "/api/v1/drafts/42", json={"status": "superseded"}
+        )
+        assert result == {"draft_id": "42", "status": "superseded"}
+
+    def test_archive_draft_result_dict(self):
+        from orchestrator.actions import get_handler
+
+        sdk = MagicMock()
+        action = {"entity_id": "99"}
+
+        handler = get_handler("archive_draft")
+        result = handler(action, sdk)
+
+        assert result["draft_id"] == "99"
+        assert result["status"] == "superseded"
+
+
+# ---------------------------------------------------------------------------
+# update_draft_status handler
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateDraftStatusHandler:
+    def test_update_draft_status(self):
+        from orchestrator.actions import get_handler
+
+        sdk = MagicMock()
+        action = {
+            "entity_id": "7",
+            "payload": {"status": "ready"},
+        }
+
+        handler = get_handler("update_draft_status")
+        result = handler(action, sdk)
+
+        sdk._request.assert_called_once_with(
+            "PATCH", "/api/v1/drafts/7", json={"status": "ready"}
+        )
+        assert result == {"draft_id": "7", "status": "ready"}
+
+    def test_update_draft_status_various_statuses(self):
+        from orchestrator.actions import get_handler
+
+        sdk = MagicMock()
+        handler = get_handler("update_draft_status")
+
+        for status in ("idea", "draft", "ready", "superseded"):
+            sdk.reset_mock()
+            action = {"entity_id": "1", "payload": {"status": status}}
+            result = handler(action, sdk)
+            assert result["status"] == status
+
+
+# ---------------------------------------------------------------------------
+# requeue_task handler
+# ---------------------------------------------------------------------------
+
+
+class TestRequeueTaskHandler:
+    def test_requeue_task(self):
+        from orchestrator.actions import get_handler
+
+        sdk = MagicMock()
+        action = {
+            "entity_type": "task",
+            "entity_id": "TASK-abc123",
+            "action_type": "requeue_task",
+        }
+
+        handler = get_handler("requeue_task")
+        result = handler(action, sdk)
+
+        sdk.tasks.update.assert_called_once_with("TASK-abc123", queue="incoming")
+        assert result == {"task_id": "TASK-abc123", "queue": "incoming"}
+
+    def test_requeue_task_result_dict(self):
+        from orchestrator.actions import get_handler
+
+        sdk = MagicMock()
+        handler = get_handler("requeue_task")
+        result = handler({"entity_id": "T-xyz"}, sdk)
+
+        assert result["task_id"] == "T-xyz"
+        assert result["queue"] == "incoming"
