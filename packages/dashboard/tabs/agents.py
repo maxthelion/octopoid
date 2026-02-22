@@ -1,16 +1,20 @@
-"""Agents tab — master-detail view of all configured agents and jobs."""
+"""Agents tab — two-tier TabbedContent: Flow Agents and Background Agents."""
 
 from __future__ import annotations
 
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.widget import Widget
-from textual.widgets import Label, ListItem, ListView
+from textual.widgets import Label, ListItem, ListView, TabbedContent, TabPane
 from textual.containers import Horizontal, Vertical, VerticalScroll
 
 from ..utils import format_age
 from ..widgets.status_badge import StatusBadge
 from .base import TabBase
+
+# Roles that belong to the "flow" agents tab (claim tasks from queues).
+# All other roles are treated as background agents.
+_FLOW_ROLES: frozenset[str] = frozenset({"implement", "gatekeeper"})
 
 
 class AgentItem(ListItem):
@@ -37,8 +41,8 @@ class AgentItem(ListItem):
                 badge_status = "paused" if paused else status
                 yield StatusBadge(badge_status)
             else:
-                # Job agent — show interval as a compact indicator
-                interval = agent.get("interval", 0)
+                # Background agent or job — show interval
+                interval = agent.get("interval_seconds") or agent.get("interval", 0)
                 if interval >= 3600:
                     interval_str = f"{interval // 3600}h"
                 elif interval >= 60:
@@ -71,6 +75,8 @@ class AgentDetail(Widget):
         agent_type = self._agent.get("agent_type", "flow")
         if agent_type == "job":
             yield from self._compose_job_detail()
+        elif agent_type == "background":
+            yield from self._compose_background_detail()
         else:
             yield from self._compose_flow_detail()
 
@@ -196,8 +202,52 @@ class AgentDetail(Widget):
                 yield Label("NOTES", classes="detail-section-header")
                 yield Label(notes, classes="agent-detail-row dim-text")
 
+    def _compose_background_detail(self) -> ComposeResult:
+        """Render detail for a background agent (non-flow, runs periodically)."""
+        agent = self._agent
+        name = agent.get("name", "?")
+        role = agent.get("role", "?")
+        interval_seconds = agent.get("interval_seconds")
+        last_run = agent.get("last_run")
+        notes = agent.get("notes")
+
+        with VerticalScroll():
+            yield Label(name, classes="agent-detail-name")
+
+            yield Label("Type: background agent", classes="agent-detail-row dim-text")
+            yield Label(f"Role: {role}", classes="agent-detail-row")
+
+            yield Label("")  # spacer
+
+            yield Label("SCHEDULE", classes="detail-section-header")
+            if interval_seconds is not None:
+                if interval_seconds >= 3600:
+                    interval_str = f"{interval_seconds // 3600}h ({interval_seconds}s)"
+                elif interval_seconds >= 60:
+                    interval_str = f"{interval_seconds // 60}m ({interval_seconds}s)"
+                else:
+                    interval_str = f"{interval_seconds}s"
+                yield Label(f"Interval: {interval_str}", classes="agent-detail-row")
+            else:
+                yield Label("Interval: (unknown)", classes="agent-detail-row dim-text")
+
+            yield Label("")  # spacer
+
+            yield Label("RUN STATUS", classes="detail-section-header")
+            if last_run:
+                age = format_age(last_run)
+                age_text = f" ({age} ago)" if age else ""
+                yield Label(f"Last run: {last_run[:19]}{age_text}", classes="agent-detail-row")
+            else:
+                yield Label("Last run: (never)", classes="agent-detail-row dim-text")
+
+            if notes:
+                yield Label("")  # spacer
+                yield Label("RECENT OUTPUT", classes="detail-section-header")
+                yield Label(notes, classes="agent-detail-row dim-text")
+
     def _compose_job_detail(self) -> ComposeResult:
-        """Render detail for a job agent (scheduler background job)."""
+        """Render detail for a scheduler background job."""
         agent = self._agent
         name = agent.get("name", "?")
         job_type = agent.get("job_type", "script")
@@ -211,7 +261,7 @@ class AgentDetail(Widget):
             yield Label(name, classes="agent-detail-name")
 
             # Type indicator
-            yield Label("Type: background job", classes="agent-detail-row dim-text")
+            yield Label("Type: scheduler job", classes="agent-detail-row dim-text")
 
             yield Label("")  # spacer
 
@@ -275,11 +325,10 @@ class AgentDetail(Widget):
 
 
 class AgentsTab(TabBase):
-    """Master-detail agents view: list on left, detail on right.
+    """Agents view with two sub-tabs: Flow Agents and Background Agents.
 
-    Shows two sections in the list panel:
-    - Flow agents (implementer, gatekeeper) — claim tasks from queues
-    - Job agents — background jobs that run on a schedule
+    Flow Agents: implementer/gatekeeper agents that claim tasks from queues.
+    Background Agents: autonomous agents that run on a schedule, plus scheduler jobs.
     """
 
     BINDINGS = [
@@ -290,22 +339,27 @@ class AgentsTab(TabBase):
     def compose(self) -> ComposeResult:
         agents = self._report.get("agents", [])
         jobs = self._report.get("jobs", [])
-        all_items = agents + jobs
-        selected = all_items[0] if all_items else None
+
+        flow_agents = [a for a in agents if a.get("role") in _FLOW_ROLES]
+        # Background: non-flow agents from agents.yaml + all scheduler jobs
+        bg_agents = [a for a in agents if a.get("role") not in _FLOW_ROLES]
+        bg_items = bg_agents + jobs
+
+        # Default selection: first flow agent, or first background item if no flow agents
+        selected = flow_agents[0] if flow_agents else (bg_items[0] if bg_items else None)
 
         with Horizontal(classes="agents-layout"):
             with Vertical(classes="agent-list-panel", id="agent-list-panel"):
-                # Flow agents section
-                yield Label(" FLOW AGENTS ", classes="section-header")
-                with ListView(id="agent-listview", classes="agent-listview"):
-                    for agent in agents:
-                        yield AgentItem(agent)
+                with TabbedContent(id="agent-sub-tabs"):
+                    with TabPane("Flow Agents", id="tab-flow"):
+                        with ListView(id="flow-listview", classes="agent-listview"):
+                            for agent in flow_agents:
+                                yield AgentItem(agent)
 
-                # Job agents section
-                yield Label(" JOBS ", classes="section-header")
-                with ListView(id="job-listview", classes="agent-listview"):
-                    for job in jobs:
-                        yield AgentItem(job)
+                    with TabPane("Background Agents", id="tab-background"):
+                        with ListView(id="bg-listview", classes="agent-listview"):
+                            for item in bg_items:
+                                yield AgentItem(item)
 
             yield AgentDetail(
                 agent=selected,
@@ -320,34 +374,26 @@ class AgentsTab(TabBase):
             detail = self.query_one("#agent-detail", AgentDetail)
             detail.update_agent(event.item.agent_data, self._report)
 
-    def action_cursor_down(self) -> None:
-        # Try focused listview first, then fall back to agent-listview
-        for lv_id in ("#agent-listview", "#job-listview"):
-            try:
-                lv = self.query_one(lv_id, ListView)
-                if lv.has_focus:
-                    lv.action_cursor_down()
-                    return
-            except Exception:
-                pass
-        # No focused listview — move in the first one
+    def _active_listview_id(self) -> str:
+        """Return the CSS selector for the listview in the currently active sub-tab."""
         try:
-            lv = self.query_one("#agent-listview", ListView)
+            tabs = self.query_one("#agent-sub-tabs", TabbedContent)
+            if tabs.active == "tab-background":
+                return "#bg-listview"
+        except Exception:
+            pass
+        return "#flow-listview"
+
+    def action_cursor_down(self) -> None:
+        try:
+            lv = self.query_one(self._active_listview_id(), ListView)
             lv.action_cursor_down()
         except Exception:
             pass
 
     def action_cursor_up(self) -> None:
-        for lv_id in ("#agent-listview", "#job-listview"):
-            try:
-                lv = self.query_one(lv_id, ListView)
-                if lv.has_focus:
-                    lv.action_cursor_up()
-                    return
-            except Exception:
-                pass
         try:
-            lv = self.query_one("#agent-listview", ListView)
+            lv = self.query_one(self._active_listview_id(), ListView)
             lv.action_cursor_up()
         except Exception:
             pass

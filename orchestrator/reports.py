@@ -495,6 +495,11 @@ def _gather_messages(sdk: "OctopoidSDK") -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
+# Roles that are considered "flow" agents (claim tasks from the task queue).
+# Agents with any other role are treated as "background" agents in the dashboard.
+_FLOW_AGENT_ROLES: frozenset[str] = frozenset({"implement", "gatekeeper"})
+
+
 def _gather_agents() -> list[dict[str, Any]]:
     """Gather agent blueprint status using the pool model."""
     try:
@@ -517,6 +522,10 @@ def _gather_agents() -> list[dict[str, Any]]:
         role = agent.get("role", "unknown")
         paused = agent.get("paused", False)
         max_instances = agent.get("max_instances", 1)
+        interval_seconds = agent.get("interval_seconds")
+
+        # Classify agent type: flow agents claim tasks; background agents run autonomously.
+        agent_type = "flow" if role in _FLOW_AGENT_ROLES else "background"
 
         # Count alive PIDs only — do NOT call cleanup_dead_pids() here.
         # Removing dead PIDs must only happen in check_and_update_finished_agents,
@@ -542,7 +551,7 @@ def _gather_agents() -> list[dict[str, Any]]:
 
         result.append({
             "name": name,
-            "agent_type": "flow",
+            "agent_type": agent_type,
             "blueprint_name": blueprint_name,
             "role": role,
             "status": status,
@@ -551,6 +560,7 @@ def _gather_agents() -> list[dict[str, Any]]:
             "running_instances": running_instances,
             "idle_capacity": idle_capacity,
             "current_tasks": current_tasks,
+            "interval_seconds": interval_seconds,
             "notes": agent_notes,
         })
 
