@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Manual resolve state for tasks** ([TASK-e62966cb])
+  - `packages/python-sdk/octopoid_sdk/client.py`: Added `TasksAPI.resolve(task_id, resolved_by, resolution_note)` method. Tries a dedicated `POST /resolve` endpoint first, falls back to `PATCH queue=resolved` for backwards compatibility with the current server.
+  - `orchestrator/tasks.py`: Added `resolve_task(task_id, resolved_by, resolution_note)` function. Fetches the task, appends a `## Resolution` section to the task file on disk for audit trail, then calls `sdk.tasks.resolve()` to move the task to the `resolved` queue.
+  - `orchestrator/queue_utils.py`: Re-exported `resolve_task` for backwards-compatible access.
+  - `orchestrator/reports.py`: `_gather_done_tasks()` now fetches and includes `resolved` queue tasks. `_format_task()` passes through `resolved_by` and `resolution_note` fields.
+  - `commands/management/resolve-task.md`: New `/resolve-task` skill for interactive use. Documents usage, examples, and the underlying implementation.
+  - `packages/dashboard/tabs/done.py`: Done tab now shows resolved tasks with a blue `◎` icon and a `resolved:<who>` badge. `_summary_text()` includes a resolved count.
+  - `project-management/tasks/octopoid-server/add-resolved-state.md`: Server task to add `resolved_by` and `resolution_note` columns to the tasks table and expose them in the PATCH handler.
+
 - **Flow-specific kanban tabs in Work view** ([TASK-0ddd897e])
   - `packages/python-sdk/octopoid_sdk/client.py`: Added `FlowsAPI.list()` method to fetch all registered flow definitions from `/api/v1/flows`.
   - `orchestrator/reports.py`: Added `_gather_flows()` which fetches flow definitions and parses JSON-encoded `states`/`transitions` fields. Added `flow` and `queue` fields to `_format_task()`. The report payload now includes a `"flows"` key.

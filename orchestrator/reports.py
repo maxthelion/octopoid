@@ -189,6 +189,22 @@ def _gather_done_tasks(sdk: Optional["OctopoidSDK"] = None) -> list[dict[str, An
         item["accepted_by"] = None
         result.append(item)
 
+    # Resolved tasks (manually resolved by humans)
+    try:
+        resolved_all = sdk.tasks.list(queue='resolved')
+        resolved_recent = [t for t in resolved_all if _is_recent(t, cutoff)]
+    except Exception:
+        resolved_recent = []
+
+    for t in resolved_recent:
+        item = _format_task(t)
+        item["final_queue"] = "resolved"
+        item["completed_at"] = t.get("completed_at") or t.get("updated_at") or t.get("created_at") or t.get("created")
+        item["resolved_by"] = t.get("resolved_by")
+        item["resolution_note"] = t.get("resolution_note")
+        item["accepted_by"] = None
+        result.append(item)
+
     # Sort by most recent first (using completed_at/created)
     result.sort(key=lambda t: t.get("completed_at") or "", reverse=True)
     return result
@@ -225,6 +241,8 @@ def _format_task(task: dict[str, Any]) -> dict[str, Any]:
         "claimed_at": task.get("claimed_at"),
         "queue": task.get("queue"),
         "flow": task.get("flow") or "default",
+        "resolved_by": task.get("resolved_by"),
+        "resolution_note": task.get("resolution_note"),
     }
 
 

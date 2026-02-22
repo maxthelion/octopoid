@@ -15,8 +15,8 @@ from .tasks import (
     fail_task, find_task_by_id, get_continuation_tasks,
     get_review_feedback, get_task_by_id, hold_task, is_task_still_valid,
     list_tasks, mark_needs_continuation, reject_completion, reject_task,
-    reset_task, resume_task, retry_task, review_reject_task, submit_completion,
-    unclaim_task,
+    reset_task, resolve_task, resume_task, retry_task, review_reject_task,
+    submit_completion, unclaim_task,
 )
 from .projects import (
     activate_project, approve_project_via_flow, create_project, get_project,

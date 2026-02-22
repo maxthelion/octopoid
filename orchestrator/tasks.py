@@ -365,6 +365,69 @@ def reset_task(task_id: str) -> dict[str, Any]:
     except Exception as e:
         raise RuntimeError(f"Failed to reset task {task_id}: {e}")
 
+def resolve_task(
+    task_id: str,
+    resolved_by: str,
+    resolution_note: str,
+) -> dict[str, Any]:
+    """Manually resolve a task, bypassing normal flow transitions.
+
+    Moves a task from any queue state to 'resolved'. Use when work was completed
+    outside the normal agent flow — cherry-picks, direct commits, abandoned tasks, etc.
+
+    Appends a resolution section to the task file on disk so the audit trail is
+    preserved even before the server persists resolved_by/resolution_note natively.
+
+    Args:
+        task_id: Task ID
+        resolved_by: Name of the person resolving (e.g. 'human', 'max')
+        resolution_note: Reason for manual resolution
+
+    Returns:
+        Updated task dict from the API
+    """
+    sdk = get_sdk()
+
+    # Fetch the task to get file_path and current queue
+    task = sdk.tasks.get(task_id)
+    if not task:
+        raise LookupError(f"Task {task_id} not found")
+
+    old_queue = task.get("queue", "unknown")
+
+    # Append resolution metadata to the task file on disk (canonical audit trail)
+    file_path_str = task.get("file_path")
+    if file_path_str:
+        try:
+            tasks_dir = get_tasks_file_dir()
+            task_file = tasks_dir / Path(file_path_str).name
+            if task_file.exists():
+                existing = task_file.read_text()
+                resolution_section = (
+                    f"\n## Resolution\n\n"
+                    f"**Resolved by:** {resolved_by}\n"
+                    f"**Resolution note:** {resolution_note}\n"
+                    f"**Resolved at:** {datetime.now().isoformat()}\n"
+                    f"**Previous queue:** {old_queue}\n"
+                )
+                if "## Resolution" not in existing:
+                    task_file.write_text(existing.rstrip() + "\n" + resolution_section)
+        except (OSError, IOError) as e:
+            print(f"Warning: Could not update task file for {task_id}: {e}")
+
+    # Transition via SDK (tries dedicated /resolve endpoint, falls back to PATCH)
+    result = sdk.tasks.resolve(task_id, resolved_by=resolved_by, resolution_note=resolution_note)
+
+    logger = get_task_logger(task_id)
+    logger.log_requeued(
+        from_queue=old_queue,
+        to_queue="resolved",
+        reason=f"Manually resolved by {resolved_by}: {resolution_note}",
+    )
+
+    return result
+
+
 def hold_task(task_id: str) -> dict[str, Any]:
     """Hold a task (moves to escalated queue)."""
     try:
