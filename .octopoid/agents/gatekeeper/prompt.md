@@ -30,6 +30,7 @@ You are reviewing this task's implementation to determine if it should be approv
 - Changes don't match the acceptance criteria
 - Critical functionality is missing or broken
 - Merge conflicts exist
+- **Errors are swallowed** — any `except` block that catches an error and silently continues (bare `except: pass`, logging without re-raising, or falling through to a success path) is a blocking issue. Every error must be re-raised, returned as a failure, or logged in a way the caller can act on.
 
 ### Advisory (Not Blocking):
 - Scope issues: CHANGELOG/README edits when not required by the task

@@ -85,6 +85,10 @@ When a PR has merge conflicts (mergeStateStatus: CONFLICTING or DIRTY), fix it i
 - Don't hand-wave with "the server didn't get the update" — investigate *why* and document the root cause or at least the symptoms.
 - **Write a postmortem for significant incidents.** When you diagnose and fix a non-trivial issue (especially one involving data loss, stuck tasks, or multi-hour outages), write a postmortem in `project-management/postmortems/` and add the symptoms to `project-management/issues-log.md` so the next person (or agent) can find the fix quickly.
 
+## Error handling rule
+
+**Never swallow errors.** Every `except` block must either re-raise, log the error visibly, or return a meaningful error value. Bare `except: pass`, `except Exception: pass`, and patterns like `except Exception as e: debug_log(f"failed: {e}")` followed by falling through to a success path are all forbidden. If an operation fails, the caller must know it failed. Silent failures cause hours of debugging — the `codebase_analyst` spawn crash was logged as "completed OK" because the error was caught and discarded.
+
 ## Plan verification rule
 
 When a plan says something is "already done" or "already disabled", **verify it** before skipping the change. Read the actual file and confirm the current state matches the plan's claim. This rule exists because a plan once incorrectly stated `_gather_prs` was already set to `[]`, causing the implementing agent to skip the fix — the function kept running and burned 22k+ GitHub API calls/hour for days.
