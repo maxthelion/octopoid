@@ -6,6 +6,7 @@ Tests cover:
 3. _format_age() utility in the agents tab
 4. App class attributes (bindings, title)
 5. Tab widget update_data() interface
+6. DraftsTab stale file_path fix (drafts created while dashboard is running)
 """
 
 from __future__ import annotations
@@ -459,3 +460,127 @@ class TestWrapperScript:
         wrapper = Path(__file__).parent.parent / "octopoid-dash"
         content = wrapper.read_text()
         assert "packages.dashboard" in content
+
+
+# ---------------------------------------------------------------------------
+# DraftsTab stale file_path fix
+# ---------------------------------------------------------------------------
+
+
+class TestDraftsTabStalePath:
+    """Tests for the fix that re-renders content when file_path is late-set.
+
+    Background: the /draft-idea skill registers a draft on the server with
+    file_path=None, then writes the file and PATCHes file_path.  If the
+    dashboard fetches between those two steps it caches file_path=None and
+    the content pane shows "_empty_" forever — even after file_path is set —
+    unless we explicitly re-render on the next update_data() call.
+    """
+
+    def _make_tab(self) -> "DraftsTab":
+        from packages.dashboard.tabs.drafts import DraftsTab
+        tab = DraftsTab()
+        # Simulate a selected draft that has no file_path yet
+        tab._selected_draft = {"id": 42, "title": "My Draft", "file_path": None, "actions": []}
+        tab._selected_draft_id = 42
+        return tab
+
+    def _make_report(self, file_path: str | None) -> dict:
+        return {
+            "drafts": [
+                {
+                    "id": 42,
+                    "title": "My Draft",
+                    "status": "idea",
+                    "author": "human",
+                    "file_path": file_path,
+                    "created_at": None,
+                    "actions": [],
+                }
+            ]
+        }
+
+    def test_update_data_rerenders_content_when_file_path_becomes_available(self, tmp_path):
+        """update_data() should re-render the content pane when file_path is newly set."""
+        from packages.dashboard.tabs.drafts import DraftsTab, _load_draft_content
+
+        draft_file = tmp_path / "42-2026-01-01-my-draft.md"
+        draft_file.write_text("# My Draft\n\nHello world.")
+
+        tab = self._make_tab()
+
+        # Track calls to query_one("#draft-content") by monkeypatching _load_draft_content
+        rendered_content: list[str] = []
+
+        original_load = _load_draft_content
+
+        def fake_load(draft: dict) -> str:
+            result = original_load(draft)
+            if result:
+                rendered_content.append(result)
+            return result
+
+        mock_md = MagicMock()
+
+        def fake_query_one(selector: str, widget_type=None):
+            if selector == "#draft-content":
+                return mock_md
+            raise Exception(f"unexpected query: {selector}")
+
+        tab.query_one = fake_query_one
+
+        with patch("packages.dashboard.tabs.drafts._load_draft_content", side_effect=fake_load):
+            # First update: file_path is None — no re-render expected
+            tab.update_data(self._make_report(file_path=None))
+            assert mock_md.update.call_count == 0
+
+            # Second update: file_path is now set — content should be re-rendered
+            tab.update_data(self._make_report(file_path=str(draft_file)))
+            assert mock_md.update.call_count == 1
+
+    def test_update_data_no_rerender_when_file_path_unchanged(self, tmp_path):
+        """update_data() should NOT re-render when file_path was already set."""
+        from packages.dashboard.tabs.drafts import DraftsTab
+
+        draft_file = tmp_path / "42-draft.md"
+        draft_file.write_text("# Draft")
+
+        tab = self._make_tab()
+        # Simulate: file_path was already set in the previous fetch
+        tab._selected_draft["file_path"] = str(draft_file)
+
+        mock_md = MagicMock()
+        tab.query_one = lambda sel, wt=None: mock_md if sel == "#draft-content" else (_ for _ in ()).throw(Exception(sel))
+
+        # Both before and after have the same file_path — no re-render
+        tab.update_data(self._make_report(file_path=str(draft_file)))
+        assert mock_md.update.call_count == 0
+
+    def test_update_data_no_rerender_when_file_path_remains_none(self):
+        """update_data() should NOT re-render when file_path is still None."""
+        from packages.dashboard.tabs.drafts import DraftsTab
+
+        tab = self._make_tab()
+        mock_md = MagicMock()
+        tab.query_one = lambda sel, wt=None: mock_md if sel == "#draft-content" else (_ for _ in ()).throw(Exception(sel))
+
+        tab.update_data(self._make_report(file_path=None))
+        assert mock_md.update.call_count == 0
+
+    def test_load_draft_content_returns_empty_for_none_file_path(self):
+        """_load_draft_content returns '' when file_path is None."""
+        from packages.dashboard.tabs.drafts import _load_draft_content
+        assert _load_draft_content({"file_path": None}) == ""
+
+    def test_load_draft_content_reads_file(self, tmp_path):
+        """_load_draft_content returns file contents for a valid file_path."""
+        from packages.dashboard.tabs.drafts import _load_draft_content
+        f = tmp_path / "draft.md"
+        f.write_text("# Hello")
+        assert _load_draft_content({"file_path": str(f)}) == "# Hello"
+
+    def test_load_draft_content_returns_error_msg_for_missing_file(self, tmp_path):
+        """_load_draft_content returns error string for a non-existent path."""
+        from packages.dashboard.tabs.drafts import _load_draft_content
+        missing = str(tmp_path / "nonexistent.md")
+        assert _load_draft_content({"file_path": missing}) == "(could not read file)"

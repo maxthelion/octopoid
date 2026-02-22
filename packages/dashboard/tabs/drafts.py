@@ -363,6 +363,15 @@ class DraftsTab(TabBase):
         # Update action bar buttons
         self._update_action_bar(draft)
 
+        # If the draft has no file_path yet (created in two steps: register then
+        # write file + PATCH), trigger a background refresh.  When the fetch
+        # completes, update_data() will re-render the content once file_path is set.
+        if not (draft.get("file_path") or ""):
+            try:
+                self.app.action_refresh()
+            except Exception:
+                pass
+
     def action_cursor_down(self) -> None:
         lv_id = self._get_active_listview_id()
         try:
@@ -385,7 +394,18 @@ class DraftsTab(TabBase):
             selected_id = self._selected_draft.get("id")
             for d in self._drafts:
                 if d.get("id") == selected_id:
+                    old_file_path = self._selected_draft.get("file_path") or ""
                     self._selected_draft = d
                     self._update_action_bar(d)
+                    # Re-render content if file_path is newly available (e.g. draft
+                    # was created with file_path=None and later PATCH-ed with the path).
+                    new_file_path = d.get("file_path") or ""
+                    if new_file_path and not old_file_path:
+                        content = _load_draft_content(d)
+                        try:
+                            md = self.query_one("#draft-content", Markdown)
+                            md.update(content or "_empty_")
+                        except Exception:
+                            pass
                     break
         self._refresh_all_lists()
