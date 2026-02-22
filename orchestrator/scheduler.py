@@ -19,6 +19,7 @@ from .config import (
     get_agents,
     get_agents_runtime_dir,
     get_global_instructions_path,
+    get_jobs_dir,
     get_logs_dir,
     get_base_branch,
     get_orchestrator_dir,
@@ -1012,6 +1013,130 @@ def invoke_claude(task_dir: Path, agent_config: dict) -> int:
     debug_log(f"Invoked claude for task dir {task_dir} with PID {process.pid}")
     return process.pid
 
+
+def prepare_job_directory(job_name: str, agent_config: dict) -> Path:
+    """Prepare a self-contained directory for a taskless agent job.
+
+    Unlike prepare_task_directory(), this does NOT create a git worktree,
+    write task.json, or set task-specific env vars. It is for agent jobs
+    (type: agent in jobs.yaml) that run scripts without claiming a task.
+
+    Creates:
+        {job_dir}/worktree/    - plain working directory (no git worktree)
+        {job_dir}/env.sh       - environment for scripts (no TASK_ID/TASK_BRANCH)
+        {job_dir}/scripts/     - executable agent scripts
+        {job_dir}/prompt.md    - rendered prompt
+        {job_dir}/result.json  - (written by agent if needed, not required)
+        {job_dir}/notes.md     - progress notes
+
+    The worktree/ directory sits inside .octopoid/runtime/jobs/ which is
+    itself inside the parent git repo, so git commands (e.g. git rev-parse
+    --show-toplevel) work correctly from within workdir.
+
+    Args:
+        job_name: Name of the job (e.g. "codebase_analyst").
+        agent_config: Agent configuration dict from the job definition.
+
+    Returns:
+        Path to the prepared job directory.
+    """
+    timestamp = datetime.now(tz=timezone.utc).strftime("%Y%m%dT%H%M%S")
+    jobs_base = get_jobs_dir()
+    job_dir = jobs_base / f"{job_name}-{timestamp}"
+    job_dir.mkdir(parents=True, exist_ok=True)
+
+    # Create a plain working directory (not a git worktree).
+    # Named "worktree" so invoke_claude() finds it at task_dir / "worktree".
+    # Its location inside .octopoid/runtime/jobs/ is still inside the parent
+    # git repo, so git rev-parse --show-toplevel returns the project root.
+    workdir = job_dir / "worktree"
+    workdir.mkdir(exist_ok=True)
+
+    # Copy scripts from agent_dir
+    agent_dir = agent_config.get("agent_dir")
+    if not agent_dir or not (Path(agent_dir) / "scripts").exists():
+        raise ValueError(f"Agent directory or scripts not found: {agent_dir}")
+
+    scripts_src = Path(agent_dir) / "scripts"
+    scripts_dest = job_dir / "scripts"
+    scripts_dest.mkdir(exist_ok=True)
+
+    venv_python = sys.executable
+    for script in scripts_src.iterdir():
+        if script.name.startswith("."):
+            continue
+        dest = scripts_dest / script.name
+        content = script.read_text()
+        if content.startswith("#!/usr/bin/env python3"):
+            content = f"#!{venv_python}\n" + content.split("\n", 1)[1]
+        dest.write_text(content)
+        dest.chmod(0o755)
+
+    # Write env.sh — taskless agents get ORCHESTRATOR_PYTHONPATH and server URL
+    # but no TASK_ID, TASK_BRANCH, or WORKTREE (those are task-specific).
+    orchestrator_submodule = find_parent_project() / "orchestrator"
+    env_lines = [
+        "#!/bin/bash",
+        f"export AGENT_NAME='{job_name}'",
+        f"export OCTOPOID_SERVER_URL='{os.environ.get('OCTOPOID_SERVER_URL') or _get_server_url_from_config()}'",
+        f"export ORCHESTRATOR_PYTHONPATH='{orchestrator_submodule}'",
+        f"export RESULT_FILE='{job_dir / 'result.json'}'",
+        f"export NOTES_FILE='{job_dir / 'notes.md'}'",
+    ]
+    (job_dir / "env.sh").write_text("\n".join(env_lines) + "\n")
+
+    # Render prompt from agent directory
+    prompt_template_path = Path(agent_dir) / "prompt.md"
+    if not prompt_template_path.exists():
+        raise ValueError(f"Agent prompt.md not found: {prompt_template_path}")
+
+    prompt_template = prompt_template_path.read_text()
+
+    global_instructions = ""
+    gi_path = get_global_instructions_path()
+    if gi_path.exists():
+        global_instructions = gi_path.read_text()
+
+    instructions_md_path = Path(agent_dir) / "instructions.md"
+    if instructions_md_path.exists():
+        global_instructions = global_instructions + "\n\n" + instructions_md_path.read_text()
+
+    from string import Template
+    template = Template(prompt_template)
+    prompt = template.safe_substitute(global_instructions=global_instructions)
+    (job_dir / "prompt.md").write_text(prompt)
+
+    debug_log(f"Prepared job directory: {job_dir}")
+    return job_dir
+
+
+def spawn_job_agent(ctx: AgentContext) -> int:
+    """Spawn a taskless agent job: prepare job dir, invoke claude directly.
+
+    Used for agent jobs (type: agent in jobs.yaml) that do not claim a task
+    from the queue. ctx.claimed_task is None for these agents.
+
+    Args:
+        ctx: AgentContext with agent_config and no claimed_task.
+
+    Returns:
+        PID of the spawned claude process.
+    """
+    blueprint_name = ctx.agent_config.get("blueprint_name", ctx.agent_name)
+    instance_name = _next_instance_name(blueprint_name)
+
+    job_dir = prepare_job_directory(ctx.agent_name, ctx.agent_config)
+    pid = invoke_claude(job_dir, ctx.agent_config)
+
+    # Register with empty task_id — check_and_update_finished_agents will
+    # clean up the PID without trying to process any task result.
+    register_instance_pid(blueprint_name, pid, "", instance_name)
+
+    new_state = mark_started(ctx.state, pid)
+    new_state.extra["agent_mode"] = "job"
+    new_state.extra["job_dir"] = str(job_dir)
+    save_state(new_state, ctx.state_path)
+    return pid
 
 
 def read_result_json(task_dir: Path) -> dict:
@@ -2472,7 +2597,13 @@ def spawn_implementer(ctx: AgentContext) -> int:
 
 
 def get_spawn_strategy(ctx: AgentContext) -> Callable:
-    """Select spawn strategy: always uses spawn_implementer (scripts mode only)."""
+    """Select spawn strategy based on whether a task has been claimed.
+
+    - claimed_task is None → taskless job agent → spawn_job_agent
+    - claimed_task is set  → task-based implementer → spawn_implementer
+    """
+    if ctx.claimed_task is None:
+        return spawn_job_agent
     return spawn_implementer
 
 
