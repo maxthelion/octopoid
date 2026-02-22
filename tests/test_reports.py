@@ -264,8 +264,12 @@ class TestGatherDrafts:
         assert len(draft_a["actions"]) == 2
         assert draft_a["actions"][0]["id"] == "act-1"
         assert draft_a["actions"][1]["id"] == "act-2"
+        # Draft B has no server-side actions → defaults are injected
         draft_b = next(d for d in result if d["id"] == "2")
-        assert draft_b["actions"] == []
+        assert len(draft_b["actions"]) == 3
+        assert {a["action_type"] for a in draft_b["actions"]} == {
+            "enqueue_draft", "process_draft", "archive_draft"
+        }
 
     def test_fetches_actions_with_single_api_call(self):
         """Actions must be fetched in one bulk call, not one per draft."""
@@ -295,7 +299,12 @@ class TestGatherDrafts:
 
         draft_x = next(d for d in result if d["id"] == "10")
         draft_y = next(d for d in result if d["id"] == "20")
-        assert draft_x["actions"] == []
+        # Draft X has no server-side actions → defaults injected
+        assert len(draft_x["actions"]) == 3
+        assert {a["action_type"] for a in draft_x["actions"]} == {
+            "enqueue_draft", "process_draft", "archive_draft"
+        }
+        # Draft Y has a server-side action → shown as-is, no defaults
         assert len(draft_y["actions"]) == 1
         assert draft_y["actions"][0]["id"] == "a1"
 
@@ -318,7 +327,11 @@ class TestGatherDrafts:
 
         assert len(result) == 1
         assert result[0]["id"] == "5"
-        assert result[0]["actions"] == []
+        # When the actions API fails, default actions are injected
+        assert len(result[0]["actions"]) == 3
+        assert {a["action_type"] for a in result[0]["actions"]} == {
+            "enqueue_draft", "process_draft", "archive_draft"
+        }
 
     def test_includes_expected_draft_fields(self):
         sdk = MagicMock()
@@ -336,7 +349,11 @@ class TestGatherDrafts:
         assert d["status"] == "complete"
         assert d["file_path"] == "/path/to/draft.md"
         assert d["created_at"] == "2026-02-01T12:00:00"
-        assert d["actions"] == []
+        # No server-side actions → defaults injected
+        assert len(d["actions"]) == 3
+        assert {a["action_type"] for a in d["actions"]} == {
+            "enqueue_draft", "process_draft", "archive_draft"
+        }
 
 
 # ---------------------------------------------------------------------------
