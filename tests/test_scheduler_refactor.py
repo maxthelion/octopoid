@@ -33,6 +33,7 @@ from orchestrator.scheduler import (
     handle_agent_result_via_flow,
     run_housekeeping,
     spawn_implementer,
+    spawn_job_agent,
 )
 from orchestrator.state_utils import AgentState
 
@@ -559,10 +560,10 @@ class TestEvaluateAgent:
 
 
 class TestGetSpawnStrategy:
-    """Test get_spawn_strategy always returns spawn_implementer."""
+    """Test get_spawn_strategy selects spawn path based on claimed_task."""
 
-    def test_get_spawn_strategy_returns_spawn_implementer(self, tmp_path):
-        """get_spawn_strategy always returns spawn_implementer (scripts mode only)."""
+    def test_get_spawn_strategy_returns_spawn_implementer_with_task(self, tmp_path):
+        """get_spawn_strategy returns spawn_implementer when a task is claimed."""
         state_path = tmp_path / "state.json"
         ctx = AgentContext(
             agent_config={"spawn_mode": "scripts"},
@@ -578,8 +579,8 @@ class TestGetSpawnStrategy:
 
         assert strategy == spawn_implementer
 
-    def test_get_spawn_strategy_always_implementer_regardless_of_config(self, tmp_path):
-        """get_spawn_strategy returns spawn_implementer regardless of agent config."""
+    def test_get_spawn_strategy_returns_spawn_job_agent_without_task(self, tmp_path):
+        """get_spawn_strategy returns spawn_job_agent when claimed_task is None."""
         state_path = tmp_path / "state.json"
         ctx = AgentContext(
             agent_config={"lightweight": True},
@@ -592,7 +593,7 @@ class TestGetSpawnStrategy:
 
         strategy = get_spawn_strategy(ctx)
 
-        assert strategy == spawn_implementer
+        assert strategy == spawn_job_agent
 
 
 # =============================================================================
