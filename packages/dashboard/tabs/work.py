@@ -1,4 +1,4 @@
-"""Work tab — three-column kanban board (Incoming / In Progress / In Review)."""
+"""Work tab — flow-based kanban board with one nested tab per flow."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from textual.app import ComposeResult
 from textual.events import Key
 from textual.message import Message
 from textual.widget import Widget
-from textual.widgets import Label, ListView
+from textual.widgets import Label, ListView, TabbedContent, TabPane
 from textual.containers import Horizontal
 
 from ..widgets.task_card import TaskCard
@@ -97,42 +97,84 @@ class WorkColumn(Widget):
             pass
 
 
+class FlowKanban(Widget):
+    """Kanban board for a single flow: one column per state."""
+
+    DEFAULT_CSS = """
+    FlowKanban {
+        height: 100%;
+    }
+    """
+
+    def __init__(
+        self,
+        flow: dict,
+        tasks_by_queue: dict[str, list],
+        agent_map: dict,
+        **kwargs: object,
+    ) -> None:
+        super().__init__(**kwargs)
+        self._flow = flow
+        self._tasks_by_queue = tasks_by_queue
+        self._agent_map = agent_map
+
+    def compose(self) -> ComposeResult:
+        states = self._flow.get("states", [])
+        flow_name = self._flow.get("name", "default")
+        with Horizontal(classes="kanban-board"):
+            for state in states:
+                tasks = self._tasks_by_queue.get(state, [])
+                show_progress = state not in ("incoming", "done")
+                yield WorkColumn(
+                    state.title(),
+                    tasks,
+                    show_progress=show_progress,
+                    agent_map=self._agent_map if show_progress else None,
+                    classes="kanban-column",
+                    id=f"col-{flow_name}-{state}",
+                )
+
+
 class WorkTab(TabBase):
-    """Kanban board with Incoming, In Progress, and In Review columns."""
+    """Kanban board with nested tabs, one per flow."""
 
     def compose(self) -> ComposeResult:
         work = self._report.get("work", {})
+        flows = self._report.get("flows", [])
         agents = self._report.get("agents", [])
         agent_map: dict = {a["name"]: a for a in agents if "name" in a}
 
-        incoming = work.get("incoming", [])
-        in_progress = work.get("in_progress", [])
-        # Combine checking + in_review under "In Review" column
-        in_review = list(work.get("checking", [])) + list(work.get("in_review", []))
+        # Collect all active tasks from all work queues
+        all_tasks: list[dict] = []
+        for key in ("incoming", "in_progress", "checking", "in_review", "done_today"):
+            all_tasks.extend(work.get(key, []))
 
-        with Horizontal(classes="kanban-board"):
-            yield WorkColumn(
-                "INCOMING",
-                incoming,
-                classes="kanban-column",
-                id="col-incoming",
-            )
-            yield WorkColumn(
-                "IN PROGRESS",
-                in_progress,
-                show_progress=True,
-                agent_map=agent_map,
-                classes="kanban-column",
-                id="col-in-progress",
-            )
-            yield WorkColumn(
-                "IN REVIEW",
-                in_review,
-                show_progress=True,
-                agent_map=agent_map,
-                classes="kanban-column",
-                id="col-in-review",
-            )
+        # Fall back to a default flow definition if server returned none
+        if not flows:
+            flows = [{"name": "default", "states": ["incoming", "claimed", "provisional"]}]
+
+        # Group tasks by (flow_name, queue)
+        tasks_by_flow_queue: dict[str, dict[str, list]] = {}
+        for task in all_tasks:
+            flow_name = task.get("flow") or "default"
+            queue_name = task.get("queue") or "incoming"
+            if flow_name not in tasks_by_flow_queue:
+                tasks_by_flow_queue[flow_name] = {}
+            if queue_name not in tasks_by_flow_queue[flow_name]:
+                tasks_by_flow_queue[flow_name][queue_name] = []
+            tasks_by_flow_queue[flow_name][queue_name].append(task)
+
+        with TabbedContent(classes="flow-tabs"):
+            for flow in flows:
+                flow_name = flow.get("name") or "default"
+                tasks_by_queue = tasks_by_flow_queue.get(flow_name, {})
+                with TabPane(flow_name.title(), id=f"flow-tab-{flow_name}"):
+                    yield FlowKanban(
+                        flow,
+                        tasks_by_queue,
+                        agent_map,
+                        id=f"flow-kanban-{flow_name}",
+                    )
 
     def on_mount(self) -> None:
         """Focus the first column's task list on initial mount."""

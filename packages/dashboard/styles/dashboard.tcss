@@ -343,6 +343,20 @@ TasksTab > TabbedContent > TabPane {
     height: 1fr;
 }
 
+/* Inner TabbedContent inside WorkTab (flow tabs) needs full height */
+WorkTab > TabbedContent {
+    height: 1fr;
+}
+
+WorkTab > TabbedContent > TabPane {
+    padding: 0;
+    height: 1fr;
+}
+
+FlowKanban {
+    height: 100%;
+}
+
 DoneTab > Vertical {
     height: 100%;
 }
