@@ -134,6 +134,8 @@ class DraftsTab(TabBase):
         self._selected_draft_id: int | str | None = None
         # Maps button ID -> {action_id, entity_type, entity_id, command}
         self._btn_context: dict[str, dict] = {}
+        # Monotonic counter to ensure unique button IDs across rebuilds
+        self._btn_generation: int = 0
 
     @property
     def _user_drafts(self) -> list[dict]:
@@ -305,10 +307,14 @@ class DraftsTab(TabBase):
         except Exception:
             return
 
-        # Remove all existing action buttons (leave the Input in place)
+        # Remove all existing action buttons (leave the Input in place).
+        # btn.remove() is async in Textual — the widget lingers in the DOM
+        # briefly — so we use a generation counter to guarantee unique IDs.
         for btn in list(bar.query(Button)):
             btn.remove()
         self._btn_context.clear()
+        self._btn_generation += 1
+        gen = self._btn_generation
 
         draft_id = str(draft.get("id", ""))
         actions = draft.get("actions", [])
@@ -329,7 +335,7 @@ class DraftsTab(TabBase):
             if buttons:
                 # action_data-driven: render one button per definition
                 for idx, btn_def in enumerate(buttons):
-                    btn_id = f"draft-btn-{action_id}-{idx}"
+                    btn_id = f"draft-btn-{action_id}-{idx}-g{gen}"
                     label = btn_def.get("label") or "Action"
                     command = btn_def.get("command", "")
                     self._btn_context[btn_id] = {
@@ -345,7 +351,7 @@ class DraftsTab(TabBase):
                         bar.mount(Button(label, id=btn_id, classes="draft-action-btn"))
             else:
                 # Default fallback: single button per action using action label
-                btn_id = f"draft-btn-{action_id}-0"
+                btn_id = f"draft-btn-{action_id}-0-g{gen}"
                 label = action.get("label") or action.get("action_type") or "Action"
                 command = _action_message(action, draft_id)
                 self._btn_context[btn_id] = {
