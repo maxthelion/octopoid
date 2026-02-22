@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `orchestrator/hook_manager.py`: Added `rebase_on_base` to `ORCHESTRATOR_HOOKS` and `KNOWN_HOOKS`. Added `_run_rebase_on_base()` method to `HookManager`. Unknown orchestrator hooks now return "passed" (skip) instead of "failed" for graceful backwards compatibility.
   - `orchestrator/scheduler.py`: Removed `rebase_on_main` from agent prompt steps. `process_orchestrator_hooks` now posts a rejection message to the task thread and requeues to incoming when `rebase_on_base` fails due to conflicts.
 
+- **Extract result-handling subsystem into orchestrator/result_handler.py** ([TASK-778e5cb6])
+  - `orchestrator/result_handler.py`: New module containing all result-processing and flow-transition logic extracted from `scheduler.py`: `read_result_json`, `handle_agent_result_via_flow`, `handle_agent_result`, `_handle_done_outcome`, `_handle_fail_outcome`, `_handle_continuation_outcome`, and their private helpers.
+  - `orchestrator/scheduler.py`: Imports the extracted functions from `result_handler.py` and re-exports them for backwards compatibility. Reduced from ~2700 to ~2250 lines.
+  - No behaviour changes — purely structural reorganisation.
+
 ### Performance
 
 - **Fix N+1 action queries in dashboard report** ([TASK-1f675c20])
