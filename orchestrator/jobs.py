@@ -237,6 +237,7 @@ def _run_agent_job(job_def: dict, ctx: JobContext) -> None:
         _debug_log(f"Agent job '{name}' started with PID {pid}")
     except Exception as e:
         _debug_log(f"Agent job '{name}' spawn failed: {e}")
+        raise  # Propagate so _run_job() logs failure instead of "completed OK"
 
 
 def _debug_log(msg: str) -> None:
