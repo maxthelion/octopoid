@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Flow-specific kanban tabs in Work view** ([TASK-0ddd897e])
+  - `packages/python-sdk/octopoid_sdk/client.py`: Added `FlowsAPI.list()` method to fetch all registered flow definitions from `/api/v1/flows`.
+  - `orchestrator/reports.py`: Added `_gather_flows()` which fetches flow definitions and parses JSON-encoded `states`/`transitions` fields. Added `flow` and `queue` fields to `_format_task()`. The report payload now includes a `"flows"` key.
+  - `packages/dashboard/tabs/work.py`: Replaced the hardcoded 3-column kanban with a `TabbedContent` widget that shows one tab per flow. Each tab uses the new `FlowKanban` widget to render one `WorkColumn` per state in the flow definition. Tasks are grouped by their `flow` field (defaulting to `"default"`) and their `queue` field. State names are title-cased for display. Falls back to a default flow if the server returns none.
+  - `packages/dashboard/styles/dashboard.tcss`: Added CSS for nested `TabbedContent` inside `WorkTab` and `FlowKanban` to ensure correct full-height layout.
+
 - **Default draft actions and Other... free-text input in Drafts tab** ([TASK-abeed963])
   - `orchestrator/reports.py`: `_gather_drafts()` now injects three synthetic default actions — Enqueue, Process, Archive — client-side when a draft has no server-provided actions. Drafts with proposer-created actions continue to show those instead.
   - `packages/dashboard/tabs/drafts.py`: Added a fixed action bar at the bottom of the right-hand content pane. Shows up to 3 action buttons ([A]/[B]/[C] hotkeys) drawn from the draft's `actions` list, plus an Other... text input. Clicking a button posts the corresponding message to the local inbox; submitting Other... posts the user's free-form text. Action bar is updated (not re-mounted) on each draft selection to avoid DuplicateId errors. Re-selecting the same draft is a no-op.
