@@ -328,7 +328,7 @@ class AgentsTab(TabBase):
     """Agents view with two sub-tabs: Flow Agents and Background Agents.
 
     Flow Agents: implementer/gatekeeper agents that claim tasks from queues.
-    Background Agents: autonomous agents that run on a schedule, plus scheduler jobs.
+    Background Agents: autonomous agents that run on a schedule.
     """
 
     BINDINGS = [
@@ -338,12 +338,11 @@ class AgentsTab(TabBase):
 
     def compose(self) -> ComposeResult:
         agents = self._report.get("agents", [])
-        jobs = self._report.get("jobs", [])
 
         flow_agents = [a for a in agents if a.get("role") in _FLOW_ROLES]
-        # Background: non-flow agents from agents.yaml + all scheduler jobs
+        # Background: non-flow agents from agents.yaml (not scheduler jobs)
         bg_agents = [a for a in agents if a.get("role") not in _FLOW_ROLES]
-        bg_items = bg_agents + jobs
+        bg_items = bg_agents
 
         # Default selection: first flow agent, or first background item if no flow agents
         selected = flow_agents[0] if flow_agents else (bg_items[0] if bg_items else None)
