@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Dashboard drafts tab shows empty content for new drafts** ([TASK-403fd51f])
+  - `packages/dashboard/tabs/drafts.py`: `update_data()` now re-renders the content pane when the selected draft's `file_path` transitions from empty to a real path (handles the two-step creation pattern in `/draft-idea` where `file_path` is initially `None` and PATCHed in a second step). `on_list_view_selected()` now triggers a background refresh via `app.action_refresh()` when a draft with no `file_path` is selected, so content appears automatically once the draft is fully initialised — no restart needed.
+  - `tests/test_dashboard.py`: Added `TestDraftsTabStalePath` with 6 unit tests covering the re-render trigger, no-op cases, and `_load_draft_content` edge cases.
+
 ### Added
 
 - **`/approve-task` skill and proposed task support in `/enqueue`** ([TASK-4ad270f1])
