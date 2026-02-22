@@ -861,11 +861,6 @@ def prepare_task_directory(
             name = hook["name"]
             if name == "run_tests":
                 lines.append(f"{i}. Run tests: `../scripts/run-tests`")
-            elif name == "rebase_on_main":
-                lines.append(
-                    f"{i}. Rebase on base branch: "
-                    f"`git fetch origin {base_branch} && git rebase origin/{base_branch}`"
-                )
             elif name == "create_pr":
                 # Scheduler handles PR creation — skip this hook for the agent
                 continue
@@ -1564,6 +1559,7 @@ def process_orchestrator_hooks(provisional_tasks: list | None = None) -> None:
 
             debug_log(f"Task {task_id}: {len(pending)} pending orchestrator hooks")
 
+            hook_failed = False
             for hook in pending:
                 evidence = hook_manager.run_orchestrator_hook(task, hook)
                 hook_manager.record_evidence(task_id, hook["name"], evidence)
@@ -1571,7 +1567,38 @@ def process_orchestrator_hooks(provisional_tasks: list | None = None) -> None:
 
                 if evidence.status == "failed":
                     debug_log(f"  Orchestrator hook {hook['name']} failed for {task_id}")
+                    hook_failed = True
+
+                    if hook["name"] == "rebase_on_base":
+                        # Rebase conflict — post to task thread and reject back to incoming
+                        # so the agent re-implements on a fresh base.
+                        from .task_thread import post_message
+                        post_message(
+                            task_id,
+                            role="rejection",
+                            content=(
+                                f"## Rebase failed before merge\n\n"
+                                f"{evidence.message}\n\n"
+                                f"Please re-implement on a fresh base. "
+                                f"Do NOT rebase manually — the orchestrator will rebase "
+                                f"on your behalf before merging."
+                            ),
+                            author="scheduler-rebase",
+                        )
+                        sdk.tasks.reject(
+                            task_id,
+                            reason=evidence.message,
+                            rejected_by="scheduler-rebase",
+                        )
+                        print(
+                            f"[{datetime.now().isoformat()}] "
+                            f"Rebase failed for {task_id}, requeued to incoming"
+                        )
+
                     break
+
+            if hook_failed:
+                continue
 
             # Re-fetch task to get updated hooks
             updated_task = sdk.tasks.get(task_id)

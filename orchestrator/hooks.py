@@ -8,7 +8,7 @@ Hook points:
 - BEFORE_MERGE: Runs scheduler-side before merging/accepting a task
 
 Built-in hooks:
-- rebase_on_main: Fetch and rebase on base branch
+- rebase_on_base: Fetch, rebase on base branch, and force-push (orchestrator-side)
 - create_pr: Push branch and create a pull request
 - run_tests: Detect and run test suite
 - merge_pr: Merge a pull request via gh CLI
@@ -67,104 +67,80 @@ HookFn = Callable[[HookContext], HookResult]
 # ---------------------------------------------------------------------------
 
 
-def hook_rebase_on_main(ctx: HookContext) -> HookResult:
-    """Fetch base branch and rebase current work on top of it.
+def hook_rebase_on_base(ctx: HookContext) -> HookResult:
+    """Fetch base branch, rebase current work on top of it, and force-push.
 
-    On conflict, returns FAILURE with a remediation_prompt for Claude to
-    resolve the conflicts and retry.
+    This is an orchestrator-side hook that runs before merge. On conflict,
+    aborts the rebase and returns FAILURE so the scheduler can requeue the
+    task for re-implementation on a fresh base.
     """
-    worktree = str(ctx.worktree)
+    from .git_utils import run_git
 
-    # Fetch latest from origin
+    base_branch = ctx.base_branch
+    worktree = ctx.worktree
+
     try:
-        subprocess.run(
-            ["git", "fetch", "origin", ctx.base_branch],
-            cwd=worktree,
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
+        run_git(["fetch", "origin"], cwd=worktree)
     except subprocess.CalledProcessError as e:
         return HookResult(
             status=HookStatus.FAILURE,
-            message=f"Failed to fetch origin/{ctx.base_branch}: {e.stderr}",
+            message=f"Failed to fetch origin: {e.stderr}",
         )
     except subprocess.TimeoutExpired:
         return HookResult(
             status=HookStatus.FAILURE,
-            message=f"Timeout fetching origin/{ctx.base_branch}",
+            message="Timeout fetching from origin",
         )
 
     # Check if rebase is needed
     try:
-        result = subprocess.run(
-            ["git", "rev-list", "--count", f"HEAD..origin/{ctx.base_branch}"],
+        result = run_git(
+            ["rev-list", "--count", f"HEAD..origin/{base_branch}"],
             cwd=worktree,
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=10,
+            check=False,
         )
-        behind_count = int(result.stdout.strip())
-        if behind_count == 0:
+        if result.returncode == 0 and result.stdout.strip() == "0":
             return HookResult(
                 status=HookStatus.SKIP,
-                message="Already up to date with base branch",
+                message=f"Already up to date with origin/{base_branch}",
             )
-    except (subprocess.CalledProcessError, ValueError):
-        pass  # Proceed with rebase attempt anyway
+    except (subprocess.CalledProcessError, ValueError, subprocess.TimeoutExpired) as e:
+        logger.warning("rev-list check failed (%s), proceeding with rebase attempt", e)
 
     # Attempt rebase
-    try:
-        subprocess.run(
-            ["git", "rebase", f"origin/{ctx.base_branch}"],
-            cwd=worktree,
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-        return HookResult(
-            status=HookStatus.SUCCESS,
-            message=f"Rebased on origin/{ctx.base_branch}",
-        )
-    except subprocess.CalledProcessError as e:
-        # Rebase failed — likely conflicts. Abort and return remediation prompt.
-        subprocess.run(
-            ["git", "rebase", "--abort"],
-            cwd=worktree,
-            capture_output=True,
-            timeout=10,
-        )
+    result = run_git(
+        ["rebase", f"origin/{base_branch}"],
+        cwd=worktree,
+        check=False,
+    )
 
+    if result.returncode != 0:
+        run_git(["rebase", "--abort"], cwd=worktree, check=False)
         return HookResult(
             status=HookStatus.FAILURE,
-            message=f"Rebase conflict on origin/{ctx.base_branch}",
-            remediation_prompt=(
-                f"The rebase of branch {ctx.branch_name} onto origin/{ctx.base_branch} "
-                f"failed due to conflicts.\n\n"
-                f"Conflict output:\n{e.stderr}\n\n"
-                f"Please resolve the conflicts:\n"
-                f"1. Run: git rebase origin/{ctx.base_branch}\n"
-                f"2. For each conflicting file, edit to resolve the conflict markers\n"
-                f"3. Stage resolved files: git add <file>\n"
-                f"4. Continue: git rebase --continue\n"
-                f"5. Repeat until rebase is complete\n\n"
-                f"Work in: {ctx.worktree}"
+            message=(
+                f"Rebase conflicts with origin/{base_branch}. "
+                f"Agent will re-implement on a fresh base.\n\n"
+                f"Conflict output:\n{result.stderr}"
             ),
         )
-    except subprocess.TimeoutExpired:
-        subprocess.run(
-            ["git", "rebase", "--abort"],
+
+    # Force-push the rebased branch
+    try:
+        run_git(
+            ["push", "origin", "HEAD", "--force-with-lease"],
             cwd=worktree,
-            capture_output=True,
-            timeout=10,
         )
+    except subprocess.CalledProcessError as e:
         return HookResult(
             status=HookStatus.FAILURE,
-            message="Rebase timed out",
+            message=f"Failed to force-push after rebase: {e.stderr}",
         )
+
+    return HookResult(
+        status=HookStatus.SUCCESS,
+        message=f"Rebased on origin/{base_branch} and force-pushed",
+    )
 
 
 def hook_create_pr(ctx: HookContext) -> HookResult:
@@ -334,7 +310,7 @@ def hook_merge_pr(ctx: HookContext) -> HookResult:
 # ---------------------------------------------------------------------------
 
 BUILTIN_HOOKS: dict[str, HookFn] = {
-    "rebase_on_main": hook_rebase_on_main,
+    "rebase_on_base": hook_rebase_on_base,
     "create_pr": hook_create_pr,
     "run_tests": hook_run_tests,
     "merge_pr": hook_merge_pr,

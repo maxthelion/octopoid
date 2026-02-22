@@ -26,10 +26,10 @@ from .repo_manager import RepoManager
 logger = logging.getLogger(__name__)
 
 # Hooks that run on the orchestrator/scheduler side, not in the agent
-ORCHESTRATOR_HOOKS = {"merge_pr"}
+ORCHESTRATOR_HOOKS = {"merge_pr", "rebase_on_base"}
 
 # All valid hook names (must match hooks.BUILTIN_HOOKS keys)
-KNOWN_HOOKS = {"rebase_on_main", "create_pr", "run_tests", "merge_pr"}
+KNOWN_HOOKS = {"rebase_on_base", "create_pr", "run_tests", "merge_pr"}
 
 # Default hooks when nothing is configured
 DEFAULT_HOOKS = {
@@ -159,11 +159,13 @@ class HookManager:
 
         Currently supports:
         - merge_pr: Merges the task's PR via RepoManager
+        - rebase_on_base: Rebases the agent branch onto the latest base and force-pushes
 
         Args:
             task: Task dict from API
             hook: Hook dict to execute
-            worktree: Path to worktree (needed for git operations)
+            worktree: Path to worktree (needed for git operations).
+                      If not provided, derived from task_id for git hooks.
 
         Returns:
             HookEvidence with status and details.
@@ -173,9 +175,14 @@ class HookManager:
         if name == "merge_pr":
             return self._run_merge_pr(task, worktree)
 
+        if name == "rebase_on_base":
+            return self._run_rebase_on_base(task, worktree)
+
+        # Unknown hook — skip gracefully rather than failing the task
+        logger.warning("Unknown orchestrator hook '%s', skipping", name)
         return HookEvidence(
-            status="failed",
-            message=f"Unknown orchestrator hook: {name}",
+            status="passed",
+            message=f"Unknown orchestrator hook '{name}' skipped",
         )
 
     def _run_merge_pr(
@@ -212,6 +219,94 @@ class HookManager:
                 message=f"Failed to merge PR #{pr_number}",
                 data={"pr_number": pr_number},
             )
+
+    def _run_rebase_on_base(
+        self,
+        task: dict,
+        worktree: Path | None = None,
+    ) -> HookEvidence:
+        """Rebase the agent branch onto the latest base branch and force-push."""
+        import subprocess
+
+        from .config import get_base_branch
+        from .git_utils import get_task_worktree_path, run_git
+
+        task_id = task.get("id", "")
+        base_branch = task.get("branch") or get_base_branch()
+
+        # Resolve worktree: use provided path, or derive from task_id
+        if worktree is None:
+            if task_id:
+                worktree = get_task_worktree_path(task_id)
+            else:
+                return HookEvidence(
+                    status="failed",
+                    message="Cannot rebase: no worktree path and no task_id to derive one",
+                )
+
+        if not worktree.exists():
+            return HookEvidence(
+                status="failed",
+                message=f"Worktree not found at {worktree}",
+            )
+
+        try:
+            run_git(["fetch", "origin"], cwd=worktree)
+        except subprocess.CalledProcessError as e:
+            return HookEvidence(
+                status="failed",
+                message=f"Failed to fetch origin: {e.stderr}",
+            )
+
+        # Check if rebase is needed
+        try:
+            result = run_git(
+                ["rev-list", "--count", f"HEAD..origin/{base_branch}"],
+                cwd=worktree,
+                check=False,
+            )
+            if result.returncode == 0 and result.stdout.strip() == "0":
+                return HookEvidence(
+                    status="passed",
+                    message=f"Already up to date with origin/{base_branch}",
+                )
+        except Exception as e:
+            logger.warning("rev-list check failed (%s), proceeding with rebase attempt", e)
+
+        # Attempt rebase
+        result = run_git(
+            ["rebase", f"origin/{base_branch}"],
+            cwd=worktree,
+            check=False,
+        )
+
+        if result.returncode != 0:
+            run_git(["rebase", "--abort"], cwd=worktree, check=False)
+            return HookEvidence(
+                status="failed",
+                message=(
+                    f"Rebase conflicts with origin/{base_branch}. "
+                    f"Agent will re-implement on a fresh base.\n\n"
+                    f"Conflict output:\n{result.stderr}"
+                ),
+            )
+
+        # Force-push the rebased branch
+        push_result = run_git(
+            ["push", "origin", "HEAD", "--force-with-lease"],
+            cwd=worktree,
+            check=False,
+        )
+        if push_result.returncode != 0:
+            return HookEvidence(
+                status="failed",
+                message=f"Failed to force-push after rebase: {push_result.stderr}",
+            )
+
+        return HookEvidence(
+            status="passed",
+            message=f"Rebased on origin/{base_branch} and force-pushed",
+        )
 
     def record_evidence(
         self,

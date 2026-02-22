@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Move rebase from before_submit to before_merge** ([TASK-c0ef5fd2])
+  - `.octopoid/config.yaml`: Removed `rebase_on_main` from `before_submit` hooks; added `rebase_on_base` to `before_merge` hooks. Rebasing now happens orchestrator-side, just before merge, eliminating the race condition where agents rebase too early and the base moves before merge.
+  - `orchestrator/hooks.py`: Replaced `hook_rebase_on_main` with `hook_rebase_on_base`. New hook fetches origin, rebases, and force-pushes the agent branch. Updated `BUILTIN_HOOKS` registry.
+  - `orchestrator/hook_manager.py`: Added `rebase_on_base` to `ORCHESTRATOR_HOOKS` and `KNOWN_HOOKS`. Added `_run_rebase_on_base()` method to `HookManager`. Unknown orchestrator hooks now return "passed" (skip) instead of "failed" for graceful backwards compatibility.
+  - `orchestrator/scheduler.py`: Removed `rebase_on_main` from agent prompt steps. `process_orchestrator_hooks` now posts a rejection message to the task thread and requeues to incoming when `rebase_on_base` fails due to conflicts.
+
 ### Performance
 
 - **Fix N+1 action queries in dashboard report** ([TASK-1f675c20])

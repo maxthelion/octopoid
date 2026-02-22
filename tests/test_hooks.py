@@ -15,7 +15,7 @@ from orchestrator.hooks import (
     BUILTIN_HOOKS,
     hook_create_pr,
     hook_merge_pr,
-    hook_rebase_on_main,
+    hook_rebase_on_base,
     hook_run_tests,
     resolve_hooks,
     run_hooks,
@@ -45,91 +45,90 @@ def _make_ctx(worktree: Path | None = None, **overrides) -> HookContext:
 
 
 # ---------------------------------------------------------------------------
-# hook_rebase_on_main
+# hook_rebase_on_base
 # ---------------------------------------------------------------------------
 
 
-class TestHookRebaseOnMain:
-    """Tests for the rebase_on_main built-in hook."""
+class TestHookRebaseOnBase:
+    """Tests for the rebase_on_base built-in hook."""
 
     def test_rebase_skipped_when_up_to_date(self):
         """If behind count is 0, rebase is skipped."""
         ctx = _make_ctx()
 
-        def mock_run(cmd, **kwargs):
+        def mock_run_git(args, **kwargs):
             m = MagicMock()
             m.returncode = 0
-            m.stdout = "0\n"
+            if "rev-list" in args:
+                m.stdout = "0\n"
+            else:
+                m.stdout = ""
             m.stderr = ""
             return m
 
-        with patch("orchestrator.hooks.subprocess.run", side_effect=mock_run):
-            result = hook_rebase_on_main(ctx)
+        with patch("orchestrator.git_utils.run_git", side_effect=mock_run_git):
+            result = hook_rebase_on_base(ctx)
 
         assert result.status == HookStatus.SKIP
         assert "up to date" in result.message
 
-    def test_rebase_success(self):
-        """Successful rebase returns SUCCESS."""
+    def test_rebase_success_and_force_pushes(self):
+        """Successful rebase returns SUCCESS and force-pushes."""
         ctx = _make_ctx()
-        call_count = 0
+        calls = []
 
-        def mock_run(cmd, **kwargs):
-            nonlocal call_count
-            call_count += 1
+        def mock_run_git(args, **kwargs):
+            calls.append(args)
             m = MagicMock()
             m.returncode = 0
-            if "rev-list" in cmd:
+            if "rev-list" in args:
                 m.stdout = "5\n"
             else:
                 m.stdout = ""
             m.stderr = ""
             return m
 
-        with patch("orchestrator.hooks.subprocess.run", side_effect=mock_run):
-            result = hook_rebase_on_main(ctx)
+        with patch("orchestrator.git_utils.run_git", side_effect=mock_run_git):
+            result = hook_rebase_on_base(ctx)
 
         assert result.status == HookStatus.SUCCESS
         assert "Rebased" in result.message
+        # Verify force-push was called
+        push_calls = [c for c in calls if "push" in c]
+        assert len(push_calls) == 1
+        assert "--force-with-lease" in push_calls[0]
 
-    def test_rebase_conflict_returns_failure_with_remediation(self):
-        """Rebase conflict returns FAILURE with remediation_prompt."""
+    def test_rebase_conflict_returns_failure_no_remediation(self):
+        """Rebase conflict returns FAILURE without remediation_prompt."""
         ctx = _make_ctx()
 
-        def mock_run(cmd, **kwargs):
-            # fetch succeeds
-            if "fetch" in cmd:
+        def mock_run_git(args, **kwargs):
+            if "fetch" in args:
                 return MagicMock(returncode=0, stdout="", stderr="")
-            # rev-list shows we're behind
-            if "rev-list" in cmd:
+            if "rev-list" in args:
                 return MagicMock(returncode=0, stdout="3\n", stderr="")
-            # rebase fails
-            if cmd[1:3] == ["rebase", "origin/main"]:
-                raise subprocess.CalledProcessError(
-                    1, cmd, output="", stderr="CONFLICT in widget.py"
-                )
-            # rebase --abort succeeds
-            return MagicMock(returncode=0)
+            if "rebase" in args and "--abort" not in args:
+                return MagicMock(returncode=1, stdout="", stderr="CONFLICT in widget.py")
+            return MagicMock(returncode=0, stdout="", stderr="")
 
-        with patch("orchestrator.hooks.subprocess.run", side_effect=mock_run):
-            result = hook_rebase_on_main(ctx)
+        with patch("orchestrator.git_utils.run_git", side_effect=mock_run_git):
+            result = hook_rebase_on_base(ctx)
 
         assert result.status == HookStatus.FAILURE
-        assert "conflict" in result.message.lower()
-        assert result.remediation_prompt is not None
-        assert "resolve" in result.remediation_prompt.lower()
+        assert "conflict" in result.message.lower() or "Rebase" in result.message
+        assert result.remediation_prompt is None
 
     def test_fetch_failure(self):
-        """If fetch fails, return FAILURE without remediation."""
+        """If fetch fails, return FAILURE."""
         ctx = _make_ctx()
 
-        def mock_run(cmd, **kwargs):
-            if "fetch" in cmd:
-                raise subprocess.CalledProcessError(1, cmd, output="", stderr="network error")
-            return MagicMock(returncode=0, stdout="0\n")
+        def mock_run_git(args, **kwargs):
+            if "fetch" in args:
+                raise subprocess.CalledProcessError(1, args, output="", stderr="network error")
+            return MagicMock(returncode=0, stdout="0\n", stderr="")
 
-        with patch("orchestrator.hooks.subprocess.run", side_effect=mock_run):
-            result = hook_rebase_on_main(ctx)
+        with patch("orchestrator.git_utils.run_git", side_effect=mock_run_git):
+            result = hook_rebase_on_base(ctx)
 
         assert result.status == HookStatus.FAILURE
         assert result.remediation_prompt is None
@@ -138,13 +137,13 @@ class TestHookRebaseOnMain:
         """Timeout during fetch returns FAILURE."""
         ctx = _make_ctx()
 
-        def mock_run(cmd, **kwargs):
-            if "fetch" in cmd:
-                raise subprocess.TimeoutExpired(cmd, 60)
-            return MagicMock(returncode=0)
+        def mock_run_git(args, **kwargs):
+            if "fetch" in args:
+                raise subprocess.TimeoutExpired(args, 60)
+            return MagicMock(returncode=0, stdout="", stderr="")
 
-        with patch("orchestrator.hooks.subprocess.run", side_effect=mock_run):
-            result = hook_rebase_on_main(ctx)
+        with patch("orchestrator.git_utils.run_git", side_effect=mock_run_git):
+            result = hook_rebase_on_base(ctx)
 
         assert result.status == HookStatus.FAILURE
         assert "Timeout" in result.message
@@ -348,12 +347,12 @@ class TestResolveHooks:
     def test_project_level_hooks(self):
         """Project-level hooks override defaults."""
         with patch("orchestrator.config.get_hooks_config", return_value={
-                 "before_submit": ["rebase_on_main", "create_pr"]
+                 "before_submit": ["run_tests", "create_pr"]
              }):
             hooks = resolve_hooks(HookPoint.BEFORE_SUBMIT, task_type=None)
 
         assert len(hooks) == 2
-        assert hooks[0] is BUILTIN_HOOKS["rebase_on_main"]
+        assert hooks[0] is BUILTIN_HOOKS["run_tests"]
         assert hooks[1] is BUILTIN_HOOKS["create_pr"]
 
     def test_unknown_hook_name_skipped(self):

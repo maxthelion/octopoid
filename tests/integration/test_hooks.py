@@ -18,7 +18,7 @@ from orchestrator.hooks import (
     HookContext,
     HookPoint,
     HookStatus,
-    hook_rebase_on_main,
+    hook_rebase_on_base,
     hook_run_tests,
     resolve_hooks,
     run_hooks,
@@ -155,18 +155,23 @@ class TestHookResolutionWithConfig:
         (config_dir / "config.yaml").write_text(
             "hooks:\n"
             "  before_submit:\n"
-            "    - rebase_on_main\n"
             "    - run_tests\n"
             "    - create_pr\n"
+            "  before_merge:\n"
+            "    - rebase_on_base\n"
+            "    - merge_pr\n"
         )
 
         with patch("orchestrator.config.find_parent_project", return_value=tmp_path):
-            hooks = resolve_hooks(HookPoint.BEFORE_SUBMIT, task_type=None)
+            submit_hooks = resolve_hooks(HookPoint.BEFORE_SUBMIT, task_type=None)
+            merge_hooks = resolve_hooks(HookPoint.BEFORE_MERGE, task_type=None)
 
-        assert len(hooks) == 3
-        assert hooks[0] is BUILTIN_HOOKS["rebase_on_main"]
-        assert hooks[1] is BUILTIN_HOOKS["run_tests"]
-        assert hooks[2] is BUILTIN_HOOKS["create_pr"]
+        assert len(submit_hooks) == 2
+        assert submit_hooks[0] is BUILTIN_HOOKS["run_tests"]
+        assert submit_hooks[1] is BUILTIN_HOOKS["create_pr"]
+        assert len(merge_hooks) == 2
+        assert merge_hooks[0] is BUILTIN_HOOKS["rebase_on_base"]
+        assert merge_hooks[1] is BUILTIN_HOOKS["merge_pr"]
 
     def test_no_config_uses_defaults(self):
         """No config file at all uses DEFAULT_HOOKS (just create_pr)."""
@@ -189,15 +194,18 @@ class TestHookExecution:
         """Rebase hook skips when branch is already up to date."""
         ctx = _make_ctx()
 
-        def mock_run(cmd, **kwargs):
+        def mock_run_git(args, **kwargs):
             m = MagicMock()
             m.returncode = 0
-            m.stdout = "0\n"
+            if "rev-list" in args:
+                m.stdout = "0\n"
+            else:
+                m.stdout = ""
             m.stderr = ""
             return m
 
-        with patch("orchestrator.hooks.subprocess.run", side_effect=mock_run):
-            result = hook_rebase_on_main(ctx)
+        with patch("orchestrator.git_utils.run_git", side_effect=mock_run_git):
+            result = hook_rebase_on_base(ctx)
 
         assert result.status == HookStatus.SKIP
 
