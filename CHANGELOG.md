@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Agents tab shows both flow agents and job agents** ([TASK-d1b272dc])
+  - `orchestrator/reports.py`: Added `_gather_jobs()` which reads `.octopoid/jobs.yaml` and `scheduler_state.json` to build a list of background job dicts with `name`, `job_type`, `group`, `interval`, `last_run`, and `next_run` fields. Added `"agent_type": "flow"` to each flow agent dict so the UI can distinguish types. Added `"jobs"` key to `get_project_report()`.
+  - `packages/dashboard/tabs/agents.py`: Reworked `AgentsTab` to show two labelled sections in the list panel: "FLOW AGENTS" (implementer, gatekeeper) and "JOBS" (scheduler background jobs). Flow agents retain their existing status badge; job agents show a compact interval indicator (e.g. `60m`). `AgentDetail` now renders two different views: the existing rich detail for flow agents, and a schedule-focused view (interval, exec type, group, last run, next run) for job agents.
+  - `packages/dashboard/styles/dashboard.tcss`: Added `.agent-job-interval` CSS class for the interval indicator in job agent list rows.
+
 - **Fix flow stage order in Work kanban board** ([TASK-9be2e3f8])
   - `packages/dashboard/tabs/work.py`: Added `_order_states_by_transitions()` helper that performs a topological sort (Kahn's algorithm) on the flow transition graph. `FlowKanban.compose()` now derives column order from transitions rather than the raw `states` list (which the server returns alphabetically). States not connected to the transition graph (e.g. `"failed"`) are appended after the main lifecycle chain. The lifecycle order is now Incoming → Claimed → Provisional → Done as intended.
   - `tests/test_dashboard.py`: Added `TestOrderStatesByTransitions` class with 8 unit tests covering correct lifecycle ordering, isolated state handling, empty inputs, and edge cases.

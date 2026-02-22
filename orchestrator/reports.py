@@ -34,7 +34,7 @@ def get_project_report(sdk: "OctopoidSDK") -> dict[str, Any]:
 
     Returns:
         Structured dict with keys: work, flows, prs, proposals, messages,
-        agents, health, drafts.
+        agents, health, drafts, jobs.
     """
     return {
         "work": _gather_work(sdk),
@@ -44,6 +44,7 @@ def get_project_report(sdk: "OctopoidSDK") -> dict[str, Any]:
         "proposals": _gather_proposals(),
         "messages": _gather_messages(sdk),
         "agents": _gather_agents(),
+        "jobs": _gather_jobs(),
         "health": _gather_health(sdk),
         "drafts": _gather_drafts(sdk),
         "generated_at": datetime.now().isoformat(),
@@ -541,6 +542,7 @@ def _gather_agents() -> list[dict[str, Any]]:
 
         result.append({
             "name": name,
+            "agent_type": "flow",
             "blueprint_name": blueprint_name,
             "role": role,
             "status": status,
@@ -550,6 +552,57 @@ def _gather_agents() -> list[dict[str, Any]]:
             "idle_capacity": idle_capacity,
             "current_tasks": current_tasks,
             "notes": agent_notes,
+        })
+
+    return result
+
+
+def _gather_jobs() -> list[dict[str, Any]]:
+    """Gather job definitions and their schedule state from jobs.yaml.
+
+    Returns a list of job dicts with schedule info (last_run, next_run, interval).
+    """
+    try:
+        from .jobs import load_jobs_yaml
+        from .scheduler import load_scheduler_state
+    except Exception:
+        return []
+
+    try:
+        jobs = load_jobs_yaml()
+        state = load_scheduler_state()
+        job_timestamps: dict[str, str] = state.get("jobs", {})
+    except Exception:
+        return []
+
+    result: list[dict[str, Any]] = []
+    for job in jobs:
+        name = job.get("name", "")
+        if not name:
+            continue
+
+        interval = job.get("interval", 60)
+        job_type = job.get("type", "script")
+        group = job.get("group", "remote")
+        last_run = job_timestamps.get(name)
+
+        # Calculate next_run based on last_run + interval
+        next_run: str | None = None
+        if last_run:
+            try:
+                last_run_dt = datetime.fromisoformat(last_run)
+                next_run = (last_run_dt + timedelta(seconds=interval)).isoformat()
+            except (ValueError, TypeError):
+                pass
+
+        result.append({
+            "name": name,
+            "agent_type": "job",
+            "job_type": job_type,
+            "group": group,
+            "interval": interval,
+            "last_run": last_run,
+            "next_run": next_run,
         })
 
     return result
