@@ -26,6 +26,7 @@ When run without arguments, I'll ask for:
    - `P3` - Low (nice-to-have)
 4. **Context** - Background and motivation
 5. **Acceptance Criteria** - Specific requirements
+6. **Proposed / awaiting approval?** - If the user says the task is "proposed", "not yet ready", "needs approval", "hold for now", or similar, set `blocked_by="awaiting-approval"`. The task will be created in the queue but won't be claimed by agents until a human runs `/approve-task <task-id>` to unblock it.
 
 ## Implementation
 
@@ -47,6 +48,23 @@ create_task(
     # branch is optional — defaults to repo.base_branch from config
 )
 ```
+
+### Proposed tasks (awaiting approval)
+
+If the user indicates the task is not ready to be worked on yet — e.g. "proposed", "not yet ready", "needs approval", "park this for later", "hold off on this" — pass `blocked_by="awaiting-approval"`:
+
+```python
+create_task(
+    title="Refactor authentication module",
+    role="implement",
+    priority="P2",
+    context="...",
+    acceptance_criteria=["..."],
+    blocked_by="awaiting-approval",  # won't be claimed until approved
+)
+```
+
+The task will appear in the queue but agents will skip it. To release it, run `/approve-task <task-id>`.
 
 Do **not** write task files manually or place them in any queue directory. Always use `create_task()`.
 
@@ -85,7 +103,13 @@ the service.
 
 The task will be:
 1. Registered on the server and visible in the queue immediately
-2. Claimed by an agent with matching role on next scheduler tick
+2. Claimed by an agent with matching role on next scheduler tick (unless `blocked_by="awaiting-approval"` is set)
 3. Worked on and moved to done/failed
 
+If the task was created as proposed (with `blocked_by="awaiting-approval"`), it will remain unclaimed until a human runs `/approve-task <task-id>`.
+
 Check status with `/queue-status`.
+
+## Related Commands
+
+- `/approve-task` — Approve a proposed task and allow agents to claim it

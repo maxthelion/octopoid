@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`/approve-task` skill and proposed task support in `/enqueue`** ([TASK-4ad270f1])
+  - `.claude/commands/approve-task.md`: New skill that fetches a task, validates `blocked_by == "awaiting-approval"`, and clears the field via `PATCH /api/v1/tasks/{id}` so agents can claim it.
+  - `.claude/commands/enqueue.md`: Updated to document the `blocked_by="awaiting-approval"` option. When the user describes a task as "proposed", "not yet ready", "needs approval", or similar, the skill now instructs passing `blocked_by="awaiting-approval"` to `create_task()`.
+
 - **Agents tab shows both flow agents and job agents** ([TASK-d1b272dc])
   - `orchestrator/reports.py`: Added `_gather_jobs()` which reads `.octopoid/jobs.yaml` and `scheduler_state.json` to build a list of background job dicts with `name`, `job_type`, `group`, `interval`, `last_run`, and `next_run` fields. Added `"agent_type": "flow"` to each flow agent dict so the UI can distinguish types. Added `"jobs"` key to `get_project_report()`.
   - `packages/dashboard/tabs/agents.py`: Reworked `AgentsTab` to show two labelled sections in the list panel: "FLOW AGENTS" (implementer, gatekeeper) and "JOBS" (scheduler background jobs). Flow agents retain their existing status badge; job agents show a compact interval indicator (e.g. `60m`). `AgentDetail` now renders two different views: the existing rich detail for flow agents, and a schedule-focused view (interval, exec type, group, last run, next run) for job agents.
