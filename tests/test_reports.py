@@ -12,6 +12,7 @@ from orchestrator.reports import (
     _format_task,
     _gather_agents,
     _gather_drafts,
+    _gather_flows,
     _gather_health,
     _gather_messages,
     _gather_proposals,
@@ -57,6 +58,7 @@ class TestGetProjectReport:
         report = get_project_report(MagicMock())
 
         assert "work" in report
+        assert "flows" in report
         assert "done_tasks" in report
         assert "prs" in report
         assert "proposals" in report
@@ -176,6 +178,117 @@ class TestFormatTask:
         assert result["turns"] == 0
         assert result["commits"] == 0
         assert result["pr_number"] is None
+
+    def test_includes_flow_and_queue_fields(self):
+        task = {
+            "id": "abc123",
+            "title": "Test task",
+            "queue": "claimed",
+            "flow": "default",
+        }
+
+        result = _format_task(task)
+
+        assert result["queue"] == "claimed"
+        assert result["flow"] == "default"
+
+    def test_flow_defaults_to_default_when_missing(self):
+        task = {"id": "abc123", "title": "Test task"}
+
+        result = _format_task(task)
+
+        assert result["flow"] == "default"
+        assert result["queue"] is None
+
+    def test_flow_defaults_to_default_when_none(self):
+        task = {"id": "abc123", "title": "Test task", "flow": None}
+
+        result = _format_task(task)
+
+        assert result["flow"] == "default"
+
+
+# ---------------------------------------------------------------------------
+# _gather_flows
+# ---------------------------------------------------------------------------
+
+
+class TestGatherFlows:
+    """Tests for _gather_flows()."""
+
+    def test_returns_flows_with_parsed_states(self):
+        sdk = MagicMock()
+        sdk.flows.list.return_value = [
+            {
+                "name": "default",
+                "states": ["incoming", "claimed", "provisional", "done"],
+                "transitions": [],
+            }
+        ]
+
+        result = _gather_flows(sdk)
+
+        assert len(result) == 1
+        assert result[0]["name"] == "default"
+        assert result[0]["states"] == ["incoming", "claimed", "provisional", "done"]
+        assert result[0]["transitions"] == []
+
+    def test_parses_json_string_states(self):
+        sdk = MagicMock()
+        sdk.flows.list.return_value = [
+            {
+                "name": "default",
+                "states": '["incoming","claimed","provisional","done"]',
+                "transitions": "[]",
+            }
+        ]
+
+        result = _gather_flows(sdk)
+
+        assert len(result) == 1
+        assert result[0]["states"] == ["incoming", "claimed", "provisional", "done"]
+        assert result[0]["transitions"] == []
+
+    def test_returns_multiple_flows(self):
+        sdk = MagicMock()
+        sdk.flows.list.return_value = [
+            {"name": "default", "states": ["incoming", "claimed"], "transitions": []},
+            {"name": "review", "states": ["incoming", "review", "done"], "transitions": []},
+        ]
+
+        result = _gather_flows(sdk)
+
+        assert len(result) == 2
+        names = [f["name"] for f in result]
+        assert "default" in names
+        assert "review" in names
+
+    def test_returns_empty_list_on_exception(self):
+        sdk = MagicMock()
+        sdk.flows.list.side_effect = Exception("network error")
+
+        result = _gather_flows(sdk)
+
+        assert result == []
+
+    def test_returns_empty_list_when_no_flows(self):
+        sdk = MagicMock()
+        sdk.flows.list.return_value = []
+
+        result = _gather_flows(sdk)
+
+        assert result == []
+
+    def test_handles_invalid_json_string_states_gracefully(self):
+        sdk = MagicMock()
+        sdk.flows.list.return_value = [
+            {"name": "broken", "states": "not-valid-json", "transitions": "[]"}
+        ]
+
+        result = _gather_flows(sdk)
+
+        assert len(result) == 1
+        assert result[0]["states"] == []
 
 
 # ---------------------------------------------------------------------------

@@ -334,6 +334,17 @@ class FlowsAPI:
     def __init__(self, client: 'OctopoidSDK'):
         self.client = client
 
+    def list(self) -> List[Dict[str, Any]]:
+        """List all registered flow definitions.
+
+        Returns:
+            List of flow dicts with 'name', 'states', and 'transitions' keys
+        """
+        response = self.client._request('GET', '/api/v1/flows')
+        if isinstance(response, dict) and 'flows' in response:
+            return response['flows']
+        return response if isinstance(response, list) else []
+
     def register(
         self,
         name: str,

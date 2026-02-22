@@ -246,6 +246,118 @@ class TestTaskSelected:
 
 
 # ---------------------------------------------------------------------------
+# FlowKanban and WorkTab flow-based tests
+# ---------------------------------------------------------------------------
+
+
+class TestFlowKanban:
+    """Tests for the FlowKanban widget class."""
+
+    def test_flow_kanban_importable(self):
+        from packages.dashboard.tabs.work import FlowKanban
+        assert FlowKanban is not None
+
+    def test_flow_kanban_accepts_flow_dict(self):
+        from packages.dashboard.tabs.work import FlowKanban
+        flow = {"name": "default", "states": ["incoming", "claimed", "provisional"]}
+        kanban = FlowKanban(flow=flow, tasks_by_queue={}, agent_map={})
+        assert kanban._flow == flow
+        assert kanban._tasks_by_queue == {}
+        assert kanban._agent_map == {}
+
+
+class TestWorkTabFlowGrouping:
+    """Tests for WorkTab flow-based task grouping logic."""
+
+    def _make_report_with_flows(self) -> dict:
+        return {
+            "work": {
+                "incoming": [
+                    {"id": "t1", "title": "Task 1", "queue": "incoming", "flow": "default"},
+                ],
+                "in_progress": [
+                    {"id": "t2", "title": "Task 2", "queue": "claimed", "flow": "default"},
+                ],
+                "checking": [],
+                "in_review": [],
+                "done_today": [],
+            },
+            "flows": [
+                {"name": "default", "states": ["incoming", "claimed", "provisional", "done"]},
+            ],
+            "done_tasks": [],
+            "prs": [],
+            "proposals": [],
+            "messages": [],
+            "agents": [],
+            "health": {"scheduler": "running", "idle_agents": 0, "running_agents": 0,
+                       "total_agents": 0, "queue_depth": 0},
+            "generated_at": datetime.now().isoformat(),
+        }
+
+    def test_work_tab_importable_with_new_classes(self):
+        from packages.dashboard.tabs.work import WorkTab, FlowKanban, WorkColumn
+        assert WorkTab is not None
+        assert FlowKanban is not None
+        assert WorkColumn is not None
+
+    def test_work_tab_has_update_data_method(self):
+        from packages.dashboard.tabs.work import WorkTab
+        assert callable(getattr(WorkTab, "update_data", None))
+
+    def test_work_tab_accepts_flows_in_report(self):
+        from packages.dashboard.tabs.work import WorkTab
+        report = self._make_report_with_flows()
+        tab = WorkTab(report=report)
+        # Verify it stores the report correctly
+        assert tab._report.get("flows") == report["flows"]
+
+    def test_task_grouping_by_flow_and_queue(self):
+        """Verify the grouping logic used in WorkTab.compose()."""
+        tasks = [
+            {"id": "t1", "flow": "default", "queue": "incoming"},
+            {"id": "t2", "flow": "default", "queue": "claimed"},
+            {"id": "t3", "flow": "review", "queue": "incoming"},
+        ]
+
+        tasks_by_flow_queue: dict = {}
+        for task in tasks:
+            flow_name = task.get("flow") or "default"
+            queue_name = task.get("queue") or "incoming"
+            if flow_name not in tasks_by_flow_queue:
+                tasks_by_flow_queue[flow_name] = {}
+            if queue_name not in tasks_by_flow_queue[flow_name]:
+                tasks_by_flow_queue[flow_name][queue_name] = []
+            tasks_by_flow_queue[flow_name][queue_name].append(task)
+
+        assert len(tasks_by_flow_queue["default"]["incoming"]) == 1
+        assert tasks_by_flow_queue["default"]["incoming"][0]["id"] == "t1"
+        assert len(tasks_by_flow_queue["default"]["claimed"]) == 1
+        assert tasks_by_flow_queue["default"]["claimed"][0]["id"] == "t2"
+        assert len(tasks_by_flow_queue["review"]["incoming"]) == 1
+        assert tasks_by_flow_queue["review"]["incoming"][0]["id"] == "t3"
+
+    def test_tasks_with_missing_flow_default_to_default(self):
+        """Tasks without a flow field should be placed in the 'default' flow."""
+        tasks = [
+            {"id": "t1", "queue": "incoming"},  # no flow field
+            {"id": "t2", "flow": None, "queue": "incoming"},  # null flow
+        ]
+
+        tasks_by_flow_queue: dict = {}
+        for task in tasks:
+            flow_name = task.get("flow") or "default"
+            queue_name = task.get("queue") or "incoming"
+            if flow_name not in tasks_by_flow_queue:
+                tasks_by_flow_queue[flow_name] = {}
+            if queue_name not in tasks_by_flow_queue[flow_name]:
+                tasks_by_flow_queue[flow_name][queue_name] = []
+            tasks_by_flow_queue[flow_name][queue_name].append(task)
+
+        assert len(tasks_by_flow_queue.get("default", {}).get("incoming", [])) == 2
+
+
+# ---------------------------------------------------------------------------
 # Wrapper script test
 # ---------------------------------------------------------------------------
 

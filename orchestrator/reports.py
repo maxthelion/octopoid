@@ -33,11 +33,12 @@ def get_project_report(sdk: "OctopoidSDK") -> dict[str, Any]:
         sdk: Octopoid SDK instance for v2.0 API access (required).
 
     Returns:
-        Structured dict with keys: work, prs, proposals, messages,
+        Structured dict with keys: work, flows, prs, proposals, messages,
         agents, health, drafts.
     """
     return {
         "work": _gather_work(sdk),
+        "flows": _gather_flows(sdk),
         "done_tasks": _gather_done_tasks(sdk),
         "prs": [],  # Disabled — _gather_prs was burning 22k+ gh API calls/hour
         "proposals": _gather_proposals(),
@@ -222,6 +223,8 @@ def _format_task(task: dict[str, Any]) -> dict[str, Any]:
         "check_results": task.get("check_results", {}),
         "staging_url": task.get("staging_url"),
         "claimed_at": task.get("claimed_at"),
+        "queue": task.get("queue"),
+        "flow": task.get("flow") or "default",
     }
 
 
@@ -347,6 +350,44 @@ def _store_staging_url(pr_number: int, staging_url: str, *, branch_name: str | N
             pass
     except Exception:
         pass  # Best-effort — don't break PR gathering
+
+
+# ---------------------------------------------------------------------------
+# Flows
+# ---------------------------------------------------------------------------
+
+
+def _gather_flows(sdk: "OctopoidSDK") -> list[dict[str, Any]]:
+    """Fetch flow definitions from the API server.
+
+    Returns a list of flow dicts with 'name', 'states', and 'transitions'.
+    States and transitions may be JSON-encoded strings on the server and are
+    parsed here into Python lists.
+    """
+    try:
+        flows_raw = sdk.flows.list()
+        result = []
+        for f in flows_raw:
+            states = f.get("states", [])
+            if isinstance(states, str):
+                try:
+                    states = json.loads(states)
+                except (json.JSONDecodeError, ValueError):
+                    states = []
+            transitions = f.get("transitions", [])
+            if isinstance(transitions, str):
+                try:
+                    transitions = json.loads(transitions)
+                except (json.JSONDecodeError, ValueError):
+                    transitions = []
+            result.append({
+                "name": f.get("name"),
+                "states": states,
+                "transitions": transitions,
+            })
+        return result
+    except Exception:
+        return []
 
 
 # ---------------------------------------------------------------------------
