@@ -1,6 +1,6 @@
 # /process-draft - Process a Draft Into Action
 
-Review a draft's status and determine next steps. Archive only if fully complete.
+Review a draft's status and determine next steps.
 
 **Argument:** Filename or topic (e.g. `dashboard-redesign` or `gatekeeper-review-system-plan.md`)
 
@@ -25,7 +25,7 @@ Scan for:
 
 **If running in automated mode (e.g. draft aging agent):** do NOT enqueue tasks or start work directly. Instead:
 
-1. **Check for unresolved open questions first.** If the draft has an "Open Questions" section with unanswered questions, do NOT propose tasks. Instead, surface the questions in the inbox message for the human to answer. The draft gets archived either way (it's been filed), but no work should be proposed until the questions are resolved.
+1. **Check for unresolved open questions first.** If the draft has an "Open Questions" section with unanswered questions, do NOT propose tasks. Instead, surface the questions in the inbox message for the human to answer. The draft gets marked complete either way (it's been filed), but no work should be proposed until the questions are resolved.
 
 2. **Only if no blocking open questions exist**, write proposed tasks to `project-management/drafts/proposed-tasks/` as markdown files, one per task. Use the format:
    ```markdown
@@ -73,22 +73,24 @@ If the draft contains architecture-level content, check whether an existing doc 
 
 **If running in automated mode:** include proposed rules and architecture docs in the inbox message. Do not modify rule files or docs directly — flag them for human review.
 
-### 4. Decide whether to archive
+### 4. Decide whether the draft is complete
 
-**Archive the draft if:**
-- All proposed work is complete (tasks done, changes merged, decisions implemented)
+**Complete if:**
+- All proposed work is done (tasks done, changes merged, decisions implemented)
 - No outstanding work remains to be scheduled
 - The draft served its purpose and is now historical reference
 
-**Keep in drafts/ if:**
+**Still active if:**
 - Work has been started but not finished (tasks enqueued but not complete)
 - Multi-phase plan with later phases not yet started
 - Still actively being referenced for ongoing work
 - Open questions remain unanswered
 
-**Update the status field:**
-- If archiving: `**Status:** Complete` or `**Status:** Superseded`
-- If keeping: `**Status:** In Progress` or `**Status:** Partial`
+**Update the status field in the markdown frontmatter:**
+- If complete: `**Status:** Complete` or `**Status:** Superseded`
+- If still active: `**Status:** In Progress` or `**Status:** Partial`
+
+**IMPORTANT:** Do NOT move, rename, or delete draft files. Do NOT create an archive/ directory. Drafts always stay in `project-management/drafts/` regardless of status. The server is the source of truth for draft status — the local file is just a cache.
 
 ### 5. Add processing summary (whether archiving or not)
 
