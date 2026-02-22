@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Human inbox tab with server messages** ([TASK-9580b5ce])
+  - `packages/dashboard/tabs/inbox.py`: Replaced the old three-column inbox with a master-detail layout (message list left, content right). Messages are fetched via `sdk.messages.list(to_actor="human")`, ordered newest-first. Each item shows type tag, from_actor, and a content preview. Selecting a message renders the full content as Markdown in the right pane. Messages with embedded `"actions"` arrays in their content JSON show action buttons in a fixed bar; clicking posts an `action_command` message back via `sdk.messages.create()`.
+  - `orchestrator/reports.py`: `_gather_messages()` now takes an `sdk` parameter and fetches messages from the server (`sdk.messages.list(to_actor="human")`) instead of the local filesystem. Returns full message dicts with `id`, `task_id`, `from_actor`, `to_actor`, `type`, `content`, `created_at`.
+  - `packages/dashboard/tabs/drafts.py`: Migrated `_post_inbox_message()` from local `message_utils.create_message()` to `sdk.messages.create()` with `type="action_command"` and `to_actor="orchestrator"`.
+  - `orchestrator/tasks.py`: Migrated escalation message from `message_utils.warning()` to `sdk.messages.create()` with `type="warning"` and `to_actor="human"`.
+  - `orchestrator/message_utils.py`: Removed — all callers have been migrated to `sdk.messages.create()`.
+  - `packages/dashboard/styles/dashboard.tcss`: Added CSS for new inbox master-detail layout (`.inbox-layout`, `.inbox-list-panel`, `.inbox-listview`, `.inbox-message-label`, `.inbox-content-panel`, `.inbox-content-scroll`, `.inbox-action-bar`, `.inbox-action-btn`).
+  - `tests/test_reports.py`: Updated `TestGatherMessages` to mock the SDK instead of `message_utils`, and added a test for newest-first ordering.
+
 - **Flow-specific kanban tabs in Work view** ([TASK-0ddd897e])
   - `packages/python-sdk/octopoid_sdk/client.py`: Added `FlowsAPI.list()` method to fetch all registered flow definitions from `/api/v1/flows`.
   - `orchestrator/reports.py`: Added `_gather_flows()` which fetches flow definitions and parses JSON-encoded `states`/`transitions` fields. Added `flow` and `queue` fields to `_format_task()`. The report payload now includes a `"flows"` key.

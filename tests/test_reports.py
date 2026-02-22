@@ -532,21 +532,47 @@ class TestGatherProposals:
 class TestGatherMessages:
     """Tests for _gather_messages()."""
 
-    @patch("orchestrator.message_utils.list_messages")
-    def test_returns_formatted_messages(self, mock_list):
-        mock_list.return_value = [
-            {"filename": "warning-20260207-test.md", "type": "warning", "created": 1234567890.0},
+    def test_returns_formatted_messages(self):
+        mock_sdk = MagicMock()
+        mock_sdk.messages.list.return_value = [
+            {
+                "id": "msg-001",
+                "task_id": "task-abc",
+                "from_actor": "agent",
+                "to_actor": "human",
+                "type": "worker_result",
+                "content": "Task completed successfully.",
+                "created_at": "2026-02-22T10:00:00.000Z",
+            },
         ]
 
-        messages = _gather_messages()
+        messages = _gather_messages(mock_sdk)
 
         assert len(messages) == 1
-        assert messages[0]["filename"] == "warning-20260207-test.md"
-        assert messages[0]["type"] == "warning"
+        assert messages[0]["id"] == "msg-001"
+        assert messages[0]["type"] == "worker_result"
+        assert messages[0]["from_actor"] == "agent"
+        assert messages[0]["content"] == "Task completed successfully."
+        mock_sdk.messages.list.assert_called_once_with(to_actor="human")
 
-    @patch("orchestrator.message_utils.list_messages", side_effect=Exception("no dir"))
-    def test_returns_empty_on_error(self, mock_list):
-        messages = _gather_messages()
+    def test_returns_newest_first(self):
+        mock_sdk = MagicMock()
+        mock_sdk.messages.list.return_value = [
+            {"id": "old", "created_at": "2026-02-01T00:00:00.000Z", "type": "info", "from_actor": "a", "to_actor": "human", "task_id": "t1", "content": ""},
+            {"id": "new", "created_at": "2026-02-22T00:00:00.000Z", "type": "info", "from_actor": "a", "to_actor": "human", "task_id": "t2", "content": ""},
+        ]
+
+        messages = _gather_messages(mock_sdk)
+
+        assert messages[0]["id"] == "new"
+        assert messages[1]["id"] == "old"
+
+    def test_returns_empty_on_error(self):
+        mock_sdk = MagicMock()
+        mock_sdk.messages.list.side_effect = Exception("API error")
+
+        messages = _gather_messages(mock_sdk)
+
         assert messages == []
 
 
