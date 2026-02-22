@@ -15,6 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `packages/dashboard/tabs/work.py`: Replaced the hardcoded 3-column kanban with a `TabbedContent` widget that shows one tab per flow. Each tab uses the new `FlowKanban` widget to render one `WorkColumn` per state in the flow definition. Tasks are grouped by their `flow` field (defaulting to `"default"`) and their `queue` field. State names are title-cased for display. Falls back to a default flow if the server returns none.
   - `packages/dashboard/styles/dashboard.tcss`: Added CSS for nested `TabbedContent` inside `WorkTab` and `FlowKanban` to ensure correct full-height layout.
 
+- **Split Drafts tab into User/Agent nested sub-tabs** ([TASK-00956912])
+  - `packages/dashboard/tabs/drafts.py`: Replaced the single flat draft list with a `TabbedContent` containing two panes — "User Drafts" (author ≠ agent) and "Agent Drafts" (author = agent). Each sub-tab has independent filter state (Active, Idea, Partial, Complete, Archived). Both share the same content pane and action bar on the right.
+  - `orchestrator/reports.py`: Added `author` field to each draft dict in `_gather_drafts()` output so the dashboard can split drafts by author.
+  - `packages/dashboard/styles/dashboard.tcss`: Added CSS rules to give the nested `TabbedContent` full height within the draft list panel.
+  - `tests/test_reports.py`: Extended `TestGatherDrafts` to assert `author` field is present and passes through correctly for human, agent, and missing-author drafts.
+
 - **Default draft actions and Other... free-text input in Drafts tab** ([TASK-abeed963])
   - `orchestrator/reports.py`: `_gather_drafts()` now injects three synthetic default actions — Enqueue, Process, Archive — client-side when a draft has no server-provided actions. Drafts with proposer-created actions continue to show those instead.
   - `packages/dashboard/tabs/drafts.py`: Added a fixed action bar at the bottom of the right-hand content pane. Shows up to 3 action buttons ([A]/[B]/[C] hotkeys) drawn from the draft's `actions` list, plus an Other... text input. Clicking a button posts the corresponding message to the local inbox; submitting Other... posts the user's free-form text. Action bar is updated (not re-mounted) on each draft selection to avoid DuplicateId errors. Re-selecting the same draft is a no-op.

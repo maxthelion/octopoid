@@ -1,4 +1,9 @@
-"""Drafts tab — server-sourced draft ideas, status filters, master-detail view."""
+"""Drafts tab — server-sourced draft ideas, status filters, master-detail view.
+
+Two nested sub-tabs split drafts by author:
+  - User Drafts: author is None/empty/human
+  - Agent Drafts: author is agent
+"""
 
 from __future__ import annotations
 
@@ -7,7 +12,7 @@ from pathlib import Path
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.widgets import Button, Input, Label, ListItem, ListView, Markdown
+from textual.widgets import Button, Input, Label, ListItem, ListView, Markdown, TabbedContent, TabPane
 from textual.containers import Horizontal, Vertical, VerticalScroll
 
 from .base import TabBase
@@ -105,7 +110,7 @@ class _DraftItem(ListItem):
 
 
 class DraftsTab(TabBase):
-    """Master-detail drafts view: filter buttons + list on left, file content on right.
+    """Master-detail drafts view: nested User/Agent sub-tabs on left, content on right.
 
     The right pane shows the draft content in a scrollable area, with a fixed
     action bar at the bottom. The action bar has up to 3 buttons (A/B/C hotkeys)
@@ -121,24 +126,47 @@ class DraftsTab(TabBase):
     def __init__(self, report: dict | None = None, **kwargs: object) -> None:
         super().__init__(**kwargs)
         self._drafts: list[dict] = []
-        self._filters: dict[str, bool] = dict(_DEFAULT_FILTERS)
+        self._user_filters: dict[str, bool] = dict(_DEFAULT_FILTERS)
+        self._agent_filters: dict[str, bool] = dict(_DEFAULT_FILTERS)
         self._selected_draft: dict | None = None
         self._selected_draft_id: int | str | None = None
+
+    @property
+    def _user_drafts(self) -> list[dict]:
+        """Drafts authored by humans (author is None, empty, or 'human')."""
+        return [d for d in self._drafts if d.get("author") != "agent"]
+
+    @property
+    def _agent_drafts(self) -> list[dict]:
+        """Drafts authored by agents."""
+        return [d for d in self._drafts if d.get("author") == "agent"]
 
     def compose(self) -> ComposeResult:
         with Horizontal(classes="drafts-layout"):
             with Vertical(classes="draft-list-panel", id="draft-list-panel"):
-                yield Label(" DRAFTS ", classes="section-header")
-                with Horizontal(classes="draft-filters", id="draft-filters"):
-                    for status, label in _FILTER_LABELS:
-                        active_class = " draft-filter-active" if self._filters[status] else ""
-                        yield Button(
-                            label,
-                            id=f"filter-{status}",
-                            classes=f"draft-filter-btn draft-filter-{status}{active_class}",
-                        )
-                with ListView(id="draft-listview", classes="draft-listview"):
-                    pass
+                with TabbedContent(id="draft-subtabs"):
+                    with TabPane("User Drafts", id="user-drafts-pane"):
+                        with Horizontal(classes="draft-filters", id="user-draft-filters"):
+                            for status, label in _FILTER_LABELS:
+                                active_class = " draft-filter-active" if self._user_filters[status] else ""
+                                yield Button(
+                                    label,
+                                    id=f"user-filter-{status}",
+                                    classes=f"draft-filter-btn draft-filter-{status}{active_class}",
+                                )
+                        with ListView(id="user-draft-listview", classes="draft-listview"):
+                            pass
+                    with TabPane("Agent Drafts", id="agent-drafts-pane"):
+                        with Horizontal(classes="draft-filters", id="agent-draft-filters"):
+                            for status, label in _FILTER_LABELS:
+                                active_class = " draft-filter-active" if self._agent_filters[status] else ""
+                                yield Button(
+                                    label,
+                                    id=f"agent-filter-{status}",
+                                    classes=f"draft-filter-btn draft-filter-{status}{active_class}",
+                                )
+                        with ListView(id="agent-draft-listview", classes="draft-listview"):
+                            pass
 
             with Vertical(id="draft-content-panel", classes="draft-content-panel"):
                 with VerticalScroll(id="draft-content-scroll", classes="draft-content-scroll"):
@@ -170,25 +198,49 @@ class DraftsTab(TabBase):
                 self.query_one(f"#draft-action-{i}", Button).display = False
             except Exception:
                 pass
-        self._refresh_list()
+        self._refresh_all_lists()
+
+    def _get_active_listview_id(self) -> str:
+        """Return the ID of the currently active list view based on selected sub-tab."""
+        try:
+            tabs = self.query_one("#draft-subtabs", TabbedContent)
+            if tabs.active == "agent-drafts-pane":
+                return "agent-draft-listview"
+        except Exception:
+            pass
+        return "user-draft-listview"
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle filter toggle buttons and draft action buttons."""
         btn_id = event.button.id or ""
 
-        if btn_id.startswith("filter-"):
-            status = btn_id[len("filter-"):]
-            if status not in self._filters:
+        if btn_id.startswith("user-filter-"):
+            status = btn_id[len("user-filter-"):]
+            if status not in self._user_filters:
                 return
-            self._filters[status] = not self._filters[status]
+            self._user_filters[status] = not self._user_filters[status]
             btn = event.button
-            if self._filters[status]:
+            if self._user_filters[status]:
                 btn.add_class("draft-filter-active")
             else:
                 btn.remove_class("draft-filter-active")
-            self._refresh_list()
+            self._refresh_user_list()
+            return
 
-        elif btn_id.startswith("draft-action-"):
+        if btn_id.startswith("agent-filter-"):
+            status = btn_id[len("agent-filter-"):]
+            if status not in self._agent_filters:
+                return
+            self._agent_filters[status] = not self._agent_filters[status]
+            btn = event.button
+            if self._agent_filters[status]:
+                btn.add_class("draft-filter-active")
+            else:
+                btn.remove_class("draft-filter-active")
+            self._refresh_agent_list()
+            return
+
+        if btn_id.startswith("draft-action-"):
             idx_str = btn_id[len("draft-action-"):]
             try:
                 idx = int(idx_str)
@@ -220,22 +272,44 @@ class DraftsTab(TabBase):
         self.app.notify(f"Sent: {message}", timeout=3)
         event.input.value = ""
 
-    def _refresh_list(self) -> None:
-        """Repopulate the list with currently filtered drafts."""
+    def _refresh_user_list(self) -> None:
+        """Repopulate the user draft list with currently filtered drafts."""
         try:
-            lv = self.query_one("#draft-listview", ListView)
+            lv = self.query_one("#user-draft-listview", ListView)
         except Exception:
             return
         lv.clear()
         filtered = [
-            d for d in self._drafts
-            if self._filters.get(d.get("status", "idea"), True)
+            d for d in self._user_drafts
+            if self._user_filters.get(d.get("status", "idea"), True)
         ]
         if not filtered:
             lv.append(ListItem(Label("No drafts match filters.", classes="dim-text")))
         else:
             for idx, draft in enumerate(filtered, start=1):
                 lv.append(_DraftItem(draft, num=draft.get("id", idx)))
+
+    def _refresh_agent_list(self) -> None:
+        """Repopulate the agent draft list with currently filtered drafts."""
+        try:
+            lv = self.query_one("#agent-draft-listview", ListView)
+        except Exception:
+            return
+        lv.clear()
+        filtered = [
+            d for d in self._agent_drafts
+            if self._agent_filters.get(d.get("status", "idea"), True)
+        ]
+        if not filtered:
+            lv.append(ListItem(Label("No drafts match filters.", classes="dim-text")))
+        else:
+            for idx, draft in enumerate(filtered, start=1):
+                lv.append(_DraftItem(draft, num=draft.get("id", idx)))
+
+    def _refresh_all_lists(self) -> None:
+        """Refresh both user and agent draft lists."""
+        self._refresh_user_list()
+        self._refresh_agent_list()
 
     def _update_action_bar(self, draft: dict) -> None:
         """Refresh the action bar buttons to match the selected draft's actions."""
@@ -283,18 +357,28 @@ class DraftsTab(TabBase):
         self._update_action_bar(draft)
 
     def action_cursor_down(self) -> None:
+        lv_id = self._get_active_listview_id()
         try:
-            self.query_one("#draft-listview", ListView).action_cursor_down()
+            self.query_one(f"#{lv_id}", ListView).action_cursor_down()
         except Exception:
             pass
 
     def action_cursor_up(self) -> None:
+        lv_id = self._get_active_listview_id()
         try:
-            self.query_one("#draft-listview", ListView).action_cursor_up()
+            self.query_one(f"#{lv_id}", ListView).action_cursor_up()
         except Exception:
             pass
 
     def update_data(self, report: dict) -> None:
-        """Update drafts from report and refresh the list."""
+        """Update drafts from report and refresh the lists."""
         self._drafts = report.get("drafts", [])
-        self._refresh_list()
+        # Keep the selected draft's actions up-to-date if one is selected
+        if self._selected_draft is not None:
+            selected_id = self._selected_draft.get("id")
+            for d in self._drafts:
+                if d.get("id") == selected_id:
+                    self._selected_draft = d
+                    self._update_action_bar(d)
+                    break
+        self._refresh_all_lists()
