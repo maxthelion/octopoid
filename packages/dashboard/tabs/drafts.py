@@ -7,6 +7,7 @@ Two nested sub-tabs split drafts by author:
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from rich.text import Text
@@ -44,12 +45,6 @@ _DEFAULT_FILTERS: dict[str, bool] = {
     "complete": True,
     "superseded": False,
 }
-
-# Hotkey labels for the three action button slots
-_ACTION_HOTKEYS = ["A", "B", "C"]
-
-# Number of fixed action button slots in the action bar
-_NUM_ACTION_SLOTS = 3
 
 
 def _load_draft_content(draft: dict) -> str:
@@ -119,10 +114,10 @@ class _DraftItem(ListItem):
 class DraftsTab(TabBase):
     """Master-detail drafts view: nested User/Agent sub-tabs on left, content on right.
 
-    The right pane shows the draft content in a scrollable area, with a fixed
-    action bar at the bottom. The action bar has up to 3 buttons (A/B/C hotkeys)
-    from the draft's actions list, plus an Other... free-text input that posts
-    a custom message to the inbox on submit.
+    The right pane shows the draft content in a scrollable area, with a dynamic
+    action bar at the bottom. Buttons are rendered from action_data["buttons"]
+    when available, or fall back to a single button per action using the action
+    label. An Other... free-text input posts a custom message to the inbox.
     """
 
     BINDINGS = [
@@ -137,6 +132,8 @@ class DraftsTab(TabBase):
         self._agent_filters: dict[str, bool] = dict(_DEFAULT_FILTERS)
         self._selected_draft: dict | None = None
         self._selected_draft_id: int | str | None = None
+        # Maps button ID -> {action_id, entity_type, entity_id, command}
+        self._btn_context: dict[str, dict] = {}
 
     @property
     def _user_drafts(self) -> list[dict]:
@@ -183,15 +180,8 @@ class DraftsTab(TabBase):
                         id="draft-content",
                         classes="draft-content-text",
                     )
-                # Fixed action bar at the bottom — always mounted, updated on selection
+                # Action bar at the bottom — buttons mounted dynamically on selection
                 with Horizontal(id="draft-action-bar", classes="draft-action-bar"):
-                    for i in range(_NUM_ACTION_SLOTS):
-                        yield Button(
-                            "",
-                            id=f"draft-action-{i}",
-                            classes="draft-action-btn",
-                            disabled=True,
-                        )
                     yield Input(
                         placeholder="Other...",
                         id="draft-action-other",
@@ -199,12 +189,6 @@ class DraftsTab(TabBase):
                     )
 
     def on_mount(self) -> None:
-        # Hide all action buttons until a draft is selected
-        for i in range(_NUM_ACTION_SLOTS):
-            try:
-                self.query_one(f"#draft-action-{i}", Button).display = False
-            except Exception:
-                pass
         self._refresh_all_lists()
 
     def _get_active_listview_id(self) -> str:
@@ -247,21 +231,12 @@ class DraftsTab(TabBase):
             self._refresh_agent_list()
             return
 
-        if btn_id.startswith("draft-action-"):
-            idx_str = btn_id[len("draft-action-"):]
-            try:
-                idx = int(idx_str)
-            except ValueError:
-                return
-            if self._selected_draft is None:
-                return
-            actions = self._selected_draft.get("actions", [])
-            if 0 <= idx < len(actions):
-                action = actions[idx]
-                draft_id = self._selected_draft.get("id", "")
-                message = _action_message(action, draft_id)
-                _post_inbox_message(draft_id, message)
-                self.app.notify(f"Sent: {message}", timeout=3)
+        if btn_id in self._btn_context:
+            ctx = self._btn_context[btn_id]
+            draft_id = ctx["entity_id"]
+            command = ctx["command"]
+            _post_inbox_message(draft_id, command)
+            self.app.notify(f"Sent: {command}", timeout=3)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         """Post a free-text Other... message to the inbox."""
@@ -319,24 +294,71 @@ class DraftsTab(TabBase):
         self._refresh_agent_list()
 
     def _update_action_bar(self, draft: dict) -> None:
-        """Refresh the action bar buttons to match the selected draft's actions."""
+        """Rebuild the action bar buttons for the selected draft.
+
+        For actions with action_data["buttons"], renders one Button per button
+        definition. For actions without action_data, renders a single button
+        using the action label.
+        """
+        try:
+            bar = self.query_one("#draft-action-bar", Horizontal)
+        except Exception:
+            return
+
+        # Remove all existing action buttons (leave the Input in place)
+        for btn in list(bar.query(Button)):
+            btn.remove()
+        self._btn_context.clear()
+
+        draft_id = str(draft.get("id", ""))
         actions = draft.get("actions", [])
-        for i in range(_NUM_ACTION_SLOTS):
-            try:
-                btn = self.query_one(f"#draft-action-{i}", Button)
-            except Exception:
+
+        for action in actions:
+            action_id = action.get("id")
+            if not action_id:
                 continue
-            if i < len(actions):
-                action = actions[i]
-                hotkey = _ACTION_HOTKEYS[i]
-                label = action.get("label", "")
-                btn.label = f"[{hotkey}] {label}"
-                btn.disabled = False
-                btn.display = True
+
+            action_data = action.get("action_data") or {}
+            if isinstance(action_data, str):
+                try:
+                    action_data = json.loads(action_data)
+                except (json.JSONDecodeError, TypeError):
+                    action_data = {}
+
+            buttons = action_data.get("buttons", [])
+            if buttons:
+                # action_data-driven: render one button per definition
+                for idx, btn_def in enumerate(buttons):
+                    btn_id = f"draft-btn-{action_id}-{idx}"
+                    label = btn_def.get("label") or "Action"
+                    command = btn_def.get("command", "")
+                    self._btn_context[btn_id] = {
+                        "action_id": action_id,
+                        "entity_type": "draft",
+                        "entity_id": draft_id,
+                        "command": command,
+                    }
+                    try:
+                        inp = bar.query_one(Input)
+                        bar.mount(Button(label, id=btn_id, classes="draft-action-btn"), before=inp)
+                    except Exception:
+                        bar.mount(Button(label, id=btn_id, classes="draft-action-btn"))
             else:
-                btn.label = ""
-                btn.disabled = True
-                btn.display = False
+                # Default fallback: single button per action using action label
+                btn_id = f"draft-btn-{action_id}-0"
+                label = action.get("label") or action.get("action_type") or "Action"
+                command = _action_message(action, draft_id)
+                self._btn_context[btn_id] = {
+                    "action_id": action_id,
+                    "entity_type": "draft",
+                    "entity_id": draft_id,
+                    "command": command,
+                }
+                try:
+                    inp = bar.query_one(Input)
+                    bar.mount(Button(label, id=btn_id, classes="draft-action-btn"), before=inp)
+                except Exception:
+                    bar.mount(Button(label, id=btn_id, classes="draft-action-btn"))
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         """Update the content pane and action bar when a draft is selected."""

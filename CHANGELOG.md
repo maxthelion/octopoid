@@ -23,6 +23,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `orchestrator/reports.py`: `_gather_agents()` now classifies agents by role — agents with role `implement` or `gatekeeper` get `agent_type: "flow"`; all others get `agent_type: "background"`. Also includes `interval_seconds` from agent config in the returned dicts.
   - `packages/dashboard/styles/dashboard.tcss`: Widened `.agent-list-panel` from `width: 24` to `width: 36` to accommodate the two tab labels.
 
+- **action_data JSON field support for actions** ([TASK-cbe5f20d])
+  - `packages/python-sdk/octopoid_sdk/client.py`: Updated `ActionsAPI.create()` to accept `action_data` (dict with button definitions), `description`, and made `action_type` optional with default `"proposal"`. Removed `payload` parameter.
+  - `orchestrator/reports.py`: `_gather_drafts()` now parses `action_data` JSON strings into dicts so dashboard consumers can access `action_data["buttons"]` directly.
+  - `packages/dashboard/tabs/drafts.py`: `_update_action_bar()` now renders one Button per entry in `action_data["buttons"]` when available. Falls back to a single button per action using the action label for actions without `action_data`. Buttons are mounted dynamically on draft selection.
+
+### Removed
+
+- **Python action handler registry removed** ([TASK-cbe5f20d])
+  - Deleted `orchestrator/actions.py` — `_HANDLER_REGISTRY`, `@register_action_handler`, `get_handler`, and built-in handlers are gone.
+  - Removed handler registry tests from `tests/test_actions.py` (SDK ActionsAPI tests remain).
+
 - **`/approve-task` skill and proposed task support in `/enqueue`** ([TASK-4ad270f1])
   - `.claude/commands/approve-task.md`: New skill that fetches a task, validates `blocked_by == "awaiting-approval"`, and clears the field via `PATCH /api/v1/tasks/{id}` so agents can claim it.
   - `.claude/commands/enqueue.md`: Updated to document the `blocked_by="awaiting-approval"` option. When the user describes a task as "proposed", "not yet ready", "needs approval", or similar, the skill now instructs passing `blocked_by="awaiting-approval"` to `create_task()`.

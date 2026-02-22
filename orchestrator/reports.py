@@ -424,6 +424,13 @@ def _gather_drafts(sdk: "OctopoidSDK") -> list[dict[str, Any]]:
         all_actions = sdk.actions.list(entity_type="draft", status="pending")
         actions_by_draft: dict[str, list[dict[str, Any]]] = {}
         for action in all_actions:
+            # Parse action_data JSON strings into dicts
+            raw = action.get("action_data")
+            if isinstance(raw, str):
+                try:
+                    action["action_data"] = json.loads(raw)
+                except (json.JSONDecodeError, TypeError):
+                    action["action_data"] = {}
             eid = str(action.get("entity_id", ""))
             if eid:
                 actions_by_draft.setdefault(eid, []).append(action)
