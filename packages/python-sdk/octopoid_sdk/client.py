@@ -235,6 +235,52 @@ class TasksAPI:
         """
         return self.client._request('POST', f'/api/v1/tasks/{task_id}/requeue', json={})
 
+    def resolve(
+        self,
+        task_id: str,
+        resolved_by: str,
+        resolution_note: str,
+    ) -> Dict[str, Any]:
+        """Resolve a task manually, bypassing the normal flow.
+
+        Moves a task from any queue state to 'resolved'. Use this when work
+        was completed outside the normal agent flow (cherry-picks, direct commits,
+        abandoned tasks, etc.).
+
+        Tries the dedicated POST /resolve endpoint first (when available on server),
+        falls back to PATCH with queue=resolved.
+
+        Args:
+            task_id: Task ID
+            resolved_by: Name of the person resolving (e.g., 'human', 'max')
+            resolution_note: Reason for manual resolution
+
+        Returns:
+            Updated task dictionary
+        """
+        try:
+            return self.client._request(
+                'POST',
+                f'/api/v1/tasks/{task_id}/resolve',
+                json={
+                    'resolved_by': resolved_by,
+                    'resolution_note': resolution_note,
+                },
+            )
+        except requests.HTTPError as e:
+            if e.response.status_code == 404:
+                # Dedicated endpoint not yet deployed — fall back to PATCH
+                return self.client._request(
+                    'PATCH',
+                    f'/api/v1/tasks/{task_id}',
+                    json={
+                        'queue': 'resolved',
+                        'resolved_by': resolved_by,
+                        'resolution_note': resolution_note,
+                    },
+                )
+            raise
+
 
 class DraftsAPI:
     """Drafts API endpoints"""

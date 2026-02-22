@@ -14,15 +14,18 @@ from .work import TaskSelected
 
 
 def _summary_text(done_tasks: list[dict]) -> str:
-    """Build a summary string like '5 done · 2 failed · 1 recycled'."""
+    """Build a summary string like '5 done · 2 failed · 1 recycled · 1 resolved'."""
     done_count = sum(1 for t in done_tasks if t.get("final_queue") == "done")
     failed_count = sum(1 for t in done_tasks if t.get("final_queue") == "failed")
     recycled_count = sum(1 for t in done_tasks if t.get("final_queue") == "recycled")
+    resolved_count = sum(1 for t in done_tasks if t.get("final_queue") == "resolved")
     parts = [f"{done_count} done"]
     if recycled_count:
         parts.append(f"{recycled_count} recycled")
     if failed_count:
         parts.append(f"{failed_count} failed")
+    if resolved_count:
+        parts.append(f"{resolved_count} resolved")
     return " · ".join(parts)
 
 
@@ -79,6 +82,8 @@ class DoneTab(TabBase):
                 icon = Text("✗", style="bold #ef5350")
             elif final_queue == "recycled":
                 icon = Text("♻", style="bold #ffa726")
+            elif final_queue == "resolved":
+                icon = Text("◎", style="bold #42a5f5")
             else:
                 icon = Text("✓", style="bold #66bb6a")
 
@@ -89,8 +94,12 @@ class DoneTab(TabBase):
             turns_text = f"{turns}/{turn_limit}"
 
             # Merge / outcome column
+            resolved_by = task.get("resolved_by") or ""
             if accepted_by:
                 merge_display: str | Text = accepted_by[:10]
+            elif final_queue == "resolved":
+                label = resolved_by[:10] if resolved_by else "human"
+                merge_display = Text(f"resolved:{label}", style="#42a5f5")
             elif final_queue == "failed":
                 merge_display = Text("failed", style="#ef5350")
             elif final_queue == "recycled":
