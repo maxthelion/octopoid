@@ -257,14 +257,22 @@ def review_reject_task(
         print(f"Warning: Failed to update task {task_id} via API: {e}")
 
     if escalated:
-        from . import message_utils
-        message_utils.warning(
-            f"Task {task_id} escalated after {rejection_count} rejections",
-            f"Task has been rejected {rejection_count} times by reviewers. "
-            f"Human attention required.\n\nLatest feedback:\n{feedback[:1000]}",
-            rejected_by or "gatekeeper",
-            task_id,
-        )
+        try:
+            from .sdk import get_sdk
+            sdk = get_sdk()
+            body = (
+                f"Task has been rejected {rejection_count} times by reviewers. "
+                f"Human attention required.\n\nLatest feedback:\n{feedback[:1000]}"
+            )
+            sdk.messages.create(
+                task_id=task_id,
+                from_actor=rejected_by or "gatekeeper",
+                type="warning",
+                content=body,
+                to_actor="human",
+            )
+        except Exception as e:
+            print(f"Warning: Failed to post escalation message for task {task_id}: {e}")
 
     action = "escalated" if escalated else "rejected"
 
