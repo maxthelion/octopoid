@@ -103,7 +103,7 @@ def main():
         checks = [c.strip() for c in args.checks.split(",") if c.strip()]
 
     try:
-        task_path = create_task(
+        task_name = create_task(
             title=args.title,
             role=args.role,
             context=args.context,
@@ -117,9 +117,8 @@ def main():
             checks=checks,
         )
 
-        # Extract task ID from path (filename is TASK-{id}.md)
-        task_id = task_path.stem  # Gets "TASK-abc123"
-        print(task_id)
+        # create_task() returns "TASK-{id}"
+        print(task_name)
         sys.exit(0)
 
     except Exception as e:

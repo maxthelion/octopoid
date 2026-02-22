@@ -174,7 +174,7 @@ class TestFormatTask:
         result = _format_task(task)
 
         assert result["id"] == "xyz"
-        assert result["title"] is None
+        assert result["title"] == "untitled"
         assert result["turns"] == 0
         assert result["commits"] == 0
         assert result["pr_number"] is None

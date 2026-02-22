@@ -188,7 +188,7 @@ def send_to_breakdown(
             created_by=created_by,
         )
 
-        task_path = create_task(
+        task_name = create_task(
             title=f"Break down: {title}",
             role="breakdown",
             context=f"{description}\n\n{context}",
@@ -208,10 +208,10 @@ def send_to_breakdown(
             "type": "project",
             "project_id": project["id"],
             "project": project,
-            "breakdown_task": str(task_path),
+            "breakdown_task": task_name,
         }
     else:
-        task_path = create_task(
+        task_name = create_task(
             title=title,
             role="breakdown",
             context=f"{description}\n\n{context}",
@@ -226,5 +226,5 @@ def send_to_breakdown(
 
         return {
             "type": "task",
-            "task_path": str(task_path),
+            "task_path": task_name,
         }

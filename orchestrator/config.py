@@ -117,16 +117,6 @@ def get_base_branch() -> str:
     return "main"
 
 
-def get_tasks_file_dir() -> Path:
-    """Get the single directory where all task files live.
-
-    Task state is owned by the API. The filesystem just stores content.
-    All task .md files go in .octopoid/tasks/ regardless of queue state.
-    """
-    d = find_parent_project() / ".octopoid" / "tasks"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
-
 
 def get_proposals_dir() -> Path:
     """Get the shared proposals directory."""

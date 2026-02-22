@@ -82,8 +82,6 @@ def init_orchestrator(
         runtime_dir / "shared" / "reviews",
         runtime_dir / "logs",
         runtime_dir / "messages",
-        # Task content (gitignored, server is source of truth)
-        octopoid_dir / "tasks",
         # Flow definitions
         octopoid_dir / "flows",
     ]

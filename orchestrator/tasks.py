@@ -1,7 +1,7 @@
 """Task lifecycle, CRUD, and query operations.
 
 All task state transitions use the Octopoid SDK API.
-Task files on disk are supplementary — the API is the source of truth.
+The server is the single source of truth for task content.
 """
 
 import os
@@ -15,7 +15,6 @@ from uuid import uuid4
 from .config import (
     ACTIVE_QUEUES,
     get_base_branch,
-    get_tasks_file_dir,
 )
 from .sdk import get_sdk, get_orchestrator_id
 from .task_logger import get_task_logger
@@ -70,14 +69,6 @@ def claim_task(
 
     if task is None:
         return None
-
-    file_path_str = task.get("file_path")
-    if file_path_str:
-        tasks_dir = get_tasks_file_dir()
-        task_file = tasks_dir / Path(file_path_str).name
-        if task_file.exists():
-            task["file_path"] = str(task_file)
-            task["content"] = task_file.read_text()
 
     task_id = task.get("id")
     if task_id:
@@ -443,17 +434,6 @@ def find_task_by_id(task_id: str, queues: list[str] | None = None) -> dict[str, 
         if task_queue not in queues:
             return None
 
-    file_path_str = task.get("file_path")
-    if file_path_str and "content" not in task:
-        try:
-            tasks_dir = get_tasks_file_dir()
-            task_file = tasks_dir / Path(file_path_str).name
-            if task_file.exists():
-                task["file_path"] = str(task_file)
-                task["content"] = task_file.read_text()
-        except (FileNotFoundError, IOError):
-            pass  # Task file missing — content stays empty
-
     return task
 
 def get_continuation_tasks(agent_name: str | None = None) -> list[dict[str, Any]]:
@@ -484,8 +464,11 @@ def create_task(
     queue: str = "incoming",
     checks: list[str] | None = None,
     breakdown_depth: int = 0,
-) -> Path:
-    """Create a new task file in the specified queue."""
+) -> str:
+    """Create a new task and register it on the server with full content.
+
+    Returns the task ID in "TASK-{id}" format.
+    """
     if not branch:
         if project_id:
             try:
@@ -522,8 +505,6 @@ def create_task(
     checks_line = f"CHECKS: {','.join(checks)}\n" if checks else ""
     breakdown_depth_line = f"BREAKDOWN_DEPTH: {breakdown_depth}\n" if breakdown_depth > 0 else ""
 
-    task_path = get_tasks_file_dir() / filename
-
     content = f"""# [TASK-{task_id}] {title}
 
 ROLE: {role}
@@ -538,8 +519,6 @@ CREATED_BY: {created_by}
 ## Acceptance Criteria
 {criteria_md}
 """
-
-    task_path.write_text(content)
 
     hooks_json = None
     try:
@@ -563,6 +542,7 @@ CREATED_BY: {created_by}
             queue=queue,
             branch=branch,
             hooks=hooks_json,
+            content=content,
             flow=flow if flow is not None else ("project" if project_id else "default"),
             metadata={
                 "created_by": created_by,
@@ -587,7 +567,7 @@ CREATED_BY: {created_by}
         queue=queue,
     )
 
-    return task_path
+    return f"TASK-{task_id}"
 
 def is_task_still_valid(task_id: str) -> bool:
     """Check if a task still exists in active queues."""

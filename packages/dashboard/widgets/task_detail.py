@@ -68,12 +68,19 @@ def _fetch_tab_content(task_id: str, tab_index: int) -> str:
             return f"(error running git diff: {e})"
 
     elif tab_index == 1:  # Desc
-        task_file = repo_root / ".octopoid" / "tasks" / f"{task_id}.md"
-        if task_file.exists():
-            try:
-                return task_file.read_text()
-            except OSError:
-                pass
+        # Read content from server via SDK
+        try:
+            import sys
+            repo_root_str = str(repo_root)
+            if repo_root_str not in sys.path:
+                sys.path.insert(0, repo_root_str)
+            from orchestrator.sdk import get_sdk
+            sdk = get_sdk()
+            task = sdk.tasks.get(task_id)
+            if task and task.get("content"):
+                return task["content"]
+        except Exception:
+            pass
         # Fallback: extract ## Task Description section from prompt.md
         prompt_file = runtime_dir / "prompt.md"
         if prompt_file.exists():

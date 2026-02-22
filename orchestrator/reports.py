@@ -197,13 +197,7 @@ def _gather_done_tasks(sdk: Optional["OctopoidSDK"] = None) -> list[dict[str, An
 
 def _format_task(task: dict[str, Any]) -> dict[str, Any]:
     """Format a task dict into a card-renderable summary."""
-    title = task.get("title")
-    # If title is missing or looks like a raw ID, try extracting from file
-    if not title or (len(title) < 20 and " " not in title):
-        file_path = task.get("path") or task.get("file_path")
-        extracted = _extract_title_from_file(str(file_path) if file_path else None)
-        if extracted and extracted != "untitled":
-            title = extracted
+    title = task.get("title") or "untitled"
     return {
         "id": task.get("id"),
         "title": title,
@@ -634,36 +628,6 @@ def _load_agent_state(state_path: Path) -> dict[str, Any]:
     except (json.JSONDecodeError, OSError):
         return {}
 
-
-def _extract_title_from_file(file_path: str | None) -> str:
-    """Extract task title from the task file on disk."""
-    if not file_path:
-        return "untitled"
-    try:
-        path = Path(file_path)
-        # file_path in DB may be stale (points to incoming/ but file moved)
-        if not path.exists():
-            # Search across queue directories for the same filename
-            queue_root = path.parent.parent
-            if queue_root.exists():
-                for subdir in queue_root.iterdir():
-                    if subdir.is_dir():
-                        candidate = subdir / path.name
-                        if candidate.exists():
-                            path = candidate
-                            break
-        if path.exists():
-            content = path.read_text()
-            match = re.search(r"^#\s*\[TASK-[^\]]+\]\s*(.+)$", content, re.MULTILINE)
-            if match:
-                return match.group(1).strip()
-        # Fall back to extracting from filename
-        stem = path.stem
-        if stem.startswith("TASK-"):
-            return stem[5:]
-        return stem
-    except (OSError, ValueError):
-        return "untitled"
 
 
 def _get_agent_notes(notes_dir: Path, current_task: str | None) -> str | None:

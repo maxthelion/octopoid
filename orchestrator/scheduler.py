@@ -25,7 +25,6 @@ from .config import (
     get_orchestrator_dir,
     get_scope,
     get_tasks_dir,
-    get_tasks_file_dir,
     is_system_paused,
 )
 from .git_utils import ensure_worktree, get_task_branch, get_worktree_path, run_git
@@ -245,9 +244,8 @@ def guard_task_description_nonempty(ctx: AgentContext) -> tuple[bool, str]:
     """Guard against spawning agents for tasks with empty or missing descriptions.
 
     Only active for scripts-mode agents with a claimed task. Checks that the
-    task's content (read from the .octopoid/tasks/ file) is non-empty. If the
-    file is missing or empty, the task is moved to the failed queue and no
-    agent is spawned.
+    task's content (from the server) is non-empty. If content is missing or empty,
+    the task is moved to the failed queue and no agent is spawned.
 
     Args:
         ctx: AgentContext containing the claimed task
@@ -266,21 +264,9 @@ def guard_task_description_nonempty(ctx: AgentContext) -> tuple[bool, str]:
     if content and content.strip():
         return (True, "")
 
-    # Content is empty — determine why and build a clear reason
+    # Content is empty — task has no description on the server
     task_id = ctx.claimed_task.get("id", "unknown")
-    file_path_str = ctx.claimed_task.get("file_path", "")
-
-    tasks_file_dir = get_tasks_file_dir()
-    expected_path = tasks_file_dir / f"TASK-{task_id}.md"
-
-    if file_path_str:
-        fp = Path(file_path_str)
-        if fp.is_absolute() and fp.exists():
-            reason = f"Task description is empty — file at {file_path_str} exists but has no content"
-        else:
-            reason = f"Task description is empty — no file at {expected_path}"
-    else:
-        reason = f"Task description is empty — no file at {expected_path}"
+    reason = f"Task description is empty — TASK-{task_id}.md has no content on server"
 
     debug_log(f"guard_task_description_nonempty: {reason}")
 

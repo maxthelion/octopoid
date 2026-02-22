@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Retire filesystem task files — task content stored server-side** ([TASK-fb8c568c])
+  - `orchestrator/tasks.py`: `create_task()` now POSTs the full markdown body as `content` to the server and does NOT write `.octopoid/tasks/TASK-{id}.md` files. Returns `"TASK-{id}"` string instead of a `Path`. `claim_task()` reads content directly from the server response. `find_task_by_id()` uses server content with no disk reads.
+  - `orchestrator/scheduler.py`: `guard_task_description_nonempty()` checks `task["content"]` from server response, removes file existence checks.
+  - `packages/dashboard/widgets/task_detail.py`: Desc tab reads task content via SDK instead of filesystem.
+  - `orchestrator/reports.py`: Removed `_extract_title_from_file()` — title comes from server directly.
+  - `orchestrator/config.py`: Removed `get_tasks_file_dir()` function.
+  - `orchestrator/init.py`: Removed `.octopoid/tasks/` directory creation.
+  - `CLAUDE.md`: Removed "write the task file BEFORE changing task state" rule (no longer applies).
+
 ### Fixed
 
 - **Dashboard drafts tab shows empty content for new drafts** ([TASK-403fd51f])

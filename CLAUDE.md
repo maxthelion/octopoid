@@ -27,13 +27,10 @@ find orchestrator -name '__pycache__' -type d -exec rm -rf {} +
 
 ## Task & PR lifecycle rules
 
-- **Always use `create_task()` from `orchestrator.tasks`** to create tasks. Never bypass it with raw `sdk.tasks.create()` or `requests.post()` calls. `create_task()` handles file placement (`.octopoid/tasks/TASK-{id}.md`), server registration with the correct `file_path`, and branch defaulting via `get_base_branch()`. Bypassing it causes file path mismatches that make agents fail.
+- **Always use `create_task()` from `orchestrator.tasks`** to create tasks. Never bypass it with raw `sdk.tasks.create()` or `requests.post()` calls. `create_task()` stores task content on the server and handles branch defaulting via `get_base_branch()`. Bypassing it causes content to be missing from tasks, which makes agents fail.
 - When manually approving a task, use `approve_and_merge(task_id)` from `orchestrator.queue_utils` — not raw `sdk.tasks.update(queue='done')`. This runs the `before_merge` hooks (merges PR, etc).
 - When closing or merging PRs, never use `--delete-branch`. We may need to go back and check the branch later.
 - When rejecting a task, post the rejection feedback as a comment on the PR (not just in the task body).
-- **Always write the task file BEFORE changing task state** (reject, requeue, enqueue). The scheduler runs every 60s and agents claim tasks immediately. If you reject/requeue first, an agent may claim the task and read the old file before you've rewritten it.
-- **Do NOT set BRANCH in task files** unless the task specifically needs a different branch. The system defaults to `repo.base_branch` from `.octopoid/config.yaml` (currently `main`). Hardcoding a branch in a task file overrides this and can cause agents to miss feature branch work.
-- When rejecting a task, **rewrite the entire task file** to reflect only what remains to be done. Do not just prepend a rejection notice above the old description — the agent will follow the original instructions and ignore the notice. Remove or update any code examples, instructions, or acceptance criteria that contradict the rejection feedback. The task file should read as a clear, self-consistent set of instructions with no ambiguity.
 - When approving a task, post a review summary comment on the PR before merging.
 
 ## Git hygiene
