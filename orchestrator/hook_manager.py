@@ -270,8 +270,8 @@ class HookManager:
                     status="passed",
                     message=f"Already up to date with origin/{base_branch}",
                 )
-        except Exception:
-            pass  # Proceed with rebase attempt anyway
+        except Exception as e:
+            logger.warning("rev-list check failed (%s), proceeding with rebase attempt", e)
 
         # Attempt rebase
         result = run_git(

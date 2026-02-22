@@ -94,22 +94,18 @@ def hook_rebase_on_base(ctx: HookContext) -> HookResult:
 
     # Check if rebase is needed
     try:
-        result = subprocess.run(
-            ["git", "rev-list", "--count", f"HEAD..origin/{base_branch}"],
+        result = run_git(
+            ["rev-list", "--count", f"HEAD..origin/{base_branch}"],
             cwd=worktree,
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=10,
+            check=False,
         )
-        behind_count = int(result.stdout.strip())
-        if behind_count == 0:
+        if result.returncode == 0 and result.stdout.strip() == "0":
             return HookResult(
                 status=HookStatus.SKIP,
                 message=f"Already up to date with origin/{base_branch}",
             )
-    except (subprocess.CalledProcessError, ValueError):
-        pass  # Proceed with rebase attempt anyway
+    except (subprocess.CalledProcessError, ValueError, subprocess.TimeoutExpired) as e:
+        logger.warning("rev-list check failed (%s), proceeding with rebase attempt", e)
 
     # Attempt rebase
     result = run_git(
