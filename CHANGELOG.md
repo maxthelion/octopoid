@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Animated spinner on claimed task cards in kanban board** ([TASK-defad79d])
+  - `packages/dashboard/widgets/status_badge.py`: `StatusBadge` now animates when `status == "running"`. Uses `set_interval(0.1, ...)` on mount to cycle through braille spinner frames (`⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏`) and updates the badge text to `"⠋ RUN"`, `"⠙ RUN"`, etc. every 100ms. All other statuses remain static.
+
 - **Agents tab: two-tier TabbedContent with Flow Agents and Background Agents** ([TASK-d3ba7e63])
   - `packages/dashboard/tabs/agents.py`: Replaced the two-section list panel with a `TabbedContent` containing "Flow Agents" and "Background Agents" sub-tabs. Flow Agents shows implementer/gatekeeper agents with status badge; Background Agents shows autonomous background agents (non-flow roles) and scheduler jobs, both with interval indicators. `AgentDetail` now dispatches to a new `_compose_background_detail()` for `agent_type: "background"` entries, showing role, interval, last run, and recent output. `_compose_job_detail()` label updated to "scheduler job". Navigation bindings (j/k) route to the listview in the active sub-tab.
   - `orchestrator/reports.py`: `_gather_agents()` now classifies agents by role — agents with role `implement` or `gatekeeper` get `agent_type: "flow"`; all others get `agent_type: "background"`. Also includes `interval_seconds` from agent config in the returned dicts.
