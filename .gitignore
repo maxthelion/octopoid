@@ -67,6 +67,7 @@ dist/
 .octopoid/logs/
 .octopoid/tasks/
 .octopoid/worktrees/
+.octopoid/.api_key
 .octopoid/*.db
 .octopoid/*.db-shm
 .octopoid/*.db-wal

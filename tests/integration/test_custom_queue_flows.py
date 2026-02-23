@@ -11,12 +11,16 @@ Run with a local server on port 9787:
     cd submodules/server && npx wrangler dev --port 9787
 """
 
+import socket
 import uuid
 
 import pytest
 import requests
 
 from tests.integration.flow_helpers import create_task, make_task_id
+
+_FLOW_TEST_CLUSTER = "default"
+_FLOW_TEST_MACHINE_ID = "flow-test-machine"
 
 
 def _register_flow(sdk, name: str, states: list, transitions: list) -> None:
@@ -32,24 +36,48 @@ def _register_flow(sdk, name: str, states: list, transitions: list) -> None:
         raise
 
 
+def _register_flow_orchestrator(test_server_url: str) -> str:
+    """Register a dedicated orchestrator in cluster='default' for flow tests.
+
+    The accept endpoint resolves the cluster from the task's orchestrator.
+    Flows are registered per (name, cluster), so the claiming orchestrator's
+    cluster must match the cluster the flow was registered for.
+
+    Returns the orchestrator_id.
+    """
+    requests.post(
+        f"{test_server_url}/api/v1/orchestrators/register",
+        json={
+            "cluster": _FLOW_TEST_CLUSTER,
+            "machine_id": _FLOW_TEST_MACHINE_ID,
+            "repo_url": "https://github.com/test/octopoid.git",
+            "hostname": socket.gethostname(),
+            "version": "2.0.0-test",
+            "scope": "integration-test",
+        },
+    ).raise_for_status()
+    return f"{_FLOW_TEST_CLUSTER}-{_FLOW_TEST_MACHINE_ID}"
+
+
 class TestCustomQueueFlows:
     """Test task transitions through custom queues registered via flow definitions."""
 
-    @pytest.mark.xfail(
-        reason="Server hardcodes provisional→done on /accept. "
-               "Custom flows should allow any registered state→done. "
-               "See: project-management/tasks/octopoid-server/accept-from-custom-queue.md",
-        strict=True,
-    )
-    def test_task_moves_through_custom_queues(self, scoped_sdk, orchestrator_id):
+    def test_task_moves_through_custom_queues(self, scoped_sdk, test_server_url):
         """Task transitions through custom queues: incoming → testing → staging → done.
 
         1. Register a flow with custom queues via sdk.flows.register()
         2. Create a task
         3. Move task through custom queues via sdk.tasks.update()
         4. Accept from a custom queue (staging → done)
+
+        Uses a dedicated orchestrator in cluster='default' so that the flow lookup
+        in the accept endpoint (which resolves cluster from the task's orchestrator)
+        matches the cluster used when registering the flow.
         """
-        # Register a flow that includes custom queues
+        # Register a dedicated orchestrator in the same cluster as the flow
+        orch_id = _register_flow_orchestrator(test_server_url)
+
+        # Register a flow that includes custom queues (cluster defaults to 'default')
         _register_flow(
             scoped_sdk,
             name="default",
@@ -67,9 +95,9 @@ class TestCustomQueueFlows:
         task_id = task["id"]
         assert task["queue"] == "incoming"
 
-        # Claim the task (incoming → claimed)
+        # Claim the task with the flow-test orchestrator (cluster='default')
         claimed = scoped_sdk.tasks.claim(
-            orchestrator_id=orchestrator_id,
+            orchestrator_id=orch_id,
             agent_name="test-agent",
             role_filter="implement",
         )

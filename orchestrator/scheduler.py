@@ -1825,7 +1825,8 @@ def _register_orchestrator(orchestrator_registered: bool = False) -> None:
         return
     try:
         from .queue_utils import get_sdk, get_orchestrator_id
-        from .config import _load_project_config as load_config
+        from .config import _load_project_config as load_config, save_api_key
+        from .sdk import reset_sdk
         sdk = get_sdk()
         orch_id = get_orchestrator_id()
         parts = orch_id.split("-", 1)
@@ -1842,8 +1843,14 @@ def _register_orchestrator(orchestrator_registered: bool = False) -> None:
         }
         if repo_url:
             payload["repo_url"] = repo_url
-        sdk._request("POST", "/api/v1/orchestrators/register", json=payload)
+        response = sdk._request("POST", "/api/v1/orchestrators/register", json=payload)
         debug_log(f"Registered orchestrator: {orch_id}")
+        # If the server issued a new API key (first registration for this scope),
+        # persist it and reset the SDK so subsequent calls use it.
+        if isinstance(response, dict) and response.get("api_key"):
+            save_api_key(response["api_key"])
+            reset_sdk()
+            debug_log("Stored new API key from registration response")
     except Exception as e:
         debug_log(f"Orchestrator registration failed (non-fatal): {e}")
 

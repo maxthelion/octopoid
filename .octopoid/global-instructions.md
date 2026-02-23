@@ -11,7 +11,7 @@ You are working on **Octopoid**, a distributed AI orchestration system for softw
 
 ## When to STOP and FAIL
 
-If any of the following are true, do NOT improvise. Write `{"status": "failure", "message": "<reason>"}` to `../result.json`:
+If any of the following are true, do NOT improvise. Use the `../scripts/fail "<reason>"` script if available, or write your failure result to `../result.json` using the format described in your role-specific prompt:
 
 - **Files don't exist:** The task tells you to edit a specific file or function, but it doesn't exist on this branch. Do not search for similar code elsewhere and edit that instead.
 - **Contradictory instructions:** The task description contradicts itself (e.g. "add X" but also "do not modify the file where X would go").

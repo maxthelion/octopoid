@@ -74,7 +74,15 @@ def get_sdk():
                 "Server URL not configured in .octopoid/config.yaml"
             )
 
-        api_key = server_config.get("api_key") or os.getenv("OCTOPOID_API_KEY")
+        # API key resolution order:
+        # 1. .octopoid/.api_key file (gitignored, written by save_api_key())
+        # 2. OCTOPOID_API_KEY env var
+        api_key_file = config_path.parent / ".api_key"
+        api_key = None
+        if api_key_file.exists():
+            api_key = api_key_file.read_text().strip() or None
+        if not api_key:
+            api_key = os.getenv("OCTOPOID_API_KEY")
         scope = get_scope()
 
         _sdk = OctopoidSDK(server_url=server_url, api_key=api_key, scope=scope)
@@ -82,6 +90,16 @@ def get_sdk():
 
     except Exception as e:
         raise RuntimeError(f"Failed to initialize SDK: {e}")
+
+
+def reset_sdk() -> None:
+    """Clear the cached SDK instance so it is re-initialised on the next call.
+
+    Call this after storing a new API key so the next
+    ``get_sdk()`` picks up the updated credentials.
+    """
+    global _sdk
+    _sdk = None
 
 
 def get_orchestrator_id() -> str:

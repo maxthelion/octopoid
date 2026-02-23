@@ -479,6 +479,19 @@ def get_scope() -> str | None:
     return None
 
 
+def save_api_key(api_key: str) -> None:
+    """Persist an API key to .octopoid/.api_key (gitignored).
+
+    This file is separate from config.yaml (which is tracked) to avoid
+    accidentally committing secrets.
+
+    Args:
+        api_key: The oct_-prefixed API key returned by the server.
+    """
+    key_path = find_parent_project() / ".octopoid" / ".api_key"
+    key_path.write_text(api_key + "\n")
+
+
 def get_hooks_config() -> dict[str, list[str]]:
     """Get project-level hooks configuration.
 

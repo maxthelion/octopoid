@@ -16,8 +16,12 @@ import os
 # This runs at import time (before any session fixture), so get_sdk()
 # will always resolve to the local test server.
 _ORIGINAL_SERVER_URL = os.environ.get("OCTOPOID_SERVER_URL")
+_ORIGINAL_API_KEY = os.environ.get("OCTOPOID_API_KEY")
 TEST_SERVER_URL = "http://localhost:9787"
 os.environ["OCTOPOID_SERVER_URL"] = TEST_SERVER_URL
+# Unset any stale API key — the test server runs without auth, and a
+# stale OCTOPOID_API_KEY from the production environment would cause 401s.
+os.environ.pop("OCTOPOID_API_KEY", None)
 
 import socket
 
@@ -77,6 +81,10 @@ def isolate_from_production(sdk):
         os.environ.pop("OCTOPOID_SERVER_URL", None)
     else:
         os.environ["OCTOPOID_SERVER_URL"] = _ORIGINAL_SERVER_URL
+    if _ORIGINAL_API_KEY is None:
+        os.environ.pop("OCTOPOID_API_KEY", None)
+    else:
+        os.environ["OCTOPOID_API_KEY"] = _ORIGINAL_API_KEY
 
 
 @pytest.fixture(scope="session", autouse=True)
