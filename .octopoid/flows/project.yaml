@@ -25,4 +25,4 @@ transitions:
     conditions:
       - name: human_approval
         type: manual
-    runs: [merge_pr]
+    runs: [check_ci, merge_pr]
