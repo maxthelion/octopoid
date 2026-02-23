@@ -26,6 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Testing analyst background agent** (PROJ-efe0fc20)
+  - `.octopoid/agents/testing-analyst/`: New background analyst agent that runs daily. Scans for test coverage gaps — features shipped with no tests, over-mocked unit tests with no integration coverage, and missing e2e paths. Picks the single highest-impact gap and creates a draft proposal with action buttons. Posts an inbox message so the proposal surfaces in the dashboard.
+  - `.octopoid/agents/testing-analyst/scripts/`: Guard script (prevents duplicate proposals), scan-test-gaps script (SDK-aware analysis of done tasks with timestamp tracking), reset-timer utility.
+  - `.octopoid/jobs.yaml`: Added `testing_analyst` job (interval: 86400s, type: agent, group: remote, max_instances: 1).
+
 - **Message dispatcher: scheduler polls inbox and spawns action agents** ([TASK-906a8ebf])
   - `orchestrator/message_dispatcher.py`: New module that polls for `action_command` messages addressed to the "agent" actor, spawns a lightweight Claude agent synchronously to handle each command, and posts a `worker_result` message back to the human inbox. Local state file (`message_dispatch_state.json`) tracks processed message IDs (done/failed/processing) since the server messages API does not expose per-message status updates. Includes stuck-message detection: messages stuck in "processing" for > 5 minutes are automatically marked failed.
   - `orchestrator/jobs.py`: Registered `dispatch_action_messages` job handler.
