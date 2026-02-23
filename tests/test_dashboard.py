@@ -567,10 +567,12 @@ class TestDraftsTabStalePath:
         tab.update_data(self._make_report(file_path=None))
         assert mock_md.update.call_count == 0
 
-    def test_load_draft_content_returns_empty_for_none_file_path(self):
-        """_load_draft_content returns '' when file_path is None."""
+    def test_load_draft_content_synthesises_for_none_file_path(self):
+        """_load_draft_content synthesises content from metadata when file_path is None."""
         from packages.dashboard.tabs.drafts import _load_draft_content
-        assert _load_draft_content({"file_path": None}) == ""
+        content = _load_draft_content({"file_path": None, "title": "Test Draft", "status": "idea", "author": "human"})
+        assert "# Test Draft" in content
+        assert "*No draft file written yet.*" in content
 
     def test_load_draft_content_reads_file(self, tmp_path):
         """_load_draft_content returns file contents for a valid file_path."""
@@ -579,8 +581,10 @@ class TestDraftsTabStalePath:
         f.write_text("# Hello")
         assert _load_draft_content({"file_path": str(f)}) == "# Hello"
 
-    def test_load_draft_content_returns_error_msg_for_missing_file(self, tmp_path):
-        """_load_draft_content returns error string for a non-existent path."""
+    def test_load_draft_content_synthesises_for_missing_file(self, tmp_path):
+        """_load_draft_content synthesises content when file_path exists but file is missing."""
         from packages.dashboard.tabs.drafts import _load_draft_content
         missing = str(tmp_path / "nonexistent.md")
-        assert _load_draft_content({"file_path": missing}) == "(could not read file)"
+        content = _load_draft_content({"file_path": missing, "title": "Gone Draft"})
+        assert "# Gone Draft" in content
+        assert f"*Draft file not found: `{missing}`*" in content
