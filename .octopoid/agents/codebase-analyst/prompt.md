@@ -66,7 +66,50 @@ print(f"Created draft {draft_id}")
 
 Write a clear title that names the file and the proposed split. The draft body is the title — keep it descriptive.
 
-## Step 6: Attach actions
+## Step 6: Write the draft file
+
+Write a markdown file to `project-management/drafts/` so the dashboard can display the full content. Use the server-assigned draft ID for the filename:
+
+```python
+from datetime import date
+from pathlib import Path
+
+# Build a slug from the title (e.g. "scheduler-split")
+slug = "-".join(title.lower().split()[:4]).replace(":", "").replace("/", "-")
+today = date.today().isoformat()
+filename = f"{draft_id}-{today}-{slug}.md"
+file_path = f"project-management/drafts/{filename}"
+
+content = f"""# {title}
+
+**Status:** Idea
+**Author:** codebase-analyst
+**Captured:** {today}
+
+## Analysis
+
+{analysis_summary}
+
+## Proposed Split
+
+{split_description}
+
+## Complexity
+
+{complexity_notes}
+"""
+
+Path(file_path).write_text(content)
+print(f"Wrote draft file: {file_path}")
+
+# Update the server record with the file path
+sdk._request("PATCH", f"/api/v1/drafts/{draft_id}", json={"file_path": file_path})
+print(f"Updated file_path on server")
+```
+
+Fill in `analysis_summary`, `split_description`, and `complexity_notes` from your analysis in Step 4. The file should contain enough detail for a human to evaluate the proposal without reading the source code.
+
+## Step 7: Attach actions
 
 Attach two action buttons to the draft so the user can approve or dismiss:
 
@@ -111,7 +154,7 @@ print("Attached actions")
 
 Fill in `<filename>`, `<N>`, `<module-a>`, `<module-b>`, `X`, `Y`, and complexity from your analysis.
 
-## Step 7: Post an inbox message
+## Step 8: Post an inbox message
 
 Notify the user so the proposal surfaces in the dashboard:
 

@@ -94,7 +94,50 @@ The title should name the module, the tier (e2e/integration/unit), and the speci
 - `"Add e2e test for scheduler: full lifecycle create → claim → spawn → submit → accept"`
 - `"Replace mocked SDK tests in backpressure.py with scoped_sdk integration tests"`
 
-## Step 6: Attach actions
+## Step 6: Write the draft file
+
+Write a markdown file to `project-management/drafts/` so the dashboard can display the full content. Use the server-assigned draft ID for the filename:
+
+```python
+from datetime import date
+from pathlib import Path
+
+# Build a slug from the title (e.g. "integration-tests-queue-utils")
+slug = "-".join(title.lower().split()[:5]).replace(":", "").replace("/", "-")
+today = date.today().isoformat()
+filename = f"{draft_id}-{today}-{slug}.md"
+file_path = f"project-management/drafts/{filename}"
+
+content = f"""# {title}
+
+**Status:** Idea
+**Author:** testing-analyst
+**Captured:** {today}
+
+## Gap
+
+{gap_description}
+
+## Proposed Test
+
+{test_description}
+
+## Why This Matters
+
+{risk_description}
+"""
+
+Path(file_path).write_text(content)
+print(f"Wrote draft file: {file_path}")
+
+# Update the server record with the file path
+sdk._request("PATCH", f"/api/v1/drafts/{draft_id}", json={"file_path": file_path})
+print(f"Updated file_path on server")
+```
+
+Fill in `gap_description`, `test_description`, and `risk_description` from your analysis in Step 4. The file should contain enough detail for a human to evaluate the proposal without reading the source code.
+
+## Step 7: Attach actions
 
 Attach two action buttons to the draft so the user can approve or dismiss:
 
@@ -143,7 +186,7 @@ print("Attached actions")
 
 Fill in `<module>`, `<gap description>`, `<specific scenario>`, `<fixture>`, `<tier>`, and `<risk>` from your analysis. Make the "Enqueue test task" command specific enough that an implementing agent can act on it directly without further investigation.
 
-## Step 7: Post an inbox message
+## Step 8: Post an inbox message
 
 Notify the user so the proposal surfaces in the dashboard:
 

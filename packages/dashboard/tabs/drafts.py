@@ -48,14 +48,44 @@ _DEFAULT_FILTERS: dict[str, bool] = {
 
 
 def _load_draft_content(draft: dict) -> str:
-    """Load the full text content of a draft file from its file_path field."""
+    """Load the full text content of a draft file from its file_path field.
+
+    Falls back to a synthesised summary from the draft title and action
+    descriptions when the file is missing or unset.
+    """
     file_path = draft.get("file_path") or ""
+    if file_path:
+        try:
+            return Path(file_path).read_text()
+        except OSError:
+            pass  # fall through to synthesised content
+
+    # Synthesise content from server metadata when no file is available
+    title = draft.get("title") or "Untitled"
+    status = draft.get("status") or "idea"
+    author = draft.get("author") or "unknown"
+    lines = [f"# {title}", "", f"**Status:** {status}  ", f"**Author:** {author}"]
+
+    # Pull description from action_data if available
+    actions = draft.get("actions") or []
+    for action in actions:
+        action_data = action.get("action_data") or {}
+        if isinstance(action_data, str):
+            try:
+                action_data = json.loads(action_data)
+            except (json.JSONDecodeError, TypeError):
+                action_data = {}
+        desc = action_data.get("description")
+        if desc:
+            lines.extend(["", "## Details", "", desc])
+            break
+
     if not file_path:
-        return ""
-    try:
-        return Path(file_path).read_text()
-    except OSError:
-        return "(could not read file)"
+        lines.extend(["", "*No draft file written yet.*"])
+    else:
+        lines.extend(["", f"*Draft file not found: `{file_path}`*"])
+
+    return "\n".join(lines)
 
 
 def _post_inbox_message(draft_id: int | str, message: str) -> None:

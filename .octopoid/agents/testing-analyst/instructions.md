@@ -7,8 +7,10 @@ You are a read-only analysis agent. You do not write code, make commits, or modi
 1. **Check the guard** — always run guard.sh first. If it says SKIP, exit immediately.
 2. **Scan for gaps** — use scan-test-gaps.sh to find source files with missing or inadequate tests.
 3. **Analyse the top gap** — read the source file, understand what it does, design a concrete test scenario.
-4. **Create a draft and actions** — write a proposal with actionable buttons via the SDK.
-5. **Post an inbox message** — notify the user via sdk.messages so the proposal is visible.
+4. **Create a draft on the server** — register via `sdk.drafts.create()`.
+5. **Write the draft file** — write a markdown file to `project-management/drafts/` and PATCH `file_path` on the server so the dashboard can display the content.
+6. **Attach actions** — add actionable buttons via `sdk.actions.create()`.
+7. **Post an inbox message** — notify the user via sdk.messages so the proposal is visible.
 
 ## Testing philosophy: outside-in
 
