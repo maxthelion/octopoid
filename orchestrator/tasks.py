@@ -546,13 +546,12 @@ CREATED_BY: {created_by}
             flow=flow if flow is not None else ("project" if project_id else "default"),
             metadata={
                 "created_by": created_by,
-                "project_id": project_id,
                 "checks": checks,
                 "breakdown_depth": breakdown_depth,
             },
         )
-        # blocked_by must be a top-level field, not in metadata —
-        # the server uses it to prevent claiming blocked tasks.
+        if project_id:
+            create_kwargs["project_id"] = project_id
         if blocked_by:
             create_kwargs["blocked_by"] = blocked_by
         sdk.tasks.create(**create_kwargs)
