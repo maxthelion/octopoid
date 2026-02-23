@@ -47,24 +47,24 @@ def test_server_url():
 
 @pytest.fixture(scope="session")
 def sdk():
-    """SDK client connected to test server."""
+    """SDK client connected to test server (shared session scope)."""
     _assert_not_production(TEST_SERVER_URL)
-    return OctopoidSDK(server_url=TEST_SERVER_URL)
+    return OctopoidSDK(server_url=TEST_SERVER_URL, scope="integration-test")
 
 
 @pytest.fixture(scope="session", autouse=True)
-def isolate_from_production():
-    """Ensure get_sdk() always resolves to the local test server.
+def isolate_from_production(sdk):
+    """Ensure get_sdk() always resolves to the session test SDK.
 
     The env var is already set at module level, but this fixture also
-    clears the cached SDK inside the sdk module so any prior import cannot
-    leak a production SDK into test code.
+    replaces the cached SDK inside the sdk module with our session-scoped
+    test SDK. This ensures scheduler functions (claim_task, handle_agent_result,
+    etc.) use the same scope as the session `sdk` fixture.
     """
     import orchestrator.sdk as sdk_module
 
-    # Force-clear the cached SDK so get_sdk() re-initialises with env var
     old_sdk = sdk_module._sdk
-    sdk_module._sdk = None
+    sdk_module._sdk = sdk
 
     # Double-check env var is still pointing at test server
     assert os.environ.get("OCTOPOID_SERVER_URL") == TEST_SERVER_URL
@@ -116,6 +116,7 @@ def orchestrator_id(test_server_url):
             "repo_url": "https://github.com/test/octopoid.git",
             "hostname": socket.gethostname(),
             "version": "2.0.0-test",
+            "scope": "integration-test",
         },
     ).json()
     print(f"✓ Registered test orchestrator: {result}")
@@ -155,9 +156,24 @@ def _cleanup_all_tasks(sdk):
 
 @pytest.fixture
 def scoped_sdk(test_server_url):
-    """SDK client scoped to this test — complete isolation, no cleanup needed."""
+    """SDK client scoped to this test — complete isolation, no cleanup needed.
+
+    Also patches orchestrator.sdk._sdk so that get_sdk() returns this scoped
+    client. This ensures that scheduler functions (handle_agent_result,
+    check_and_requeue_expired_leases, etc.) use the same scope as the test.
+    """
     import uuid
+    import orchestrator.sdk as sdk_module
+
     scope = f"test-{uuid.uuid4().hex[:8]}"
     client = OctopoidSDK(server_url=test_server_url, scope=scope)
+
+    # Patch get_sdk() to return this scoped client
+    old_sdk = sdk_module._sdk
+    sdk_module._sdk = client
+
     yield client
+
+    # Restore
+    sdk_module._sdk = old_sdk
     client.close()

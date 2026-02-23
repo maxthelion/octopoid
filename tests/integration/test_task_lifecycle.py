@@ -273,22 +273,28 @@ class TestStateValidation:
 
     def test_cannot_claim_from_wrong_queue(self, sdk, orchestrator_id, clean_tasks):
         """Cannot claim task that's not in incoming queue."""
-        # Create task directly in provisional queue
+        # Create task in incoming, then advance to provisional via lifecycle
         sdk.tasks.create(
             id="wrong-queue-001",
             file_path="/tmp/wrong-queue-001.md",
             title="Wrong Queue",
             role="implement",
-            queue="provisional",
             branch="main",
         )
+        # Claim it first (incoming → claimed)
+        sdk.tasks.claim(
+            orchestrator_id=orchestrator_id,
+            agent_name="setup-agent",
+            role_filter="implement",
+        )
+        # Submit it (claimed → provisional)
+        sdk.tasks.submit("wrong-queue-001", commits_count=1, turns_used=1)
 
-        # Claim should not return this task
+        # Now try to claim from incoming — should not return the provisional task
         claimed = sdk.tasks.claim(
             orchestrator_id=orchestrator_id,
             agent_name="test-agent",
             role_filter="implement"
         )
-        # Should either return None or a different task
-        if claimed:
-            assert claimed['id'] != "wrong-queue-001"
+        # Should be None since there are no tasks in incoming
+        assert claimed is None

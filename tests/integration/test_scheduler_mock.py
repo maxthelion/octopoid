@@ -25,6 +25,7 @@ import os
 import subprocess
 import uuid
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -290,7 +291,14 @@ class TestHappyPath:
         assert result.returncode == 0, f"Mock gatekeeper failed: {result.stderr}"
 
         # handle_agent_result_via_flow → post_review_comment, merge_pr → done
-        handle_agent_result_via_flow(task_id, "mock-gatekeeper", gk_task_dir)
+        # Mock merge_pr to skip real git rebase/merge — just accept the task
+        def _mock_approve(task_id, merge_method="merge"):
+            from orchestrator.queue_utils import get_sdk
+            get_sdk().tasks.accept(task_id, accepted_by="mock-gatekeeper")
+            return {"task_id": task_id, "merged": True}
+
+        with patch("orchestrator.queue_utils.approve_and_merge", side_effect=_mock_approve):
+            handle_agent_result_via_flow(task_id, "mock-gatekeeper", gk_task_dir)
 
         task = scoped_sdk.tasks.get(task_id)
         assert task is not None
@@ -672,7 +680,14 @@ class TestIdempotentResultHandling:
         )
         assert result.returncode == 0, f"Mock gatekeeper failed: {result.stderr}"
 
-        handle_agent_result_via_flow(task_id, "mock-gatekeeper", gk_task_dir)
+        # Mock merge_pr to skip real git rebase/merge
+        def _mock_approve(task_id, merge_method="merge"):
+            from orchestrator.queue_utils import get_sdk
+            get_sdk().tasks.accept(task_id, accepted_by="mock-gatekeeper")
+            return {"task_id": task_id, "merged": True}
+
+        with patch("orchestrator.queue_utils.approve_and_merge", side_effect=_mock_approve):
+            handle_agent_result_via_flow(task_id, "mock-gatekeeper", gk_task_dir)
 
         task = scoped_sdk.tasks.get(task_id)
         assert task is not None
@@ -738,8 +753,12 @@ class TestMergePrFlows:
         )
         assert result.returncode == 0, f"Mock gatekeeper failed: {result.stderr}"
 
-        # Flow runs post_review_comment then merge_pr; merge_pr raises → failed
-        handle_agent_result_via_flow(task_id, "mock-gatekeeper", gk_task_dir)
+        # Mock approve_and_merge to simulate merge failure
+        def _mock_approve_fail(task_id, merge_method="merge"):
+            return {"task_id": task_id, "merged": False, "error": "Merge conflict"}
+
+        with patch("orchestrator.queue_utils.approve_and_merge", side_effect=_mock_approve_fail):
+            handle_agent_result_via_flow(task_id, "mock-gatekeeper", gk_task_dir)
 
         task = scoped_sdk.tasks.get(task_id)
         assert task is not None
@@ -776,8 +795,14 @@ class TestMergePrFlows:
         )
         assert result.returncode == 0, f"Mock gatekeeper failed: {result.stderr}"
 
-        # Flow runs post_review_comment then merge_pr; merge_pr succeeds → done
-        handle_agent_result_via_flow(task_id, "mock-gatekeeper", gk_task_dir)
+        # Mock approve_and_merge to simulate successful merge
+        def _mock_approve_ok(task_id, merge_method="merge"):
+            from orchestrator.queue_utils import get_sdk
+            get_sdk().tasks.accept(task_id, accepted_by="mock-gatekeeper")
+            return {"task_id": task_id, "merged": True}
+
+        with patch("orchestrator.queue_utils.approve_and_merge", side_effect=_mock_approve_ok):
+            handle_agent_result_via_flow(task_id, "mock-gatekeeper", gk_task_dir)
 
         task = scoped_sdk.tasks.get(task_id)
         assert task is not None

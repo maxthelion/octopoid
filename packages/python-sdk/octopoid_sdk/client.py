@@ -218,9 +218,7 @@ class TasksAPI:
         Returns:
             Updated task dictionary
         """
-        data = {'reason': reason}
-        if rejected_by:
-            data['rejected_by'] = rejected_by
+        data = {'reason': reason, 'rejected_by': rejected_by or 'orchestrator'}
 
         return self.client._request('POST', f'/api/v1/tasks/{task_id}/reject', json=data)
 

@@ -4,9 +4,11 @@ Tests that the claim endpoint returns tasks in priority order (P0 before P1 befo
 and that tasks with the same priority are returned in FIFO (creation) order.
 """
 
+import uuid
+
 import pytest
 
-TEST_BRANCH = "feature/client-server-architecture"
+from tests.integration.flow_helpers import make_task_id
 
 
 class TestPriorityOrdering:
@@ -18,30 +20,34 @@ class TestPriorityOrdering:
         Creates tasks in P2, P0, P1 order (intentionally scrambled), then asserts
         that claims come back in strict priority order: P0 → P1 → P2.
         """
+        p2_id = make_task_id()
+        p0_id = make_task_id()
+        p1_id = make_task_id()
+
         # Create tasks in P2, P0, P1 order (deliberately out of priority order)
         scoped_sdk.tasks.create(
-            id="priority-p2",
-            file_path="/tmp/priority-p2.md",
+            id=p2_id,
+            file_path=f".octopoid/tasks/{p2_id}.md",
             title="P2 Task",
             role="implement",
             priority="P2",
-            branch=TEST_BRANCH,
+            branch="main",
         )
         scoped_sdk.tasks.create(
-            id="priority-p0",
-            file_path="/tmp/priority-p0.md",
+            id=p0_id,
+            file_path=f".octopoid/tasks/{p0_id}.md",
             title="P0 Task",
             role="implement",
             priority="P0",
-            branch=TEST_BRANCH,
+            branch="main",
         )
         scoped_sdk.tasks.create(
-            id="priority-p1",
-            file_path="/tmp/priority-p1.md",
+            id=p1_id,
+            file_path=f".octopoid/tasks/{p1_id}.md",
             title="P1 Task",
             role="implement",
             priority="P1",
-            branch=TEST_BRANCH,
+            branch="main",
         )
 
         # First claim must be the P0 task
@@ -83,15 +89,15 @@ class TestPriorityOrdering:
         Creates 3 P1 tasks in sequence, then asserts that claim returns them
         in the same order they were created.
         """
-        task_ids = ["fifo-task-1", "fifo-task-2", "fifo-task-3"]
+        task_ids = [make_task_id() for _ in range(3)]
         for task_id in task_ids:
             scoped_sdk.tasks.create(
                 id=task_id,
-                file_path=f"/tmp/{task_id}.md",
+                file_path=f".octopoid/tasks/{task_id}.md",
                 title=f"FIFO Task {task_id}",
                 role="implement",
                 priority="P1",
-                branch=TEST_BRANCH,
+                branch="main",
             )
 
         # Claim all 3 and verify FIFO order

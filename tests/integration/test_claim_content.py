@@ -49,10 +49,10 @@ class TestClaimReturnsContent:
             content=TASK_CONTENT,
         )
 
-        import orchestrator.queue_utils as qu
+        import orchestrator.tasks as tasks_mod
 
-        with patch.object(qu, "get_orchestrator_id", return_value=orchestrator_id):
-            task = qu.claim_task(role_filter="implement", agent_name="test-agent")
+        with patch.object(tasks_mod, "get_orchestrator_id", return_value=orchestrator_id):
+            task = tasks_mod.claim_task(role_filter="implement", agent_name="test-agent")
 
             # Fundamental assertions
             assert task is not None, "claim_task returned None — no task claimed"
@@ -84,10 +84,10 @@ class TestClaimReturnsContent:
             branch="main",
         )
 
-        import orchestrator.queue_utils as qu
+        import orchestrator.tasks as tasks_mod
 
-        with patch.object(qu, "get_orchestrator_id", return_value=orchestrator_id):
-            task = qu.claim_task(role_filter="implement", agent_name="test-agent")
+        with patch.object(tasks_mod, "get_orchestrator_id", return_value=orchestrator_id):
+            task = tasks_mod.claim_task(role_filter="implement", agent_name="test-agent")
 
             assert task is not None, "claim_task returned None — no task claimed"
             assert task["id"] == "claim-content-003"

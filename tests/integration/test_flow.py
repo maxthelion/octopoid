@@ -247,16 +247,41 @@ class TestTaskLifecycleFlow:
         assert no_task is None
 
     def test_unblock_on_accept(self, scoped_sdk, orchestrator_id):
-        """Accepting blocker task unblocks dependent."""
-        # Create blocker and advance to done
-        blocker_id = create_provisional(scoped_sdk, orchestrator_id)
-        scoped_sdk.tasks.accept(blocker_id, accepted_by="test-gatekeeper")
+        """Accepting blocker task auto-unblocks dependent.
 
-        # Create dependent task blocked by done blocker
+        The server's accept endpoint runs:
+            UPDATE tasks SET blocked_by = NULL WHERE blocked_by = ?
+        so any existing task blocked by the accepted task gets unblocked.
+        """
+        # Create blocker task
+        blocker = create_task(scoped_sdk, role="implement")
+        blocker_id = blocker["id"]
+
+        # Create dependent task blocked by blocker (BEFORE blocker is done)
         blocked_task = create_task(scoped_sdk, role="implement", blocked_by=blocker_id)
         blocked_id = blocked_task["id"]
 
-        # Now the blocked task should be claimable
+        # Blocked task should NOT be claimable yet
+        # (claim skips tasks where blocked_by is set)
+        first_claim = scoped_sdk.tasks.claim(
+            orchestrator_id=orchestrator_id,
+            agent_name="test-agent",
+            role_filter="implement",
+        )
+        assert first_claim is not None
+        assert first_claim["id"] == blocker_id, "Should claim the blocker, not the blocked task"
+
+        # Advance blocker to done: claimed → provisional → done
+        scoped_sdk.tasks.submit(blocker_id, commits_count=1, turns_used=5)
+        scoped_sdk.tasks.accept(blocker_id, accepted_by="test-gatekeeper")
+
+        # Server should have auto-cleared blocked_by on the dependent
+        dep_after = scoped_sdk.tasks.get(blocked_id)
+        assert dep_after["blocked_by"] is None, (
+            f"Server should auto-unblock on accept, but blocked_by={dep_after['blocked_by']}"
+        )
+
+        # Now the unblocked task should be claimable
         claimed = scoped_sdk.tasks.claim(
             orchestrator_id=orchestrator_id,
             agent_name="test-agent",

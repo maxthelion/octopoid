@@ -35,19 +35,25 @@ def _register_flow(sdk, name: str, states: list, transitions: list) -> None:
 class TestCustomQueueFlows:
     """Test task transitions through custom queues registered via flow definitions."""
 
+    @pytest.mark.xfail(
+        reason="Server hardcodes provisional→done on /accept. "
+               "Custom flows should allow any registered state→done. "
+               "See: project-management/tasks/octopoid-server/accept-from-custom-queue.md",
+        strict=True,
+    )
     def test_task_moves_through_custom_queues(self, scoped_sdk, orchestrator_id):
         """Task transitions through custom queues: incoming → testing → staging → done.
 
         1. Register a flow with custom queues via sdk.flows.register()
         2. Create a task
         3. Move task through custom queues via sdk.tasks.update()
-        4. Assert each transition succeeds and the queue is updated
+        4. Accept from a custom queue (staging → done)
         """
         # Register a flow that includes custom queues
         _register_flow(
             scoped_sdk,
             name="default",
-            states=["incoming", "claimed", "testing", "staging", "done"],
+            states=["incoming", "claimed", "testing", "staging", "done", "failed", "provisional"],
             transitions=[
                 {"from": "incoming", "to": "claimed"},
                 {"from": "claimed", "to": "testing"},
@@ -80,7 +86,9 @@ class TestCustomQueueFlows:
         assert in_staging["queue"] == "staging"
 
         # Complete the task: staging → done
-        done = scoped_sdk.tasks.update(task_id, queue="done")
+        # This is the key assertion: accept should work from any flow-registered
+        # source state, not just 'provisional'
+        done = scoped_sdk.tasks.accept(task_id, accepted_by="test-gatekeeper")
         assert done["queue"] == "done"
 
         # Verify final state via get
@@ -100,7 +108,7 @@ class TestCustomQueueFlows:
         _register_flow(
             scoped_sdk,
             name="default",
-            states=["incoming", "claimed", "testing", "staging", "done"],
+            states=["incoming", "claimed", "testing", "staging", "done", "failed", "provisional"],
             transitions=[
                 {"from": "incoming", "to": "claimed"},
                 {"from": "claimed", "to": "testing"},

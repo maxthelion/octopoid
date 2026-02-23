@@ -35,7 +35,8 @@ class TestOrchestratorAPI:
                 "machine_id": "test-machine-001",
                 "repo_url": "https://github.com/test/repo.git",
                 "hostname": "test-host",
-                "version": "2.0.0-test"
+                "version": "2.0.0-test",
+                "scope": "integration-test",
             }
         )
         assert response.status_code in [200, 201]
@@ -51,7 +52,8 @@ class TestOrchestratorAPI:
             "machine_id": "test-machine-002",
             "repo_url": "https://github.com/test/repo.git",
             "hostname": "test-host",
-            "version": "2.0.0"
+            "version": "2.0.0",
+            "scope": "integration-test",
         }
 
         # First registration (may already exist, that's ok)

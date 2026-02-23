@@ -53,7 +53,7 @@ def lifecycle_env(tmp_path):
     # 1. Create a bare repo that will act as "origin"
     # ----------------------------------------------------------------
     bare_repo = tmp_path / "origin.git"
-    _git(["init", "--bare", str(bare_repo)], cwd=tmp_path)
+    _git(["init", "--bare", "--initial-branch=main", str(bare_repo)], cwd=tmp_path)
 
     # ----------------------------------------------------------------
     # 2. Clone to get the "main repo" (the parent project / octopoid root)
