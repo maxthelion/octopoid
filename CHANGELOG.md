@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`octopoid init` now scaffolds `jobs.yaml` and analyst agent directories** ([TASK-9e0bce3c])
+  - `orchestrator/init.py`: Creates `.octopoid/jobs.yaml` with all core scheduler jobs (heartbeat, agent evaluation loop, lease requeue, hooks, etc.) and analyst agent jobs (`codebase_analyst`, `testing_analyst`) if the file does not already exist.
+  - `orchestrator/init.py`: Scaffolds `.octopoid/agents/codebase-analyst/` and `.octopoid/agents/testing-analyst/` by copying from the built-in orchestrator templates (same `copytree` pattern as gatekeeper and implementer). Skips if directories already exist.
+  - `orchestrator/init.py`: Init success output now reports whether `jobs.yaml` and analyst agent dirs were created or already existed.
+  - `README.md`: Lists `jobs.yaml` in the init output tree, adds a Configuration Files section for `jobs.yaml` with a job reference table, and documents the analyst agents.
+
 ### Changed
 
 - **Retire filesystem task files — task content stored server-side** ([TASK-fb8c568c])

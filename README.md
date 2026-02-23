@@ -251,6 +251,7 @@ octopoid init --server https://octopoid-server.your-username.workers.dev --clust
 # .octopoid/
 # +-- config.yaml      # Server connection, cluster settings
 # +-- agents.yaml      # Agent pool configuration (blueprints)
+# +-- jobs.yaml        # Background job schedule (heartbeat, analysts, etc.)
 # +-- agents/           # Agent type directories (prompt, scripts, config)
 # +-- flows/            # Flow definitions (state machines)
 # +-- runtime/          # PIDs, locks, orchestrator ID (don't commit)
@@ -312,6 +313,32 @@ agents:
     paused: true               # disabled by default
 ```
 
+#### `.octopoid/jobs.yaml`
+
+Declarative schedule for all background jobs. Without this file the scheduler runs no jobs at all — no heartbeats, no agent evaluation loop, no lease requeue, nothing. `octopoid init` creates it automatically from the built-in defaults.
+
+Each entry has a `name` (must match a `@register_job` function in `jobs.py` for `type: script`, or an agent blueprint for `type: agent`), an `interval` in seconds, a `type` (`script` or `agent`), and a `group` (`local` or `remote`).
+
+**Built-in jobs (created by `octopoid init`):**
+
+| Job | Interval | Description |
+|-----|----------|-------------|
+| `check_and_update_finished_agents` | 10s | Detect finished agents and process results |
+| `_register_orchestrator` | 300s | Register orchestrator with server (idempotent) |
+| `send_heartbeat` | 60s | Keep last-heartbeat timestamp fresh |
+| `check_and_requeue_expired_leases` | 60s | Requeue tasks with expired claim leases |
+| `process_orchestrator_hooks` | 60s | Run before-merge hooks on provisional tasks |
+| `check_project_completion` | 60s | Detect completed projects and run flow transitions |
+| `_check_queue_health_throttled` | 1800s | Queue health checks |
+| `agent_evaluation_loop` | 60s | Main agent spawning loop |
+| `sweep_stale_resources` | 1800s | Archive logs and clean up old worktrees/branches |
+| `poll_github_issues` | 900s | Convert new GitHub issues to tasks |
+| `dispatch_action_messages` | 30s | Process action_command inbox messages |
+| `codebase_analyst` | 86400s | Daily background agent: proposes refactoring for large/complex files |
+| `testing_analyst` | 86400s | Daily background agent: proposes tests for coverage gaps |
+
+The `codebase_analyst` and `testing_analyst` jobs are **agent jobs** — they spawn short-lived lightweight Claude agents (no worktree needed) that scan the codebase, create a draft proposal, and post an inbox message. Their agent directories live under `.octopoid/agents/codebase-analyst/` and `.octopoid/agents/testing-analyst/`, which `octopoid init` also scaffolds.
+
 ### Install Slash Commands
 
 Octopoid ships management skills (slash commands) for Claude Code. Install them to your project's `.claude/commands/`:
@@ -350,6 +377,7 @@ echo 'export ANTHROPIC_API_KEY="sk-ant-..."' >> ~/.zshrc
 .octopoid/
 +-- config.yaml          # Server URL, cluster name, base branch
 +-- agents.yaml          # Agent pool blueprints (dict format)
++-- jobs.yaml            # Background job schedule (heartbeat, analysts, etc.)
 +-- agents/              # Agent type directories
 |   +-- implementer/     # Implementer agent
 |   |   +-- agent.yaml   # Role, model, spawn_mode, allowed_tools
@@ -357,10 +385,12 @@ echo 'export ANTHROPIC_API_KEY="sk-ant-..."' >> ~/.zshrc
 |   |   +-- instructions.md  # Supplementary instructions
 |   |   +-- scripts/     # Helper scripts (run-tests, record-progress)
 |   +-- gatekeeper/      # Gatekeeper (review) agent
-|       +-- agent.yaml
-|       +-- prompt.md
-|       +-- instructions.md
-|       +-- scripts/     # run-tests, check-scope, check-debug-code
+|   |   +-- agent.yaml
+|   |   +-- prompt.md
+|   |   +-- instructions.md
+|   |   +-- scripts/     # run-tests, check-scope, check-debug-code
+|   +-- codebase-analyst/ # Background agent: proposes refactoring
+|   +-- testing-analyst/  # Background agent: proposes test coverage fixes
 +-- flows/               # Declarative state machines
 |   +-- default.yaml     # incoming -> claimed -> provisional -> done
 +-- tasks/               # Task description files (TASK-{id}.md)
