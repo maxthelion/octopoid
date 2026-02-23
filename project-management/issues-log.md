@@ -32,6 +32,14 @@ Known symptoms and their root causes. **Consult this first when diagnosing a pro
 | Scheduler runs old code after editing `.py` files | Stale `__pycache__`; run `find orchestrator -name '__pycache__' -type d -exec rm -rf {} +` | [CLAUDE.md](../CLAUDE.md#scheduler-and-python-caching) |
 | Agent marked as failed despite completing work | Stale `result.json` from previous run | [2026-02-15 postmortem](postmortems/2026-02-15-TASK-stale-result-60f52b91.md) |
 
+## Projects
+
+| Symptom | Likely cause | See |
+|---|---|---|
+| Project tasks all done but no PR created | Project has `branch=null` — `create_project()` was called without `branch` param. `check_project_completion` silently skips branchless projects. | [2026-02-23 postmortem](postmortems/2026-02-23-project-branch-null-silent-failure.md) |
+| Project tasks not visible on dashboard Work tab | Tasks have `flow=project` but no "project" flow registered on server. Fixed by pooling unregistered flows into default tab. | commit `b1b0982` |
+| Dashboard 401 errors after auth migration | Stale `OCTOPOID_API_KEY` env var in shell. Remove from `.zshrc`, kill dashboard processes, provision new key via orchestrator registration. | — |
+
 ## API / Server
 
 | Symptom | Likely cause | See |
