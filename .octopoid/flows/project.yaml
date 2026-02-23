@@ -9,7 +9,7 @@ child_flow:
       agent: implementer
 
     "claimed -> done":
-      runs: [rebase_on_project_branch, run_tests]
+      runs: [rebase_on_project_branch, push_branch, run_tests]
       # No create_pr — children commit to the shared branch
 
 # Flow for the project itself, after all children complete.

@@ -16,10 +16,11 @@ update).
 
 Key difference between standard flow and child_flow (project.yaml):
 - Standard:  incoming → claimed → provisional → done
-             (with create_pr step before provisional)
+             (with push_branch + create_pr steps before provisional)
 - child_flow: incoming → claimed → provisional → done
-             (WITHOUT create_pr — the child task commits to the shared branch,
-              no individual PR. Only the project itself creates a PR at the end.)
+             (runs [rebase_on_project_branch, push_branch, run_tests] — no
+              individual PR. Child pushes rebased commits to the shared project
+              branch. Only the project itself creates a PR at the end.)
 
 The server's state machine requires provisional as an intermediate step; the
 child_flow skips the create_pr step, not the provisional queue.
@@ -248,10 +249,10 @@ class TestProjectLifecycle:
            the project flow: "children_complete -> provisional")
 
         Child_flow detail: unlike the standard flow which runs [push_branch,
-        run_tests, create_pr, submit_to_server], the child_flow only runs
-        [rebase_on_project_branch, run_tests] — no individual PR is created.
-        Child tasks commit directly to the shared project branch. Only the
-        project itself creates a PR when all children are done.
+        run_tests, create_pr, submit_to_server], the child_flow runs
+        [rebase_on_project_branch, push_branch, run_tests] — no individual PR
+        is created. Child tasks rebase onto and push to the shared project branch.
+        Only the project itself creates a PR when all children are done.
         """
         project_id = _proj_id()
         project_branch = f"feature/e2e-{uuid.uuid4().hex[:6]}"
@@ -304,7 +305,7 @@ class TestProjectLifecycle:
 
         # ── 4. Claim and complete task 1 via child_flow ──────────────────────
         # Claim → submit → accept (no create_pr in between).
-        # In child_flow the scheduler runs [rebase_on_project_branch, run_tests]
+        # In child_flow the scheduler runs [rebase_on_project_branch, push_branch, run_tests]
         # then moves the task to done — no PR created for this child task.
         claimed1 = sdk.tasks.claim(
             orchestrator_id=orchestrator_id,
@@ -374,8 +375,15 @@ class TestProjectLifecycle:
 
         This test verifies the child task lifecycle works end-to-end while
         only performing the operations that child_flow authorises:
-          - claim, rebase (mocked), run_tests (mocked), submit, accept
+          - claim, rebase (mocked), push_branch (mocked), run_tests (mocked),
+            submit, accept
           - NO create_pr call
+
+        The child_flow runs [rebase_on_project_branch, push_branch, run_tests]:
+          - rebase_on_project_branch: rebases agent commits onto the project branch
+          - push_branch: pushes the rebased commits to the remote project branch
+            so subsequent tasks and the project completion step can see the work
+          - run_tests: validates the implementation on the shared branch
 
         The task's project_id being set is the trigger that causes the
         scheduler to use child_flow instead of the default flow.
@@ -416,7 +424,9 @@ class TestProjectLifecycle:
         assert claimed["id"] == task_id
         assert claimed["queue"] == "claimed"
 
-        # 2. Agent does work: rebase_on_project_branch + run_tests (mocked)
+        # 2. Agent does work: rebase_on_project_branch + push_branch + run_tests (mocked)
+        #    push_branch ensures rebased commits reach the remote project branch
+        #    so subsequent tasks and project completion can see this task's work.
         #    — notably, create_pr is NOT called (child_flow skips it)
 
         # 3. Submit (provisional) — no PR created
