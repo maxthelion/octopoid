@@ -179,6 +179,44 @@ def init_orchestrator(
     else:
         print(f"  Exists:  {implementer_dir.relative_to(parent)}/")
 
+    # Scaffold codebase-analyst agent directory
+    codebase_analyst_dir = octopoid_dir / "agents" / "codebase-analyst"
+    if not codebase_analyst_dir.exists():
+        builtin_codebase_analyst = submodule / ".octopoid" / "agents" / "codebase-analyst"
+        if builtin_codebase_analyst.exists():
+            shutil.copytree(builtin_codebase_analyst, codebase_analyst_dir)
+            print(f"  Created: {codebase_analyst_dir.relative_to(parent)}/ (from template)")
+        else:
+            codebase_analyst_dir.mkdir(parents=True)
+            print(f"  Created: {codebase_analyst_dir.relative_to(parent)}/ (empty scaffold)")
+    else:
+        print(f"  Exists:  {codebase_analyst_dir.relative_to(parent)}/")
+
+    # Scaffold testing-analyst agent directory
+    testing_analyst_dir = octopoid_dir / "agents" / "testing-analyst"
+    if not testing_analyst_dir.exists():
+        builtin_testing_analyst = submodule / ".octopoid" / "agents" / "testing-analyst"
+        if builtin_testing_analyst.exists():
+            shutil.copytree(builtin_testing_analyst, testing_analyst_dir)
+            print(f"  Created: {testing_analyst_dir.relative_to(parent)}/ (from template)")
+        else:
+            testing_analyst_dir.mkdir(parents=True)
+            print(f"  Created: {testing_analyst_dir.relative_to(parent)}/ (empty scaffold)")
+    else:
+        print(f"  Exists:  {testing_analyst_dir.relative_to(parent)}/")
+
+    # Create jobs.yaml only if it does not already exist
+    jobs_yaml = octopoid_dir / "jobs.yaml"
+    jobs_yaml_created = False
+    if not jobs_yaml.exists():
+        jobs_yaml.write_text(DEFAULT_JOBS_YAML)
+        jobs_yaml_created = True
+
+    if jobs_yaml_created:
+        print("  Created .octopoid/jobs.yaml with default scheduler jobs")
+    else:
+        print("  Using existing .octopoid/jobs.yaml")
+
     # Install dashboard wrapper script
     dash_script = parent / "octopoid-dash"
     submodule_rel = submodule.relative_to(parent)
@@ -377,6 +415,135 @@ GITIGNORE_ADDITIONS = """
 .octopoid/runtime/
 .octopoid/tasks/
 .agent-instructions.md
+"""
+
+DEFAULT_JOBS_YAML = """# Declarative scheduler job definitions.
+#
+# Each job runs on a fixed interval (seconds). The launchd tick is 10s;
+# jobs only run when their interval has elapsed since last run.
+#
+# Fields:
+#   name     — job name, must match a @register_job function in jobs.py
+#   interval — minimum seconds between runs
+#   type     — "script" (Python function) or "agent" (spawns a Claude agent)
+#   group    — "local" (no API calls, runs before poll fetch)
+#              "remote" (runs after poll fetch, ctx.poll_data is populated)
+#
+# For type: agent jobs, additional fields are supported:
+#   blueprint    — pool blueprint name (defaults to job name)
+#   max_instances — max concurrent agent instances (default: 1)
+#   agent_config  — dict merged into the AgentContext agent_config
+
+jobs:
+
+  # --------------------------------------------------------------------------
+  # Local jobs — run before the poll fetch, no API calls needed
+  # --------------------------------------------------------------------------
+
+  # Fast PID check: detect finished agents and process their results.
+  # Runs every 10s (local PID checks only — no network I/O).
+  - name: check_and_update_finished_agents
+    interval: 10
+    type: script
+    group: local
+
+  # --------------------------------------------------------------------------
+  # Remote jobs — run after the poll fetch, ctx.poll_data is populated
+  # --------------------------------------------------------------------------
+
+  # Register this orchestrator with the server (idempotent).
+  # Uses poll_data.orchestrator_registered to skip the POST when not needed.
+  - name: _register_orchestrator
+    interval: 300
+    type: script
+    group: remote
+
+  # Send a heartbeat to the server so queue-status shows a recent "Last tick".
+  - name: send_heartbeat
+    interval: 60
+    type: script
+    group: remote
+
+  # Requeue tasks whose claim lease has expired (server-side fallback).
+  - name: check_and_requeue_expired_leases
+    interval: 60
+    type: script
+    group: remote
+
+  # Run orchestrator-side hooks (e.g. merge_pr) on provisional tasks.
+  # Uses poll_data.provisional_tasks to skip the sdk.tasks.list() call.
+  - name: process_orchestrator_hooks
+    interval: 60
+    type: script
+    group: remote
+
+  # Detect projects whose children are all done and run flow transitions.
+  - name: check_project_completion
+    interval: 60
+    type: script
+    group: remote
+
+  # Check queue health (already self-throttled internally at 30 min).
+  - name: _check_queue_health_throttled
+    interval: 1800
+    type: script
+    group: remote
+
+  # Main agent evaluation and spawning loop.
+  # Uses poll_data.queue_counts for backpressure without per-agent API calls.
+  - name: agent_evaluation_loop
+    interval: 60
+    type: script
+    group: remote
+
+  # Archive logs and delete worktrees/branches for old done/failed tasks.
+  - name: sweep_stale_resources
+    interval: 1800
+    type: script
+    group: remote
+
+  # Poll GitHub issues and create tasks for new ones.
+  # Rate budget: 1 gh issue list call per run = 4 calls/hour (< 0.1% of 5000/hour limit).
+  # Issues labelled 'server' are forwarded to the server repo instead.
+  - name: poll_github_issues
+    interval: 900
+    type: script
+    group: local
+
+  # Message dispatcher: poll action_command messages and spawn action agents.
+  # Processes one message per tick (serial). Runs every 30s so unprocessed
+  # messages are handled promptly. Agent runs synchronously (max 3 minutes).
+  - name: dispatch_action_messages
+    interval: 30
+    type: script
+    group: remote
+
+  # Daily codebase analyst: scans for large/complex files and proposes refactoring.
+  # Guard script runs first inside the agent — skips if a pending proposal already exists.
+  - name: codebase_analyst
+    interval: 86400
+    type: agent
+    group: remote
+    max_instances: 1
+    agent_config:
+      role: analyse
+      spawn_mode: scripts
+      lightweight: true
+      agent_dir: .octopoid/agents/codebase-analyst
+
+  # Daily testing analyst: scans for test coverage gaps and proposes specific tests.
+  # Focuses on outside-in gaps — features that shipped with no tests, or only over-mocked
+  # unit tests with no integration coverage. Guard skips if a proposal already exists.
+  - name: testing_analyst
+    interval: 86400
+    type: agent
+    group: remote
+    max_instances: 1
+    agent_config:
+      role: analyse
+      spawn_mode: scripts
+      lightweight: true
+      agent_dir: .octopoid/agents/testing-analyst
 """
 
 DASHBOARD_WRAPPER = """#!/usr/bin/env bash

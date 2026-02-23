@@ -26,6 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`octopoid init` scaffolds `jobs.yaml` and analyst agent directories** ([TASK-c11040e2])
+  - `orchestrator/init.py`: Creates `.octopoid/jobs.yaml` with all core scheduler jobs and analyst agent jobs if the file does not already exist. Scaffolds `.octopoid/agents/codebase-analyst/` and `.octopoid/agents/testing-analyst/` from built-in templates using the same `shutil.copytree` pattern as gatekeeper/implementer. All three are guarded against overwriting existing files.
+  - `README.md`: Added `jobs.yaml` to the `octopoid init` output tree, added a `#### .octopoid/jobs.yaml` Configuration Files section, and added analyst agent entries to the "What Files Does Octopoid Create?" file tree.
+
 - **Testing analyst background agent** (PROJ-efe0fc20)
   - `.octopoid/agents/testing-analyst/`: New background analyst agent that runs daily. Scans for test coverage gaps — features shipped with no tests, over-mocked unit tests with no integration coverage, and missing e2e paths. Picks the single highest-impact gap and creates a draft proposal with action buttons. Posts an inbox message so the proposal surfaces in the dashboard.
   - `.octopoid/agents/testing-analyst/scripts/`: Guard script (prevents duplicate proposals), scan-test-gaps script (SDK-aware analysis of done tasks with timestamp tracking), reset-timer utility.

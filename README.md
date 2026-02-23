@@ -251,6 +251,7 @@ octopoid init --server https://octopoid-server.your-username.workers.dev --clust
 # .octopoid/
 # +-- config.yaml      # Server connection, cluster settings
 # +-- agents.yaml      # Agent pool configuration (blueprints)
+# +-- jobs.yaml        # Background job schedule (heartbeat, analyst agents, etc.)
 # +-- agents/           # Agent type directories (prompt, scripts, config)
 # +-- flows/            # Flow definitions (state machines)
 # +-- runtime/          # PIDs, locks, orchestrator ID (don't commit)
@@ -312,6 +313,52 @@ agents:
     paused: true               # disabled by default
 ```
 
+#### `.octopoid/jobs.yaml`
+
+Defines the background job schedule. `octopoid init` creates this file with sensible defaults. Without it, the scheduler runs no jobs at all (no heartbeats, no agent evaluation, nothing).
+
+```yaml
+jobs:
+  # Core scheduler jobs (required)
+  - name: check_and_update_finished_agents
+    interval: 10
+    type: script
+    group: local
+
+  - name: send_heartbeat
+    interval: 60
+    type: script
+    group: remote
+
+  - name: agent_evaluation_loop
+    interval: 60
+    type: script
+    group: remote
+
+  # Analyst agents (run daily, lightweight, no worktree)
+  - name: codebase_analyst
+    interval: 86400
+    type: agent
+    group: remote
+    max_instances: 1
+    agent_config:
+      role: analyse
+      spawn_mode: scripts
+      lightweight: true
+      agent_dir: .octopoid/agents/codebase-analyst
+
+  - name: testing_analyst
+    interval: 86400
+    type: agent
+    group: remote
+    max_instances: 1
+    agent_config:
+      role: analyse
+      spawn_mode: scripts
+      lightweight: true
+      agent_dir: .octopoid/agents/testing-analyst
+```
+
 ### Install Slash Commands
 
 Octopoid ships management skills (slash commands) for Claude Code. Install them to your project's `.claude/commands/`:
@@ -350,6 +397,7 @@ echo 'export ANTHROPIC_API_KEY="sk-ant-..."' >> ~/.zshrc
 .octopoid/
 +-- config.yaml          # Server URL, cluster name, base branch
 +-- agents.yaml          # Agent pool blueprints (dict format)
++-- jobs.yaml            # Background job schedule (core jobs + analyst agents)
 +-- agents/              # Agent type directories
 |   +-- implementer/     # Implementer agent
 |   |   +-- agent.yaml   # Role, model, spawn_mode, allowed_tools
@@ -357,10 +405,20 @@ echo 'export ANTHROPIC_API_KEY="sk-ant-..."' >> ~/.zshrc
 |   |   +-- instructions.md  # Supplementary instructions
 |   |   +-- scripts/     # Helper scripts (run-tests, record-progress)
 |   +-- gatekeeper/      # Gatekeeper (review) agent
+|   |   +-- agent.yaml
+|   |   +-- prompt.md
+|   |   +-- instructions.md
+|   |   +-- scripts/     # run-tests, check-scope, check-debug-code
+|   +-- codebase-analyst/  # Daily codebase quality analyst
+|   |   +-- agent.yaml
+|   |   +-- prompt.md
+|   |   +-- instructions.md
+|   |   +-- scripts/
+|   +-- testing-analyst/   # Daily test coverage analyst
 |       +-- agent.yaml
 |       +-- prompt.md
 |       +-- instructions.md
-|       +-- scripts/     # run-tests, check-scope, check-debug-code
+|       +-- scripts/
 +-- flows/               # Declarative state machines
 |   +-- default.yaml     # incoming -> claimed -> provisional -> done
 +-- tasks/               # Task description files (TASK-{id}.md)
