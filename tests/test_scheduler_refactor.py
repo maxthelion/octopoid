@@ -21,7 +21,6 @@ import pytest
 
 from orchestrator.scheduler import (
     AGENT_GUARDS,
-    HOUSEKEEPING_JOBS,
     AgentContext,
     evaluate_agent,
     get_spawn_strategy,
@@ -31,10 +30,10 @@ from orchestrator.scheduler import (
     guard_pool_capacity,
     guard_pre_check,
     handle_agent_result_via_flow,
-    run_housekeeping,
     spawn_implementer,
     spawn_job_agent,
 )
+from orchestrator.housekeeping import HOUSEKEEPING_JOBS, run_housekeeping
 from orchestrator.state_utils import AgentState
 
 
@@ -609,7 +608,7 @@ class TestRunHousekeeping:
         # Mock all jobs in the list
         mock_jobs = [Mock() for _ in HOUSEKEEPING_JOBS]
 
-        with patch("orchestrator.scheduler.HOUSEKEEPING_JOBS", mock_jobs):
+        with patch("orchestrator.housekeeping.HOUSEKEEPING_JOBS", mock_jobs):
             run_housekeeping()
 
         # Verify each job was called
@@ -627,7 +626,7 @@ class TestRunHousekeeping:
 
         mock_jobs = [failing_job, succeeding_job]
 
-        with patch("orchestrator.scheduler.HOUSEKEEPING_JOBS", mock_jobs):
+        with patch("orchestrator.housekeeping.HOUSEKEEPING_JOBS", mock_jobs):
             # Should not raise exception
             run_housekeeping()
 
@@ -640,8 +639,8 @@ class TestRunHousekeeping:
         failing_job = Mock(side_effect=ValueError("Test error"))
         failing_job.__name__ = "test_failing_job"
 
-        with patch("orchestrator.scheduler.HOUSEKEEPING_JOBS", [failing_job]):
-            with patch("orchestrator.scheduler.debug_log") as mock_log:
+        with patch("orchestrator.housekeeping.HOUSEKEEPING_JOBS", [failing_job]):
+            with patch("orchestrator.housekeeping.debug_log") as mock_log:
                 run_housekeeping()
 
                 # Verify error was logged

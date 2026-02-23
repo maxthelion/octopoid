@@ -23,7 +23,7 @@ from orchestrator.pool import (
     load_blueprint_pids,
     register_instance_pid,
 )
-from orchestrator.scheduler import check_and_update_finished_agents
+from orchestrator.housekeeping import check_and_update_finished_agents
 
 
 def _make_task_id() -> str:
@@ -99,10 +99,10 @@ class TestDeadPIDRecovery:
         #    - scheduler uses get_agents_runtime_dir() to scan agent dirs
         #    - pool uses get_agents_runtime_dir() inside load/save_blueprint_pids
         with (
-            patch("orchestrator.scheduler.get_agents_runtime_dir", return_value=agents_dir),
+            patch("orchestrator.housekeeping.get_agents_runtime_dir", return_value=agents_dir),
             patch("orchestrator.pool.get_agents_runtime_dir", return_value=agents_dir),
-            patch("orchestrator.scheduler.get_tasks_dir", return_value=tasks_dir),
-            patch("orchestrator.scheduler.get_agents", return_value=[
+            patch("orchestrator.housekeeping.get_tasks_dir", return_value=tasks_dir),
+            patch("orchestrator.housekeeping.get_agents", return_value=[
                 {"blueprint_name": blueprint_name, "claim_from": "incoming"}
             ]),
         ):

@@ -13,9 +13,9 @@ import pytest
 
 from orchestrator.scheduler import (
     AgentContext,
-    check_and_update_finished_agents,
     guard_claim_task,
 )
+from orchestrator.housekeeping import check_and_update_finished_agents
 from orchestrator.state_utils import AgentState
 
 
@@ -56,9 +56,9 @@ class TestCheckAndUpdateFinishedAgents:
         (agents_dir / "implementer").mkdir()  # no running_pids.json
 
         with (
-            patch("orchestrator.scheduler.get_agents_runtime_dir", return_value=agents_dir),
-            patch("orchestrator.scheduler.get_agents", return_value=[]),
-            patch("orchestrator.scheduler.handle_agent_result") as mock_handle,
+            patch("orchestrator.housekeeping.get_agents_runtime_dir", return_value=agents_dir),
+            patch("orchestrator.housekeeping.get_agents", return_value=[]),
+            patch("orchestrator.housekeeping.handle_agent_result") as mock_handle,
         ):
             check_and_update_finished_agents()
 
@@ -74,16 +74,16 @@ class TestCheckAndUpdateFinishedAgents:
         pids_data = self._make_pids_dict(12345, task_id, "implementer-1")
 
         with (
-            patch("orchestrator.scheduler.get_agents_runtime_dir", return_value=agents_dir),
-            patch("orchestrator.scheduler.get_agents", return_value=[
+            patch("orchestrator.housekeeping.get_agents_runtime_dir", return_value=agents_dir),
+            patch("orchestrator.housekeeping.get_agents", return_value=[
                 {"blueprint_name": "implementer", "claim_from": "incoming"}
             ]),
-            patch("orchestrator.scheduler.get_tasks_dir", return_value=tasks_dir),
-            patch("orchestrator.scheduler.load_blueprint_pids", return_value=pids_data),
-            patch("orchestrator.scheduler.save_blueprint_pids"),
-            patch("orchestrator.scheduler.is_process_running", return_value=False),
-            patch("orchestrator.scheduler.handle_agent_result") as mock_handle,
-            patch("orchestrator.scheduler.handle_agent_result_via_flow") as mock_flow,
+            patch("orchestrator.housekeeping.get_tasks_dir", return_value=tasks_dir),
+            patch("orchestrator.housekeeping.load_blueprint_pids", return_value=pids_data),
+            patch("orchestrator.housekeeping.save_blueprint_pids"),
+            patch("orchestrator.housekeeping.is_process_running", return_value=False),
+            patch("orchestrator.housekeeping.handle_agent_result") as mock_handle,
+            patch("orchestrator.housekeeping.handle_agent_result_via_flow") as mock_flow,
         ):
             check_and_update_finished_agents()
 
@@ -100,16 +100,16 @@ class TestCheckAndUpdateFinishedAgents:
         pids_data = self._make_pids_dict(99999, task_id, "gatekeeper-1")
 
         with (
-            patch("orchestrator.scheduler.get_agents_runtime_dir", return_value=agents_dir),
-            patch("orchestrator.scheduler.get_agents", return_value=[
+            patch("orchestrator.housekeeping.get_agents_runtime_dir", return_value=agents_dir),
+            patch("orchestrator.housekeeping.get_agents", return_value=[
                 {"blueprint_name": "gatekeeper", "claim_from": "provisional"}
             ]),
-            patch("orchestrator.scheduler.get_tasks_dir", return_value=tasks_dir),
-            patch("orchestrator.scheduler.load_blueprint_pids", return_value=pids_data),
-            patch("orchestrator.scheduler.save_blueprint_pids"),
-            patch("orchestrator.scheduler.is_process_running", return_value=False),
-            patch("orchestrator.scheduler.handle_agent_result") as mock_handle,
-            patch("orchestrator.scheduler.handle_agent_result_via_flow") as mock_flow,
+            patch("orchestrator.housekeeping.get_tasks_dir", return_value=tasks_dir),
+            patch("orchestrator.housekeeping.load_blueprint_pids", return_value=pids_data),
+            patch("orchestrator.housekeeping.save_blueprint_pids"),
+            patch("orchestrator.housekeeping.is_process_running", return_value=False),
+            patch("orchestrator.housekeeping.handle_agent_result") as mock_handle,
+            patch("orchestrator.housekeeping.handle_agent_result_via_flow") as mock_flow,
         ):
             check_and_update_finished_agents()
 
@@ -127,16 +127,16 @@ class TestCheckAndUpdateFinishedAgents:
         saved_args: list[tuple] = []
 
         with (
-            patch("orchestrator.scheduler.get_agents_runtime_dir", return_value=agents_dir),
-            patch("orchestrator.scheduler.get_agents", return_value=[
+            patch("orchestrator.housekeeping.get_agents_runtime_dir", return_value=agents_dir),
+            patch("orchestrator.housekeeping.get_agents", return_value=[
                 {"blueprint_name": "implementer", "claim_from": "incoming"}
             ]),
-            patch("orchestrator.scheduler.get_tasks_dir", return_value=tasks_dir),
-            patch("orchestrator.scheduler.load_blueprint_pids", return_value=pids_data),
-            patch("orchestrator.scheduler.save_blueprint_pids",
+            patch("orchestrator.housekeeping.get_tasks_dir", return_value=tasks_dir),
+            patch("orchestrator.housekeeping.load_blueprint_pids", return_value=pids_data),
+            patch("orchestrator.housekeeping.save_blueprint_pids",
                   side_effect=lambda name, p: saved_args.append((name, p))),
-            patch("orchestrator.scheduler.is_process_running", return_value=False),
-            patch("orchestrator.scheduler.handle_agent_result"),
+            patch("orchestrator.housekeeping.is_process_running", return_value=False),
+            patch("orchestrator.housekeeping.handle_agent_result"),
         ):
             check_and_update_finished_agents()
 
@@ -151,14 +151,14 @@ class TestCheckAndUpdateFinishedAgents:
         pids_data = self._make_pids_dict(12345, "TASK-alive", "implementer-1")
 
         with (
-            patch("orchestrator.scheduler.get_agents_runtime_dir", return_value=agents_dir),
-            patch("orchestrator.scheduler.get_agents", return_value=[
+            patch("orchestrator.housekeeping.get_agents_runtime_dir", return_value=agents_dir),
+            patch("orchestrator.housekeeping.get_agents", return_value=[
                 {"blueprint_name": "implementer", "claim_from": "incoming"}
             ]),
-            patch("orchestrator.scheduler.load_blueprint_pids", return_value=pids_data),
-            patch("orchestrator.scheduler.save_blueprint_pids") as mock_save,
-            patch("orchestrator.scheduler.is_process_running", return_value=True),
-            patch("orchestrator.scheduler.handle_agent_result") as mock_handle,
+            patch("orchestrator.housekeeping.load_blueprint_pids", return_value=pids_data),
+            patch("orchestrator.housekeeping.save_blueprint_pids") as mock_save,
+            patch("orchestrator.housekeeping.is_process_running", return_value=True),
+            patch("orchestrator.housekeeping.handle_agent_result") as mock_handle,
         ):
             check_and_update_finished_agents()
 
@@ -172,14 +172,14 @@ class TestCheckAndUpdateFinishedAgents:
         pids_data = {12345: {"task_id": "", "started_at": "...", "instance_name": "proposer-1"}}
 
         with (
-            patch("orchestrator.scheduler.get_agents_runtime_dir", return_value=agents_dir),
-            patch("orchestrator.scheduler.get_agents", return_value=[
+            patch("orchestrator.housekeeping.get_agents_runtime_dir", return_value=agents_dir),
+            patch("orchestrator.housekeeping.get_agents", return_value=[
                 {"blueprint_name": "proposer", "claim_from": "incoming"}
             ]),
-            patch("orchestrator.scheduler.load_blueprint_pids", return_value=pids_data),
-            patch("orchestrator.scheduler.save_blueprint_pids"),
-            patch("orchestrator.scheduler.is_process_running", return_value=False),
-            patch("orchestrator.scheduler.handle_agent_result") as mock_handle,
+            patch("orchestrator.housekeeping.load_blueprint_pids", return_value=pids_data),
+            patch("orchestrator.housekeeping.save_blueprint_pids"),
+            patch("orchestrator.housekeeping.is_process_running", return_value=False),
+            patch("orchestrator.housekeeping.handle_agent_result") as mock_handle,
         ):
             check_and_update_finished_agents()
 

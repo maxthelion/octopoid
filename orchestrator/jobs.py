@@ -263,7 +263,7 @@ def check_and_update_finished_agents(ctx: JobContext) -> None:
     Delegates to the scheduler implementation which handles PID tracking,
     result dispatch, and flow transitions.
     """
-    from .scheduler import check_and_update_finished_agents as _impl
+    from .housekeeping import check_and_update_finished_agents as _impl
     _impl()
 
 
@@ -274,7 +274,7 @@ def _register_orchestrator(ctx: JobContext) -> None:
     Passes orchestrator_registered from poll_data so the implementation
     can skip the POST when the server already knows about this orchestrator.
     """
-    from .scheduler import _register_orchestrator as _impl
+    from .housekeeping import _register_orchestrator as _impl
     orchestrator_registered = (ctx.poll_data or {}).get("orchestrator_registered", False)
     _impl(orchestrator_registered=orchestrator_registered)
 
@@ -282,7 +282,7 @@ def _register_orchestrator(ctx: JobContext) -> None:
 @register_job
 def check_and_requeue_expired_leases(ctx: JobContext) -> None:
     """Requeue tasks whose claim lease has expired."""
-    from .scheduler import check_and_requeue_expired_leases as _impl
+    from .housekeeping import check_and_requeue_expired_leases as _impl
     _impl()
 
 
@@ -293,7 +293,7 @@ def process_orchestrator_hooks(ctx: JobContext) -> None:
     Passes pre-fetched provisional_tasks from poll_data so the implementation
     can skip the sdk.tasks.list() call when poll data is available.
     """
-    from .scheduler import process_orchestrator_hooks as _impl
+    from .housekeeping import process_orchestrator_hooks as _impl
     provisional_tasks = (ctx.poll_data or {}).get("provisional_tasks")
     _impl(provisional_tasks=provisional_tasks)
 
@@ -301,14 +301,14 @@ def process_orchestrator_hooks(ctx: JobContext) -> None:
 @register_job
 def check_project_completion(ctx: JobContext) -> None:
     """Check active projects and run the children_complete flow transition."""
-    from .scheduler import check_project_completion as _impl
+    from .housekeeping import check_project_completion as _impl
     _impl()
 
 
 @register_job
 def _check_queue_health_throttled(ctx: JobContext) -> None:
     """Check queue health (interval managed by declarative scheduler)."""
-    from .scheduler import _check_queue_health_throttled as _impl
+    from .housekeeping import _check_queue_health_throttled as _impl
     _impl()
 
 
@@ -327,14 +327,14 @@ def agent_evaluation_loop(ctx: JobContext) -> None:
 @register_job
 def sweep_stale_resources(ctx: JobContext) -> None:
     """Archive logs and clean up stale worktrees and remote branches."""
-    from .scheduler import sweep_stale_resources as _impl
+    from .housekeeping import sweep_stale_resources as _impl
     _impl()
 
 
 @register_job
 def send_heartbeat(ctx: JobContext) -> None:
     """Send a heartbeat to the API server to update last_heartbeat."""
-    from .scheduler import send_heartbeat as _impl
+    from .housekeeping import send_heartbeat as _impl
     _impl()
 
 

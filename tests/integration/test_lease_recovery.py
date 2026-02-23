@@ -22,10 +22,8 @@ from unittest.mock import patch
 
 import pytest
 
-from orchestrator.scheduler import (
-    check_and_requeue_expired_leases,
-    handle_agent_result,
-)
+from orchestrator.housekeeping import check_and_requeue_expired_leases
+from orchestrator.scheduler import handle_agent_result
 
 # Re-use module-level helpers and constants from the mock scheduler tests.
 from tests.integration.test_scheduler_mock import (
@@ -43,11 +41,11 @@ _FAR_FUTURE = datetime(2099, 1, 1, tzinfo=timezone.utc)
 def _advance_time_to_future():
     """Context manager: make datetime.now() in the scheduler return _FAR_FUTURE.
 
-    Only orchestrator.scheduler.datetime.now is patched; fromisoformat() is
+    Only orchestrator.housekeeping.datetime.now is patched; fromisoformat() is
     preserved so the ISO string parsing in the lease check still works.
     """
     return patch(
-        "orchestrator.scheduler.datetime",
+        "orchestrator.housekeeping.datetime",
         **{
             "now.return_value": _FAR_FUTURE,
             "fromisoformat.side_effect": datetime.fromisoformat,

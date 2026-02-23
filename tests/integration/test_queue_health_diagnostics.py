@@ -29,8 +29,8 @@ from unittest.mock import patch
 
 import pytest
 
-import orchestrator.scheduler as _sched_module
-from orchestrator.scheduler import check_and_requeue_expired_leases
+import orchestrator.housekeeping as _sched_module
+from orchestrator.housekeeping import check_and_requeue_expired_leases
 
 
 _TEST_BRANCH = "main"
@@ -45,7 +45,7 @@ def _run_health_check(sdk) -> None:
     Claimed tasks with a future lease are NOT requeued. Use this for
     "healthy queue" assertions.
     """
-    with patch("orchestrator.scheduler.queue_utils.get_sdk", return_value=sdk):
+    with patch("orchestrator.housekeeping.queue_utils.get_sdk", return_value=sdk):
         check_and_requeue_expired_leases()
 
 
@@ -64,7 +64,7 @@ def _run_health_check_time_shifted(
         # Keep fromisoformat working for timestamp parsing inside the function
         mock_dt.fromisoformat = _datetime.fromisoformat
 
-        with patch("orchestrator.scheduler.queue_utils.get_sdk", return_value=sdk):
+        with patch("orchestrator.housekeeping.queue_utils.get_sdk", return_value=sdk):
             check_and_requeue_expired_leases()
 
 

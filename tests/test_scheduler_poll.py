@@ -21,14 +21,16 @@ from orchestrator.flow import Condition, Flow, Transition
 from orchestrator.jobs import load_jobs_yaml
 from orchestrator.scheduler import (
     AgentContext,
-    _has_flow_blocking_conditions,
-    _register_orchestrator,
     guard_backpressure,
     is_job_due,
     load_scheduler_state,
-    process_orchestrator_hooks,
     record_job_run,
     save_scheduler_state,
+)
+from orchestrator.housekeeping import (
+    _has_flow_blocking_conditions,
+    _register_orchestrator,
+    process_orchestrator_hooks,
 )
 from orchestrator.state_utils import AgentState
 
@@ -275,8 +277,8 @@ class TestRegisterOrchestratorSkip:
         """No POST request when orchestrator_registered=True."""
         mock_sdk = MagicMock()
         with (
-            patch("orchestrator.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
-            patch("orchestrator.scheduler.queue_utils.get_orchestrator_id", return_value="test-orch"),
+            patch("orchestrator.housekeeping.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("orchestrator.housekeeping.queue_utils.get_orchestrator_id", return_value="test-orch"),
         ):
             _register_orchestrator(orchestrator_registered=True)
         mock_sdk._request.assert_not_called()
@@ -324,7 +326,7 @@ class TestProcessOrchestratorHooksWithPreFetched:
 
         with (
             patch("orchestrator.queue_utils.get_sdk", return_value=mock_sdk),
-            patch("orchestrator.scheduler.HookManager", return_value=mock_hook_manager),
+            patch("orchestrator.housekeeping.HookManager", return_value=mock_hook_manager),
         ):
             process_orchestrator_hooks(provisional_tasks=[])
 
@@ -339,7 +341,7 @@ class TestProcessOrchestratorHooksWithPreFetched:
 
         with (
             patch("orchestrator.queue_utils.get_sdk", return_value=mock_sdk),
-            patch("orchestrator.scheduler.HookManager", return_value=mock_hook_manager),
+            patch("orchestrator.housekeeping.HookManager", return_value=mock_hook_manager),
         ):
             process_orchestrator_hooks(provisional_tasks=None)
 
@@ -354,9 +356,9 @@ class TestProcessOrchestratorHooksWithPreFetched:
 
         with (
             patch("orchestrator.queue_utils.get_sdk", return_value=mock_sdk),
-            patch("orchestrator.scheduler.HookManager", return_value=mock_hook_manager),
+            patch("orchestrator.housekeeping.HookManager", return_value=mock_hook_manager),
             # Suppress flow-blocking check so hook processing is reached
-            patch("orchestrator.scheduler._has_flow_blocking_conditions", return_value=False),
+            patch("orchestrator.housekeeping._has_flow_blocking_conditions", return_value=False),
         ):
             process_orchestrator_hooks(provisional_tasks=[task])
 
@@ -469,8 +471,8 @@ class TestProcessOrchestratorHooksSkipsBlockedTasks:
 
         with (
             patch("orchestrator.queue_utils.get_sdk", return_value=mock_sdk),
-            patch("orchestrator.scheduler.HookManager", return_value=mock_hook_manager),
-            patch("orchestrator.scheduler._has_flow_blocking_conditions", return_value=True),
+            patch("orchestrator.housekeeping.HookManager", return_value=mock_hook_manager),
+            patch("orchestrator.housekeeping._has_flow_blocking_conditions", return_value=True),
         ):
             process_orchestrator_hooks(provisional_tasks=[task])
 
@@ -487,8 +489,8 @@ class TestProcessOrchestratorHooksSkipsBlockedTasks:
 
         with (
             patch("orchestrator.queue_utils.get_sdk", return_value=mock_sdk),
-            patch("orchestrator.scheduler.HookManager", return_value=mock_hook_manager),
-            patch("orchestrator.scheduler._has_flow_blocking_conditions", return_value=False),
+            patch("orchestrator.housekeeping.HookManager", return_value=mock_hook_manager),
+            patch("orchestrator.housekeeping._has_flow_blocking_conditions", return_value=False),
         ):
             process_orchestrator_hooks(provisional_tasks=[task])
 

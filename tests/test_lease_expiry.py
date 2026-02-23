@@ -5,7 +5,8 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 
-from orchestrator.scheduler import _requeue_task, check_and_requeue_expired_leases
+from orchestrator.scheduler import _requeue_task
+from orchestrator.housekeeping import check_and_requeue_expired_leases
 
 
 def _make_task(
@@ -64,8 +65,8 @@ class TestCheckAndRequeueExpiredLeases:
         mock_sdk.tasks.list.side_effect = _list
 
         with (
-            patch("orchestrator.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
-            patch("orchestrator.scheduler._get_circuit_breaker_threshold", return_value=threshold),
+            patch("orchestrator.housekeeping.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("orchestrator.housekeeping._get_circuit_breaker_threshold", return_value=threshold),
         ):
             check_and_requeue_expired_leases()
 
@@ -124,8 +125,8 @@ class TestCheckAndRequeueExpiredLeases:
         mock_sdk.tasks.list.side_effect = lambda queue=None: None
 
         with (
-            patch("orchestrator.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
-            patch("orchestrator.scheduler._get_circuit_breaker_threshold", return_value=3),
+            patch("orchestrator.housekeeping.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("orchestrator.housekeeping._get_circuit_breaker_threshold", return_value=3),
         ):
             check_and_requeue_expired_leases()  # must not raise
 
@@ -144,8 +145,8 @@ class TestCheckAndRequeueExpiredLeases:
         mock_sdk.tasks.list.side_effect = RuntimeError("network error")
 
         with (
-            patch("orchestrator.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
-            patch("orchestrator.scheduler._get_circuit_breaker_threshold", return_value=3),
+            patch("orchestrator.housekeeping.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("orchestrator.housekeeping._get_circuit_breaker_threshold", return_value=3),
         ):
             check_and_requeue_expired_leases()  # must not raise
 
