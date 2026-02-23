@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **action_data round-trip integration test** ([TASK-1f72c39e])
+  - `tests/integration/test_action_data_roundtrip.py`: New integration tests verifying that `action_data` (a JSON string containing a `buttons` array) is preserved end-to-end when creating an action and fetching it back via the list endpoint. Covers: single create/fetch round-trip with button label and command verification, multiple buttons, and the no-action_data case.
+
 - **Flow-specific kanban tabs in Work view** ([TASK-0ddd897e])
   - `packages/python-sdk/octopoid_sdk/client.py`: Added `FlowsAPI.list()` method to fetch all registered flow definitions from `/api/v1/flows`.
   - `orchestrator/reports.py`: Added `_gather_flows()` which fetches flow definitions and parses JSON-encoded `states`/`transitions` fields. Added `flow` and `queue` fields to `_format_task()`. The report payload now includes a `"flows"` key.
