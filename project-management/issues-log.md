@@ -40,6 +40,14 @@ Known symptoms and their root causes. **Consult this first when diagnosing a pro
 | Project tasks not visible on dashboard Work tab | Tasks have `flow=project` but no "project" flow registered on server. Fixed by pooling unregistered flows into default tab. | commit `b1b0982` |
 | Dashboard 401 errors after auth migration | Stale `OCTOPOID_API_KEY` env var in shell. Remove from `.zshrc`, kill dashboard processes, provision new key via orchestrator registration. | — |
 
+## Merge / Rebase failures
+
+| Symptom | Likely cause | See |
+|---|---|---|
+| Task approved by gatekeeper but fails at `merge_pr` | Branch conflicts with main. `merge_pr` treats any rebase conflict as fatal — discards all work and re-implements from scratch. | [2026-02-23 postmortem](postmortems/2026-02-23-rebase-conflicts-wasted-agent-runs.md) |
+| Same task fails repeatedly at merge despite correct code | Main is being actively pushed to (human or other agents). Each re-attempt diverges again. | [2026-02-23 postmortem](postmortems/2026-02-23-rebase-conflicts-wasted-agent-runs.md), [Draft #93](../project-management/drafts/93-2026-02-23-resilient-rebase-at-merge.md) |
+| Gatekeeper approves PR that CI rejects | Gatekeeper runs tests locally without the integration test server. Integration tests are silently skipped (`pytest.skip`). CI starts the server and catches failures the gatekeeper can't see. | TASK-c93fe7d2 (check_ci step) |
+
 ## API / Server
 
 | Symptom | Likely cause | See |

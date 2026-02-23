@@ -205,6 +205,19 @@ def init_orchestrator(
     else:
         print(f"  Exists:  {testing_analyst_dir.relative_to(parent)}/")
 
+    # Scaffold architecture-analyst agent directory
+    architecture_analyst_dir = octopoid_dir / "agents" / "architecture-analyst"
+    if not architecture_analyst_dir.exists():
+        builtin_architecture_analyst = submodule / ".octopoid" / "agents" / "architecture-analyst"
+        if builtin_architecture_analyst.exists():
+            shutil.copytree(builtin_architecture_analyst, architecture_analyst_dir)
+            print(f"  Created: {architecture_analyst_dir.relative_to(parent)}/ (from template)")
+        else:
+            architecture_analyst_dir.mkdir(parents=True)
+            print(f"  Created: {architecture_analyst_dir.relative_to(parent)}/ (empty scaffold)")
+    else:
+        print(f"  Exists:  {architecture_analyst_dir.relative_to(parent)}/")
+
     # Create jobs.yaml only if it does not already exist
     jobs_yaml = octopoid_dir / "jobs.yaml"
     jobs_yaml_created = False
@@ -544,6 +557,20 @@ jobs:
       spawn_mode: scripts
       lightweight: true
       agent_dir: .octopoid/agents/testing-analyst
+
+  # Daily architecture analyst: scans for complex functions, copy-paste,
+  # and structural issues using Lizard and jscpd. Proposes refactorings
+  # with named design patterns. Guard skips if a proposal already exists.
+  - name: architecture_analyst
+    interval: 86400
+    type: agent
+    group: remote
+    max_instances: 1
+    agent_config:
+      role: analyse
+      spawn_mode: scripts
+      lightweight: true
+      agent_dir: .octopoid/agents/architecture-analyst
 """
 
 DASHBOARD_WRAPPER = """#!/usr/bin/env bash
