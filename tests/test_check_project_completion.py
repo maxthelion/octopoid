@@ -163,7 +163,8 @@ class TestCheckProjectCompletion:
         sdk.projects.get_tasks.assert_not_called()
         sdk.projects.update.assert_not_called()
 
-    def test_project_without_branch_is_skipped(self):
+    def test_project_without_branch_posts_warning(self):
+        """When all tasks done but project has no branch, a warning message is posted."""
         project_id = "PROJ-nobranch"
         sdk = _make_sdk(
             projects=[{"id": project_id, "status": "active", "branch": None, "title": "No Branch"}],
@@ -174,7 +175,15 @@ class TestCheckProjectCompletion:
             from orchestrator.scheduler import check_project_completion
             check_project_completion()
 
+        # Project must not be transitioned (no branch → cannot create PR)
         sdk.projects.update.assert_not_called()
+
+        # A warning message must be posted to the human inbox
+        sdk.messages.create.assert_called_once()
+        call_kwargs = sdk.messages.create.call_args[1]
+        assert call_kwargs["to_actor"] == "human"
+        assert call_kwargs["type"] == "warning"
+        assert project_id in call_kwargs["content"]
 
     def test_sdk_error_does_not_crash(self):
         with patch(

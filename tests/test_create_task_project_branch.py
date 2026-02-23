@@ -235,3 +235,35 @@ class TestCreateTaskFlowParameter:
         assert task_name.startswith("TASK-")
         call_kwargs = mock_sdk_for_unit_tests.tasks.create.call_args[1]
         assert "BRANCH: main" in call_kwargs["content"]
+
+    def test_project_without_branch_logs_warning(
+        self, mock_orchestrator_dir, mock_sdk_for_unit_tests, capsys
+    ):
+        """If the project has no branch, a warning is printed to stderr."""
+        project_id = "PROJ-warntest"
+
+        mock_sdk_for_unit_tests.projects.get.return_value = {
+            "id": project_id,
+            "title": "Project with no branch",
+            "branch": None,
+            "status": "draft",
+        }
+
+        with patch("orchestrator.tasks.get_base_branch", return_value="main"):
+            from orchestrator.tasks import create_task
+
+            create_task(
+                title="Task under branchless project",
+                role="implement",
+                context="Project has no branch",
+                acceptance_criteria=["Done"],
+                project_id=project_id,
+            )
+
+        captured = capsys.readouterr()
+        assert project_id in captured.err, (
+            f"Expected warning about {project_id} in stderr, got: {captured.err!r}"
+        )
+        assert "no branch" in captured.err.lower(), (
+            f"Expected 'no branch' in stderr warning, got: {captured.err!r}"
+        )
