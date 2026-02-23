@@ -330,7 +330,7 @@ def handle_agent_result_via_flow(task_id: str, agent_name: str, task_dir: Path, 
             discarded as stale to prevent running wrong transition steps.
     """
     from .flow import load_flow  # noqa: PLC0415
-    from .steps import execute_steps, reject_with_feedback  # noqa: PLC0415
+    from .steps import execute_steps, reject_with_feedback, RetryableStepError  # noqa: PLC0415
 
     result = read_result_json(task_dir)
 
@@ -414,6 +414,10 @@ def handle_agent_result_via_flow(task_id: str, agent_name: str, task_dir: Path, 
 
         return True  # Steps executed (or no steps needed) — PID safe to remove
 
+    except RetryableStepError as e:
+        print(f"[{datetime.now().isoformat()}] check_ci pending for {task_id}: {e}, leaving in {current_queue}")
+        return False  # Don't remove PID — scheduler will retry on next tick
+
     except Exception as e:
         import traceback  # noqa: PLC0415
         print(f"[{datetime.now().isoformat()}] ERROR: handle_agent_result_via_flow failed for {task_id}: {e}")
@@ -458,6 +462,8 @@ def handle_agent_result(task_id: str, agent_name: str, task_dir: Path) -> bool:
         agent_name: Name of the agent
         task_dir: Path to the task directory
     """
+    from .steps import RetryableStepError  # noqa: PLC0415
+
     result = _read_or_infer_result(task_dir)
     outcome = result.get("outcome", "error")
     debug_log(f"Task {task_id} result: {outcome}")
@@ -481,6 +487,9 @@ def handle_agent_result(task_id: str, agent_name: str, task_dir: Path) -> bool:
             return _handle_continuation_outcome(sdk, task_id, task, agent_name, current_queue)
         else:
             return _handle_fail_outcome(sdk, task_id, task, f"Unknown outcome: {outcome}", current_queue)
+    except RetryableStepError as e:
+        print(f"[{datetime.now().isoformat()}] Retryable step error for task {task_id}: {e}, will retry")
+        return False  # Don't remove PID — scheduler will retry on next tick
     except Exception as e:
         import traceback  # noqa: PLC0415
         failure_count = _increment_step_failure_count(task_dir)
