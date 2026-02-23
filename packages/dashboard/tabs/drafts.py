@@ -137,15 +137,21 @@ class DraftsTab(TabBase):
         # Monotonic counter to ensure unique button IDs across rebuilds
         self._btn_generation: int = 0
 
+    @staticmethod
+    def _is_agent_authored(draft: dict) -> bool:
+        """True if the draft was authored by an agent (not a human)."""
+        author = (draft.get("author") or "").lower()
+        return author not in ("", "human")
+
     @property
     def _user_drafts(self) -> list[dict]:
         """Drafts authored by humans (author is None, empty, or 'human')."""
-        return [d for d in self._drafts if d.get("author") != "agent"]
+        return [d for d in self._drafts if not self._is_agent_authored(d)]
 
     @property
     def _agent_drafts(self) -> list[dict]:
-        """Drafts authored by agents."""
-        return [d for d in self._drafts if d.get("author") == "agent"]
+        """Drafts authored by agents (any non-human author)."""
+        return [d for d in self._drafts if self._is_agent_authored(d)]
 
     def compose(self) -> ComposeResult:
         with Horizontal(classes="drafts-layout"):
