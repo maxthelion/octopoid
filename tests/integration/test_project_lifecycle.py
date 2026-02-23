@@ -54,6 +54,59 @@ def _task_id() -> str:
 # ---------------------------------------------------------------------------
 
 
+class TestProjectCreationWithoutBranch:
+    """Verify that create_project() auto-generates a branch when none is provided."""
+
+    def test_create_project_without_branch_auto_generates(self, sdk):
+        """create_project() auto-generates a feature branch when no branch is given.
+
+        This tests the orchestrator-level function, not the raw SDK. The function
+        must generate a branch name (feature/{short_id}) and pass it to the server.
+        The server must store it and return it on retrieval.
+        """
+        from orchestrator.projects import create_project
+
+        project = create_project(
+            title="Auto-branch project",
+            description="Tests that branch is auto-generated when not provided",
+        )
+
+        assert project is not None, "create_project() must return a project dict"
+        assert project.get("branch") is not None, (
+            "create_project() must auto-generate a branch when none is provided"
+        )
+        assert project["branch"].startswith("feature/"), (
+            f"Auto-generated branch must start with 'feature/', got: {project['branch']!r}"
+        )
+
+        # The generated branch must also be stored on the server
+        fetched = sdk.projects.get(project["id"])
+        assert fetched is not None, "Project must be retrievable from server"
+        assert fetched["branch"] == project["branch"], (
+            f"Server must store the auto-generated branch. "
+            f"Expected {project['branch']!r}, got {fetched.get('branch')!r}"
+        )
+
+    def test_auto_generated_branch_derived_from_project_id(self, sdk):
+        """The auto-generated branch is derived from the project ID (feature/{short_id})."""
+        from orchestrator.projects import create_project
+
+        project = create_project(
+            title="Branch ID derivation test",
+            description="Verifies branch is feature/{short_id}",
+        )
+
+        project_id = project["id"]          # e.g. PROJ-abc12345
+        branch = project["branch"]           # e.g. feature/abc12345
+        short_id = project_id.replace("PROJ-", "")[:8]
+        expected_branch = f"feature/{short_id}"
+
+        assert branch == expected_branch, (
+            f"Auto-generated branch must be feature/{{short_id}}. "
+            f"Expected '{expected_branch}', got '{branch}'"
+        )
+
+
 class TestProjectCreation:
     """Verify project creation and basic retrieval."""
 
@@ -99,6 +152,47 @@ class TestProjectCreation:
 
 class TestChildTaskAssociation:
     """Verify child tasks are associated with their project."""
+
+    def test_child_tasks_inherit_project_branch_via_create_task(self, sdk, clean_tasks):
+        """Tasks created via create_task(project_id=X) inherit the project's branch.
+
+        This tests the orchestrator.tasks.create_task() function end-to-end:
+        it fetches the project, extracts its branch, and passes it to the server.
+        The server must store the branch on the task record.
+        """
+        from orchestrator.projects import create_project
+        from orchestrator.tasks import create_task
+
+        # 1. Create a project (auto-generates branch via create_project)
+        project = create_project(
+            title="Branch inheritance project",
+            description="Tests that child tasks inherit project branch via create_task()",
+        )
+        project_id = project["id"]
+        project_branch = project["branch"]
+        assert project_branch is not None
+
+        # 2. Create a child task via create_task() — should auto-inherit project branch
+        task_name = create_task(
+            title="Child task via create_task",
+            role="implement",
+            context="Should inherit project branch automatically",
+            acceptance_criteria=["Do the thing"],
+            project_id=project_id,
+        )
+
+        # 3. Retrieve the task from the server and verify branch
+        task_id = task_name.replace("TASK-", "")
+        task = sdk.tasks.get(task_id)
+        assert task is not None, f"Task {task_id} must be retrievable from server"
+        assert task["branch"] == project_branch, (
+            f"Task must inherit project branch '{project_branch}', "
+            f"got '{task.get('branch')}'"
+        )
+        assert task["project_id"] == project_id, (
+            f"Task must reference project '{project_id}', "
+            f"got '{task.get('project_id')}'"
+        )
 
     def test_child_tasks_carry_project_branch(self, sdk, clean_tasks):
         """Tasks created with project_id store the project's branch.

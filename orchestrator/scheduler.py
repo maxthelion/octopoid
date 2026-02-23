@@ -1714,7 +1714,20 @@ def check_project_completion() -> None:
 
             # All children done — project has no branch check kept for safety
             if not project.get("branch"):
-                debug_log(f"check_project_completion: project {project_id} has no branch, skipping")
+                debug_log(f"check_project_completion: project {project_id} has no branch, posting warning")
+                try:
+                    sdk.messages.create(
+                        task_id=f"project-{project_id}",
+                        from_actor="scheduler",
+                        to_actor="human",
+                        type="warning",
+                        content=(
+                            f"Project {project_id} has all tasks done but no branch set. "
+                            f"Cannot create PR. Please set a branch on the project."
+                        ),
+                    )
+                except Exception as warn_e:
+                    debug_log(f"check_project_completion: failed to post warning for {project_id}: {warn_e}")
                 continue
 
             debug_log(f"check_project_completion: all children done for {project_id}, running flow transition")

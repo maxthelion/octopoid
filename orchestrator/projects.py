@@ -31,6 +31,10 @@ def create_project(
     """
     project_id = f"PROJ-{uuid4().hex[:8]}"
 
+    if not branch:
+        short_id = project_id.replace("PROJ-", "")[:8]
+        branch = f"feature/{short_id}"
+
     sdk = get_sdk()
     return sdk.projects.create(
         id=project_id,

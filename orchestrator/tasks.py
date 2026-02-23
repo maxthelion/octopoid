@@ -476,6 +476,12 @@ def create_task(
                 project = sdk.projects.get(project_id)
                 if project and project.get("branch"):
                     branch = project["branch"]
+                elif project and not project.get("branch"):
+                    print(
+                        f"WARNING: Project {project_id} has no branch set. "
+                        f"Task will fall back to base branch.",
+                        file=sys.stderr,
+                    )
             except Exception as e:
                 print(f"Warning: Failed to fetch project {project_id} for branch: {e}")
         if not branch:
