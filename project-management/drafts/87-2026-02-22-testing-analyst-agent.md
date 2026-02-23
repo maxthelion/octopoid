@@ -1,6 +1,16 @@
+---
+**Processed:** 2026-02-23
+**Mode:** human-guided
+**Actions taken:**
+- Resolved all 5 open questions with human approval
+- Proposed 4 implementation tasks as a project (sequential dependency chain)
+- Proposed tasks written to `project-management/drafts/proposed-tasks/testing-analyst-*.md`
+**Outstanding items:** Proposed tasks awaiting enqueue decision
+---
+
 # Testing Analyst Agent
 
-**Status:** Idea
+**Status:** In Progress
 **Captured:** 2026-02-22
 
 ## Raw
@@ -52,13 +62,13 @@ Came up during the draft-50 merge readiness assessment (Draft 86). Found signifi
 
 The codebase analyst (Draft 69) already exists as a model for this kind of periodic analysis agent. This extends the pattern to testing.
 
-## Open Questions
+## Open Questions (Resolved)
 
-- How does the agent determine what "recently completed" means? Last N tasks? Last 24 hours? Since last analysis run?
-- Should it have access to CI results to see what's actually failing?
-- Should it differentiate between "no tests at all" (critical) and "only unit tests" (improvement)?
-- How does it assess whether an integration test exists for a given feature — by filename convention, by grepping test content, or by something smarter?
-- Should it also check test quality (e.g. tests that assert True, tests with no assertions, tests that only check status codes)?
+- **"Recently completed" = since last analysis run.** Agent writes a timestamp file on each run; analysis script only looks at tasks completed after that timestamp.
+- **CI access via `gh` CLI.** Agent can run `gh run list` / `gh run view` to check what's actually failing. Read-only, low-risk.
+- **Yes, differentiate by severity.** "No tests at all" = critical gap (P1 proposal), "unit tests only / over-mocked" = improvement (P2). Both flagged.
+- **Grep test content.** Search `tests/integration/` for references to changed files/functions. Content-based matching, not filename convention.
+- **No test quality checks in v1.** Scope limited to coverage gaps. Quality checks (empty assertions, assert True) deferred to follow-up.
 
 ## Possible Next Steps
 
