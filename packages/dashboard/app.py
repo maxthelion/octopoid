@@ -5,6 +5,7 @@ Launch with: python -m packages.dashboard
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from textual import work
@@ -88,7 +89,7 @@ class OctopoidDashboard(App):
 
     def on_mount(self) -> None:
         self.register_theme(_OCTOPOID_THEME)
-        self.theme = "octopoid-dark"
+        self.theme = os.environ.get("OCTOPOID_THEME", "atom-one-dark")
         self._fetch_data(force=True)
         self.set_interval(5, self._fetch_data)
 
