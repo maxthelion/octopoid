@@ -125,3 +125,18 @@ jobs:
       spawn_mode: scripts
       lightweight: true
       agent_dir: .octopoid/agents/testing-analyst
+
+  # Daily architecture analyst: scans for architectural quality issues using Lizard
+  # (function complexity metrics) and jscpd (copy-paste detection). Proposes concrete
+  # refactorings with named design patterns and before/after sketches. Guard skips if
+  # a proposal already exists.
+  - name: architecture_analyst
+    interval: 86400
+    type: agent
+    group: remote
+    max_instances: 1
+    agent_config:
+      role: analyse
+      spawn_mode: scripts
+      lightweight: true
+      agent_dir: .octopoid/agents/architecture-analyst
