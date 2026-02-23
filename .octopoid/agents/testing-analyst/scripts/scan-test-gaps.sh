@@ -80,7 +80,7 @@ print()
 if not recent_tasks:
     print('No recent tasks to analyse.')
     # Still update the last-run file
-    now = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S')
+    now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S')
     last_run_file.parent.mkdir(parents=True, exist_ok=True)
     last_run_file.write_text(now)
     sys.exit(0)
@@ -131,13 +131,19 @@ for task in recent_tasks:
             pass
 
     # Deduplicate and filter to source files only
+    # Skip: test files (they ARE the tests), config/docs, and agent scripts
     changed_files = list(dict.fromkeys(
         f for f in changed_files
         if f.endswith(('.py', '.ts', '.tsx', '.js', '.jsx', '.sh'))
         and not f.startswith('tests/')
         and not f.startswith('.octopoid/')
+        and not f.startswith('project-management/')
+        and not f.endswith('__init__.py')
+        and '/tests/' not in f  # skip embedded test dirs (e.g. orchestrator/tests/)
+        and not Path(f).stem.startswith('test_')  # skip test files anywhere
         and 'CHANGELOG' not in f
         and 'README' not in f
+        and 'conftest' not in f
     ))
 
     if not changed_files:
@@ -148,33 +154,52 @@ for task in recent_tasks:
         file_stem = Path(changed_file).stem
         file_name = Path(changed_file).name
 
+        # Build search patterns: match the module by import or filename reference
+        # Use the full filename (e.g. "reports.py") and import pattern (e.g. "from orchestrator.reports")
+        # to avoid false matches (e.g. "reports" matching "test_reports_unrelated")
+        module_path = changed_file.replace('/', '.').replace('.py', '')
+        search_patterns = [file_name]  # e.g. "reports.py"
+        if '.' in module_path:
+            # e.g. "from orchestrator.reports" or "import orchestrator.reports"
+            search_patterns.append(module_path.rsplit('.', 1)[0] + '.' + file_stem)
+
         # Check if any unit test exists for this file
-        unit_test_pattern = f'test_{file_stem}'
         unit_tests_found = []
-        try:
-            result = subprocess.run(
-                ['grep', '-rl', file_stem, str(tests_root)],
-                capture_output=True, text=True, timeout=10
-            )
-            if result.returncode == 0:
-                unit_tests_found = [
-                    f for f in result.stdout.strip().splitlines()
-                    if 'integration' not in f
-                ]
-        except (subprocess.TimeoutExpired, Exception):
-            pass
+        # First check for test_<stem>.py naming convention
+        for test_dir in tests_root.iterdir() if tests_root.exists() else []:
+            if test_dir.is_file() and test_dir.name == f'test_{file_stem}.py':
+                unit_tests_found.append(str(test_dir))
+        # Then grep for imports/references in non-integration tests
+        for pattern in search_patterns:
+            try:
+                result = subprocess.run(
+                    ['grep', '-rl', pattern, str(tests_root)],
+                    capture_output=True, text=True, timeout=10
+                )
+                if result.returncode == 0:
+                    unit_tests_found.extend(
+                        f for f in result.stdout.strip().splitlines()
+                        if 'integration' not in f and f not in unit_tests_found
+                    )
+            except (subprocess.TimeoutExpired, Exception):
+                pass
 
         # Check if any integration test covers this file
         integration_tests_found = []
-        try:
-            result = subprocess.run(
-                ['grep', '-rl', file_stem, str(integration_tests_root)],
-                capture_output=True, text=True, timeout=10
-            )
-            if result.returncode == 0:
-                integration_tests_found = result.stdout.strip().splitlines()
-        except (subprocess.TimeoutExpired, Exception):
-            pass
+        if integration_tests_root.exists():
+            for pattern in search_patterns:
+                try:
+                    result = subprocess.run(
+                        ['grep', '-rl', pattern, str(integration_tests_root)],
+                        capture_output=True, text=True, timeout=10
+                    )
+                    if result.returncode == 0:
+                        integration_tests_found.extend(
+                            f for f in result.stdout.strip().splitlines()
+                            if f not in integration_tests_found
+                        )
+                except (subprocess.TimeoutExpired, Exception):
+                    pass
 
         # Categorise the gap
         if not unit_tests_found and not integration_tests_found:
@@ -200,6 +225,16 @@ for task in recent_tasks:
                 ),
             })
         # else: has integration tests — no gap
+
+# Deduplicate gaps by file — if multiple tasks changed the same file,
+# report it once (keep the first occurrence, which is the most recent task)
+seen_files = set()
+deduped_gaps = []
+for gap in gaps:
+    if gap['file'] not in seen_files:
+        seen_files.add(gap['file'])
+        deduped_gaps.append(gap)
+gaps = deduped_gaps
 
 # Output the structured report
 critical = [g for g in gaps if g['severity'] == 'critical']
