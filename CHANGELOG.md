@@ -26,6 +26,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **CI status check step before merge** ([TASK-c93fe7d2])
+  - `orchestrator/steps.py`: New `check_ci` step that runs `gh pr checks` to verify GitHub Actions CI has passed before merging. Raises `RetryableStepError` (new exception class in same file) when checks are still pending — moving the task back to `provisional` for re-evaluation on the next scheduler tick. Raises `RuntimeError` when checks have conclusively failed (FAILURE, TIMED_OUT, CANCELLED, ACTION_REQUIRED). No-ops gracefully when the task has no PR number or when `gh` returns no checks.
+  - `orchestrator/result_handler.py`: `handle_agent_result_via_flow` now catches `RetryableStepError` before the general `Exception` handler and re-queues the task to `expected_queue` (rather than moving it to `failed`).
+  - `.octopoid/flows/default.yaml`: `provisional -> done` runs updated from `[post_review_comment, merge_pr]` to `[post_review_comment, check_ci, merge_pr]`.
+  - `.octopoid/flows/project.yaml`: `provisional -> done` runs updated from `[merge_pr]` to `[check_ci, merge_pr]`.
+  - `orchestrator/flow.py`: `generate_default_flow()` and `generate_project_flow()` updated to match.
+
 - **Testing analyst background agent** (PROJ-efe0fc20)
   - `.octopoid/agents/testing-analyst/`: New background analyst agent that runs daily. Scans for test coverage gaps — features shipped with no tests, over-mocked unit tests with no integration coverage, and missing e2e paths. Picks the single highest-impact gap and creates a draft proposal with action buttons. Posts an inbox message so the proposal surfaces in the dashboard.
   - `.octopoid/agents/testing-analyst/scripts/`: Guard script (prevents duplicate proposals), scan-test-gaps script (SDK-aware analysis of done tasks with timestamp tracking), reset-timer utility.

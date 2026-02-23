@@ -4,6 +4,7 @@ Each step is a function: (task: dict, result: dict, task_dir: Path) -> None
 Steps are referenced by name in flow YAML `runs:` lists.
 """
 
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -12,6 +13,19 @@ from typing import Callable
 StepFn = Callable[[dict, dict, Path], None]
 
 STEP_REGISTRY: dict[str, StepFn] = {}
+
+
+class RetryableStepError(Exception):
+    """Raised by a step to indicate a transient condition that should be retried.
+
+    Unlike a plain RuntimeError (which sends the task to 'failed'), a
+    RetryableStepError signals that the current state is temporary and the
+    flow engine should move the task back to its previous queue so it can be
+    re-evaluated on the next scheduler tick.
+
+    Typical use: check_ci raises this when GitHub CI checks are still pending,
+    keeping the task in 'provisional' rather than failing it.
+    """
 
 
 def register_step(name: str) -> Callable:
@@ -44,6 +58,85 @@ def post_review_comment(task: dict, result: dict, task_dir: Path) -> None:
     if pr_number and comment:
         from .pr_utils import add_pr_comment
         add_pr_comment(int(pr_number), comment)
+
+
+@register_step("check_ci")
+def check_ci(task: dict, result: dict, task_dir: Path) -> None:
+    """Verify GitHub Actions CI checks have passed on the task's PR.
+
+    Exits early (no-op) if the task has no PR number.
+
+    Raises:
+        RetryableStepError: if any required CI check is still pending/in-progress,
+            so the task is re-queued and re-checked on the next scheduler tick.
+        RuntimeError: if any CI check has conclusively failed (FAILURE, TIMED_OUT,
+            CANCELLED, ACTION_REQUIRED), with the name of the failing check.
+    """
+    from .config import find_parent_project
+
+    pr_number = task.get("pr_number")
+    if not pr_number:
+        print("check_ci step: no pr_number on task, skipping")
+        return
+
+    cwd = find_parent_project()
+
+    proc = subprocess.run(
+        ["gh", "pr", "checks", str(int(pr_number)), "--json", "name,status,conclusion"],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    if proc.returncode != 0:
+        # gh may return non-zero when there are no checks or on network errors.
+        # Treat as a transient/ignorable condition so we don't block the merge.
+        print(f"check_ci step: gh pr checks returned {proc.returncode}, skipping check: {proc.stderr.strip()}")
+        return
+
+    output = proc.stdout.strip()
+    if not output or output == "[]":
+        print("check_ci step: no CI checks found, passing")
+        return
+
+    try:
+        checks = json.loads(output)
+    except json.JSONDecodeError as e:
+        print(f"check_ci step: failed to parse gh output, skipping: {e}")
+        return
+
+    # Classify each check
+    _FAILING_CONCLUSIONS = {"FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED"}
+    _PASSING_CONCLUSIONS = {"SUCCESS", "NEUTRAL", "SKIPPED"}
+
+    pending = []
+    failed = []
+
+    for check in checks:
+        name = check.get("name", "<unknown>")
+        status = (check.get("status") or "").upper()
+        conclusion = (check.get("conclusion") or "").upper()
+
+        if status != "COMPLETED":
+            pending.append(name)
+        elif conclusion in _FAILING_CONCLUSIONS:
+            failed.append(f"{name} ({conclusion})")
+        elif conclusion not in _PASSING_CONCLUSIONS:
+            # Unknown/unexpected conclusion — treat as pending to be safe
+            pending.append(name)
+
+    if failed:
+        raise RuntimeError(
+            f"check_ci: CI checks failed on PR #{pr_number}: {', '.join(failed)}"
+        )
+
+    if pending:
+        raise RetryableStepError(
+            f"check_ci: CI checks still pending on PR #{pr_number}: {', '.join(pending)}"
+        )
+
+    print(f"check_ci step: all CI checks passed for PR #{pr_number}")
 
 
 @register_step("merge_pr")

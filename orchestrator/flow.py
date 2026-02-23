@@ -426,7 +426,7 @@ transitions:
         type: agent
         agent: gatekeeper
         on_fail: incoming
-    runs: [post_review_comment, merge_pr]
+    runs: [post_review_comment, check_ci, merge_pr]
 """
 
 
@@ -462,7 +462,7 @@ transitions:
     conditions:
       - name: human_approval
         type: manual
-    runs: [merge_project_pr]
+    runs: [check_ci, merge_project_pr]
 """
 
 

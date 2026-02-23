@@ -330,7 +330,7 @@ def handle_agent_result_via_flow(task_id: str, agent_name: str, task_dir: Path, 
             discarded as stale to prevent running wrong transition steps.
     """
     from .flow import load_flow  # noqa: PLC0415
-    from .steps import execute_steps, reject_with_feedback  # noqa: PLC0415
+    from .steps import RetryableStepError, execute_steps, reject_with_feedback  # noqa: PLC0415
 
     result = read_result_json(task_dir)
 
@@ -413,6 +413,20 @@ def handle_agent_result_via_flow(task_id: str, agent_name: str, task_dir: Path, 
             debug_log(f"Flow dispatch: no runs defined for transition from '{current_queue}', task {task_id}")
 
         return True  # Steps executed (or no steps needed) — PID safe to remove
+
+    except RetryableStepError as e:
+        # A step (e.g. check_ci) found a transient condition — move the task back
+        # to its pre-claim queue so it will be re-evaluated on the next tick.
+        requeue_target = expected_queue or current_queue or "provisional"
+        debug_log(f"Flow dispatch: retryable step error for {task_id}, re-queuing to {requeue_target}: {e}")
+        print(f"[{datetime.now().isoformat()}] check_ci pending for task {task_id}, re-queuing to {requeue_target}: {e}")
+        try:
+            sdk = queue_utils.get_sdk()
+            sdk.tasks.update(task_id, queue=requeue_target)
+        except Exception as inner_e:
+            print(f"[{datetime.now().isoformat()}] ERROR: re-queue failed for {task_id}: {inner_e}")
+            debug_log(f"Failed to re-queue {task_id} to {requeue_target}: {inner_e}")
+        return True  # Task re-queued — PID safe to remove
 
     except Exception as e:
         import traceback  # noqa: PLC0415
