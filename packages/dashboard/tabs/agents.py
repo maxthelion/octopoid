@@ -340,9 +340,11 @@ class AgentsTab(TabBase):
         agents = self._report.get("agents", [])
 
         flow_agents = [a for a in agents if a.get("role") in _FLOW_ROLES]
-        # Background: non-flow agents from agents.yaml (not scheduler jobs)
+        # Background: non-flow agents from agents.yaml
         bg_agents = [a for a in agents if a.get("role") not in _FLOW_ROLES]
-        bg_items = bg_agents
+        # Also include type=agent jobs from jobs.yaml (e.g. codebase_analyst, testing_analyst)
+        agent_jobs = [j for j in self._report.get("jobs", []) if j.get("job_type") == "agent"]
+        bg_items = bg_agents + agent_jobs
 
         # Default selection: first flow agent, or first background item if no flow agents
         selected = flow_agents[0] if flow_agents else (bg_items[0] if bg_items else None)

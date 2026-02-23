@@ -28,6 +28,17 @@ When run without arguments, I'll ask for:
 5. **Acceptance Criteria** - Specific requirements
 6. **Proposed / awaiting approval?** - If the user says the task is "proposed", "not yet ready", "needs approval", "hold for now", or similar, set `blocked_by="awaiting-approval"`. The task will be created in the queue but won't be claimed by agents until a human runs `/approve-task <task-id>` to unblock it.
 
+## Enqueuing from a draft
+
+When the user references a draft (by number, filename, or "that draft"), read the draft file first. If it has an **Open Questions** section with unanswered questions:
+
+1. List each open question
+2. State what you are assuming for each one
+3. Show the user your assumptions **before** creating the task
+4. Let them correct any assumptions before proceeding
+
+Do not silently resolve open questions — the user needs to see and approve the answers, since they become baked into the task description that the implementing agent will follow.
+
 ## Implementation
 
 Use `create_task()` from `orchestrator.tasks` to create tasks. This function writes the task file to `.octopoid/tasks/` **and** registers it on the server in one step:
