@@ -330,7 +330,7 @@ def handle_agent_result_via_flow(task_id: str, agent_name: str, task_dir: Path, 
             discarded as stale to prevent running wrong transition steps.
     """
     from .flow import load_flow  # noqa: PLC0415
-    from .steps import execute_steps, reject_with_feedback  # noqa: PLC0415
+    from .steps import CIFailedError, RetryableStepError, execute_steps, reject_with_feedback  # noqa: PLC0415
 
     result = read_result_json(task_dir)
 
@@ -413,6 +413,21 @@ def handle_agent_result_via_flow(task_id: str, agent_name: str, task_dir: Path, 
             debug_log(f"Flow dispatch: no runs defined for transition from '{current_queue}', task {task_id}")
 
         return True  # Steps executed (or no steps needed) — PID safe to remove
+
+    except CIFailedError as e:
+        # CI checks failed — reject the task back to incoming with a clear message
+        print(f"[{datetime.now().isoformat()}] check_ci: CI failed for task {task_id}: {e}")
+        try:
+            sdk = queue_utils.get_sdk()
+            sdk.tasks.reject(task_id, reason=str(e), rejected_by="check_ci")
+        except Exception as inner_e:
+            print(f"[{datetime.now().isoformat()}] ERROR: failed to reject {task_id} after CI failure: {inner_e}")
+        return True  # Task transitioned — PID safe to remove
+
+    except RetryableStepError as e:
+        # CI is still running — re-raise so the scheduler retries on the next tick
+        print(f"[{datetime.now().isoformat()}] check_ci: CI pending for task {task_id}, will retry: {e}")
+        raise  # Scheduler keeps PID and retries next tick
 
     except Exception as e:
         import traceback  # noqa: PLC0415
