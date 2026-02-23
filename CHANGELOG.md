@@ -63,6 +63,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Fix flow stage order in Work kanban board** ([TASK-9be2e3f8])
   - `packages/dashboard/tabs/work.py`: Added `_order_states_by_transitions()` helper that performs a topological sort (Kahn's algorithm) on the flow transition graph. `FlowKanban.compose()` now derives column order from transitions rather than the raw `states` list (which the server returns alphabetically). States not connected to the transition graph (e.g. `"failed"`) are appended after the main lifecycle chain. The lifecycle order is now Incoming → Claimed → Provisional → Done as intended.
   - `tests/test_dashboard.py`: Added `TestOrderStatesByTransitions` class with 8 unit tests covering correct lifecycle ordering, isolated state handling, empty inputs, and edge cases.
+- **action_data round-trip integration test** ([TASK-1f72c39e])
+  - `tests/integration/test_action_data_roundtrip.py`: New integration tests verifying that `action_data` (a JSON string containing a `buttons` array) is preserved end-to-end when creating an action and fetching it back via the list endpoint. Covers: single create/fetch round-trip with button label and command verification, multiple buttons, and the no-action_data case.
 
 - **Flow-specific kanban tabs in Work view** ([TASK-0ddd897e])
   - `packages/python-sdk/octopoid_sdk/client.py`: Added `FlowsAPI.list()` method to fetch all registered flow definitions from `/api/v1/flows`.
