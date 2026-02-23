@@ -17,6 +17,7 @@ class TestStepRegistry:
         from orchestrator.steps import STEP_REGISTRY
 
         assert "post_review_comment" in STEP_REGISTRY
+        assert "check_ci" in STEP_REGISTRY
         assert "merge_pr" in STEP_REGISTRY
         assert "reject_with_feedback" in STEP_REGISTRY
 
@@ -302,3 +303,164 @@ class TestCreatePrStep:
             create_pr(task, {}, task_dir)
 
         mock_repo_cls.assert_called_once_with(worktree, base_branch="main")
+
+
+class TestCheckCiStep:
+    """Tests for the check_ci step."""
+
+    def test_check_ci_no_pr_is_noop(self, tmp_path):
+        """check_ci skips gracefully when no pr_number on task."""
+        from orchestrator.steps import check_ci
+
+        with patch("orchestrator.steps.subprocess.run") as mock_run:
+            check_ci({}, {}, tmp_path)
+            mock_run.assert_not_called()
+
+    def test_check_ci_no_pr_number_key_is_noop(self, tmp_path):
+        """check_ci skips gracefully when pr_number is None."""
+        from orchestrator.steps import check_ci
+
+        with patch("orchestrator.steps.subprocess.run") as mock_run:
+            check_ci({"pr_number": None}, {}, tmp_path)
+            mock_run.assert_not_called()
+
+    def test_check_ci_raises_retryable_on_pending(self, tmp_path):
+        """check_ci raises RetryableStepError when a CI check is in progress."""
+        import json as _json
+        from orchestrator.steps import RetryableStepError, check_ci
+
+        checks = [{"name": "test-suite", "state": "IN_PROGRESS", "conclusion": None}]
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = _json.dumps(checks)
+        mock_result.stderr = ""
+
+        with patch("orchestrator.steps.subprocess.run", return_value=mock_result):
+            with pytest.raises(RetryableStepError, match="pending"):
+                check_ci({"pr_number": 42}, {}, tmp_path)
+
+    def test_check_ci_raises_retryable_on_queued(self, tmp_path):
+        """check_ci raises RetryableStepError when a CI check is queued."""
+        import json as _json
+        from orchestrator.steps import RetryableStepError, check_ci
+
+        checks = [{"name": "build", "state": "QUEUED", "conclusion": None}]
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = _json.dumps(checks)
+        mock_result.stderr = ""
+
+        with patch("orchestrator.steps.subprocess.run", return_value=mock_result):
+            with pytest.raises(RetryableStepError, match="pending"):
+                check_ci({"pr_number": 99}, {}, tmp_path)
+
+    def test_check_ci_raises_runtime_error_on_failure(self, tmp_path):
+        """check_ci raises RuntimeError with the failed check name when CI failed."""
+        import json as _json
+        from orchestrator.steps import check_ci
+
+        checks = [
+            {"name": "lint", "state": "COMPLETED", "conclusion": "FAILURE"},
+        ]
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = _json.dumps(checks)
+        mock_result.stderr = ""
+
+        with patch("orchestrator.steps.subprocess.run", return_value=mock_result):
+            with pytest.raises(RuntimeError, match="lint"):
+                check_ci({"pr_number": 42}, {}, tmp_path)
+
+    def test_check_ci_raises_runtime_error_names_all_failed_checks(self, tmp_path):
+        """check_ci includes all failed check names in the error message."""
+        import json as _json
+        from orchestrator.steps import check_ci
+
+        checks = [
+            {"name": "unit-tests", "state": "COMPLETED", "conclusion": "FAILURE"},
+            {"name": "integration-tests", "state": "COMPLETED", "conclusion": "TIMED_OUT"},
+        ]
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = _json.dumps(checks)
+        mock_result.stderr = ""
+
+        with patch("orchestrator.steps.subprocess.run", return_value=mock_result):
+            with pytest.raises(RuntimeError) as exc_info:
+                check_ci({"pr_number": 42}, {}, tmp_path)
+
+        msg = str(exc_info.value)
+        assert "unit-tests" in msg
+        assert "integration-tests" in msg
+
+    def test_check_ci_succeeds_when_all_pass(self, tmp_path):
+        """check_ci completes without error when all CI checks passed."""
+        import json as _json
+        from orchestrator.steps import check_ci
+
+        checks = [
+            {"name": "unit-tests", "state": "COMPLETED", "conclusion": "SUCCESS"},
+            {"name": "lint", "state": "COMPLETED", "conclusion": "SUCCESS"},
+        ]
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = _json.dumps(checks)
+        mock_result.stderr = ""
+
+        with patch("orchestrator.steps.subprocess.run", return_value=mock_result):
+            # Should not raise
+            check_ci({"pr_number": 42}, {}, tmp_path)
+
+    def test_check_ci_succeeds_when_checks_skipped_or_neutral(self, tmp_path):
+        """check_ci treats SKIPPED and NEUTRAL conclusions as passing."""
+        import json as _json
+        from orchestrator.steps import check_ci
+
+        checks = [
+            {"name": "optional-check", "state": "COMPLETED", "conclusion": "SKIPPED"},
+            {"name": "docs-check", "state": "COMPLETED", "conclusion": "NEUTRAL"},
+        ]
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = _json.dumps(checks)
+        mock_result.stderr = ""
+
+        with patch("orchestrator.steps.subprocess.run", return_value=mock_result):
+            # Should not raise
+            check_ci({"pr_number": 42}, {}, tmp_path)
+
+    def test_check_ci_noop_when_no_checks_configured(self, tmp_path):
+        """check_ci proceeds without error when the PR has no CI checks."""
+        import json as _json
+        from orchestrator.steps import check_ci
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = _json.dumps([])
+        mock_result.stderr = ""
+
+        with patch("orchestrator.steps.subprocess.run", return_value=mock_result):
+            # Should not raise
+            check_ci({"pr_number": 42}, {}, tmp_path)
+
+    def test_check_ci_failed_and_pending_reports_failure_first(self, tmp_path):
+        """check_ci raises RuntimeError (not RetryableStepError) when some checks failed
+        even if other checks are still pending."""
+        import json as _json
+        from orchestrator.steps import RetryableStepError, check_ci
+
+        checks = [
+            {"name": "lint", "state": "COMPLETED", "conclusion": "FAILURE"},
+            {"name": "tests", "state": "IN_PROGRESS", "conclusion": None},
+        ]
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = _json.dumps(checks)
+        mock_result.stderr = ""
+
+        with patch("orchestrator.steps.subprocess.run", return_value=mock_result):
+            with pytest.raises(RuntimeError) as exc_info:
+                check_ci({"pr_number": 42}, {}, tmp_path)
+            # Must be RuntimeError, not RetryableStepError
+            assert not isinstance(exc_info.value, RetryableStepError)
+            assert "lint" in str(exc_info.value)

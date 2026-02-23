@@ -4,6 +4,7 @@ Each step is a function: (task: dict, result: dict, task_dir: Path) -> None
 Steps are referenced by name in flow YAML `runs:` lists.
 """
 
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -12,6 +13,15 @@ from typing import Callable
 StepFn = Callable[[dict, dict, Path], None]
 
 STEP_REGISTRY: dict[str, StepFn] = {}
+
+
+class RetryableStepError(RuntimeError):
+    """Raised by a step when the failure is transient and should be retried.
+
+    For example, check_ci raises this when CI checks are still in progress.
+    The caller should leave the task in its current state and retry on the
+    next tick rather than treating this as a permanent failure.
+    """
 
 
 def register_step(name: str) -> Callable:
@@ -44,6 +54,87 @@ def post_review_comment(task: dict, result: dict, task_dir: Path) -> None:
     if pr_number and comment:
         from .pr_utils import add_pr_comment
         add_pr_comment(int(pr_number), comment)
+
+
+@register_step("check_ci")
+def check_ci(task: dict, result: dict, task_dir: Path) -> None:
+    """Verify that GitHub CI has passed before allowing merge_pr to proceed.
+
+    Uses `gh pr checks` to inspect CI status. Outcomes:
+    - No pr_number on task: no-op (graceful skip).
+    - All checks passed: step succeeds, merge_pr may proceed.
+    - Any check still pending/in-progress: raises RetryableStepError so the
+      task stays in its current queue and is retried on the next scheduler tick.
+    - Any check failed: raises RuntimeError with the name(s) of failed check(s).
+    """
+    pr_number = task.get("pr_number")
+    if not pr_number:
+        print("check_ci step: no pr_number on task, skipping")
+        return
+
+    try:
+        proc = subprocess.run(
+            ["gh", "pr", "checks", str(pr_number), "--json", "name,state,conclusion"],
+            capture_output=True, text=True, timeout=60,
+        )
+    except subprocess.TimeoutExpired:
+        raise RetryableStepError("check_ci: gh pr checks timed out after 60s, will retry")
+    except FileNotFoundError:
+        print("check_ci step: gh CLI not found, skipping CI check")
+        return
+
+    if proc.returncode != 0:
+        stderr = proc.stderr.strip()
+        # If stdout is empty, the PR likely has no CI configured — treat as pass
+        if not proc.stdout.strip():
+            print(f"check_ci step: no CI checks found (gh exit {proc.returncode}), proceeding")
+            return
+        raise RetryableStepError(f"check_ci: failed to query CI checks: {stderr}")
+
+    try:
+        checks = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        print("check_ci step: could not parse gh output, skipping")
+        return
+
+    if not checks:
+        print("check_ci step: no CI checks configured, proceeding")
+        return
+
+    _PENDING_STATES = {"QUEUED", "IN_PROGRESS", "PENDING", "WAITING", "REQUESTED"}
+    _FAILED_STATES = {"ERROR", "FAILURE"}
+    _FAILED_CONCLUSIONS = {
+        "FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED",
+        "STARTUP_FAILURE", "ERROR",
+    }
+
+    failed_checks: list[str] = []
+    pending_checks: list[str] = []
+
+    for check in checks:
+        name = check.get("name", "unknown")
+        state = (check.get("state") or "").upper()
+        conclusion = (check.get("conclusion") or "").upper()
+
+        if state in _PENDING_STATES:
+            pending_checks.append(name)
+        elif state in _FAILED_STATES or conclusion in _FAILED_CONCLUSIONS:
+            label = conclusion.lower() if conclusion else state.lower()
+            failed_checks.append(f"{name} ({label})")
+
+    if failed_checks:
+        raise RuntimeError(
+            f"check_ci: CI failed — {', '.join(failed_checks)}. "
+            f"Fix the failures and push again."
+        )
+
+    if pending_checks:
+        raise RetryableStepError(
+            f"check_ci: CI still pending — {', '.join(pending_checks)}. "
+            f"Waiting for checks to complete."
+        )
+
+    print(f"check_ci step: all {len(checks)} CI check(s) passed")
 
 
 @register_step("merge_pr")
