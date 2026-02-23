@@ -205,9 +205,14 @@ class WorkTab(TabBase):
             flows = [{"name": "default", "states": ["incoming", "claimed", "provisional"]}]
 
         # Group tasks by (flow_name, queue)
+        # Pool "project" tasks into the "default" tab — project tasks use the
+        # same state machine but belong to a project parent.
+        registered_flow_names = {f.get("name") for f in flows}
         tasks_by_flow_queue: dict[str, dict[str, list]] = {}
         for task in all_tasks:
             flow_name = task.get("flow") or "default"
+            if flow_name not in registered_flow_names:
+                flow_name = "default"
             queue_name = task.get("queue") or "incoming"
             if flow_name not in tasks_by_flow_queue:
                 tasks_by_flow_queue[flow_name] = {}
