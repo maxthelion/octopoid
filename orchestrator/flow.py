@@ -3,9 +3,12 @@
 A flow defines how tasks move through the system as a conditional state machine.
 Transitions between states have conditions (gates) and actions (runs).
 
-Flow files are YAML stored in .octopoid/flows/
+Flow files are YAML stored in .octopoid/flows/ and used as source files for
+`octopoid sync-flows`. At runtime, flows are read from the server via the SDK.
 """
 
+import json
+import logging
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -272,6 +275,73 @@ class Flow:
             data = yaml.safe_load(f)
         return cls.from_dict(data)
 
+    @classmethod
+    def from_server_dict(cls, data: dict[str, Any]) -> "Flow":
+        """Create a Flow from a server response dict (e.g. from sdk.flows.list()).
+
+        Handles JSON-encoded strings for states and transitions, and supports
+        both 'from_state'/'to_state' and 'from'/'to' key names in transitions.
+        Full transition detail (agent, runs, conditions) is preserved when
+        present (stored by sync-flows).
+
+        Args:
+            data: Flow dict from the server, with keys 'name', 'transitions', etc.
+
+        Returns:
+            Flow object
+        """
+        name = data["name"]
+
+        # Transitions may be a JSON-encoded string or a native list
+        transitions_raw = data.get("transitions", [])
+        if isinstance(transitions_raw, str):
+            try:
+                transitions_raw = json.loads(transitions_raw)
+            except (ValueError, json.JSONDecodeError):
+                transitions_raw = []
+
+        transitions = []
+        for t in transitions_raw:
+            if not isinstance(t, dict):
+                continue
+            # Server may use from_state/to_state or from/to key names
+            from_state = t.get("from_state") or t.get("from")
+            to_state = t.get("to_state") or t.get("to")
+            if not from_state or not to_state:
+                continue
+            conditions = [
+                Condition.from_dict(c) for c in t.get("conditions", [])
+            ]
+            transitions.append(Transition(
+                from_state=from_state,
+                to_state=to_state,
+                agent=t.get("agent"),
+                runs=t.get("runs", []),
+                conditions=conditions,
+            ))
+
+        # child_flow — only present if sync-flows stored it on the server
+        child_flow = None
+        child_flow_raw = data.get("child_flow")
+        if child_flow_raw:
+            if isinstance(child_flow_raw, str):
+                try:
+                    child_flow_raw = json.loads(child_flow_raw)
+                except (ValueError, json.JSONDecodeError):
+                    child_flow_raw = None
+            if isinstance(child_flow_raw, dict):
+                child_flow = cls.from_server_dict({
+                    "name": f"{name}_child",
+                    "transitions": child_flow_raw.get("transitions", []),
+                })
+
+        return cls(
+            name=name,
+            description=data.get("description", ""),
+            transitions=transitions,
+            child_flow=child_flow,
+        )
+
     def get_all_states(self) -> set[str]:
         """Get all states referenced in this flow.
 
@@ -336,38 +406,49 @@ class Flow:
 
 
 def load_flow(flow_name: str) -> Flow:
-    """Load a flow by name from .octopoid/flows/
+    """Load a flow by name from the server.
 
     Args:
-        flow_name: Name of the flow (without .yaml extension)
+        flow_name: Name of the flow
 
     Returns:
         Flow object
 
     Raises:
-        FileNotFoundError: If flow file doesn't exist
-        yaml.YAMLError: If YAML is invalid
-        ValueError: If flow structure is invalid
+        FileNotFoundError: If the flow is not found on the server
+        RuntimeError: If the server is unreachable
     """
-    flows_dir = get_orchestrator_dir() / "flows"
-    flow_path = flows_dir / f"{flow_name}.yaml"
+    from .sdk import get_sdk  # noqa: PLC0415
 
-    if not flow_path.exists():
-        raise FileNotFoundError(
-            f"Flow '{flow_name}' not found at {flow_path}. "
-            f"Available flows: {list_flows()}"
-        )
+    try:
+        sdk = get_sdk()
+        flows = sdk.flows.list()
+    except Exception as e:
+        logging.error(f"load_flow: failed to reach server for flow '{flow_name}': {e}")
+        raise
 
-    return Flow.from_yaml_file(flow_path)
+    for flow_data in flows:
+        if flow_data.get("name") == flow_name:
+            return Flow.from_server_dict(flow_data)
+
+    available = [f.get("name") for f in flows if f.get("name")]
+    raise FileNotFoundError(
+        f"Flow '{flow_name}' not found on server. "
+        f"Available flows: {available}"
+    )
 
 
 def list_flows() -> list[str]:
-    """List all available flow names."""
-    flows_dir = get_orchestrator_dir() / "flows"
-    if not flows_dir.exists():
-        return []
+    """List all available flow names from the server."""
+    from .sdk import get_sdk  # noqa: PLC0415
 
-    return [f.stem for f in flows_dir.glob("*.yaml")]
+    try:
+        sdk = get_sdk()
+        flows = sdk.flows.list()
+        return [f.get("name") for f in flows if f.get("name")]
+    except Exception as e:
+        logging.warning(f"list_flows: failed to fetch flows from server: {e}")
+        return []
 
 
 def validate_flow_file(flow_path: Path) -> tuple[Flow | None, list[str]]:

@@ -1868,17 +1868,19 @@ def _register_orchestrator(orchestrator_registered: bool = False) -> None:
         debug_log(f"Orchestrator registration failed (non-fatal): {e}")
 
     # Sync flow definitions to server so it can validate queue names at runtime.
+    # Reads directly from local YAML files (source of truth for sync).
     # Non-fatal: errors are logged but never block registration.
     try:
-        from .flow import list_flows, load_flow
+        from .flow import Flow
         from .config import get_orchestrator_dir
         flows_dir = get_orchestrator_dir() / "flows"
         if flows_dir.exists():
             from .queue_utils import get_sdk as _get_sdk
             _sdk = _get_sdk()
-            for flow_name in list_flows():
+            for flow_path in sorted(flows_dir.glob("*.yaml")):
+                flow_name = flow_path.stem
                 try:
-                    flow = load_flow(flow_name)
+                    flow = Flow.from_yaml_file(flow_path)
                     states = sorted(flow.get_all_states())
                     transitions = [
                         {"from": t.from_state, "to": t.to_state}

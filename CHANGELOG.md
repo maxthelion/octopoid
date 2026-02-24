@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Scheduler reads flows from server instead of local YAML** ([TASK-5ec31cc1])
+  - `orchestrator/flow.py`: `load_flow()` now fetches from the server via `sdk.flows.list()` and raises `FileNotFoundError` if not found (no silent fallback to local YAML). `list_flows()` returns names from the server and returns `[]` on SDK error.
+  - `orchestrator/flow.py`: Added `Flow.from_server_dict()` classmethod to parse server response into Flow objects — handles JSON-encoded strings, both `from_state`/`to_state` and `from`/`to` key names, and full transition detail (agent, runs, conditions, child_flow).
+  - `orchestrator/scheduler.py`: Registration-time flow sync now uses `Flow.from_yaml_file()` directly instead of `load_flow()` so local YAML → server sync remains functional.
+  - `tests/test_flow.py`: Added tests for `Flow.from_server_dict()`, `load_flow()`, and `list_flows()` with mocked SDK.
+
 - **Retire filesystem task files — task content stored server-side** ([TASK-fb8c568c])
   - `orchestrator/tasks.py`: `create_task()` now POSTs the full markdown body as `content` to the server and does NOT write `.octopoid/tasks/TASK-{id}.md` files. Returns `"TASK-{id}"` string instead of a `Path`. `claim_task()` reads content directly from the server response. `find_task_by_id()` uses server content with no disk reads.
   - `orchestrator/scheduler.py`: `guard_task_description_nonempty()` checks `task["content"]` from server response, removes file existence checks.
