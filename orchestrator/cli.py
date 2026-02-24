@@ -181,6 +181,45 @@ def cmd_install_commands(args: argparse.Namespace) -> None:
         print("All commands up to date.")
 
 
+def cmd_sync_flows(args: argparse.Namespace) -> None:
+    """Read all .octopoid/flows/*.yaml and register them on the server."""
+    from .config import get_orchestrator_dir
+    from .flow import Flow, flow_to_server_registration
+
+    flows_dir = get_orchestrator_dir() / "flows"
+    if not flows_dir.exists():
+        print(f"No flows directory found at {flows_dir}", file=sys.stderr)
+        sys.exit(1)
+
+    yaml_files = sorted(flows_dir.glob("*.yaml"))
+    if not yaml_files:
+        print("No flow YAML files found.")
+        return
+
+    sdk = get_sdk()
+    registered = 0
+    failed = 0
+
+    for yaml_file in yaml_files:
+        try:
+            flow = Flow.from_yaml_file(yaml_file)
+            reg = flow_to_server_registration(flow)
+            sdk.flows.register(
+                name=flow.name,
+                states=reg["states"],
+                transitions=reg["transitions"],
+            )
+            print(f"  Registered '{flow.name}' ({len(reg['states'])} states, {len(reg['transitions'])} transitions)")
+            registered += 1
+        except Exception as e:
+            print(f"  Failed '{yaml_file.stem}': {e}", file=sys.stderr)
+            failed += 1
+
+    print(f"\n{registered} flow(s) registered" + (f", {failed} failed" if failed else ""))
+    if failed:
+        sys.exit(1)
+
+
 def cmd_worktrees_clean(args: argparse.Namespace) -> None:
     """Prune task worktrees for done/deleted tasks."""
     from .git_utils import cleanup_task_worktree
@@ -273,6 +312,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_ic = sub.add_parser("install-commands", help="Install slash commands to .claude/commands/")
     p_ic.add_argument("--force", "-f", action="store_true", help="Overwrite even if unchanged")
     p_ic.set_defaults(func=cmd_install_commands)
+
+    # sync-flows
+    p_sf = sub.add_parser("sync-flows", help="Register local flow YAML files on the server")
+    p_sf.set_defaults(func=cmd_sync_flows)
 
     return parser
 
