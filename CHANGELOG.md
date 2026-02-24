@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Structured inbox message schema** ([TASK-ef7ecfd9])
+  - `orchestrator/message_dispatcher.py`: Added `InboxMessage` TypedDict documenting the schema for all human-inbox messages (fields: `title`, `summary`, `entity_type`, `entity_id`, `message_type`, `actions`, `timestamp`). Added `build_inbox_message()` helper that serialises a conforming JSON string. All three `sdk.messages.create()` calls in `dispatch_action_messages()` now use this helper — success messages get `message_type="result"`, failures and stuck-message timeouts get `message_type="error"` with a human-readable title.
+  - `packages/dashboard/tabs/inbox.py`: `_parse_content()` now handles the new schema (renders `title` as a Markdown heading, `summary` as body, entity reference line) while remaining backward-compatible with legacy message formats (body/text/message keys or plain text).
+  - Analyst prompt files (`architecture-analyst`, `codebase-analyst`, `testing-analyst`): Updated inbox message code snippets to emit the new schema with `title`, `summary`, `entity_type`, `entity_id`, `message_type="proposal"`, and suggested `actions`.
+
 ### Changed
 
 - **Scheduler reads flows from server instead of local YAML** ([TASK-5ec31cc1])
