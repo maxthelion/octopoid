@@ -333,10 +333,10 @@ class FlowsAPI:
         self.client = client
 
     def list(self) -> List[Dict[str, Any]]:
-        """List all registered flow definitions.
+        """List registered flow definitions (filtered by SDK scope).
 
         Returns:
-            List of flow dicts with 'name', 'states', and 'transitions' keys
+            List of flow dicts with 'name', 'scope', 'states', and 'transitions' keys
         """
         response = self.client._request('GET', '/api/v1/flows')
         if isinstance(response, dict) and 'flows' in response:
@@ -348,13 +348,21 @@ class FlowsAPI:
         name: str,
         states: List[str],
         transitions: Optional[List[Dict[str, Any]]] = None,
+        description: Optional[str] = None,
+        child_flow: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Register (upsert) a flow definition on the server.
+
+        Scope is auto-injected by the SDK's _request method.
 
         Args:
             name: Flow name (e.g., 'default')
             states: List of all queue names used by this flow
-            transitions: Optional list of transition dicts with 'from' and 'to' keys
+            transitions: List of transition dicts with full detail (from, to,
+                agent, runs, conditions)
+            description: Optional flow description
+            child_flow: Optional child flow dict (for project flows) with
+                its own 'transitions' list
 
         Returns:
             Server response dict
@@ -362,7 +370,24 @@ class FlowsAPI:
         data: Dict[str, Any] = {'states': states}
         if transitions is not None:
             data['transitions'] = transitions
+        if description is not None:
+            data['description'] = description
+        if child_flow is not None:
+            data['child_flow'] = child_flow
         return self.client._request('PUT', f'/api/v1/flows/{name}', json=data)
+
+    def delete(self, name: str) -> Dict[str, Any]:
+        """Delete a flow definition.
+
+        Scope is auto-injected by the SDK's _request method.
+
+        Args:
+            name: Flow name to delete
+
+        Returns:
+            Deletion confirmation dict
+        """
+        return self.client._request('DELETE', f'/api/v1/flows/{name}')
 
 
 class MessagesAPI:

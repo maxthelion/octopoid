@@ -72,6 +72,8 @@ def _register_flows_on_server(flows_dir: Path) -> None:
                 name=flow.name,
                 states=reg["states"],
                 transitions=reg["transitions"],
+                description=reg.get("description"),
+                child_flow=reg.get("child_flow"),
             )
             print(f"  Registered flow '{flow.name}' on server")
         except Exception as e:

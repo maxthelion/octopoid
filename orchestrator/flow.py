@@ -563,18 +563,53 @@ def create_flows_directory() -> None:
         project_flow_path.write_text(generate_project_flow())
 
 
+def _serialize_condition(c: Condition) -> dict:
+    """Serialize a Condition to a dict for server storage."""
+    d: dict[str, Any] = {"name": c.name, "type": c.type}
+    if c.script:
+        d["script"] = c.script
+    if c.agent:
+        d["agent"] = c.agent
+    if c.on_fail:
+        d["on_fail"] = c.on_fail
+    return d
+
+
+def _serialize_transitions(transitions: list[Transition]) -> list[dict]:
+    """Serialize transitions including agent, runs, and conditions."""
+    result = []
+    for t in transitions:
+        td: dict[str, Any] = {"from": t.from_state, "to": t.to_state}
+        if t.agent:
+            td["agent"] = t.agent
+        if t.runs:
+            td["runs"] = t.runs
+        if t.conditions:
+            td["conditions"] = [_serialize_condition(c) for c in t.conditions]
+        result.append(td)
+    return result
+
+
 def flow_to_server_registration(flow: Flow) -> dict:
     """Convert a Flow to the dict format expected by sdk.flows.register().
 
     Returns:
-        Dict with 'states' (list[str]) and 'transitions' (list[{from, to}])
+        Dict with 'states', 'transitions' (with full detail: agent, runs,
+        conditions), and optionally 'description' and 'child_flow'.
     """
-    states = sorted(flow.get_all_states())
-    transitions = [
-        {"from": t.from_state, "to": t.to_state}
-        for t in flow.transitions
-    ]
-    return {"states": states, "transitions": transitions}
+    all_states = flow.get_all_states()
+    if flow.child_flow:
+        all_states |= flow.child_flow.get_all_states()
+    states = sorted(all_states)
+    transitions = _serialize_transitions(flow.transitions)
+    reg: dict[str, Any] = {"states": states, "transitions": transitions}
+    if flow.description:
+        reg["description"] = flow.description
+    if flow.child_flow:
+        reg["child_flow"] = {
+            "transitions": _serialize_transitions(flow.child_flow.transitions),
+        }
+    return reg
 
 
 def evaluate_script_conditions(

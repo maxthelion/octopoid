@@ -208,6 +208,8 @@ def cmd_sync_flows(args: argparse.Namespace) -> None:
                 name=flow.name,
                 states=reg["states"],
                 transitions=reg["transitions"],
+                description=reg.get("description"),
+                child_flow=reg.get("child_flow"),
             )
             print(f"  Registered '{flow.name}' ({len(reg['states'])} states, {len(reg['transitions'])} transitions)")
             registered += 1
