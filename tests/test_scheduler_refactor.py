@@ -813,6 +813,103 @@ class TestHandleAgentResultViaFlowDecisions:
 
 
 # =============================================================================
+# Rebase/merge failure rejection tests
+# =============================================================================
+
+
+class TestHandleAgentResultRebaseMergeFailure:
+    """Test that rebase/merge failures during provisional->done reject to incoming."""
+
+    def _make_flow_with_conditions(self, runs: list | None = None, on_fail: str = "incoming") -> MagicMock:
+        """Build a flow mock with a condition that has an on_fail target."""
+        condition = MagicMock()
+        condition.type = "agent"
+        condition.on_fail = on_fail
+
+        transition = MagicMock()
+        transition.runs = runs or ["rebase_on_base", "merge_pr"]
+        transition.conditions = [condition]
+
+        flow = MagicMock()
+        flow.get_transitions_from.return_value = [transition]
+        flow.child_flow = None
+        return flow
+
+    def test_rebase_failure_rejects_to_incoming(self, tmp_path: Path) -> None:
+        """A rebase_on_base RuntimeError must reject to incoming, not move to failed."""
+        result = {"status": "success", "decision": "approve"}
+        (tmp_path / "result.json").write_text(json.dumps(result))
+
+        mock_sdk = _make_sdk_mock(queue="provisional")
+        mock_flow = self._make_flow_with_conditions()
+
+        rebase_error = RuntimeError("rebase_on_base: git rebase onto origin/main failed:\nCONFLICT")
+
+        with (
+            patch("orchestrator.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("orchestrator.flow.load_flow", return_value=mock_flow),
+            patch("orchestrator.steps.execute_steps", side_effect=rebase_error),
+            patch("orchestrator.result_handler.debug_log"),
+            patch("orchestrator.task_thread.post_message"),
+        ):
+            result_val = handle_agent_result_via_flow("TASK-test", "gatekeeper-1", tmp_path)
+
+        # Must return True (PID safe to remove) and call reject, NOT update to failed
+        assert result_val is True
+        mock_sdk.tasks.reject.assert_called_once()
+        reject_kwargs = mock_sdk.tasks.reject.call_args
+        assert reject_kwargs.args[0] == "TASK-test"
+        mock_sdk.tasks.update.assert_not_called()
+
+    def test_merge_failure_rejects_to_incoming(self, tmp_path: Path) -> None:
+        """A merge_pr RuntimeError must reject to incoming, not move to failed."""
+        result = {"status": "success", "decision": "approve"}
+        (tmp_path / "result.json").write_text(json.dumps(result))
+
+        mock_sdk = _make_sdk_mock(queue="provisional")
+        mock_flow = self._make_flow_with_conditions()
+
+        merge_error = RuntimeError("merge_pr failed: Pull Request is not mergeable")
+
+        with (
+            patch("orchestrator.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("orchestrator.flow.load_flow", return_value=mock_flow),
+            patch("orchestrator.steps.execute_steps", side_effect=merge_error),
+            patch("orchestrator.result_handler.debug_log"),
+            patch("orchestrator.task_thread.post_message"),
+        ):
+            result_val = handle_agent_result_via_flow("TASK-test", "gatekeeper-1", tmp_path)
+
+        assert result_val is True
+        mock_sdk.tasks.reject.assert_called_once()
+        mock_sdk.tasks.update.assert_not_called()
+
+    def test_non_merge_runtime_error_still_fails(self, tmp_path: Path) -> None:
+        """A RuntimeError unrelated to rebase/merge must still move task to failed."""
+        result = {"status": "success", "decision": "approve"}
+        (tmp_path / "result.json").write_text(json.dumps(result))
+
+        mock_sdk = _make_sdk_mock(queue="provisional")
+        mock_flow = self._make_flow_with_conditions()
+
+        other_error = RuntimeError("Some unexpected error during post_review_comment")
+
+        with (
+            patch("orchestrator.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("orchestrator.flow.load_flow", return_value=mock_flow),
+            patch("orchestrator.steps.execute_steps", side_effect=other_error),
+            patch("orchestrator.result_handler.debug_log"),
+        ):
+            handle_agent_result_via_flow("TASK-test", "gatekeeper-1", tmp_path)
+
+        # Must NOT call reject — should fall through to failed
+        mock_sdk.tasks.reject.assert_not_called()
+        mock_sdk.tasks.update.assert_called_once()
+        call_kwargs = mock_sdk.tasks.update.call_args
+        assert call_kwargs.kwargs.get("queue") == "failed"
+
+
+# =============================================================================
 # Detached HEAD enforcement tests
 # =============================================================================
 
