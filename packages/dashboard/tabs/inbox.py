@@ -1,8 +1,10 @@
 """Inbox tab — server-sourced messages addressed to the human, master-detail view.
 
-Left panel: scrollable message list (newest first) showing type, from_actor, and
-content preview. Right panel: full message content rendered as Markdown. Fixed
-action bar at bottom: buttons parsed from content JSON, plus free-text input.
+Left panel: scrollable message list (newest first) showing type tag, a
+human-readable title, and a relative timestamp. Right panel: full message
+content rendered as Markdown, optionally preceded by the referenced entity
+content (draft / task). Fixed action bar at bottom: buttons parsed from
+content JSON, plus free-text input.
 
 Clicking an action button posts an action_command back via sdk.messages.create().
 """
@@ -10,6 +12,8 @@ Clicking an action button posts an action_command back via sdk.messages.create()
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
+from pathlib import Path
 
 from rich.text import Text
 from textual.app import ComposeResult
@@ -30,9 +34,64 @@ _TYPE_TAGS: dict[str, tuple[str, str]] = {
     "error": ("ERR", "#ef5350"),
 }
 
+# Human-readable fallback titles per message type
+_TYPE_TITLES: dict[str, str] = {
+    "action_proposal": "Proposal",
+    "action_command": "Command",
+    "worker_result": "Result",
+    "info": "Info",
+    "warning": "Warning",
+    "error": "Error",
+}
+
+# Actor display names
+_ACTOR_NAMES: dict[str, str] = {
+    "agent": "Agent",
+    "human": "Human",
+    "orchestrator": "Orchestrator",
+    "system": "System",
+}
+
 # Number of fixed action button slots
 _NUM_ACTION_SLOTS = 3
 _ACTION_HOTKEYS = ["A", "B", "C"]
+
+
+def _actor_display(actor: str) -> str:
+    """Return a human-readable actor name."""
+    if not actor:
+        return "Unknown"
+    return _ACTOR_NAMES.get(actor.lower(), actor.capitalize())
+
+
+def _rel_time(iso_str: str | None) -> str:
+    """Format an ISO timestamp as a short relative time string.
+
+    Examples: 'just now', '5m ago', '3h ago', 'yesterday', '2d ago'.
+    Returns empty string if iso_str is absent or unparseable.
+    """
+    if not iso_str:
+        return ""
+    try:
+        dt = datetime.fromisoformat(str(iso_str).replace("Z", "+00:00"))
+        now = datetime.now(timezone.utc)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        total_secs = (now - dt).total_seconds()
+        if total_secs < 60:
+            return "just now"
+        mins = int(total_secs / 60)
+        if mins < 60:
+            return f"{mins}m ago"
+        hours = mins // 60
+        if hours < 24:
+            return f"{hours}h ago"
+        days = hours // 24
+        if days == 1:
+            return "yesterday"
+        return f"{days}d ago"
+    except (ValueError, TypeError):
+        return ""
 
 
 def _parse_content(content: str) -> tuple[str, list[dict]]:
@@ -74,8 +133,9 @@ def _parse_content(content: str) -> tuple[str, list[dict]]:
             # --- Legacy format: body/text/message key ---
             body = data.get("body") or data.get("text") or data.get("message") or ""
             if not body:
-                # Fall back to pretty-printing the JSON minus the actions key
-                display_data = {k: v for k, v in data.items() if k != "actions"}
+                # Fall back to pretty-printing the JSON minus display-only keys
+                skip = {"actions", "title", "entity_type", "entity_id", "subject"}
+                display_data = {k: v for k, v in data.items() if k not in skip}
                 body = f"```json\n{json.dumps(display_data, indent=2)}\n```" if display_data else content
             return body or "_empty_", actions
     except (json.JSONDecodeError, ValueError):
@@ -85,10 +145,130 @@ def _parse_content(content: str) -> tuple[str, list[dict]]:
     return content, []
 
 
+def _extract_title(message: dict) -> str:
+    """Extract or synthesize a human-readable title for the message list.
+
+    Priority:
+    1. Explicit 'title' or 'subject' field in content JSON (structured schema).
+    2. First non-empty line of 'body'/'text'/'message' in content JSON.
+    3. First line of plain-text content.
+    4. Type-based fallback ('Proposal', 'Result', etc.).
+    """
+    content = message.get("content", "")
+    msg_type = message.get("type", "")
+
+    if content:
+        try:
+            data = json.loads(content)
+            if isinstance(data, dict):
+                title = data.get("title") or data.get("subject") or ""
+                if title:
+                    s = str(title)
+                    return s if len(s) <= 80 else s[:77] + "…"
+                body = data.get("body") or data.get("text") or data.get("message") or ""
+                if body:
+                    first_line = body.strip().split("\n")[0].lstrip("#").strip()
+                    if first_line:
+                        return first_line if len(first_line) <= 80 else first_line[:77] + "…"
+        except (json.JSONDecodeError, ValueError):
+            # Plain text — use first line as title
+            first_line = content.strip().split("\n")[0]
+            if first_line:
+                return first_line if len(first_line) <= 80 else first_line[:77] + "…"
+
+    return _TYPE_TITLES.get(msg_type, "Message")
+
+
+def _get_entity_ref(content: str) -> tuple[str | None, str | None]:
+    """Extract (entity_type, entity_id) from structured message content JSON.
+
+    Returns (None, None) if content is not structured or has no entity reference.
+    """
+    if not content:
+        return None, None
+    try:
+        data = json.loads(content)
+        if isinstance(data, dict):
+            entity_type = data.get("entity_type")
+            entity_id = data.get("entity_id")
+            if entity_type and entity_id:
+                return str(entity_type), str(entity_id)
+    except (json.JSONDecodeError, ValueError):
+        pass
+    return None, None
+
+
+def _load_entity_content(entity_type: str, entity_id: str, report: dict) -> str | None:
+    """Resolve entity content from the cached report.
+
+    Returns markdown-formatted content, or None if the entity is not found.
+    Does not make additional network calls.
+    """
+    if entity_type == "draft":
+        for draft in report.get("drafts", []):
+            if str(draft.get("id", "")) == entity_id:
+                file_path = draft.get("file_path") or ""
+                if file_path:
+                    try:
+                        return Path(file_path).read_text()
+                    except OSError:
+                        pass
+                title = draft.get("title") or "Untitled"
+                status = draft.get("status") or "unknown"
+                return f"# {title}\n\n**Status:** {status}\n\n*Draft file not available.*"
+        return None
+
+    if entity_type == "task":
+        all_tasks = report.get("work", []) + report.get("done_tasks", [])
+        for task in all_tasks:
+            if str(task.get("id", "")) == entity_id:
+                title = task.get("title") or task.get("name") or f"Task {entity_id}"
+                status = task.get("status") or task.get("flow") or "unknown"
+                return f"# {title}\n\n**Status:** {status}"
+        return None
+
+    return None
+
+
+def _build_detail_content(message: dict, report: dict) -> str:
+    """Build the full markdown content string for the detail panel.
+
+    Includes a metadata header (from, time), optional entity content, and
+    the message body.
+    """
+    body, _ = _parse_content(message.get("content", ""))
+    title = _extract_title(message)
+    actor_name = _actor_display(message.get("from_actor", ""))
+    rel_time = _rel_time(message.get("created_at"))
+
+    lines: list[str] = [f"# {title}", ""]
+
+    meta_parts: list[str] = []
+    if actor_name:
+        meta_parts.append(f"**From:** {actor_name}")
+    if rel_time:
+        meta_parts.append(f"**Time:** {rel_time}")
+    if meta_parts:
+        lines.append("  ".join(meta_parts))
+        lines.append("")
+
+    # Entity content (from structured schema entity_type/entity_id fields)
+    entity_type, entity_id = _get_entity_ref(message.get("content", ""))
+    if entity_type and entity_id:
+        entity_content = _load_entity_content(entity_type, entity_id, report)
+        if entity_content:
+            lines += ["---", "", f"*Referenced {entity_type}:*", "", entity_content, ""]
+
+    # Message body
+    if body and body != "_empty_":
+        lines += ["---", "", body]
+
+    return "\n".join(lines)
+
+
 def _content_preview(content: str, max_len: int = 60) -> str:
     """Return a short preview of message content for list display."""
     body, _ = _parse_content(content)
-    # Strip markdown formatting for preview
     preview = body.replace("\n", " ").replace("_", "").replace("*", "").replace("`", "")
     if len(preview) > max_len:
         return preview[:max_len] + "…"
@@ -112,7 +292,10 @@ def _post_action_command(task_id: str, content: str) -> None:
 
 
 class _MessageItem(ListItem):
-    """A single message entry in the left list — compact 1-line format."""
+    """A single message entry in the left list.
+
+    Displays: [TYPE TAG] human-readable title  Actor · relative-time
+    """
 
     def __init__(self, message: dict, **kwargs: object) -> None:
         super().__init__(**kwargs)
@@ -125,14 +308,25 @@ class _MessageItem(ListItem):
     def compose(self) -> ComposeResult:
         msg_type = self._message.get("type", "")
         from_actor = self._message.get("from_actor", "")
-        content = self._message.get("content", "")
+        created_at = self._message.get("created_at")
+
         tag, color = _TYPE_TAGS.get(msg_type, ("MSG", "#e0e0e0"))
-        preview = _content_preview(content)
+        title = _extract_title(self._message)
+        actor_name = _actor_display(from_actor)
+        rel_time = _rel_time(created_at)
 
         label_text = Text()
         label_text.append(f"{tag} ", style=f"bold {color}")
-        label_text.append(f"{from_actor}: ", style="bold #616161")
-        label_text.append(preview, style="#e0e0e0")
+        label_text.append(title, style="#e0e0e0")
+
+        meta_parts: list[str] = []
+        if actor_name:
+            meta_parts.append(actor_name)
+        if rel_time:
+            meta_parts.append(rel_time)
+        if meta_parts:
+            label_text.append(f"  {' · '.join(meta_parts)}", style="#616161")
+
         yield Label(label_text, classes="inbox-msg-label")
 
 
@@ -245,13 +439,18 @@ class InboxTab(TabBase):
         self._selected_message = message
         self._selected_message_id = msg_id
 
-        body, actions = _parse_content(message.get("content", ""))
+        self._render_detail(message)
+
+    def _render_detail(self, message: dict) -> None:
+        """Update the right panel with the full detail view for a message."""
+        detail = _build_detail_content(message, self._report)
         try:
             md = self.query_one("#inbox-content", Markdown)
-            md.update(body)
+            md.update(detail)
         except Exception:
             pass
 
+        _, actions = _parse_content(message.get("content", ""))
         self._update_action_bar(actions)
 
     def _update_action_bar(self, actions: list[dict]) -> None:
@@ -299,14 +498,13 @@ class InboxTab(TabBase):
     def update_data(self, report: dict) -> None:
         self._report = report
         self._messages = report.get("messages", [])
-        # Keep selected message in sync if still present
+        # Keep selected message in sync and refresh the detail view
         if self._selected_message is not None:
             selected_id = self._selected_message.get("id")
             for m in self._messages:
                 if m.get("id") == selected_id:
                     self._selected_message = m
-                    _, actions = _parse_content(m.get("content", ""))
-                    self._update_action_bar(actions)
+                    self._render_detail(m)
                     break
         self._refresh_list()
 
