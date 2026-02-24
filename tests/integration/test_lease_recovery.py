@@ -248,3 +248,129 @@ class TestLeaseExpiry:
         assert task["queue"] != "incoming", (
             "Lease monitor must not requeue a task that already left 'claimed'"
         )
+
+
+class TestLeaseRecoveryProvisional:
+    """Tests for lease expiry recovery in the provisional queue.
+
+    When a gatekeeper claims a task from provisional, the server sets
+    claimed_by and lease_expires_at. If the gatekeeper dies or the lease
+    expires, the scheduler should clear these fields so the task is
+    available for another gatekeeper to claim.
+    """
+
+    def _create_provisional_task(self, sdk, orch_id, task_id):
+        """Create a task and advance it to provisional."""
+        sdk.tasks.create(
+            id=task_id,
+            file_path=f".octopoid/tasks/{task_id}.md",
+            title=f"Provisional lease test: {task_id}",
+            role="implement",
+            priority="P1",
+            branch="main",
+        )
+        sdk.tasks.claim(
+            orchestrator_id=orch_id,
+            agent_name="test-impl",
+            role_filter="implement",
+            lease_duration_seconds=3600,
+        )
+        submitted = sdk.tasks.submit(task_id=task_id, commits_count=1, turns_used=5)
+        assert submitted["queue"] == "provisional"
+        return submitted
+
+    def test_expired_provisional_lease_is_cleared(
+        self,
+        scoped_sdk,
+        orchestrator_id: str,
+        clean_tasks,
+    ) -> None:
+        """Gatekeeper claims from provisional, lease expires, claim is cleared.
+
+        The task should stay in provisional but with claimed_by and
+        lease_expires_at both set to None, so another gatekeeper can claim it.
+        """
+        task_id = _make_task_id()
+        self._create_provisional_task(scoped_sdk, orchestrator_id, task_id)
+
+        # Claim from provisional (gatekeeper) with a short lease
+        claimed = scoped_sdk.tasks.claim(
+            orchestrator_id=orchestrator_id,
+            agent_name="test-gatekeeper",
+            queue="provisional",
+            lease_duration_seconds=1,
+        )
+        assert claimed is not None, "Gatekeeper claim from provisional should succeed"
+        assert claimed.get("claimed_by") == "test-gatekeeper"
+        assert claimed.get("lease_expires_at") is not None
+
+        # Run the lease monitor with mocked far-future time
+        with _advance_time_to_future():
+            check_and_requeue_expired_leases()
+
+        # Task should stay in provisional but claim fields cleared
+        task = scoped_sdk.tasks.get(task_id)
+        assert task["queue"] == "provisional", (
+            f"Task should stay in provisional, got {task['queue']}"
+        )
+        assert task.get("claimed_by") is None, (
+            f"claimed_by should be cleared, got {task.get('claimed_by')}"
+        )
+        assert task.get("lease_expires_at") is None, (
+            f"lease_expires_at should be cleared, got {task.get('lease_expires_at')}"
+        )
+
+    def test_stale_lease_without_claimed_by_is_still_cleared(
+        self,
+        scoped_sdk,
+        orchestrator_id: str,
+        clean_tasks,
+    ) -> None:
+        """BUG: claimed_by cleared but lease_expires_at left behind.
+
+        This reproduces the scenario where check_and_update_finished_agents
+        (or some other code path) clears claimed_by on a provisional task
+        but does NOT clear lease_expires_at. The task ends up with:
+          claimed_by=None, lease_expires_at=<expired timestamp>
+
+        check_and_requeue_expired_leases skips provisional tasks where
+        claimed_by is falsy (line 1768), so the stale lease is never cleaned.
+
+        This test should FAIL until the bug is fixed.
+        """
+        task_id = _make_task_id()
+        self._create_provisional_task(scoped_sdk, orchestrator_id, task_id)
+
+        # Claim from provisional with short lease
+        claimed = scoped_sdk.tasks.claim(
+            orchestrator_id=orchestrator_id,
+            agent_name="test-gatekeeper",
+            queue="provisional",
+            lease_duration_seconds=1,
+        )
+        assert claimed is not None
+
+        # Simulate the inconsistent state: clear claimed_by but leave lease_expires_at.
+        # This is what happens when check_and_update_finished_agents processes
+        # a dead gatekeeper but only clears claimed_by.
+        scoped_sdk.tasks.update(task_id, claimed_by=None)
+
+        # Verify the inconsistent state exists
+        task = scoped_sdk.tasks.get(task_id)
+        assert task.get("claimed_by") is None, "Precondition: claimed_by should be None"
+        assert task.get("lease_expires_at") is not None, (
+            "Precondition: lease_expires_at should still be set"
+        )
+
+        # Run the lease monitor with mocked far-future time
+        with _advance_time_to_future():
+            check_and_requeue_expired_leases()
+
+        # BUG: the function skips provisional tasks where claimed_by is None
+        # (line 1768), so lease_expires_at is never cleared.
+        task = scoped_sdk.tasks.get(task_id)
+        assert task["queue"] == "provisional"
+        assert task.get("lease_expires_at") is None, (
+            f"BUG: lease_expires_at should be cleared even when claimed_by is None, "
+            f"but got {task.get('lease_expires_at')}"
+        )
