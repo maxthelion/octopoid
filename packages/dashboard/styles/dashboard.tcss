@@ -222,6 +222,18 @@ DataTable > .datatable--cursor {
     color: $text;
 }
 
+/* ─── Inbox tab sub-tabs ─────────────────────────────────────────────────── */
+
+/* Inner TabbedContent inside InboxTab needs full height */
+InboxTab > TabbedContent {
+    height: 1fr;
+}
+
+InboxTab > TabbedContent > TabPane {
+    padding: 0;
+    height: 1fr;
+}
+
 /* ─── Inbox tab ──────────────────────────────────────────────────────────── */
 
 .inbox-layout {

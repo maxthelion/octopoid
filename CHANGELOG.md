@@ -52,6 +52,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `orchestrator/init.py`: Added `_register_flows_on_server()` that registers all `.octopoid/flows/*.yaml` files on the server after scaffolding. Fails gracefully if SDK is not configured (prints a message to run `octopoid sync-flows` later).
   - `orchestrator/cli.py`: Added `octopoid sync-flows` subcommand that reads all `.octopoid/flows/*.yaml` files, parses them with `Flow.from_yaml_file()`, and calls `sdk.flows.register()` for each. Idempotent (PUT upsert). Exits non-zero if any registration fails.
 
+- **Inbox tab: Sent sub-tab showing dispatched actions and responses** ([TASK-331b95d7])
+  - `packages/dashboard/tabs/inbox.py`: `InboxTab` now has two sub-tabs — **Messages** (existing inbox) and **Sent**. The Sent sub-tab lists every `action_command` the human has dispatched, with a status badge (`PEND` / `RUN` / `DONE` / `FAIL`) and a master-detail view. Selecting a sent action shows the full command content plus the agent's `worker_result` response linked back by `task_id` and timestamp.
+  - `orchestrator/reports.py`: Added `_gather_sent_messages(sdk)` which fetches `action_command` messages sent from human to agent, derives each message's status from `message_dispatch_state.json`, and matches `worker_result` responses by `task_id`. The enriched list is included in the project report under `sent_messages`.
+  - `packages/dashboard/styles/dashboard.tcss`: Added `InboxTab > TabbedContent` height rules so the nested tab panes fill the available space.
+
 - **`octopoid init` scaffolds `jobs.yaml` and analyst agent directories** ([TASK-c11040e2])
   - `orchestrator/init.py`: Creates `.octopoid/jobs.yaml` with all core scheduler jobs and analyst agent jobs if the file does not already exist. Scaffolds `.octopoid/agents/codebase-analyst/` and `.octopoid/agents/testing-analyst/` from built-in templates using the same `shutil.copytree` pattern as gatekeeper/implementer. All three are guarded against overwriting existing files.
   - `README.md`: Added `jobs.yaml` to the `octopoid init` output tree, added a `#### .octopoid/jobs.yaml` Configuration Files section, and added analyst agent entries to the "What Files Does Octopoid Create?" file tree.

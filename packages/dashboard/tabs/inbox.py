@@ -1,12 +1,17 @@
-"""Inbox tab — server-sourced messages addressed to the human, master-detail view.
+"""Inbox tab — two sub-tabs: Messages (inbox) and Sent (dispatched actions).
 
-Left panel: scrollable message list (newest first) showing type tag, a
-human-readable title, and a relative timestamp. Right panel: full message
-content rendered as Markdown, optionally preceded by the referenced entity
-content (draft / task). Fixed action bar at bottom: buttons parsed from
-content JSON, plus free-text input.
+Messages sub-tab:
+  Left panel: scrollable message list (newest first) showing type tag, a
+  human-readable title, and a relative timestamp. Right panel: full message
+  content rendered as Markdown, optionally preceded by the referenced entity
+  content (draft / task). Fixed action bar at bottom: buttons parsed from
+  content JSON, plus free-text input. Clicking an action button posts an
+  action_command back via sdk.messages.create().
 
-Clicking an action button posts an action_command back via sdk.messages.create().
+Sent sub-tab:
+  Left panel: list of action_commands sent by the human, showing status badge
+  and content preview, newest first. Right panel: full action content plus the
+  agent's response when available.
 """
 
 from __future__ import annotations
@@ -18,7 +23,7 @@ from pathlib import Path
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.widgets import Button, Input, Label, ListItem, ListView, Markdown
+from textual.widgets import Button, Input, Label, ListItem, ListView, Markdown, TabbedContent, TabPane
 from textual.containers import Horizontal, Vertical, VerticalScroll
 
 from .base import TabBase
@@ -50,6 +55,14 @@ _ACTOR_NAMES: dict[str, str] = {
     "human": "Human",
     "orchestrator": "Orchestrator",
     "system": "System",
+}
+
+# Status badge labels and colors for sent messages
+_SENT_STATUS: dict[str, tuple[str, str]] = {
+    "pending": ("PEND", "#ffa726"),
+    "running": ("RUN", "#4fc3f7"),
+    "done": ("DONE", "#66bb6a"),
+    "failed": ("FAIL", "#ef5350"),
 }
 
 # Number of fixed action button slots
@@ -330,15 +343,35 @@ class _MessageItem(ListItem):
         yield Label(label_text, classes="inbox-msg-label")
 
 
+class _SentItem(ListItem):
+    """A single sent-action entry in the Sent list — compact 1-line format."""
+
+    def __init__(self, sent_msg: dict, **kwargs: object) -> None:
+        super().__init__(**kwargs)
+        self._sent_msg = sent_msg
+
+    @property
+    def sent_data(self) -> dict:
+        return self._sent_msg
+
+    def compose(self) -> ComposeResult:
+        status = self._sent_msg.get("status", "pending")
+        content = self._sent_msg.get("content", "")
+        tag, color = _SENT_STATUS.get(status, ("???", "#e0e0e0"))
+        preview = _content_preview(content)
+
+        label_text = Text()
+        label_text.append(f"{tag} ", style=f"bold {color}")
+        label_text.append(preview, style="#e0e0e0")
+        yield Label(label_text, classes="inbox-msg-label")
+
+
 class InboxTab(TabBase):
-    """Master-detail inbox view: message list on left, content on right.
+    """Inbox tab with Messages and Sent sub-tabs.
 
-    Messages are sourced from sdk.messages.list(to_actor='human') via the
-    report dict's 'messages' key. Ordered newest first.
-
-    The right pane shows content as Markdown with a fixed action bar at
-    the bottom. Action buttons are parsed from the message content JSON.
-    Clicking one posts an action_command back via sdk.messages.create().
+    Messages sub-tab: master-detail view of messages addressed to the human.
+    Sent sub-tab: list of action_commands dispatched by the human with status
+    and agent responses linked back.
     """
 
     BINDINGS = [
@@ -349,36 +382,55 @@ class InboxTab(TabBase):
     def __init__(self, report: dict | None = None, **kwargs: object) -> None:
         super().__init__(report=report, **kwargs)
         self._messages: list[dict] = []
+        self._sent_messages: list[dict] = []
         self._selected_message: dict | None = None
         self._selected_message_id: str | int | None = None
+        self._selected_sent: dict | None = None
+        self._selected_sent_id: str | int | None = None
 
     def compose(self) -> ComposeResult:
-        with Horizontal(classes="inbox-layout"):
-            with Vertical(classes="inbox-list-panel", id="inbox-list-panel"):
-                yield Label(" INBOX ", classes="section-header")
-                with ListView(id="inbox-listview", classes="inbox-msg-listview"):
-                    pass
-            with Vertical(id="inbox-content-panel", classes="inbox-content-panel"):
-                with VerticalScroll(id="inbox-content-scroll", classes="inbox-content-scroll"):
-                    yield Label(" MESSAGE ", classes="section-header")
-                    yield Markdown(
-                        "_No message selected._",
-                        id="inbox-content",
-                        classes="inbox-content-text",
-                    )
-                with Horizontal(id="inbox-action-bar", classes="inbox-action-bar"):
-                    for i in range(_NUM_ACTION_SLOTS):
-                        yield Button(
-                            "",
-                            id=f"inbox-action-{i}",
-                            classes="inbox-action-btn",
-                            disabled=True,
-                        )
-                    yield Input(
-                        placeholder="Other...",
-                        id="inbox-action-other",
-                        classes="inbox-action-input",
-                    )
+        with TabbedContent(id="inbox-subtabs"):
+            with TabPane("Messages", id="inbox-messages-pane"):
+                with Horizontal(classes="inbox-layout"):
+                    with Vertical(classes="inbox-list-panel", id="inbox-list-panel"):
+                        yield Label(" INBOX ", classes="section-header")
+                        with ListView(id="inbox-listview", classes="inbox-msg-listview"):
+                            pass
+                    with Vertical(id="inbox-content-panel", classes="inbox-content-panel"):
+                        with VerticalScroll(id="inbox-content-scroll", classes="inbox-content-scroll"):
+                            yield Label(" MESSAGE ", classes="section-header")
+                            yield Markdown(
+                                "_No message selected._",
+                                id="inbox-content",
+                                classes="inbox-content-text",
+                            )
+                        with Horizontal(id="inbox-action-bar", classes="inbox-action-bar"):
+                            for i in range(_NUM_ACTION_SLOTS):
+                                yield Button(
+                                    "",
+                                    id=f"inbox-action-{i}",
+                                    classes="inbox-action-btn",
+                                    disabled=True,
+                                )
+                            yield Input(
+                                placeholder="Other...",
+                                id="inbox-action-other",
+                                classes="inbox-action-input",
+                            )
+            with TabPane("Sent", id="inbox-sent-pane"):
+                with Horizontal(classes="inbox-layout"):
+                    with Vertical(classes="inbox-list-panel", id="sent-list-panel"):
+                        yield Label(" SENT ACTIONS ", classes="section-header")
+                        with ListView(id="sent-listview", classes="inbox-msg-listview"):
+                            pass
+                    with Vertical(id="sent-content-panel", classes="inbox-content-panel"):
+                        with VerticalScroll(id="sent-content-scroll", classes="inbox-content-scroll"):
+                            yield Label(" ACTION DETAIL ", classes="section-header")
+                            yield Markdown(
+                                "_No action selected._",
+                                id="sent-content",
+                                classes="inbox-content-text",
+                            )
 
     def on_mount(self) -> None:
         for i in range(_NUM_ACTION_SLOTS):
@@ -386,7 +438,8 @@ class InboxTab(TabBase):
                 self.query_one(f"#inbox-action-{i}", Button).display = False
             except Exception:
                 pass
-        self._refresh_list()
+        self._refresh_messages_list()
+        self._refresh_sent_list()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         btn_id = event.button.id or ""
@@ -428,11 +481,13 @@ class InboxTab(TabBase):
         event.input.value = ""
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
-        if not isinstance(event.item, _MessageItem):
-            return
-        message = event.item.message_data
-        msg_id = message.get("id")
+        if isinstance(event.item, _MessageItem):
+            self._on_message_selected(event.item.message_data)
+        elif isinstance(event.item, _SentItem):
+            self._on_sent_selected(event.item.sent_data)
 
+    def _on_message_selected(self, message: dict) -> None:
+        msg_id = message.get("id")
         if msg_id is not None and msg_id == self._selected_message_id:
             return
 
@@ -453,6 +508,20 @@ class InboxTab(TabBase):
         _, actions = _parse_content(message.get("content", ""))
         self._update_action_bar(actions)
 
+    def _on_sent_selected(self, sent_msg: dict) -> None:
+        sent_id = sent_msg.get("id")
+        if sent_id is not None and sent_id == self._selected_sent_id:
+            return
+
+        self._selected_sent = sent_msg
+        self._selected_sent_id = sent_id
+
+        try:
+            md = self.query_one("#sent-content", Markdown)
+            md.update(_build_sent_detail(sent_msg))
+        except Exception:
+            pass
+
     def _update_action_bar(self, actions: list[dict]) -> None:
         for i in range(_NUM_ACTION_SLOTS):
             try:
@@ -471,7 +540,7 @@ class InboxTab(TabBase):
                 btn.disabled = True
                 btn.display = False
 
-    def _refresh_list(self) -> None:
+    def _refresh_messages_list(self) -> None:
         try:
             lv = self.query_one("#inbox-listview", ListView)
         except Exception:
@@ -483,21 +552,49 @@ class InboxTab(TabBase):
             for message in self._messages:
                 lv.append(_MessageItem(message))
 
-    def action_cursor_down(self) -> None:
+    def _refresh_sent_list(self) -> None:
         try:
-            self.query_one("#inbox-listview", ListView).action_cursor_down()
+            lv = self.query_one("#sent-listview", ListView)
+        except Exception:
+            return
+        lv.clear()
+        if not self._sent_messages:
+            lv.append(ListItem(Label("No sent actions.", classes="dim-text")))
+        else:
+            for sent_msg in self._sent_messages:
+                lv.append(_SentItem(sent_msg))
+
+    def action_cursor_down(self) -> None:
+        """Move cursor down in the active list."""
+        lv_id = self._active_listview_id()
+        try:
+            self.query_one(f"#{lv_id}", ListView).action_cursor_down()
         except Exception:
             pass
 
     def action_cursor_up(self) -> None:
+        """Move cursor up in the active list."""
+        lv_id = self._active_listview_id()
         try:
-            self.query_one("#inbox-listview", ListView).action_cursor_up()
+            self.query_one(f"#{lv_id}", ListView).action_cursor_up()
         except Exception:
             pass
+
+    def _active_listview_id(self) -> str:
+        """Return the list view ID for the currently visible sub-tab."""
+        try:
+            tabs = self.query_one("#inbox-subtabs", TabbedContent)
+            if tabs.active == "inbox-sent-pane":
+                return "sent-listview"
+        except Exception:
+            pass
+        return "inbox-listview"
 
     def update_data(self, report: dict) -> None:
         self._report = report
         self._messages = report.get("messages", [])
+        self._sent_messages = report.get("sent_messages", [])
+
         # Keep selected message in sync and refresh the detail view
         if self._selected_message is not None:
             selected_id = self._selected_message.get("id")
@@ -506,8 +603,76 @@ class InboxTab(TabBase):
                     self._selected_message = m
                     self._render_detail(m)
                     break
-        self._refresh_list()
+
+        # Keep selected sent item in sync (status/response may have changed)
+        if self._selected_sent is not None:
+            selected_id = self._selected_sent.get("id")
+            for s in self._sent_messages:
+                if s.get("id") == selected_id:
+                    self._selected_sent = s
+                    try:
+                        md = self.query_one("#sent-content", Markdown)
+                        md.update(_build_sent_detail(s))
+                    except Exception:
+                        pass
+                    break
+
+        self._refresh_messages_list()
+        self._refresh_sent_list()
 
     def _refresh(self) -> None:
         self._messages = self._report.get("messages", [])
-        self._refresh_list()
+        self._sent_messages = self._report.get("sent_messages", [])
+        self._refresh_messages_list()
+        self._refresh_sent_list()
+
+
+def _build_sent_detail(sent_msg: dict) -> str:
+    """Build the Markdown content to display in the Sent detail pane.
+
+    Shows the command sent, its current status, and the agent response if
+    one is available.
+    """
+    content = sent_msg.get("content", "") or "_empty_"
+    status = sent_msg.get("status", "pending")
+    sent_at = sent_msg.get("sent_at", "")
+    response = sent_msg.get("response")
+
+    _, color = _SENT_STATUS.get(status, ("?", "#e0e0e0"))
+
+    lines: list[str] = [
+        "## Command Sent",
+        "",
+        f"**Status:** `{status.upper()}`  ",
+        f"**Sent:** {sent_at}",
+        "",
+        "### Content",
+        "",
+        content,
+    ]
+
+    if response is not None:
+        lines.extend([
+            "",
+            "---",
+            "",
+            "## Agent Response",
+            "",
+            response,
+        ])
+    elif status in ("done", "failed"):
+        lines.extend([
+            "",
+            "---",
+            "",
+            "_No response recorded._",
+        ])
+    else:
+        lines.extend([
+            "",
+            "---",
+            "",
+            f"_Waiting for agent response… (status: {status})_",
+        ])
+
+    return "\n".join(lines)
