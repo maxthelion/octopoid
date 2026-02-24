@@ -378,6 +378,7 @@ class MessagesAPI:
         type: str,
         content: str,
         to_actor: Optional[str] = None,
+        parent_message_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Create a new message
 
@@ -387,6 +388,7 @@ class MessagesAPI:
             type: Message type (e.g., 'comment', 'question')
             content: Message content
             to_actor: Optional recipient actor
+            parent_message_id: Optional parent message ID for threading
 
         Returns:
             Created message dictionary
@@ -399,6 +401,8 @@ class MessagesAPI:
         }
         if to_actor:
             payload['to_actor'] = to_actor
+        if parent_message_id:
+            payload['parent_message_id'] = parent_message_id
         return self._client._request('POST', '/api/v1/messages', json=payload)
 
     def list(
@@ -406,6 +410,7 @@ class MessagesAPI:
         task_id: Optional[str] = None,
         to_actor: Optional[str] = None,
         type: Optional[str] = None,
+        thread_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """List messages with optional filters
 
@@ -413,6 +418,7 @@ class MessagesAPI:
             task_id: Filter by task ID
             to_actor: Filter by recipient actor
             type: Filter by message type
+            thread_id: Return all messages in a thread (root + descendants)
 
         Returns:
             List of message dictionaries
@@ -424,6 +430,8 @@ class MessagesAPI:
             params['to_actor'] = to_actor
         if type:
             params['type'] = type
+        if thread_id:
+            params['thread_id'] = thread_id
         return self._client._request('GET', '/api/v1/messages', params=params).get('messages', [])
 
 
