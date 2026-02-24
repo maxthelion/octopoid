@@ -111,7 +111,7 @@ def _run_action_agent(prompt: str, timeout: int = AGENT_TIMEOUT_SECONDS) -> tupl
     """Run a lightweight action agent synchronously.
 
     Spawns `claude -p` in the main repo working directory and waits for it
-    to complete. The agent is constrained to --max-turns 10 and Read/Write/
+    to complete. The agent is constrained to --max-turns 30 and Read/Write/
     Edit/Glob/Grep/Bash/Skill tools.
 
     Args:
@@ -127,7 +127,7 @@ def _run_action_agent(prompt: str, timeout: int = AGENT_TIMEOUT_SECONDS) -> tupl
         "claude",
         "-p", prompt,
         "--allowedTools", "Read,Write,Edit,Glob,Grep,Bash,Skill",
-        "--max-turns", "10",
+        "--max-turns", "30",
     ]
 
     env = os.environ.copy()
