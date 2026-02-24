@@ -167,10 +167,15 @@ class FlowKanban(Widget):
         self._tasks_by_queue = tasks_by_queue
         self._agent_map = agent_map
 
+    # Terminal states excluded from the kanban board — they are static
+    # and take up columns without adding value to the active work view.
+    _HIDDEN_STATES = {"done", "failed"}
+
     def compose(self) -> ComposeResult:
         states = self._flow.get("states", [])
         transitions = self._flow.get("transitions", [])
         ordered_states = _order_states_by_transitions(states, transitions)
+        ordered_states = [s for s in ordered_states if s not in self._HIDDEN_STATES]
         flow_name = self._flow.get("name", "default")
         with Horizontal(classes="kanban-board"):
             for state in ordered_states:
