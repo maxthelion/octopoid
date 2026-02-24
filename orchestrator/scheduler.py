@@ -1914,8 +1914,8 @@ def send_heartbeat() -> None:
 def sweep_stale_resources() -> None:
     """Archive logs and delete worktrees for old done/failed tasks.
 
-    For each task in the 'done' or 'failed' queue that has been there
-    for more than 1 hour:
+    For each task in the 'done' queue (1 hour grace) or 'failed' queue
+    (24 hour grace — longer to allow investigation):
     - Archives stdout.log, stderr.log, result.json, prompt.md to
       .octopoid/runtime/logs/<task-id>/
     - Deletes the worktree at .octopoid/runtime/tasks/<task-id>/worktree
@@ -1927,7 +1927,8 @@ def sweep_stale_resources() -> None:
     """
     import shutil
 
-    GRACE_PERIOD_SECONDS = 3600  # 1 hour
+    DONE_GRACE_SECONDS = 3600       # 1 hour — work is merged, safe to clean
+    FAILED_GRACE_SECONDS = 86400    # 24 hours — need time to investigate
 
     try:
         sdk = queue_utils.get_sdk()
@@ -1967,7 +1968,8 @@ def sweep_stale_resources() -> None:
             debug_log(f"sweep_stale_resources: could not parse timestamp {ts_str!r} for task {task_id}: {e}")
             continue
 
-        if elapsed < GRACE_PERIOD_SECONDS:
+        grace = FAILED_GRACE_SECONDS if queue == "failed" else DONE_GRACE_SECONDS
+        if elapsed < grace:
             continue
 
         task_dir = tasks_dir / task_id
