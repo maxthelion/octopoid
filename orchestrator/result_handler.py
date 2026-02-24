@@ -406,7 +406,48 @@ def handle_agent_result_via_flow(task_id: str, agent_name: str, task_dir: Path, 
         # Execute the transition's runs (approve path — only reached on explicit "approve")
         if transition.runs:
             debug_log(f"Flow dispatch: executing steps {transition.runs} for task {task_id}")
-            execute_steps(transition.runs, task, result, task_dir)
+            try:
+                execute_steps(transition.runs, task, result, task_dir)
+            except RuntimeError as step_err:
+                err_msg = str(step_err)
+                # Rebase and merge failures are recoverable: reject back to incoming
+                # so the implementer can re-implement on a fresh base.
+                is_merge_fail = any(
+                    kw in err_msg for kw in ("rebase_on_base", "merge_pr", "git rebase failed")
+                )
+                if not is_merge_fail:
+                    raise  # Non-recoverable — let the outer except Exception handle it
+
+                print(f"[{datetime.now().isoformat()}] Rebase/merge failed for {task_id}: {step_err}")
+                debug_log(f"Rebase/merge failure in handle_agent_result_via_flow for {task_id}: {step_err}")
+
+                try:
+                    from .task_thread import post_message  # noqa: PLC0415
+                    post_message(
+                        task_id,
+                        role="rejection",
+                        content=(
+                            f"## Rebase/merge failed before completion\n\n"
+                            f"{err_msg}\n\n"
+                            f"The task will be requeued to incoming so it can be "
+                            f"re-implemented on a fresh base."
+                        ),
+                        author="scheduler-merge",
+                    )
+                except Exception as post_e:
+                    print(f"[{datetime.now().isoformat()}] WARNING: failed to post rejection message for {task_id}: {post_e}")
+
+                # Find on_fail target from transition conditions (default: incoming)
+                on_fail = "incoming"
+                for condition in transition.conditions:
+                    if hasattr(condition, "on_fail") and condition.on_fail:
+                        on_fail = condition.on_fail
+                        break
+
+                sdk.tasks.reject(task_id, reason=err_msg, rejected_by="scheduler-merge")
+                print(f"[{datetime.now().isoformat()}] Task {task_id} rejected back to {on_fail} after rebase/merge failure")
+                return True  # Task requeued — PID safe to remove
+
             print(f"[{datetime.now().isoformat()}] Agent {agent_name} completed task {task_id} (steps: {transition.runs})")
         else:
             # No runs defined — just log

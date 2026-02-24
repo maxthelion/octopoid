@@ -332,6 +332,41 @@ def create_pr(task: dict, result: dict, task_dir: Path) -> None:
         sdk.tasks.update(task_id, **update_kwargs)
 
 
+@register_step("rebase_on_base")
+def rebase_on_base(task: dict, result: dict, task_dir: Path) -> None:
+    """Rebase the worktree branch onto the repository's base branch (e.g. main).
+
+    Ensures the PR is up-to-date before merge_pr runs, preventing rebase
+    conflicts during the merge step. Aborts the rebase on failure so the
+    worktree is left clean, then raises RuntimeError so the caller can
+    reject the task back to incoming for retry.
+    """
+    from .config import get_base_branch
+
+    base_branch = get_base_branch()
+    worktree = task_dir / "worktree"
+
+    fetch = subprocess.run(
+        ["git", "fetch", "origin"],
+        cwd=worktree, capture_output=True, text=True,
+    )
+    if fetch.returncode != 0:
+        raise RuntimeError(f"rebase_on_base: git fetch failed:\n{fetch.stderr}")
+
+    rebase = subprocess.run(
+        ["git", "rebase", f"origin/{base_branch}"],
+        cwd=worktree, capture_output=True, text=True,
+    )
+    if rebase.returncode != 0:
+        subprocess.run(["git", "rebase", "--abort"], cwd=worktree, capture_output=True, text=True)
+        raise RuntimeError(
+            f"rebase_on_base: git rebase onto origin/{base_branch} failed:\n"
+            f"{rebase.stdout}\n{rebase.stderr}"
+        )
+
+    print(f"rebase_on_base: rebased onto origin/{base_branch}")
+
+
 @register_step("rebase_on_project_branch")
 def rebase_on_project_branch(task: dict, result: dict, task_dir: Path) -> None:
     """Rebase the worktree onto the project's shared branch.
