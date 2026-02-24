@@ -26,6 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Sync local flow YAML files to server via `octopoid init` and `octopoid sync-flows`** ([TASK-e5dce7e7])
+  - `orchestrator/flow.py`: Added `flow_to_server_registration()` helper that converts a `Flow` object to the `{states, transitions}` format expected by `sdk.flows.register()` (transitions use `{"from", "to"}` keys).
+  - `orchestrator/init.py`: Added `_register_flows_on_server()` that registers all `.octopoid/flows/*.yaml` files on the server after scaffolding. Fails gracefully if SDK is not configured (prints a message to run `octopoid sync-flows` later).
+  - `orchestrator/cli.py`: Added `octopoid sync-flows` subcommand that reads all `.octopoid/flows/*.yaml` files, parses them with `Flow.from_yaml_file()`, and calls `sdk.flows.register()` for each. Idempotent (PUT upsert). Exits non-zero if any registration fails.
+
 - **`octopoid init` scaffolds `jobs.yaml` and analyst agent directories** ([TASK-c11040e2])
   - `orchestrator/init.py`: Creates `.octopoid/jobs.yaml` with all core scheduler jobs and analyst agent jobs if the file does not already exist. Scaffolds `.octopoid/agents/codebase-analyst/` and `.octopoid/agents/testing-analyst/` from built-in templates using the same `shutil.copytree` pattern as gatekeeper/implementer. All three are guarded against overwriting existing files.
   - `README.md`: Added `jobs.yaml` to the `octopoid init` output tree, added a `#### .octopoid/jobs.yaml` Configuration Files section, and added analyst agent entries to the "What Files Does Octopoid Create?" file tree.
