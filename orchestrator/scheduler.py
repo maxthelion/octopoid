@@ -1763,9 +1763,10 @@ def check_and_requeue_expired_leases() -> None:
         for queue_name, target_queue in queues_to_check.items():
             tasks = sdk.tasks.list(queue=queue_name)
             for task in tasks or []:
-                # For provisional queue, only process tasks actively claimed
-                # (claimed_by set) — unclaimed provisional tasks need no action.
-                if queue_name == "provisional" and not task.get("claimed_by"):
+                # For provisional queue, skip truly unclaimed tasks (no claimed_by
+                # AND no lease_expires_at). If lease_expires_at is set but
+                # claimed_by is None, we still need to clear the stale lease.
+                if queue_name == "provisional" and not task.get("claimed_by") and not task.get("lease_expires_at"):
                     continue
 
                 lease_expires = task.get("lease_expires_at")
