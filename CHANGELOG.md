@@ -26,6 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Ghost leases on provisional tasks are now cleared** ([TASK-93798520])
+  - `orchestrator/scheduler.py`: `check_and_requeue_expired_leases()` guard relaxed — provisional tasks with `lease_expires_at` set but `claimed_by=None` are now processed instead of skipped. Previously these "ghost leases" were never cleaned up because the guard skipped all provisional tasks where `claimed_by` was falsy.
+  - `submodules/server/src/routes/tasks.ts`: Added `lease_expires_at` to the PATCH endpoint field allowlist so the orchestrator can clear stale leases via `sdk.tasks.update(task_id, lease_expires_at=None)`.
+
 - **Dashboard drafts tab shows empty content for new drafts** ([TASK-403fd51f])
   - `packages/dashboard/tabs/drafts.py`: `update_data()` now re-renders the content pane when the selected draft's `file_path` transitions from empty to a real path (handles the two-step creation pattern in `/draft-idea` where `file_path` is initially `None` and PATCHed in a second step). `on_list_view_selected()` now triggers a background refresh via `app.action_refresh()` when a draft with no `file_path` is selected, so content appears automatically once the draft is fully initialised — no restart needed.
   - `tests/test_dashboard.py`: Added `TestDraftsTabStalePath` with 6 unit tests covering the re-render trigger, no-op cases, and `_load_draft_content` edge cases.
