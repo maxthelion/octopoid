@@ -38,6 +38,9 @@ _ACTION_HOTKEYS = ["A", "B", "C"]
 def _parse_content(content: str) -> tuple[str, list[dict]]:
     """Parse a message's content field.
 
+    Supports both the structured InboxMessage schema (title/summary/message_type/…)
+    and the legacy freeform formats (body/text/message keys, or plain text).
+
     Returns:
         (body_markdown, actions) where body_markdown is the text to display
         and actions is a list of action dicts (may be empty).
@@ -48,14 +51,32 @@ def _parse_content(content: str) -> tuple[str, list[dict]]:
     try:
         data = json.loads(content)
         if isinstance(data, dict):
+            actions = data.get("actions", [])
+            if not isinstance(actions, list):
+                actions = []
+
+            # --- Structured InboxMessage schema (title + summary) ---
+            if "title" in data or "message_type" in data:
+                parts: list[str] = []
+                title = data.get("title", "")
+                summary = data.get("summary", "")
+                entity_type = data.get("entity_type", "")
+                entity_id = data.get("entity_id", "")
+                if title:
+                    parts.append(f"## {title}")
+                if summary:
+                    parts.append(summary)
+                if entity_type and entity_id is not None:
+                    parts.append(f"*{entity_type.capitalize()} #{entity_id}*")
+                body = "\n\n".join(parts) if parts else "_empty_"
+                return body, actions
+
+            # --- Legacy format: body/text/message key ---
             body = data.get("body") or data.get("text") or data.get("message") or ""
             if not body:
                 # Fall back to pretty-printing the JSON minus the actions key
                 display_data = {k: v for k, v in data.items() if k != "actions"}
                 body = f"```json\n{json.dumps(display_data, indent=2)}\n```" if display_data else content
-            actions = data.get("actions", [])
-            if not isinstance(actions, list):
-                actions = []
             return body or "_empty_", actions
     except (json.JSONDecodeError, ValueError):
         pass

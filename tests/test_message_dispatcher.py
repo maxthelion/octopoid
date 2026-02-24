@@ -236,14 +236,15 @@ class TestDispatchActionMessages:
             from orchestrator.message_dispatcher import dispatch_action_messages
             dispatch_action_messages()
 
-        # worker_result posted to human inbox
-        sdk.messages.create.assert_called_once_with(
-            task_id="80",
-            from_actor="agent",
-            to_actor="human",
-            type="worker_result",
-            content="Draft archived successfully.",
-        )
+        # worker_result posted to human inbox — content is a JSON InboxMessage
+        sdk.messages.create.assert_called_once()
+        call_kwargs = sdk.messages.create.call_args.kwargs
+        assert call_kwargs["task_id"] == "80"
+        assert call_kwargs["to_actor"] == "human"
+        assert call_kwargs["type"] == "worker_result"
+        msg = json.loads(call_kwargs["content"])
+        assert msg["message_type"] == "result"
+        assert "Draft archived successfully." in msg["summary"]
 
         # State updated: done
         state = json.loads(state_path.read_text())
@@ -275,12 +276,14 @@ class TestDispatchActionMessages:
             from orchestrator.message_dispatcher import dispatch_action_messages
             dispatch_action_messages()
 
-        # Error posted to human inbox
+        # Error posted to human inbox — content is a JSON InboxMessage
         sdk.messages.create.assert_called_once()
-        call_kwargs = sdk.messages.create.call_args
-        assert call_kwargs.kwargs["to_actor"] == "human"
-        assert call_kwargs.kwargs["type"] == "worker_result"
-        assert "Action failed" in call_kwargs.kwargs["content"]
+        call_kwargs = sdk.messages.create.call_args.kwargs
+        assert call_kwargs["to_actor"] == "human"
+        assert call_kwargs["type"] == "worker_result"
+        msg = json.loads(call_kwargs["content"])
+        assert msg["message_type"] == "error"
+        assert "Action failed" in msg["title"]
 
         # State updated: failed
         state = json.loads(state_path.read_text())
@@ -363,15 +366,17 @@ class TestDispatchActionMessages:
         assert "msg-020" in state["failed"]
         assert "msg-020" not in state.get("processing", {})
 
-        # Error posted to human — content uses original message content (not truncated state)
+        # Error posted to human — content is a JSON InboxMessage
         sdk.messages.create.assert_called_once()
         call_kwargs = sdk.messages.create.call_args.kwargs
         assert call_kwargs["task_id"] == "80"
         assert call_kwargs["to_actor"] == "human"
         assert call_kwargs["type"] == "worker_result"
-        assert "stuck/timeout" in call_kwargs["content"]
-        # Original message content ("archive draft 80 as superseded") should appear
-        assert "archive draft 80 as superseded" in call_kwargs["content"]
+        msg = json.loads(call_kwargs["content"])
+        assert msg["message_type"] == "error"
+        assert "timed out" in msg["title"].lower()
+        # Original message content ("archive draft 80 as superseded") should appear in summary
+        assert "archive draft 80 as superseded" in msg["summary"]
 
     def test_sdk_list_failure_returns_early(self, tmp_path):
         """SDK failure on messages.list does not crash the scheduler."""

@@ -16,9 +16,91 @@ import os
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Literal, TypedDict
 
 from . import queue_utils
 from .config import find_parent_project, get_global_instructions_path, get_orchestrator_dir
+
+
+# ---------------------------------------------------------------------------
+# Inbox message schema
+# ---------------------------------------------------------------------------
+
+EntityType = Literal["draft", "task", "project"]
+MessageType = Literal["proposal", "result", "error", "question"]
+
+
+class InboxMessage(TypedDict, total=False):
+    """Structured schema for all messages written to the human inbox.
+
+    Fields:
+        title:        Human-readable one-line summary shown as the message heading.
+                      Examples: "Architecture Analyst — New draft: CI status checks"
+                                "Action completed: archive draft 80"
+                                "Action failed: agent timed out"
+        summary:      Brief description of what happened (1-3 sentences).  Rendered
+                      below the title in the dashboard detail pane.
+        entity_type:  Category of the primary entity referenced by the message.
+                      One of "draft", "task", "project", or absent when not applicable.
+        entity_id:    Identifier for the referenced entity (draft number as int, task
+                      UUID string, project ID, etc.).  Absent when entity_type is absent.
+        message_type: Semantic type of the message.
+                      "proposal"  — agent is suggesting an action for human review
+                      "result"    — reports outcome of an action the human triggered
+                      "error"     — something went wrong (agent crash, timeout, etc.)
+                      "question"  — agent needs human input to proceed
+        actions:      Ordered list of suggested follow-up action dicts.  Each dict
+                      must have a "label" (display string) and an "action_type" (the
+                      command sent to the agent when the button is pressed).  May be
+                      absent or empty when no actions are applicable.
+        timestamp:    ISO-8601 UTC timestamp of when the message was created.
+    """
+
+    title: str
+    summary: str
+    entity_type: EntityType
+    entity_id: str | int
+    message_type: MessageType
+    actions: list[dict]
+    timestamp: str
+
+
+def build_inbox_message(
+    title: str,
+    message_type: MessageType,
+    summary: str = "",
+    entity_type: EntityType | None = None,
+    entity_id: str | int | None = None,
+    actions: list[dict] | None = None,
+) -> str:
+    """Build a JSON-serialised InboxMessage string for use as message content.
+
+    Args:
+        title:        Human-readable heading for the message.
+        message_type: Semantic type — "proposal", "result", "error", or "question".
+        summary:      Optional body text (markdown supported).
+        entity_type:  Optional entity category ("draft", "task", "project").
+        entity_id:    Optional entity identifier.
+        actions:      Optional list of action dicts (each needs "label" and
+                      "action_type" keys).
+
+    Returns:
+        JSON string conforming to the InboxMessage schema.
+    """
+    msg: InboxMessage = {
+        "title": title,
+        "message_type": message_type,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    if summary:
+        msg["summary"] = summary
+    if entity_type is not None:
+        msg["entity_type"] = entity_type
+    if entity_id is not None:
+        msg["entity_id"] = entity_id
+    if actions is not None:
+        msg["actions"] = actions
+    return json.dumps(msg)
 
 
 # How long before a "processing" message is considered stuck (agent crash recovery)
@@ -216,14 +298,20 @@ def dispatch_action_messages() -> None:
             orig = next((m for m in messages if m.get("id") == msg_id), None)
             if orig:
                 try:
+                    orig_content = orig.get("content", "")
                     sdk.messages.create(
                         task_id=orig.get("task_id", ""),
                         from_actor="agent",
                         to_actor="human",
                         type="worker_result",
-                        content=(
-                            f"Action failed (stuck/timeout after {elapsed:.0f}s): "
-                            f"{orig.get('content', '')[:200]}"
+                        content=build_inbox_message(
+                            title=f"Action timed out after {elapsed:.0f}s",
+                            message_type="error",
+                            summary=(
+                                f"The action agent did not complete within "
+                                f"{elapsed:.0f}s (threshold: {STUCK_THRESHOLD_SECONDS}s). "
+                                f"Original command: {orig_content[:200]}"
+                            ),
                         ),
                     )
                 except Exception as e:
@@ -274,12 +362,17 @@ def dispatch_action_messages() -> None:
 
             # Post worker_result to human inbox
             try:
+                short_cmd = content[:60] + ("…" if len(content) > 60 else "")
                 sdk.messages.create(
                     task_id=message.get("task_id", ""),
                     from_actor="agent",
                     to_actor="human",
                     type="worker_result",
-                    content=result_text or f"Action completed: {content[:100]}",
+                    content=build_inbox_message(
+                        title=f"Action completed: {short_cmd}",
+                        message_type="result",
+                        summary=result_text[:500] if result_text else f"Command executed: {content[:200]}",
+                    ),
                 )
             except Exception as e:
                 debug_log(f"dispatch_action_messages: failed to post worker_result: {e}")
@@ -294,12 +387,17 @@ def dispatch_action_messages() -> None:
 
             # Post error notification to human inbox
             try:
+                short_cmd = content[:60] + ("…" if len(content) > 60 else "")
                 sdk.messages.create(
                     task_id=message.get("task_id", ""),
                     from_actor="agent",
                     to_actor="human",
                     type="worker_result",
-                    content=f"Action failed: {result_text[:500]}",
+                    content=build_inbox_message(
+                        title=f"Action failed: {short_cmd}",
+                        message_type="error",
+                        summary=result_text[:500],
+                    ),
                 )
             except Exception as e:
                 debug_log(f"dispatch_action_messages: failed to post error message: {e}")
