@@ -1,7 +1,9 @@
 """Tests for flow module - declarative task state machines."""
 
+import json
 import tempfile
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
@@ -12,6 +14,7 @@ from orchestrator.flow import (
     Transition,
     generate_default_flow,
     generate_project_flow,
+    list_flows,
     load_flow,
     validate_flow_file,
 )
@@ -363,3 +366,217 @@ transitions:
             # May have agent validation errors in test environment
             assert flow is not None
             assert flow.name == "test"
+
+
+class TestFlowFromServerDict:
+    """Tests for Flow.from_server_dict()."""
+
+    def test_basic_transitions(self):
+        """Parse a server dict with native list transitions."""
+        data = {
+            "name": "default",
+            "transitions": [
+                {"from_state": "incoming", "to_state": "claimed", "agent": "implementer"},
+                {"from_state": "claimed", "to_state": "provisional", "runs": ["push_branch"]},
+            ],
+        }
+        flow = Flow.from_server_dict(data)
+        assert flow.name == "default"
+        assert len(flow.transitions) == 2
+        assert flow.transitions[0].from_state == "incoming"
+        assert flow.transitions[0].to_state == "claimed"
+        assert flow.transitions[0].agent == "implementer"
+        assert flow.transitions[1].runs == ["push_branch"]
+
+    def test_json_encoded_transitions(self):
+        """Parse a server dict with JSON-string-encoded transitions."""
+        transitions = [
+            {"from_state": "incoming", "to_state": "claimed"},
+            {"from_state": "claimed", "to_state": "done"},
+        ]
+        data = {
+            "name": "simple",
+            "transitions": json.dumps(transitions),
+        }
+        flow = Flow.from_server_dict(data)
+        assert len(flow.transitions) == 2
+        assert flow.transitions[0].from_state == "incoming"
+
+    def test_from_and_to_key_names(self):
+        """Handle 'from'/'to' key names (used by SDK register())."""
+        data = {
+            "name": "test",
+            "transitions": [
+                {"from": "incoming", "to": "claimed"},
+            ],
+        }
+        flow = Flow.from_server_dict(data)
+        assert flow.transitions[0].from_state == "incoming"
+        assert flow.transitions[0].to_state == "claimed"
+
+    def test_transitions_with_conditions(self):
+        """Parse transitions with full condition data."""
+        data = {
+            "name": "default",
+            "transitions": [
+                {
+                    "from_state": "provisional",
+                    "to_state": "done",
+                    "conditions": [
+                        {
+                            "name": "gatekeeper_review",
+                            "type": "agent",
+                            "agent": "gatekeeper",
+                            "on_fail": "incoming",
+                        }
+                    ],
+                    "runs": ["merge_pr"],
+                }
+            ],
+        }
+        flow = Flow.from_server_dict(data)
+        assert len(flow.transitions) == 1
+        t = flow.transitions[0]
+        assert len(t.conditions) == 1
+        assert t.conditions[0].name == "gatekeeper_review"
+        assert t.conditions[0].type == "agent"
+        assert t.conditions[0].on_fail == "incoming"
+        assert t.runs == ["merge_pr"]
+
+    def test_empty_transitions(self):
+        """Handle empty or missing transitions gracefully."""
+        flow = Flow.from_server_dict({"name": "empty", "transitions": []})
+        assert flow.name == "empty"
+        assert flow.transitions == []
+
+    def test_invalid_json_transitions_falls_back_to_empty(self):
+        """Bad JSON string for transitions produces empty list, not an exception."""
+        flow = Flow.from_server_dict({"name": "bad", "transitions": "not valid json {"})
+        assert flow.transitions == []
+
+    def test_child_flow_parsed(self):
+        """child_flow is parsed when present in server data."""
+        data = {
+            "name": "project",
+            "transitions": [],
+            "child_flow": {
+                "transitions": [
+                    {"from_state": "incoming", "to_state": "done", "agent": "implementer"}
+                ]
+            },
+        }
+        flow = Flow.from_server_dict(data)
+        assert flow.child_flow is not None
+        assert flow.child_flow.name == "project_child"
+        assert len(flow.child_flow.transitions) == 1
+
+    def test_child_flow_json_string(self):
+        """child_flow stored as JSON string is parsed correctly."""
+        child = {"transitions": [{"from_state": "incoming", "to_state": "done"}]}
+        data = {
+            "name": "project",
+            "transitions": [],
+            "child_flow": json.dumps(child),
+        }
+        flow = Flow.from_server_dict(data)
+        assert flow.child_flow is not None
+        assert len(flow.child_flow.transitions) == 1
+
+    def test_description_defaults_to_empty(self):
+        """description is optional and defaults to empty string."""
+        flow = Flow.from_server_dict({"name": "x", "transitions": []})
+        assert flow.description == ""
+
+    def test_description_preserved(self):
+        """description is preserved when present."""
+        flow = Flow.from_server_dict({"name": "x", "description": "My flow", "transitions": []})
+        assert flow.description == "My flow"
+
+
+class TestLoadFlowFromServer:
+    """Tests for load_flow() reading from the server."""
+
+    def _make_sdk(self, flows: list) -> MagicMock:
+        sdk = MagicMock()
+        sdk.flows.list.return_value = flows
+        return sdk
+
+    def test_loads_matching_flow(self):
+        """load_flow returns the matching flow from server."""
+        sdk = self._make_sdk([
+            {"name": "default", "transitions": [{"from_state": "incoming", "to_state": "claimed"}]},
+        ])
+        with patch("orchestrator.sdk.get_sdk", return_value=sdk):
+            flow = load_flow("default")
+        assert flow.name == "default"
+        assert len(flow.transitions) == 1
+
+    def test_raises_file_not_found_when_missing(self):
+        """load_flow raises FileNotFoundError if flow not on server."""
+        sdk = self._make_sdk([{"name": "other", "transitions": []}])
+        with patch("orchestrator.sdk.get_sdk", return_value=sdk):
+            with pytest.raises(FileNotFoundError, match="not found on server"):
+                load_flow("default")
+
+    def test_raises_on_sdk_error(self):
+        """load_flow re-raises when the SDK call fails (no silent fallback)."""
+        sdk = MagicMock()
+        sdk.flows.list.side_effect = RuntimeError("server down")
+        with patch("orchestrator.sdk.get_sdk", return_value=sdk):
+            with pytest.raises(RuntimeError, match="server down"):
+                load_flow("default")
+
+    def test_full_transition_detail_preserved(self):
+        """load_flow returns full transition detail (agent, runs, conditions)."""
+        sdk = self._make_sdk([
+            {
+                "name": "default",
+                "transitions": [
+                    {
+                        "from_state": "provisional",
+                        "to_state": "done",
+                        "agent": None,
+                        "runs": ["post_review_comment", "merge_pr"],
+                        "conditions": [
+                            {"name": "gatekeeper_review", "type": "agent", "agent": "gatekeeper", "on_fail": "incoming"}
+                        ],
+                    }
+                ],
+            }
+        ])
+        with patch("orchestrator.sdk.get_sdk", return_value=sdk):
+            flow = load_flow("default")
+        t = flow.transitions[0]
+        assert t.runs == ["post_review_comment", "merge_pr"]
+        assert t.conditions[0].agent == "gatekeeper"
+
+
+class TestListFlowsFromServer:
+    """Tests for list_flows() reading from the server."""
+
+    def test_returns_flow_names(self):
+        """list_flows returns names of all flows on server."""
+        sdk = MagicMock()
+        sdk.flows.list.return_value = [
+            {"name": "default"},
+            {"name": "project"},
+        ]
+        with patch("orchestrator.sdk.get_sdk", return_value=sdk):
+            names = list_flows()
+        assert names == ["default", "project"]
+
+    def test_returns_empty_on_sdk_error(self):
+        """list_flows returns empty list if server is unreachable."""
+        sdk = MagicMock()
+        sdk.flows.list.side_effect = RuntimeError("server down")
+        with patch("orchestrator.sdk.get_sdk", return_value=sdk):
+            names = list_flows()
+        assert names == []
+
+    def test_skips_entries_without_name(self):
+        """list_flows skips flows without a name field."""
+        sdk = MagicMock()
+        sdk.flows.list.return_value = [{"name": "default"}, {"transitions": []}]
+        with patch("orchestrator.sdk.get_sdk", return_value=sdk):
+            names = list_flows()
+        assert names == ["default"]
