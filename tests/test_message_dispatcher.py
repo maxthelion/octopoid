@@ -236,12 +236,13 @@ class TestDispatchActionMessages:
             from orchestrator.message_dispatcher import dispatch_action_messages
             dispatch_action_messages()
 
-        # worker_result posted to human inbox — content is a JSON InboxMessage
+        # worker_result posted to human inbox — structured InboxMessage, threaded to the action command
         sdk.messages.create.assert_called_once()
         call_kwargs = sdk.messages.create.call_args.kwargs
         assert call_kwargs["task_id"] == "80"
         assert call_kwargs["to_actor"] == "human"
         assert call_kwargs["type"] == "worker_result"
+        assert call_kwargs["parent_message_id"] == "msg-003"
         msg = json.loads(call_kwargs["content"])
         assert msg["message_type"] == "result"
         assert "Draft archived successfully." in msg["summary"]
