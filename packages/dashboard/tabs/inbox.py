@@ -1,12 +1,14 @@
-"""Inbox tab — two sub-tabs: Messages (inbox) and Sent (dispatched actions).
+"""Inbox tab — two sub-tabs: Messages (threaded inbox) and Sent (dispatched actions).
 
 Messages sub-tab:
-  Left panel: scrollable message list (newest first) showing type tag, a
-  human-readable title, and a relative timestamp. Right panel: full message
-  content rendered as Markdown, optionally preceded by the referenced entity
-  content (draft / task). Fixed action bar at bottom: buttons parsed from
-  content JSON, plus free-text input. Clicking an action button posts an
-  action_command back via sdk.messages.create().
+  Messages are grouped into threads by task_id. Left panel shows one thread
+  entry per task with a message count badge (newest thread first). Right panel
+  shows the full conversation chronologically (oldest first), rendered as
+  Markdown with human-readable titles and relative timestamps. Fixed action bar
+  at bottom: buttons parsed from content JSON, plus free-text input. Clicking
+  an action button posts an action_command back via sdk.messages.create(),
+  setting parent_message_id to the latest message in the thread so replies are
+  properly chained.
 
 Sent sub-tab:
   Left panel: list of action_commands sent by the human, showing status badge
@@ -288,7 +290,86 @@ def _content_preview(content: str, max_len: int = 60) -> str:
     return preview
 
 
-def _post_action_command(task_id: str, content: str) -> None:
+def _group_into_threads(messages: list[dict]) -> list[dict]:
+    """Group messages into threads by task_id.
+
+    Each thread contains all messages for a task_id, sorted chronologically.
+    Threads themselves are sorted by the most recent message (newest first).
+
+    Args:
+        messages: Flat list of messages (any order)
+
+    Returns:
+        List of thread dicts, each with:
+          - task_id: str
+          - messages: list of messages sorted oldest-first
+          - latest_message: the most recent message
+          - count: number of messages in thread
+    """
+    threads: dict[str, dict] = {}
+    for msg in messages:
+        task_id = msg.get("task_id") or ""
+        if task_id not in threads:
+            threads[task_id] = {
+                "task_id": task_id,
+                "messages": [],
+                "latest_message": None,
+                "count": 0,
+            }
+        threads[task_id]["messages"].append(msg)
+        threads[task_id]["count"] += 1
+
+    # Sort each thread's messages chronologically (oldest first)
+    for thread in threads.values():
+        thread["messages"].sort(key=lambda m: m.get("created_at", ""))
+        thread["latest_message"] = thread["messages"][-1]
+
+    # Sort threads newest-first by their latest message's timestamp
+    return sorted(
+        threads.values(),
+        key=lambda t: (t["latest_message"] or {}).get("created_at", ""),
+        reverse=True,
+    )
+
+
+def _format_thread_detail(thread_messages: list[dict]) -> str:
+    """Format a thread's messages as a readable Markdown conversation.
+
+    Messages are shown oldest-first so the conversation reads top-to-bottom.
+
+    Args:
+        thread_messages: Messages sorted chronologically (oldest first)
+
+    Returns:
+        Markdown string suitable for display
+    """
+    if not thread_messages:
+        return "_No messages._"
+
+    parts: list[str] = []
+    for msg in thread_messages:
+        from_actor = msg.get("from_actor", "unknown")
+        msg_type = msg.get("type", "")
+        created_at = (msg.get("created_at") or "")[:19].replace("T", " ")
+        tag, _ = _TYPE_TAGS.get(msg_type, ("MSG", "#e0e0e0"))
+        body, _ = _parse_content(msg.get("content", ""))
+
+        header = f"**[{tag}] {from_actor}** — {created_at}"
+        parts.append(header)
+        parts.append("")
+        parts.append(body)
+        parts.append("")
+        parts.append("---")
+        parts.append("")
+
+    return "\n".join(parts).rstrip("-\n ")
+
+
+def _post_action_command(
+    task_id: str,
+    content: str,
+    parent_message_id: str | None = None,
+) -> None:
     """Post an action_command reply via sdk.messages.create()."""
     try:
         from orchestrator.sdk import get_sdk
@@ -299,38 +380,44 @@ def _post_action_command(task_id: str, content: str) -> None:
             type="action_command",
             content=content,
             to_actor="agent",
+            parent_message_id=parent_message_id,
         )
     except Exception:
         pass
 
 
-class _MessageItem(ListItem):
-    """A single message entry in the left list.
+class _ThreadItem(ListItem):
+    """A single thread entry in the left list — shows latest message + count.
 
-    Displays: [TYPE TAG] human-readable title  Actor · relative-time
+    Displays: [TYPE TAG] human-readable title  Actor · relative-time [count]
     """
 
-    def __init__(self, message: dict, **kwargs: object) -> None:
+    def __init__(self, thread: dict, **kwargs: object) -> None:
         super().__init__(**kwargs)
-        self._message = message
+        self._thread = thread
 
     @property
-    def message_data(self) -> dict:
-        return self._message
+    def thread_data(self) -> dict:
+        return self._thread
 
     def compose(self) -> ComposeResult:
-        msg_type = self._message.get("type", "")
-        from_actor = self._message.get("from_actor", "")
-        created_at = self._message.get("created_at")
-
+        latest = self._thread.get("latest_message") or {}
+        msg_type = latest.get("type", "")
+        from_actor = latest.get("from_actor", "")
+        content = latest.get("content", "")
+        count = self._thread.get("count", 1)
+        task_id = self._thread.get("task_id", "")
+        created_at = latest.get("created_at")
         tag, color = _TYPE_TAGS.get(msg_type, ("MSG", "#e0e0e0"))
-        title = _extract_title(self._message)
+        title = _extract_title(latest)
         actor_name = _actor_display(from_actor)
         rel_time = _rel_time(created_at)
 
+        count_badge = f" [{count}]" if count > 1 else ""
+
         label_text = Text()
         label_text.append(f"{tag} ", style=f"bold {color}")
-        label_text.append(title, style="#e0e0e0")
+        label_text.append(f"{title}{count_badge}", style="#e0e0e0")
 
         meta_parts: list[str] = []
         if actor_name:
@@ -369,7 +456,12 @@ class _SentItem(ListItem):
 class InboxTab(TabBase):
     """Inbox tab with Messages and Sent sub-tabs.
 
-    Messages sub-tab: master-detail view of messages addressed to the human.
+    Messages sub-tab: threaded inbox view. Messages are fetched from
+    sdk.messages.list(to_actor='human') and grouped into threads by task_id.
+    Left panel shows one entry per thread (newest first). Right panel shows
+    the full conversation chronologically. The action bar uses the latest
+    message's actions; replies are threaded to the latest message.
+
     Sent sub-tab: list of action_commands dispatched by the human with status
     and agent responses linked back.
     """
@@ -383,8 +475,9 @@ class InboxTab(TabBase):
         super().__init__(report=report, **kwargs)
         self._messages: list[dict] = []
         self._sent_messages: list[dict] = []
-        self._selected_message: dict | None = None
-        self._selected_message_id: str | int | None = None
+        self._threads: list[dict] = []
+        self._selected_thread: dict | None = None
+        self._selected_task_id: str | None = None
         self._selected_sent: dict | None = None
         self._selected_sent_id: str | int | None = None
 
@@ -398,9 +491,9 @@ class InboxTab(TabBase):
                             pass
                     with Vertical(id="inbox-content-panel", classes="inbox-content-panel"):
                         with VerticalScroll(id="inbox-content-scroll", classes="inbox-content-scroll"):
-                            yield Label(" MESSAGE ", classes="section-header")
+                            yield Label(" CONVERSATION ", classes="section-header")
                             yield Markdown(
-                                "_No message selected._",
+                                "_No thread selected._",
                                 id="inbox-content",
                                 classes="inbox-content-text",
                             )
@@ -441,6 +534,12 @@ class InboxTab(TabBase):
         self._refresh_messages_list()
         self._refresh_sent_list()
 
+    def _get_latest_message(self) -> dict | None:
+        """Return the latest message in the selected thread."""
+        if self._selected_thread is None:
+            return None
+        return self._selected_thread.get("latest_message")
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         btn_id = event.button.id or ""
         if not btn_id.startswith("inbox-action-"):
@@ -450,19 +549,21 @@ class InboxTab(TabBase):
             idx = int(idx_str)
         except ValueError:
             return
-        if self._selected_message is None:
+        latest = self._get_latest_message()
+        if latest is None:
             return
-        _, actions = _parse_content(self._selected_message.get("content", ""))
+        _, actions = _parse_content(latest.get("content", ""))
         if 0 <= idx < len(actions):
             action = actions[idx]
             action_label = action.get("label", "")
             action_type = action.get("action_type", action.get("type", ""))
-            task_id = self._selected_message.get("task_id") or ""
+            task_id = latest.get("task_id") or ""
+            parent_message_id = latest.get("id")
             cmd_content = json.dumps({"action_type": action_type, "label": action_label, **{
                 k: v for k, v in action.items() if k not in ("label", "action_type")
             }})
             if task_id:
-                _post_action_command(task_id, cmd_content)
+                _post_action_command(task_id, cmd_content, parent_message_id=parent_message_id)
             self.app.notify(f"Sent: {action_label}", timeout=3)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
@@ -471,41 +572,44 @@ class InboxTab(TabBase):
         text = event.value.strip()
         if not text:
             return
-        if self._selected_message is None:
-            self.app.notify("No message selected", severity="warning", timeout=3)
+        latest = self._get_latest_message()
+        if latest is None:
+            self.app.notify("No thread selected", severity="warning", timeout=3)
             return
-        task_id = self._selected_message.get("task_id") or ""
+        task_id = latest.get("task_id") or ""
+        parent_message_id = latest.get("id")
         if task_id:
-            _post_action_command(task_id, text)
+            _post_action_command(task_id, text, parent_message_id=parent_message_id)
         self.app.notify(f"Sent: {text}", timeout=3)
         event.input.value = ""
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
-        if isinstance(event.item, _MessageItem):
-            self._on_message_selected(event.item.message_data)
+        if isinstance(event.item, _ThreadItem):
+            self._on_thread_selected(event.item.thread_data)
         elif isinstance(event.item, _SentItem):
             self._on_sent_selected(event.item.sent_data)
 
-    def _on_message_selected(self, message: dict) -> None:
-        msg_id = message.get("id")
-        if msg_id is not None and msg_id == self._selected_message_id:
+    def _on_thread_selected(self, thread: dict) -> None:
+        task_id = thread.get("task_id")
+
+        if task_id is not None and task_id == self._selected_task_id:
             return
 
-        self._selected_message = message
-        self._selected_message_id = msg_id
+        self._selected_thread = thread
+        self._selected_task_id = task_id
 
-        self._render_detail(message)
-
-    def _render_detail(self, message: dict) -> None:
-        """Update the right panel with the full detail view for a message."""
-        detail = _build_detail_content(message, self._report)
+        # Render all thread messages as a conversation
+        thread_messages = thread.get("messages", [])
+        conversation_md = _format_thread_detail(thread_messages)
         try:
             md = self.query_one("#inbox-content", Markdown)
-            md.update(detail)
+            md.update(conversation_md)
         except Exception:
             pass
 
-        _, actions = _parse_content(message.get("content", ""))
+        # Action bar uses the latest message's actions
+        latest = thread.get("latest_message") or {}
+        _, actions = _parse_content(latest.get("content", ""))
         self._update_action_bar(actions)
 
     def _on_sent_selected(self, sent_msg: dict) -> None:
@@ -546,11 +650,11 @@ class InboxTab(TabBase):
         except Exception:
             return
         lv.clear()
-        if not self._messages:
+        if not self._threads:
             lv.append(ListItem(Label("No messages.", classes="dim-text")))
         else:
-            for message in self._messages:
-                lv.append(_MessageItem(message))
+            for thread in self._threads:
+                lv.append(_ThreadItem(thread))
 
     def _refresh_sent_list(self) -> None:
         try:
@@ -594,14 +698,24 @@ class InboxTab(TabBase):
         self._report = report
         self._messages = report.get("messages", [])
         self._sent_messages = report.get("sent_messages", [])
+        self._threads = _group_into_threads(self._messages)
 
-        # Keep selected message in sync and refresh the detail view
-        if self._selected_message is not None:
-            selected_id = self._selected_message.get("id")
-            for m in self._messages:
-                if m.get("id") == selected_id:
-                    self._selected_message = m
-                    self._render_detail(m)
+        # Keep selected thread in sync if still present
+        if self._selected_task_id is not None:
+            for thread in self._threads:
+                if thread.get("task_id") == self._selected_task_id:
+                    self._selected_thread = thread
+                    # Re-render conversation in case new messages arrived
+                    thread_messages = thread.get("messages", [])
+                    conversation_md = _format_thread_detail(thread_messages)
+                    try:
+                        md = self.query_one("#inbox-content", Markdown)
+                        md.update(conversation_md)
+                    except Exception:
+                        pass
+                    latest = thread.get("latest_message") or {}
+                    _, actions = _parse_content(latest.get("content", ""))
+                    self._update_action_bar(actions)
                     break
 
         # Keep selected sent item in sync (status/response may have changed)
@@ -623,6 +737,7 @@ class InboxTab(TabBase):
     def _refresh(self) -> None:
         self._messages = self._report.get("messages", [])
         self._sent_messages = self._report.get("sent_messages", [])
+        self._threads = _group_into_threads(self._messages)
         self._refresh_messages_list()
         self._refresh_sent_list()
 
@@ -672,7 +787,7 @@ def _build_sent_detail(sent_msg: dict) -> str:
             "",
             "---",
             "",
-            f"_Waiting for agent response… (status: {status})_",
+            f"_Waiting for agent response... (status: {status})_",
         ])
 
     return "\n".join(lines)
