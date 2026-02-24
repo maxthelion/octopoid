@@ -119,6 +119,7 @@ The `command` in "Enqueue refactor" must be specific enough for an implementing 
 
 ```python
 import json as _json
+from datetime import datetime, timezone
 
 sdk.messages.create(
     task_id=f"analysis-{draft_id}",
@@ -126,12 +127,22 @@ sdk.messages.create(
     to_actor="human",
     type="action_proposal",
     content=_json.dumps({
+        "title": f"Architecture Analyst — New draft: {draft_title}",
+        "summary": f"Found an architectural refactoring opportunity. Draft #{draft_id} has been created with the proposal.",
         "entity_type": "draft",
         "entity_id": draft_id,
-        "description": f"Architecture analyst found a refactoring opportunity: draft {draft_id}",
+        "message_type": "proposal",
+        "actions": [
+            {"label": "Process Draft", "action_type": "process_draft", "draft_id": draft_id},
+            {"label": "Archive", "action_type": "archive_draft", "draft_id": draft_id},
+            {"label": "Dismiss", "action_type": "dismiss"},
+        ],
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }),
 )
 ```
+
+Replace `draft_title` with the actual draft title string from the proposal you created.
 
 ## Error handling
 

@@ -411,6 +411,7 @@ class MessagesAPI:
         to_actor: Optional[str] = None,
         type: Optional[str] = None,
         thread_id: Optional[str] = None,
+        parent_message_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """List messages with optional filters
 
@@ -419,6 +420,7 @@ class MessagesAPI:
             to_actor: Filter by recipient actor
             type: Filter by message type
             thread_id: Return all messages in a thread (root + descendants)
+            parent_message_id: Filter by parent message ID (for threading)
 
         Returns:
             List of message dictionaries
@@ -432,6 +434,8 @@ class MessagesAPI:
             params['type'] = type
         if thread_id:
             params['thread_id'] = thread_id
+        if parent_message_id:
+            params['parent_message_id'] = parent_message_id
         return self._client._request('GET', '/api/v1/messages', params=params).get('messages', [])
 
 

@@ -43,6 +43,7 @@ def get_project_report(sdk: "OctopoidSDK") -> dict[str, Any]:
         "prs": [],  # Disabled — _gather_prs was burning 22k+ gh API calls/hour
         "proposals": _gather_proposals(),
         "messages": _gather_messages(sdk),
+        "sent_messages": _gather_sent_messages(sdk),
         "agents": _gather_agents(),
         "jobs": _gather_jobs(),
         "health": _gather_health(sdk),
@@ -489,6 +490,98 @@ def _gather_messages(sdk: "OctopoidSDK") -> list[dict[str, Any]]:
         return messages
     except Exception:
         return []
+
+
+def _gather_sent_messages(sdk: "OctopoidSDK") -> list[dict[str, Any]]:
+    """Gather action_command messages sent FROM the human TO the agent.
+
+    Enriches each sent message with:
+    - status: "pending" | "processing" | "done" | "failed"
+    - response: content of the matched worker_result reply (if available)
+
+    Status is derived from the local message_dispatch_state.json file.
+    Responses are matched by task_id — the most recent worker_result on the
+    same task_id that was created after the action_command was sent.
+
+    Returns:
+        List of enriched sent-message dicts, newest first.
+    """
+    try:
+        sent = sdk.messages.list(from_actor="human", to_actor="agent", type="action_command")
+    except Exception:
+        return []
+
+    if not sent:
+        return []
+
+    # Sort newest first
+    sent.sort(key=lambda m: m.get("created_at", ""), reverse=True)
+
+    # Load local dispatch state for status information
+    try:
+        from .message_dispatcher import _load_state
+        state = _load_state()
+    except Exception:
+        state = {"done": [], "failed": [], "processing": {}}
+
+    done_ids: set[str] = set(str(i) for i in state.get("done", []))
+    failed_ids: set[str] = set(str(i) for i in state.get("failed", []))
+    processing_ids: set[str] = set(str(i) for i in state.get("processing", {}).keys())
+
+    # Fetch worker_result messages for response linking
+    # Group by task_id for efficient lookup
+    worker_results_by_task: dict[str, list[dict]] = {}
+    try:
+        results = sdk.messages.list(from_actor="agent", to_actor="human", type="worker_result")
+        for r in results:
+            tid = str(r.get("task_id") or "")
+            if tid:
+                worker_results_by_task.setdefault(tid, []).append(r)
+    except Exception:
+        pass
+
+    enriched = []
+    for msg in sent:
+        msg_id = str(msg.get("id") or "")
+        sent_at = msg.get("created_at", "")
+        task_id = str(msg.get("task_id") or "")
+
+        # Determine status from dispatch state
+        if msg_id in done_ids:
+            status = "done"
+        elif msg_id in failed_ids:
+            status = "failed"
+        elif msg_id in processing_ids:
+            status = "running"
+        else:
+            status = "pending"
+
+        # Find the best matching response: a worker_result on the same task_id
+        # created after this action_command was sent.
+        response: str | None = None
+        if status in ("done", "failed") and task_id:
+            candidates = worker_results_by_task.get(task_id, [])
+            # Filter to responses after the sent_at timestamp
+            matching = []
+            for r in candidates:
+                r_at = r.get("created_at", "")
+                if not sent_at or r_at >= sent_at:
+                    matching.append(r)
+            if matching:
+                # Take the earliest one (closest in time after the send)
+                matching.sort(key=lambda r: r.get("created_at", ""))
+                response = matching[0].get("content", "")
+
+        enriched.append({
+            "id": msg_id,
+            "task_id": task_id,
+            "content": msg.get("content", ""),
+            "sent_at": sent_at,
+            "status": status,
+            "response": response,
+        })
+
+    return enriched
 
 
 # ---------------------------------------------------------------------------

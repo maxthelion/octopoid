@@ -16,9 +16,91 @@ import os
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Literal, TypedDict
 
 from . import queue_utils
 from .config import find_parent_project, get_global_instructions_path, get_orchestrator_dir
+
+
+# ---------------------------------------------------------------------------
+# Inbox message schema
+# ---------------------------------------------------------------------------
+
+EntityType = Literal["draft", "task", "project"]
+MessageType = Literal["proposal", "result", "error", "question"]
+
+
+class InboxMessage(TypedDict, total=False):
+    """Structured schema for all messages written to the human inbox.
+
+    Fields:
+        title:        Human-readable one-line summary shown as the message heading.
+                      Examples: "Architecture Analyst — New draft: CI status checks"
+                                "Action completed: archive draft 80"
+                                "Action failed: agent timed out"
+        summary:      Brief description of what happened (1-3 sentences).  Rendered
+                      below the title in the dashboard detail pane.
+        entity_type:  Category of the primary entity referenced by the message.
+                      One of "draft", "task", "project", or absent when not applicable.
+        entity_id:    Identifier for the referenced entity (draft number as int, task
+                      UUID string, project ID, etc.).  Absent when entity_type is absent.
+        message_type: Semantic type of the message.
+                      "proposal"  — agent is suggesting an action for human review
+                      "result"    — reports outcome of an action the human triggered
+                      "error"     — something went wrong (agent crash, timeout, etc.)
+                      "question"  — agent needs human input to proceed
+        actions:      Ordered list of suggested follow-up action dicts.  Each dict
+                      must have a "label" (display string) and an "action_type" (the
+                      command sent to the agent when the button is pressed).  May be
+                      absent or empty when no actions are applicable.
+        timestamp:    ISO-8601 UTC timestamp of when the message was created.
+    """
+
+    title: str
+    summary: str
+    entity_type: EntityType
+    entity_id: str | int
+    message_type: MessageType
+    actions: list[dict]
+    timestamp: str
+
+
+def build_inbox_message(
+    title: str,
+    message_type: MessageType,
+    summary: str = "",
+    entity_type: EntityType | None = None,
+    entity_id: str | int | None = None,
+    actions: list[dict] | None = None,
+) -> str:
+    """Build a JSON-serialised InboxMessage string for use as message content.
+
+    Args:
+        title:        Human-readable heading for the message.
+        message_type: Semantic type — "proposal", "result", "error", or "question".
+        summary:      Optional body text (markdown supported).
+        entity_type:  Optional entity category ("draft", "task", "project").
+        entity_id:    Optional entity identifier.
+        actions:      Optional list of action dicts (each needs "label" and
+                      "action_type" keys).
+
+    Returns:
+        JSON string conforming to the InboxMessage schema.
+    """
+    msg: InboxMessage = {
+        "title": title,
+        "message_type": message_type,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    if summary:
+        msg["summary"] = summary
+    if entity_type is not None:
+        msg["entity_type"] = entity_type
+    if entity_id is not None:
+        msg["entity_id"] = entity_id
+    if actions is not None:
+        msg["actions"] = actions
+    return json.dumps(msg)
 
 
 # How long before a "processing" message is considered stuck (agent crash recovery)
@@ -58,14 +140,74 @@ def _save_state(state: dict) -> None:
     path.write_text(json.dumps(state, indent=2))
 
 
-def _build_agent_prompt(message: dict) -> str:
+def _fetch_thread_messages(sdk: object, task_id: str, current_msg_id: str) -> list[dict]:
+    """Fetch the full conversation thread for a task.
+
+    Retrieves all messages (to both human and agent) for the given task_id,
+    sorted chronologically, excluding the current message itself (it is included
+    separately in the prompt as the active command).
+
+    Args:
+        sdk: OctopoidSDK instance
+        task_id: Task ID to fetch thread for
+        current_msg_id: ID of the current message being processed (excluded)
+
+    Returns:
+        List of message dicts in chronological order (oldest first), or []
+    """
+    try:
+        # Fetch all messages for this task (both directions)
+        all_msgs = sdk.messages.list(task_id=task_id)
+        # Sort chronologically and exclude the current command
+        thread = [
+            m for m in all_msgs
+            if m.get("id") != current_msg_id
+        ]
+        thread.sort(key=lambda m: m.get("created_at", ""))
+        return thread
+    except Exception:
+        return []
+
+
+def _format_thread_for_prompt(thread_messages: list[dict]) -> str:
+    """Format prior thread messages as a readable conversation history.
+
+    Args:
+        thread_messages: Messages sorted chronologically (oldest first)
+
+    Returns:
+        Formatted string for inclusion in agent prompt, or empty string
+    """
+    if not thread_messages:
+        return ""
+
+    lines = ["## Prior conversation history (oldest first)\n"]
+    for msg in thread_messages:
+        from_actor = msg.get("from_actor", "unknown")
+        msg_type = msg.get("type", "")
+        created_at = msg.get("created_at", "")[:19].replace("T", " ")  # trim to seconds
+        content = msg.get("content", "")
+        # Truncate very long messages
+        if len(content) > 500:
+            content = content[:500] + "…"
+        lines.append(f"**[{created_at}] {from_actor} ({msg_type}):**")
+        lines.append(content)
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def _build_agent_prompt(message: dict, thread_messages: list[dict] | None = None) -> str:
     """Build the full prompt for an action agent from a message.
 
     Prepends global instructions and action-agent constraints to the message
     content so the agent knows its execution environment and limitations.
+    Includes prior thread messages as conversation history so the agent has
+    full context for follow-up responses.
 
     Args:
         message: Message dict from sdk.messages.list()
+        thread_messages: Optional prior messages in the thread (oldest first)
 
     Returns:
         Full prompt string to pass to claude -p
@@ -79,6 +221,10 @@ def _build_agent_prompt(message: dict) -> str:
     gi_path = get_global_instructions_path()
     if gi_path.exists():
         global_instructions = gi_path.read_text()
+
+    thread_section = ""
+    if thread_messages:
+        thread_section = _format_thread_for_prompt(thread_messages) + "\n---\n"
 
     return f"""{global_instructions}
 
@@ -99,7 +245,7 @@ You receive a single command and execute it, then you are done.
 
 **Available skills:** /enqueue, /process-draft, /draft-idea, /approve-task, /queue-status
 
-**Command to execute:**
+{thread_section}**Command to execute:**
 {content}
 
 ---
@@ -212,19 +358,26 @@ def dispatch_action_messages() -> None:
             state.setdefault("failed", []).append(msg_id)
             del state["processing"][msg_id]
 
-            # Post error notification to human inbox
+            # Post error notification to human inbox, threaded to the original command
             orig = next((m for m in messages if m.get("id") == msg_id), None)
             if orig:
                 try:
+                    orig_content = orig.get("content", "")
                     sdk.messages.create(
                         task_id=orig.get("task_id", ""),
                         from_actor="agent",
                         to_actor="human",
                         type="worker_result",
-                        content=(
-                            f"Action failed (stuck/timeout after {elapsed:.0f}s): "
-                            f"{orig.get('content', '')[:200]}"
+                        content=build_inbox_message(
+                            title=f"Action timed out after {elapsed:.0f}s",
+                            message_type="error",
+                            summary=(
+                                f"The action agent did not complete within "
+                                f"{elapsed:.0f}s (threshold: {STUCK_THRESHOLD_SECONDS}s). "
+                                f"Original command: {orig_content[:200]}"
+                            ),
                         ),
+                        parent_message_id=msg_id,
                     )
                 except Exception as e:
                     debug_log(f"dispatch_action_messages: failed to post stuck error: {e}")
@@ -260,8 +413,16 @@ def dispatch_action_messages() -> None:
         }
         _save_state(state)
 
+        # Fetch thread context (prior messages for this task) before running agent
+        task_id_for_thread = message.get("task_id", "")
+        thread_messages = _fetch_thread_messages(sdk, task_id_for_thread, msg_id)
+        debug_log(
+            f"dispatch_action_messages: fetched {len(thread_messages)} prior thread "
+            f"messages for task {task_id_for_thread}"
+        )
+
         # Build prompt and run agent synchronously
-        prompt = _build_agent_prompt(message)
+        prompt = _build_agent_prompt(message, thread_messages=thread_messages)
         success, result_text = _run_action_agent(prompt, timeout=AGENT_TIMEOUT_SECONDS)
 
         # Remove from processing regardless of outcome
@@ -272,14 +433,20 @@ def dispatch_action_messages() -> None:
             print(f"[{datetime.now().isoformat()}] Action message {msg_id} completed")
             debug_log(f"dispatch_action_messages: message {msg_id} done")
 
-            # Post worker_result to human inbox
+            # Post worker_result to human inbox, threaded to the action command
             try:
+                short_cmd = content[:60] + ("…" if len(content) > 60 else "")
                 sdk.messages.create(
                     task_id=message.get("task_id", ""),
                     from_actor="agent",
                     to_actor="human",
                     type="worker_result",
-                    content=result_text or f"Action completed: {content[:100]}",
+                    content=build_inbox_message(
+                        title=f"Action completed: {short_cmd}",
+                        message_type="result",
+                        summary=result_text[:500] if result_text else f"Command executed: {content[:200]}",
+                    ),
+                    parent_message_id=msg_id,
                 )
             except Exception as e:
                 debug_log(f"dispatch_action_messages: failed to post worker_result: {e}")
@@ -292,14 +459,20 @@ def dispatch_action_messages() -> None:
             )
             debug_log(f"dispatch_action_messages: message {msg_id} failed: {result_text}")
 
-            # Post error notification to human inbox
+            # Post error notification to human inbox, threaded to the action command
             try:
+                short_cmd = content[:60] + ("…" if len(content) > 60 else "")
                 sdk.messages.create(
                     task_id=message.get("task_id", ""),
                     from_actor="agent",
                     to_actor="human",
                     type="worker_result",
-                    content=f"Action failed: {result_text[:500]}",
+                    content=build_inbox_message(
+                        title=f"Action failed: {short_cmd}",
+                        message_type="error",
+                        summary=result_text[:500],
+                    ),
+                    parent_message_id=msg_id,
                 )
             except Exception as e:
                 debug_log(f"dispatch_action_messages: failed to post error message: {e}")

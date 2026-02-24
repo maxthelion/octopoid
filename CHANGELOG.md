@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Structured inbox message schema** ([TASK-ef7ecfd9])
+  - `orchestrator/message_dispatcher.py`: Added `InboxMessage` TypedDict documenting the schema for all human-inbox messages (fields: `title`, `summary`, `entity_type`, `entity_id`, `message_type`, `actions`, `timestamp`). Added `build_inbox_message()` helper that serialises a conforming JSON string. All three `sdk.messages.create()` calls in `dispatch_action_messages()` now use this helper — success messages get `message_type="result"`, failures and stuck-message timeouts get `message_type="error"` with a human-readable title.
+  - `packages/dashboard/tabs/inbox.py`: `_parse_content()` now handles the new schema (renders `title` as a Markdown heading, `summary` as body, entity reference line) while remaining backward-compatible with legacy message formats (body/text/message keys or plain text).
+  - Analyst prompt files (`architecture-analyst`, `codebase-analyst`, `testing-analyst`): Updated inbox message code snippets to emit the new schema with `title`, `summary`, `entity_type`, `entity_id`, `message_type="proposal"`, and suggested `actions`.
+- **Message threading: follow-up responses reference the full conversation chain** ([TASK-c92252fd])
+  - `packages/python-sdk/octopoid_sdk/client.py`: `MessagesAPI.create()` now accepts `parent_message_id` (optional string) to link a message to its parent, enabling thread chains. `MessagesAPI.list()` accepts `parent_message_id` as a filter parameter.
+  - `orchestrator/message_dispatcher.py`: `_fetch_thread_messages()` fetches all prior messages for a task before dispatching an action agent. `_build_agent_prompt()` accepts `thread_messages` and renders them as a "Prior conversation history" section so the agent has full context. `worker_result` responses now carry `parent_message_id` pointing to the `action_command` that triggered them.
+  - `packages/dashboard/tabs/inbox.py`: Inbox now groups messages into threads by `task_id`. Left panel shows one thread entry per task with a message count badge. Right panel shows the full conversation chronologically (oldest first). Replies are sent with `parent_message_id` set to the latest message in the thread. `_group_into_threads()` and `_format_thread_detail()` are new utilities.
+  - `project-management/tasks/octopoid-server/add-parent-message-id-to-messages.md`: Server task written to add `parent_message_id` column to the messages table and expose it in GET/POST API responses.
+
 ### Changed
 
 - **Scheduler reads flows from server instead of local YAML** ([TASK-5ec31cc1])
@@ -14,6 +26,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `orchestrator/flow.py`: Added `Flow.from_server_dict()` classmethod to parse server response into Flow objects — handles JSON-encoded strings, both `from_state`/`to_state` and `from`/`to` key names, and full transition detail (agent, runs, conditions, child_flow).
   - `orchestrator/scheduler.py`: Registration-time flow sync now uses `Flow.from_yaml_file()` directly instead of `load_flow()` so local YAML → server sync remains functional.
   - `tests/test_flow.py`: Added tests for `Flow.from_server_dict()`, `load_flow()`, and `list_flows()` with mocked SDK.
+
+- **Inbox tab: human-readable message rendering** ([TASK-36e0278b])
+  - Message list shows a human-readable title (extracted from `title`/`subject` JSON field, or first line of body/plain text) instead of raw `[PROP] agent: json {...}`.
+  - Relative timestamps shown on all list items and in the detail panel (`just now`, `5m ago`, `3h ago`, `yesterday`, `2d ago`).
+  - Actor display names (`Agent`, `Human`, `Orchestrator`) shown instead of raw role strings.
+  - Detail panel shows a title heading, from/time metadata, optional entity content (draft or task fetched from cached report), and the message body as Markdown.
+  - Structured schema messages with `entity_type`/`entity_id` have their referenced entity rendered inline in the detail view.
+  - Old-format messages (plain text or JSON without schema fields) display gracefully with fallback title synthesis.
 
 - **Retire filesystem task files — task content stored server-side** ([TASK-fb8c568c])
   - `orchestrator/tasks.py`: `create_task()` now POSTs the full markdown body as `content` to the server and does NOT write `.octopoid/tasks/TASK-{id}.md` files. Returns `"TASK-{id}"` string instead of a `Path`. `claim_task()` reads content directly from the server response. `find_task_by_id()` uses server content with no disk reads.
@@ -36,6 +56,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `orchestrator/flow.py`: Added `flow_to_server_registration()` helper that converts a `Flow` object to the `{states, transitions}` format expected by `sdk.flows.register()` (transitions use `{"from", "to"}` keys).
   - `orchestrator/init.py`: Added `_register_flows_on_server()` that registers all `.octopoid/flows/*.yaml` files on the server after scaffolding. Fails gracefully if SDK is not configured (prints a message to run `octopoid sync-flows` later).
   - `orchestrator/cli.py`: Added `octopoid sync-flows` subcommand that reads all `.octopoid/flows/*.yaml` files, parses them with `Flow.from_yaml_file()`, and calls `sdk.flows.register()` for each. Idempotent (PUT upsert). Exits non-zero if any registration fails.
+
+- **Inbox tab: Sent sub-tab showing dispatched actions and responses** ([TASK-331b95d7])
+  - `packages/dashboard/tabs/inbox.py`: `InboxTab` now has two sub-tabs — **Messages** (existing inbox) and **Sent**. The Sent sub-tab lists every `action_command` the human has dispatched, with a status badge (`PEND` / `RUN` / `DONE` / `FAIL`) and a master-detail view. Selecting a sent action shows the full command content plus the agent's `worker_result` response linked back by `task_id` and timestamp.
+  - `orchestrator/reports.py`: Added `_gather_sent_messages(sdk)` which fetches `action_command` messages sent from human to agent, derives each message's status from `message_dispatch_state.json`, and matches `worker_result` responses by `task_id`. The enriched list is included in the project report under `sent_messages`.
+  - `packages/dashboard/styles/dashboard.tcss`: Added `InboxTab > TabbedContent` height rules so the nested tab panes fill the available space.
 
 - **`octopoid init` scaffolds `jobs.yaml` and analyst agent directories** ([TASK-c11040e2])
   - `orchestrator/init.py`: Creates `.octopoid/jobs.yaml` with all core scheduler jobs and analyst agent jobs if the file does not already exist. Scaffolds `.octopoid/agents/codebase-analyst/` and `.octopoid/agents/testing-analyst/` from built-in templates using the same `shutil.copytree` pattern as gatekeeper/implementer. All three are guarded against overwriting existing files.
