@@ -45,6 +45,39 @@ def ask_yes_no(prompt: str, default: bool = True) -> bool:
         print("Please answer 'y' or 'n'")
 
 
+def _register_flows_on_server(flows_dir: Path) -> None:
+    """Register all YAML flow files in flows_dir on the server.
+
+    Fails gracefully if the SDK is not configured or the server is unreachable.
+    """
+    from .flow import Flow, flow_to_server_registration
+    from .sdk import get_sdk
+
+    yaml_files = sorted(flows_dir.glob("*.yaml"))
+    if not yaml_files:
+        return
+
+    try:
+        sdk = get_sdk()
+    except Exception as e:
+        print(f"  Skipping flow registration: {e}")
+        print("  Run 'octopoid sync-flows' after configuring server connection")
+        return
+
+    for yaml_file in yaml_files:
+        try:
+            flow = Flow.from_yaml_file(yaml_file)
+            reg = flow_to_server_registration(flow)
+            sdk.flows.register(
+                name=flow.name,
+                states=reg["states"],
+                transitions=reg["transitions"],
+            )
+            print(f"  Registered flow '{flow.name}' on server")
+        except Exception as e:
+            print(f"  Failed to register flow '{yaml_file.stem}': {e}")
+
+
 def init_orchestrator(
     install_skills: bool | None = None,
     update_gitignore: bool | None = None,
@@ -143,6 +176,9 @@ def init_orchestrator(
         print(f"  Created: {project_flow_path.relative_to(parent)}")
     else:
         print(f"  Exists:  {project_flow_path.relative_to(parent)}")
+
+    # Register flow files on the server
+    _register_flows_on_server(octopoid_dir / "flows")
 
     # Scaffold gatekeeper agent directory
     gatekeeper_dir = octopoid_dir / "agents" / "gatekeeper"

@@ -482,6 +482,20 @@ def create_flows_directory() -> None:
         project_flow_path.write_text(generate_project_flow())
 
 
+def flow_to_server_registration(flow: Flow) -> dict:
+    """Convert a Flow to the dict format expected by sdk.flows.register().
+
+    Returns:
+        Dict with 'states' (list[str]) and 'transitions' (list[{from, to}])
+    """
+    states = sorted(flow.get_all_states())
+    transitions = [
+        {"from": t.from_state, "to": t.to_state}
+        for t in flow.transitions
+    ]
+    return {"states": states, "transitions": transitions}
+
+
 def evaluate_script_conditions(
     conditions: list[Condition],
     cwd: Path | None = None,
