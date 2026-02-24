@@ -22,6 +22,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `orchestrator/scheduler.py`: Registration-time flow sync now uses `Flow.from_yaml_file()` directly instead of `load_flow()` so local YAML → server sync remains functional.
   - `tests/test_flow.py`: Added tests for `Flow.from_server_dict()`, `load_flow()`, and `list_flows()` with mocked SDK.
 
+- **Inbox tab: human-readable message rendering** ([TASK-36e0278b])
+  - Message list shows a human-readable title (extracted from `title`/`subject` JSON field, or first line of body/plain text) instead of raw `[PROP] agent: json {...}`.
+  - Relative timestamps shown on all list items and in the detail panel (`just now`, `5m ago`, `3h ago`, `yesterday`, `2d ago`).
+  - Actor display names (`Agent`, `Human`, `Orchestrator`) shown instead of raw role strings.
+  - Detail panel shows a title heading, from/time metadata, optional entity content (draft or task fetched from cached report), and the message body as Markdown.
+  - Structured schema messages with `entity_type`/`entity_id` have their referenced entity rendered inline in the detail view.
+  - Old-format messages (plain text or JSON without schema fields) display gracefully with fallback title synthesis.
+
 - **Retire filesystem task files — task content stored server-side** ([TASK-fb8c568c])
   - `orchestrator/tasks.py`: `create_task()` now POSTs the full markdown body as `content` to the server and does NOT write `.octopoid/tasks/TASK-{id}.md` files. Returns `"TASK-{id}"` string instead of a `Path`. `claim_task()` reads content directly from the server response. `find_task_by_id()` uses server content with no disk reads.
   - `orchestrator/scheduler.py`: `guard_task_description_nonempty()` checks `task["content"]` from server response, removes file existence checks.
