@@ -623,6 +623,61 @@ def update_changelog(task: dict, result: dict, task_dir: Path) -> None:
     print(f"update_changelog: CHANGELOG.md updated for task {task_id}")
 
 
+@register_step("aggregate_child_changes")
+def aggregate_child_changes(task: dict, result: dict, task_dir: Path) -> None:
+    """Aggregate changes.md files from all child tasks into task_dir/changes.md.
+
+    Used in project flows: reads each child task's changes.md from its runtime
+    directory and concatenates them into task_dir/changes.md so that the
+    subsequent update_changelog step can process them as normal.
+
+    Skips silently if no child tasks exist or none have a changes.md file.
+    """
+    from .config import get_tasks_dir
+    from .sdk import get_sdk
+
+    project_id = task.get("id")
+    if not project_id:
+        print("aggregate_child_changes: no id on task, skipping")
+        return
+
+    sdk = get_sdk()
+    try:
+        child_tasks = sdk.projects.get_tasks(project_id)
+    except Exception as e:
+        print(f"aggregate_child_changes: failed to get child tasks for {project_id}: {e}")
+        return
+
+    if not child_tasks:
+        print(f"aggregate_child_changes: no child tasks for project {project_id}, skipping")
+        return
+
+    tasks_dir = get_tasks_dir()
+    aggregated_parts: list[str] = []
+
+    for child_task in child_tasks:
+        child_id = child_task.get("id")
+        if not child_id:
+            continue
+        child_changes_file = tasks_dir / child_id / "changes.md"
+        if not child_changes_file.exists():
+            continue
+        content = child_changes_file.read_text().strip()
+        if content:
+            aggregated_parts.append(content)
+
+    if not aggregated_parts:
+        print(f"aggregate_child_changes: no child changes.md files found for {project_id}, skipping")
+        return
+
+    output_file = task_dir / "changes.md"
+    output_file.write_text("\n\n".join(aggregated_parts) + "\n")
+    print(
+        f"aggregate_child_changes: aggregated {len(aggregated_parts)} child "
+        f"changes.md file(s) for {project_id}"
+    )
+
+
 @register_step("merge_project_pr")
 def merge_project_pr(project: dict, result: dict, project_dir: Path) -> None:
     """Merge the project's PR via gh CLI.
