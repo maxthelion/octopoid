@@ -12,6 +12,7 @@ from orchestrator.flow import (
     Condition,
     Flow,
     Transition,
+    _inject_terminal_steps,
     generate_default_flow,
     generate_project_flow,
     list_flows,
@@ -441,7 +442,8 @@ class TestFlowFromServerDict:
         assert t.conditions[0].name == "gatekeeper_review"
         assert t.conditions[0].type == "agent"
         assert t.conditions[0].on_fail == "incoming"
-        assert t.runs == ["merge_pr"]
+        # rebase_on_base is auto-injected because this transition targets 'done'
+        assert t.runs == ["merge_pr", "rebase_on_base"]
 
     def test_empty_transitions(self):
         """Handle empty or missing transitions gracefully."""
@@ -547,7 +549,8 @@ class TestLoadFlowFromServer:
         with patch("orchestrator.sdk.get_sdk", return_value=sdk):
             flow = load_flow("default")
         t = flow.transitions[0]
-        assert t.runs == ["post_review_comment", "merge_pr"]
+        # rebase_on_base is auto-injected because this transition targets 'done'
+        assert t.runs == ["post_review_comment", "merge_pr", "rebase_on_base"]
         assert t.conditions[0].agent == "gatekeeper"
 
 
@@ -580,3 +583,80 @@ class TestListFlowsFromServer:
         with patch("orchestrator.sdk.get_sdk", return_value=sdk):
             names = list_flows()
         assert names == ["default"]
+
+
+class TestInjectTerminalSteps:
+    """Tests for _inject_terminal_steps — auto-injection of required terminal steps."""
+
+    def test_missing_steps_are_injected(self):
+        """rebase_on_base and merge_pr are appended when absent."""
+        trans = Transition(from_state="provisional", to_state="done", runs=[])
+        _inject_terminal_steps([trans])
+        assert trans.runs == ["rebase_on_base", "merge_pr"]
+
+    def test_no_duplication_when_steps_already_present(self):
+        """Steps already in runs are not duplicated."""
+        trans = Transition(
+            from_state="provisional",
+            to_state="done",
+            runs=["post_review_comment", "rebase_on_base", "merge_pr"],
+        )
+        _inject_terminal_steps([trans])
+        assert trans.runs == ["post_review_comment", "rebase_on_base", "merge_pr"]
+
+    def test_existing_runs_preserved_in_order(self):
+        """Existing runs come first; injected steps follow at the end."""
+        trans = Transition(
+            from_state="provisional",
+            to_state="done",
+            runs=["post_review_comment", "check_ci"],
+        )
+        _inject_terminal_steps([trans])
+        assert trans.runs == ["post_review_comment", "check_ci", "rebase_on_base", "merge_pr"]
+
+    def test_only_rebase_missing_merge_pr_present(self):
+        """Only the missing step is injected when one is already present."""
+        trans = Transition(
+            from_state="provisional",
+            to_state="done",
+            runs=["merge_pr"],
+        )
+        _inject_terminal_steps([trans])
+        assert trans.runs == ["merge_pr", "rebase_on_base"]
+
+    def test_non_done_transitions_are_not_modified(self):
+        """Transitions targeting states other than 'done' are left unchanged."""
+        trans = Transition(from_state="incoming", to_state="claimed", runs=[])
+        _inject_terminal_steps([trans])
+        assert trans.runs == []
+
+    def test_from_dict_injects_missing_steps(self):
+        """Flow.from_dict injects steps for a transition missing rebase_on_base."""
+        data = {
+            "name": "fast",
+            "description": "Fast flow without required steps",
+            "transitions": {
+                "incoming -> claimed": {"agent": "implementer"},
+                "claimed -> done": {"runs": ["push_branch"]},
+            },
+        }
+        flow = Flow.from_dict(data)
+        done_trans = next(t for t in flow.transitions if t.to_state == "done")
+        assert "rebase_on_base" in done_trans.runs
+        assert "merge_pr" in done_trans.runs
+        # Original step preserved and comes first
+        assert done_trans.runs[0] == "push_branch"
+
+    def test_from_server_dict_injects_missing_steps(self):
+        """Flow.from_server_dict injects steps for a transition missing terminal steps."""
+        data = {
+            "name": "fast",
+            "transitions": [
+                {"from_state": "incoming", "to_state": "claimed"},
+                {"from_state": "claimed", "to_state": "done", "runs": ["push_branch"]},
+            ],
+        }
+        flow = Flow.from_server_dict(data)
+        done_trans = next(t for t in flow.transitions if t.to_state == "done")
+        assert "rebase_on_base" in done_trans.runs
+        assert "merge_pr" in done_trans.runs

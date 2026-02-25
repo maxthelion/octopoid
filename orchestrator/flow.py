@@ -234,6 +234,24 @@ class Transition:
         return errors
 
 
+_REQUIRED_TERMINAL_STEPS = ["rebase_on_base", "merge_pr"]
+
+
+def _inject_terminal_steps(transitions: list["Transition"]) -> None:
+    """Append required terminal steps to any transition targeting 'done'.
+
+    Ensures rebase_on_base and merge_pr are always present in the runs list
+    of transitions that target 'done', preventing individual flow YAMLs from
+    accidentally omitting them. Existing entries are preserved and no
+    duplication occurs.
+    """
+    for transition in transitions:
+        if transition.to_state == "done":
+            for step in _REQUIRED_TERMINAL_STEPS:
+                if step not in transition.runs:
+                    transition.runs.append(step)
+
+
 @dataclass
 class Flow:
     """A declarative task flow - conditional state machine."""
@@ -250,6 +268,8 @@ class Flow:
         transitions = []
         for key, trans_data in data.get("transitions", {}).items():
             transitions.append(Transition.from_dict(key, trans_data))
+
+        _inject_terminal_steps(transitions)
 
         # Parse child_flow if present
         child_flow = None
@@ -319,6 +339,8 @@ class Flow:
                 runs=t.get("runs", []),
                 conditions=conditions,
             ))
+
+        _inject_terminal_steps(transitions)
 
         # child_flow — only present if sync-flows stored it on the server
         child_flow = None
