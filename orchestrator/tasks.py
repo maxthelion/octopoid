@@ -493,8 +493,6 @@ def create_task(
 
     if not blocked_by or blocked_by == "None":
         blocked_by = None
-    elif blocked_by.startswith("TASK-"):
-        blocked_by = blocked_by.removeprefix("TASK-")
 
     if isinstance(acceptance_criteria, str):
         acceptance_criteria = [
