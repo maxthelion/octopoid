@@ -14,4 +14,4 @@ transitions:
         type: agent
         agent: gatekeeper
         on_fail: incoming
-    runs: [post_review_comment, check_ci, rebase_on_base, merge_pr]
+    runs: [post_review_comment, check_ci, rebase_on_base, merge_pr, update_changelog]

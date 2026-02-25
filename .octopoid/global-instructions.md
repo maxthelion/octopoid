@@ -22,7 +22,7 @@ Failing with a clear reason is far more useful than delivering the wrong change.
 
 ## After Every Change
 
-1. **CHANGELOG.md** — Add an entry under `## [Unreleased]` in the appropriate category — UNLESS the task description explicitly says not to.
+1. **changes.md** — Write a brief changelog summary to `../changes.md` (the task runtime directory, one level above your worktree — this file is NOT committed to your branch). Use standard changelog sections: `### Added`, `### Changed`, `### Fixed`, `### Removed` as appropriate. The orchestrator reads this file after your PR is merged and prepends it to `CHANGELOG.md` on main automatically. Do NOT edit `CHANGELOG.md` directly.
 
 2. **README.md** — Update if your change affects user-facing behaviour — UNLESS the task description explicitly says not to.
 

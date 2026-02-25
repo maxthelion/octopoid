@@ -464,3 +464,163 @@ class TestCheckCiStep:
             # Must be RuntimeError, not RetryableStepError
             assert not isinstance(exc_info.value, RetryableStepError)
             assert "lint" in str(exc_info.value)
+
+
+class TestUpdateChangelogStep:
+    """Tests for the update_changelog step."""
+
+    def test_skips_when_no_changes_file(self, tmp_path):
+        """update_changelog skips silently when changes.md does not exist."""
+        from orchestrator.steps import update_changelog
+
+        task_dir = tmp_path
+        # No changes.md created
+
+        with patch("orchestrator.steps.subprocess.run") as mock_run:
+            update_changelog({"id": "TASK-abc"}, {}, task_dir)
+            mock_run.assert_not_called()
+
+    def test_skips_when_changes_file_is_empty(self, tmp_path):
+        """update_changelog skips silently when changes.md is empty."""
+        from orchestrator.steps import update_changelog
+
+        task_dir = tmp_path
+        (task_dir / "changes.md").write_text("   \n  ")
+
+        with patch("orchestrator.steps.subprocess.run") as mock_run:
+            update_changelog({"id": "TASK-abc"}, {}, task_dir)
+            mock_run.assert_not_called()
+
+    def test_skips_when_changelog_not_found(self, tmp_path):
+        """update_changelog skips when CHANGELOG.md does not exist in project root."""
+        from orchestrator.steps import update_changelog
+
+        task_dir = tmp_path
+        project_root = tmp_path / "project"
+        project_root.mkdir()
+        (task_dir / "changes.md").write_text("### Added\n- New feature\n")
+        # No CHANGELOG.md in project_root
+
+        with patch("orchestrator.config.find_parent_project", return_value=project_root), \
+             patch("orchestrator.config.get_base_branch", return_value="main"), \
+             patch("orchestrator.steps.subprocess.run") as mock_run:
+            update_changelog({"id": "TASK-abc"}, {}, task_dir)
+            mock_run.assert_not_called()
+
+    def test_skips_when_no_unreleased_section(self, tmp_path):
+        """update_changelog skips when CHANGELOG.md has no ## [Unreleased] section."""
+        from orchestrator.steps import update_changelog
+
+        task_dir = tmp_path
+        project_root = tmp_path / "project"
+        project_root.mkdir()
+        (task_dir / "changes.md").write_text("### Added\n- New feature\n")
+        (project_root / "CHANGELOG.md").write_text("# Changelog\n\n## [1.0.0]\n- Initial release\n")
+
+        ok = MagicMock()
+        ok.returncode = 0
+        ok.stdout = ""
+        ok.stderr = ""
+
+        with patch("orchestrator.config.find_parent_project", return_value=project_root), \
+             patch("orchestrator.config.get_base_branch", return_value="main"), \
+             patch("orchestrator.steps.subprocess.run", return_value=ok) as mock_run:
+            update_changelog({"id": "TASK-abc"}, {}, task_dir)
+
+        # git fetch and pull run, but no commit or push
+        called_cmds = [tuple(c.args[0]) for c in mock_run.call_args_list]
+        assert not any("commit" in cmd for cmd in called_cmds)
+
+    def test_inserts_changes_after_unreleased_header(self, tmp_path):
+        """update_changelog prepends changes.md content under ## [Unreleased]."""
+        from orchestrator.steps import update_changelog
+
+        task_dir = tmp_path
+        project_root = tmp_path / "project"
+        project_root.mkdir()
+
+        changelog_initial = (
+            "# Changelog\n\n"
+            "## [Unreleased]\n\n"
+            "### Changed\n\n- Existing change\n\n"
+            "## [1.0.0]\n- Initial release\n"
+        )
+        (project_root / "CHANGELOG.md").write_text(changelog_initial)
+        (task_dir / "changes.md").write_text("### Added\n\n- New feature\n")
+
+        ok = MagicMock()
+        ok.returncode = 0
+        ok.stdout = ""
+        ok.stderr = ""
+
+        with patch("orchestrator.config.find_parent_project", return_value=project_root), \
+             patch("orchestrator.config.get_base_branch", return_value="main"), \
+             patch("orchestrator.steps.subprocess.run", return_value=ok):
+            update_changelog({"id": "TASK-abc", "title": "My feature"}, {}, task_dir)
+
+        result = (project_root / "CHANGELOG.md").read_text()
+        unreleased_idx = result.index("## [Unreleased]")
+        added_idx = result.index("### Added")
+        existing_idx = result.index("### Changed")
+        # New content should appear between ## [Unreleased] and the existing content
+        assert unreleased_idx < added_idx < existing_idx
+
+    def test_commits_and_pushes_on_success(self, tmp_path):
+        """update_changelog commits and pushes when changes are applied."""
+        from orchestrator.steps import update_changelog
+
+        task_dir = tmp_path
+        project_root = tmp_path / "project"
+        project_root.mkdir()
+
+        (project_root / "CHANGELOG.md").write_text(
+            "# Changelog\n\n## [Unreleased]\n\n## [1.0.0]\n- Initial\n"
+        )
+        (task_dir / "changes.md").write_text("### Fixed\n\n- Bug fix\n")
+
+        ok = MagicMock()
+        ok.returncode = 0
+        ok.stdout = ""
+        ok.stderr = ""
+
+        with patch("orchestrator.config.find_parent_project", return_value=project_root), \
+             patch("orchestrator.config.get_base_branch", return_value="main"), \
+             patch("orchestrator.steps.subprocess.run", return_value=ok) as mock_run:
+            update_changelog({"id": "TASK-xyz", "title": "Bug fix"}, {}, task_dir)
+
+        called_cmds = [c.args[0] for c in mock_run.call_args_list]
+        # Should have called: fetch, pull, add, commit, push
+        cmd_strings = [" ".join(c) for c in called_cmds]
+        assert any("fetch" in s for s in cmd_strings)
+        assert any("pull" in s for s in cmd_strings)
+        assert any("add" in s for s in cmd_strings)
+        assert any("commit" in s for s in cmd_strings)
+        assert any("push" in s for s in cmd_strings)
+
+    def test_raises_on_fetch_failure(self, tmp_path):
+        """update_changelog raises RuntimeError when git fetch fails."""
+        from orchestrator.steps import update_changelog
+
+        task_dir = tmp_path
+        project_root = tmp_path / "project"
+        project_root.mkdir()
+
+        (project_root / "CHANGELOG.md").write_text("# Changelog\n\n## [Unreleased]\n\n")
+        (task_dir / "changes.md").write_text("### Added\n\n- Feature\n")
+
+        fail = MagicMock()
+        fail.returncode = 1
+        fail.stdout = ""
+        fail.stderr = "fatal: could not read"
+
+        with patch("orchestrator.config.find_parent_project", return_value=project_root), \
+             patch("orchestrator.config.get_base_branch", return_value="main"), \
+             patch("orchestrator.steps.subprocess.run", return_value=fail):
+            with pytest.raises(RuntimeError, match="git fetch failed"):
+                update_changelog({"id": "TASK-abc"}, {}, task_dir)
+
+    def test_update_changelog_step_is_registered(self):
+        """update_changelog is registered in STEP_REGISTRY."""
+        from orchestrator.steps import STEP_REGISTRY
+
+        assert "update_changelog" in STEP_REGISTRY
