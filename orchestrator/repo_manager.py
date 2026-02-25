@@ -1,7 +1,7 @@
 """High-level repository operations for worktrees.
 
 Wraps git_utils into a testable class with structured return types.
-Used by agent scripts and the HookManager for all git/PR operations.
+Used by agent scripts for all git/PR operations.
 """
 
 import subprocess

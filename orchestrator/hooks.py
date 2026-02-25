@@ -306,7 +306,7 @@ def hook_merge_pr(ctx: HookContext) -> HookResult:
 
 
 # ---------------------------------------------------------------------------
-# Registry — canonical DEFAULT_HOOKS lives in hook_manager.py
+# Registry
 # ---------------------------------------------------------------------------
 
 BUILTIN_HOOKS: dict[str, HookFn] = {
@@ -316,7 +316,11 @@ BUILTIN_HOOKS: dict[str, HookFn] = {
     "merge_pr": hook_merge_pr,
 }
 
-from .hook_manager import DEFAULT_HOOKS  # noqa: E402
+# Default hooks when nothing is configured
+DEFAULT_HOOKS: dict[str, list[str]] = {
+    "before_submit": ["create_pr"],
+    "before_merge": ["merge_pr"],
+}
 
 
 # ---------------------------------------------------------------------------

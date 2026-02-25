@@ -28,7 +28,6 @@ from .config import (
     is_system_paused,
 )
 from .git_utils import ensure_worktree, get_task_branch, get_worktree_path, run_git
-from .hook_manager import HookManager
 from .lock_utils import locked_or_skip
 from .port_utils import get_port_env_vars
 from . import queue_utils
@@ -1134,144 +1133,6 @@ def spawn_job_agent(ctx: AgentContext) -> int:
 # ---------------------------------------------------------------------------
 
 
-def _has_flow_blocking_conditions(task: dict) -> bool:
-    """Check if the task's flow has agent/manual conditions on the current transition.
-
-    Returns True if the flow requires an agent or human to explicitly approve
-    before the task can transition from its current queue. In that case,
-    process_orchestrator_hooks must not auto-accept the task — the gatekeeper
-    (or a human) must run first via handle_agent_result_via_flow.
-
-    Returns False if:
-    - The flow has no conditions (or only script conditions) on the transition
-    - The flow cannot be loaded (fail open so legacy tasks are unaffected)
-    """
-    from .flow import load_flow
-
-    try:
-        flow_name = task.get("flow", "default")
-        current_queue = task.get("queue", "provisional")
-
-        flow = load_flow(flow_name)
-        transitions = flow.get_transitions_from(current_queue)
-
-        if not transitions:
-            return False
-
-        transition = transitions[0]
-        return any(
-            c.type in ("agent", "manual") and not c.skip
-            for c in transition.conditions
-        )
-    except Exception:
-        # If flow can't be loaded, don't block legacy tasks
-        return False
-
-
-def process_orchestrator_hooks(provisional_tasks: list | None = None) -> None:
-    """Run orchestrator-side hooks on provisional tasks.
-
-    For each provisional task that has pending orchestrator hooks (e.g. merge_pr):
-    1. Get pending orchestrator hooks
-    2. Run each one via HookManager
-    3. Record evidence
-    4. If all hooks pass, accept the task
-
-    Skips tasks whose flow has agent/manual conditions on the next transition —
-    those require a gatekeeper or human to explicitly approve via
-    handle_agent_result_via_flow. Auto-accepting such tasks bypasses the flow
-    conditions and is the root cause of GH-143.
-
-    Args:
-        provisional_tasks: Pre-fetched list of provisional tasks from the poll endpoint.
-            If provided, skips the sdk.tasks.list(queue="provisional") call.
-            If None, fetches from the API.
-    """
-    try:
-        sdk = queue_utils.get_sdk()
-        hook_manager = HookManager(sdk)
-
-        # Use pre-fetched list if provided, otherwise fetch from API
-        if provisional_tasks is not None:
-            provisional = provisional_tasks
-        else:
-            provisional = sdk.tasks.list(queue="provisional")
-        if not provisional:
-            return
-
-        for task in provisional:
-            task_id = task.get("id", "")
-
-            # Skip tasks whose flow has blocking conditions (agent/manual approval).
-            # These must go through the gatekeeper / human approval path, not here.
-            if _has_flow_blocking_conditions(task):
-                debug_log(
-                    f"Task {task_id}: flow has agent/manual conditions, "
-                    "skipping orchestrator hook auto-accept"
-                )
-                continue
-
-            pending = hook_manager.get_pending_hooks(task, hook_type="orchestrator")
-            if not pending:
-                continue
-
-            debug_log(f"Task {task_id}: {len(pending)} pending orchestrator hooks")
-
-            hook_failed = False
-            for hook in pending:
-                evidence = hook_manager.run_orchestrator_hook(task, hook)
-                hook_manager.record_evidence(task_id, hook["name"], evidence)
-                debug_log(f"  Hook {hook['name']}: {evidence.status} - {evidence.message}")
-
-                if evidence.status == "failed":
-                    debug_log(f"  Orchestrator hook {hook['name']} failed for {task_id}")
-                    hook_failed = True
-
-                    if hook["name"] == "rebase_on_base":
-                        # Rebase conflict — post to task thread and reject back to incoming
-                        # so the agent re-implements on a fresh base.
-                        from .task_thread import post_message
-                        post_message(
-                            task_id,
-                            role="rejection",
-                            content=(
-                                f"## Rebase failed before merge\n\n"
-                                f"{evidence.message}\n\n"
-                                f"Please re-implement on a fresh base. "
-                                f"Do NOT rebase manually — the orchestrator will rebase "
-                                f"on your behalf before merging."
-                            ),
-                            author="scheduler-rebase",
-                        )
-                        sdk.tasks.reject(
-                            task_id,
-                            reason=evidence.message,
-                            rejected_by="scheduler-rebase",
-                        )
-                        print(
-                            f"[{datetime.now().isoformat()}] "
-                            f"Rebase failed for {task_id}, requeued to incoming"
-                        )
-
-                    break
-
-            if hook_failed:
-                continue
-
-            # Re-fetch task to get updated hooks
-            updated_task = sdk.tasks.get(task_id)
-            if updated_task:
-                can_accept, still_pending = hook_manager.can_transition(updated_task, "before_merge")
-                if can_accept:
-                    debug_log(f"All orchestrator hooks passed for {task_id}, accepting")
-                    sdk.tasks.accept(task_id=task_id, accepted_by="scheduler-hooks")
-                    print(f"[{datetime.now().isoformat()}] Accepted task {task_id} (all hooks passed)")
-
-    except Exception as e:
-        print(f"[{datetime.now().isoformat()}] ERROR: process_orchestrator_hooks failed: {e}")
-        debug_log(f"Error processing orchestrator hooks: {e}")
-
-
 def _log_pid_snapshot(agents_dir: Path) -> None:
     """Log a snapshot of all tracked PIDs to a JSONL file for diagnostics.
 
@@ -2040,7 +1901,6 @@ HOUSEKEEPING_JOBS = [
     check_and_requeue_expired_leases,
     check_and_update_finished_agents,
     _check_queue_health_throttled,
-    process_orchestrator_hooks,
     check_project_completion,
     sweep_stale_resources,
 ]
