@@ -8,7 +8,7 @@ from textual.app import ComposeResult
 from textual.events import Key
 from textual.message import Message
 from textual.widget import Widget
-from textual.widgets import Label, ListView, TabbedContent, TabPane
+from textual.widgets import DataTable, Label, ListView, TabbedContent, TabPane
 from textual.containers import Horizontal
 
 from ..widgets.task_card import TaskCard
@@ -146,6 +146,166 @@ def _order_states_by_transitions(states: list[str], transitions: list[dict]) -> 
     return ordered
 
 
+class MatrixView(Widget):
+    """All-tasks matrix view: rows are tasks, columns are flow stages.
+
+    In-progress tasks show animated >>> chevrons; incoming shows □, done ✓,
+    failed ✕. Project tasks show a parent row with child tasks indented below.
+    Selecting a row posts TaskSelected so the detail modal opens.
+    """
+
+    DEFAULT_CSS = """
+    MatrixView {
+        height: 100%;
+    }
+    """
+
+    _CHEVRON_FRAMES: list[str] = [">  ", ">> ", ">>>"]
+    _STATIC_STATES: frozenset[str] = frozenset({"incoming", "done", "failed"})
+
+    def __init__(
+        self,
+        all_tasks: list[dict],
+        flows: list[dict],
+        agent_map: dict,
+        **kwargs: object,
+    ) -> None:
+        super().__init__(**kwargs)
+        self._all_tasks = all_tasks
+        self._flows = flows
+        self._agent_map = agent_map
+        self._chevron_frame: int = 0
+        self._row_tasks: dict[str, dict] = {}  # task_id -> task dict
+
+    def _get_ordered_columns(self) -> list[str]:
+        """Return the ordered union of all states across all flows."""
+        all_states: list[str] = []
+        all_transitions: list[dict] = []
+        seen: set[str] = set()
+        for flow in self._flows:
+            for s in flow.get("states", []):
+                if s not in seen:
+                    all_states.append(s)
+                    seen.add(s)
+            all_transitions.extend(flow.get("transitions", []))
+        # Also include any queue names present in tasks but missing from flow defs
+        for task in self._all_tasks:
+            q = task.get("queue")
+            if q and q not in seen:
+                all_states.append(q)
+                seen.add(q)
+        return _order_states_by_transitions(all_states, all_transitions)
+
+    def _state_icon(self, state: str, frame: int) -> str:
+        if state == "incoming":
+            return "□"
+        if state == "done":
+            return "✓"
+        if state == "failed":
+            return "✕"
+        return self._CHEVRON_FRAMES[frame]
+
+    def _cell_value(self, task: dict, state: str, frame: int) -> str:
+        if (task.get("queue") or "incoming") != state:
+            return ""
+        return self._state_icon(state, frame)
+
+    def _build_rows(self) -> list[tuple[dict, str]]:
+        """Return ordered (task, indent_prefix) pairs.
+
+        Parent tasks come first with their children indented beneath them.
+        Tasks with no parent follow. Orphaned children (parent not in list)
+        appear last with the indent prefix.
+        """
+        children_map: dict[str, list[dict]] = {}
+        for task in self._all_tasks:
+            pid = task.get("parent_id")
+            if pid:
+                children_map.setdefault(pid, []).append(task)
+
+        rows: list[tuple[dict, str]] = []
+        seen: set[str] = set()
+
+        for task in self._all_tasks:
+            tid = task.get("id", "")
+            if tid in seen or task.get("parent_id"):
+                continue
+            rows.append((task, ""))
+            seen.add(tid)
+            for child in children_map.get(tid, []):
+                cid = child.get("id", "")
+                if cid and cid not in seen:
+                    rows.append((child, "  - "))
+                    seen.add(cid)
+
+        # Orphaned children whose parent is not in the task list
+        for task in self._all_tasks:
+            tid = task.get("id", "")
+            if tid and tid not in seen:
+                rows.append((task, "  - "))
+                seen.add(tid)
+
+        return rows
+
+    def compose(self) -> ComposeResult:
+        columns = self._get_ordered_columns()
+        table: DataTable = DataTable(
+            classes="matrix-table",
+            cursor_type="row",
+            zebra_stripes=True,
+        )
+        table.add_column("Task", key="task_name", width=30)
+        for col in columns:
+            # Abbreviate headers to keep columns narrow
+            abbrev = col[:7]
+            table.add_column(abbrev, key=f"col_{col}", width=8)
+        yield table
+
+    def on_mount(self) -> None:
+        self._populate_table()
+        self.set_interval(0.4, self._tick)
+
+    def _populate_table(self) -> None:
+        table = self.query_one(DataTable)
+        columns = self._get_ordered_columns()
+        self._row_tasks = {}
+        for task, prefix in self._build_rows():
+            tid = task.get("id", "")
+            title = task.get("title") or "Untitled"
+            cells: list[str] = [f"{prefix}{title}"]
+            for col in columns:
+                cells.append(self._cell_value(task, col, self._chevron_frame))
+            row_key = tid if tid else None
+            table.add_row(*cells, key=row_key)
+            if tid:
+                self._row_tasks[tid] = task
+
+    def _tick(self) -> None:
+        """Advance chevron animation frame and update in-progress cells."""
+        self._chevron_frame = (self._chevron_frame + 1) % 3
+        frame = self._chevron_frame
+        try:
+            table = self.query_one(DataTable)
+        except Exception:
+            return
+        for tid, task in self._row_tasks.items():
+            queue = task.get("queue") or "incoming"
+            if queue in self._STATIC_STATES:
+                continue
+            try:
+                table.update_cell(tid, f"col_{queue}", self._CHEVRON_FRAMES[frame])
+            except Exception:
+                pass
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        """Post TaskSelected when the user selects a row."""
+        key_val = event.row_key.value
+        if key_val is not None:
+            task = self._row_tasks.get(str(key_val))
+            if task:
+                self.post_message(TaskSelected(task))
+
+
 class FlowKanban(Widget):
     """Kanban board for a single flow: one column per state."""
 
@@ -226,6 +386,8 @@ class WorkTab(TabBase):
             tasks_by_flow_queue[flow_name][queue_name].append(task)
 
         with TabbedContent(classes="flow-tabs"):
+            with TabPane("Matrix", id="flow-tab-matrix"):
+                yield MatrixView(all_tasks, flows, agent_map, id="matrix-view")
             for flow in flows:
                 flow_name = flow.get("name") or "default"
                 tasks_by_queue = tasks_by_flow_queue.get(flow_name, {})
