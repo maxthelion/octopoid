@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import deque
 
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.events import Key
 from textual.message import Message
@@ -205,20 +206,48 @@ class MatrixView(Widget):
             return "✕"
         return self._CHEVRON_FRAMES[frame]
 
-    def _cell_value(self, task: dict, state: str, frame: int) -> str:
+    def _cell_value(self, task: dict, state: str, frame: int) -> str | Text:
         if (task.get("queue") or "incoming") != state:
             return ""
-        return self._state_icon(state, frame)
+        return Text(self._state_icon(state, frame), justify="center")
+
+    @staticmethod
+    def _activity_ts(task: dict) -> str:
+        """Return the most recent activity timestamp for sorting (newest first)."""
+        return (
+            task.get("updated_at")
+            or task.get("claimed_at")
+            or task.get("created_at")
+            or ""
+        )
 
     def _build_rows(self) -> list[tuple[dict, str]]:
         """Return ordered (task, indent_prefix) pairs.
 
-        Parent tasks come first with their children indented beneath them.
-        Tasks with no parent follow. Orphaned children (parent not in list)
-        appear last with the indent prefix.
+        Done tasks are capped at the 5 most recent. All other queues show all
+        tasks. Rows are sorted by most recent activity (updated_at → claimed_at
+        → created_at), so in-progress tasks naturally float to the top.
+        Parent tasks appear with their children indented beneath them.
+        Orphaned children (parent not in list) appear last.
         """
+        # Limit done tasks to 5 most recent
+        done_tasks = sorted(
+            [t for t in self._all_tasks if (t.get("queue") or "incoming") == "done"],
+            key=self._activity_ts,
+            reverse=True,
+        )[:5]
+        done_ids = {t.get("id") for t in done_tasks}
+
+        # Filter and sort the working task list
+        filtered: list[dict] = [
+            t
+            for t in self._all_tasks
+            if (t.get("queue") or "incoming") != "done" or t.get("id") in done_ids
+        ]
+        filtered.sort(key=self._activity_ts, reverse=True)
+
         children_map: dict[str, list[dict]] = {}
-        for task in self._all_tasks:
+        for task in filtered:
             pid = task.get("parent_id")
             if pid:
                 children_map.setdefault(pid, []).append(task)
@@ -226,7 +255,7 @@ class MatrixView(Widget):
         rows: list[tuple[dict, str]] = []
         seen: set[str] = set()
 
-        for task in self._all_tasks:
+        for task in filtered:
             tid = task.get("id", "")
             if tid in seen or task.get("parent_id"):
                 continue
@@ -239,7 +268,7 @@ class MatrixView(Widget):
                     seen.add(cid)
 
         # Orphaned children whose parent is not in the task list
-        for task in self._all_tasks:
+        for task in filtered:
             tid = task.get("id", "")
             if tid and tid not in seen:
                 rows.append((task, "  - "))
@@ -254,7 +283,7 @@ class MatrixView(Widget):
             cursor_type="row",
             zebra_stripes=True,
         )
-        table.add_column("Task", key="task_name", width=30)
+        table.add_column("Task", key="task_name", width=45)
         for col in columns:
             # Abbreviate headers to keep columns narrow
             abbrev = col[:7]
@@ -271,8 +300,10 @@ class MatrixView(Widget):
         self._row_tasks = {}
         for task, prefix in self._build_rows():
             tid = task.get("id", "")
+            short_id = tid[:8] if tid else ""
             title = task.get("title") or "Untitled"
-            cells: list[str] = [f"{prefix}{title}"]
+            label = f"{prefix}{short_id} {title}" if short_id else f"{prefix}{title}"
+            cells: list[str | Text] = [label]
             for col in columns:
                 cells.append(self._cell_value(task, col, self._chevron_frame))
             row_key = tid if tid else None
@@ -293,7 +324,11 @@ class MatrixView(Widget):
             if queue in self._STATIC_STATES:
                 continue
             try:
-                table.update_cell(tid, f"col_{queue}", self._CHEVRON_FRAMES[frame])
+                table.update_cell(
+                    tid,
+                    f"col_{queue}",
+                    Text(self._CHEVRON_FRAMES[frame], justify="center"),
+                )
             except Exception:
                 pass
 
