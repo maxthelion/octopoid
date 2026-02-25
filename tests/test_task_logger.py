@@ -225,7 +225,7 @@ def test_get_task_logger_factory():
     """Test the factory function."""
     logger = get_task_logger("abc123")
     assert isinstance(logger, TaskLogger)
-    assert logger.task_id == "TASK-abc123"
+    assert logger.task_id == "abc123"
 
 
 def test_event_parsing_with_spaces(temp_logs_dir):

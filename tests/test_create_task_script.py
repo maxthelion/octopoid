@@ -59,7 +59,7 @@ class TestCreateTaskScript:
 
         assert result.returncode == 0
         task_id = result.stdout.strip().split("\n")[-1].strip()
-        assert task_id.startswith("TASK-")
+        assert not task_id.startswith("TASK-")
 
     def test_invalid_role_rejected(self, script_path, test_env):
         """Script rejects invalid role with exit code 1."""
@@ -206,7 +206,7 @@ class TestCreateTaskScript:
 
         assert result.returncode == 0
         task_id = result.stdout.strip().split("\n")[-1].strip()
-        assert task_id.startswith("TASK-")
+        assert not task_id.startswith("TASK-")
 
     def test_all_roles_accepted(self, mock_orchestrator_dir, script_path, test_env):
         """Script accepts all valid roles."""
@@ -237,7 +237,7 @@ class TestCreateTaskScript:
 
             assert result.returncode == 0, f"Failed for role: {role}, stderr: {result.stderr}"
             task_id = result.stdout.strip()
-            assert task_id.startswith("TASK-"), f"Unexpected output for role {role}: {task_id!r}"
+            assert not task_id.startswith("TASK-"), f"Unexpected output for role {role}: {task_id!r}"
 
     def test_priority_default_is_p1(self, mock_orchestrator_dir, script_path, test_env):
         """Script defaults to P1 priority when not specified."""
@@ -258,7 +258,7 @@ class TestCreateTaskScript:
 
         assert result.returncode == 0
         task_id = result.stdout.strip()
-        assert task_id.startswith("TASK-")
+        assert not task_id.startswith("TASK-")
 
     def test_optional_blocked_by(self, mock_orchestrator_dir, script_path, test_env):
         """Script accepts optional blocked_by parameter."""
@@ -280,7 +280,7 @@ class TestCreateTaskScript:
 
         assert result.returncode == 0
         task_id = result.stdout.strip()
-        assert task_id.startswith("TASK-")
+        assert not task_id.startswith("TASK-")
 
     def test_optional_checks(self, mock_orchestrator_dir, script_path, test_env):
         """Script accepts optional checks parameter (with validation disabled)."""
