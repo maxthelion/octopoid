@@ -4,6 +4,8 @@
 
 The server currently allows `scope` to be NULL on both task creation and querying. This caused an orchestrator with no scope configured to claim a task from a completely different project (`scope: boxen`). Tasks and orchestrators without a scope are invisible bugs waiting to happen.
 
+**GH-227 (P1):** The poll endpoint at `GET /api/v1/scheduler/poll` returns unscoped `queue_counts` and `provisional_tasks`. This means an orchestrator for scope `boxen` receives claimed task counts that include scope `octopoid` tasks, hitting the `max_claimed` limit and blocking all boxen tasks from being picked up. Similarly, `GET /api/v1/tasks?scope=X` may not filter by scope, causing `/queue-status` to display tasks from all scopes.
+
 ## Requirements
 
 1. **Task creation (`POST /api/v1/tasks`):** reject requests where `scope` is missing or NULL. Return 400 with a clear error message.
@@ -14,7 +16,7 @@ The server currently allows `scope` to be NULL on both task creation and queryin
 
 4. **Orchestrator registration (`POST /api/v1/orchestrators`):** reject registration if `scope` is missing or NULL.
 
-5. **Poll endpoint (`GET /api/v1/orchestrators/:id/poll`):** scope-filter all returned data (queue_counts, provisional_tasks, etc.) to the orchestrator's registered scope.
+5. **Poll endpoint (`GET /api/v1/scheduler/poll?orchestrator_id=<id>`):** scope-filter all returned data (queue_counts, provisional_tasks, etc.) to the scope provided in the request. This is critical — an unscoped poll response causes cross-scope capacity blocking (GH-227). The orchestrator passes `?scope=<scope>` as a query parameter; the server must use it.
 
 6. **Migration:** any existing tasks or orchestrators with NULL scope should be identified. Consider a one-time migration to assign them a default scope, or leave them orphaned with a warning log.
 

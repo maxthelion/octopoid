@@ -47,11 +47,12 @@ class TestCanClaimTaskWithQueueCounts:
     """can_claim_task should use pre-fetched counts when provided."""
 
     def test_uses_queue_counts_no_api_call(self):
-        """When queue_counts is provided, no API calls are made."""
+        """When queue_counts is provided, only claimed count is re-fetched for scope isolation."""
         queue_counts = {"incoming": 3, "claimed": 0, "provisional": 0}
-        with patch("orchestrator.backpressure.count_queue") as mock_count:
+        with patch("orchestrator.backpressure.count_queue", return_value=0) as mock_count:
             result, reason = can_claim_task(queue_counts=queue_counts)
-        mock_count.assert_not_called()
+        # claimed is always re-fetched via count_queue for scope filtering (GH-227)
+        mock_count.assert_called_once_with("claimed")
         assert result is True
 
     def test_queue_counts_empty_incoming_blocked(self):
@@ -62,15 +63,21 @@ class TestCanClaimTaskWithQueueCounts:
         assert "No tasks" in reason
 
     def test_queue_counts_claimed_at_limit_blocked(self):
-        """Pre-fetched claimed at limit blocks claiming."""
+        """Scope-filtered claimed at limit blocks claiming.
+
+        count_queue("claimed") is always called even when queue_counts is provided,
+        to ensure scope isolation (GH-227). The queue_counts claimed value is ignored.
+        """
         from orchestrator.config import get_queue_limits
         limits = get_queue_limits()
         queue_counts = {
             "incoming": 5,
-            "claimed": limits["max_claimed"],
+            "claimed": 0,  # poll says 0, but...
             "provisional": 0,
         }
-        result, reason = can_claim_task(queue_counts=queue_counts)
+        # ...scope-filtered count is at the limit
+        with patch("orchestrator.backpressure.count_queue", return_value=limits["max_claimed"]):
+            result, reason = can_claim_task(queue_counts=queue_counts)
         assert result is False
         assert "claimed" in reason.lower()
 
@@ -115,14 +122,15 @@ class TestGuardBackpressureWithQueueCounts:
         )
 
     def test_incoming_uses_queue_counts_no_api_call(self, tmp_path):
-        """When queue_counts is in ctx, no API calls are made for incoming queue."""
+        """When queue_counts is in ctx, only claimed count is re-fetched for scope isolation."""
         ctx = self._make_ctx(
             tmp_path, "incoming",
             queue_counts={"incoming": 3, "claimed": 0, "provisional": 0},
         )
-        with patch("orchestrator.backpressure.count_queue") as mock_count:
+        with patch("orchestrator.backpressure.count_queue", return_value=0) as mock_count:
             proceed, reason = guard_backpressure(ctx)
-        mock_count.assert_not_called()
+        # claimed is always re-fetched for scope filtering (GH-227); incoming uses poll data
+        mock_count.assert_called_once_with("claimed")
         assert proceed is True
 
     def test_incoming_queue_counts_empty_returns_false(self, tmp_path):

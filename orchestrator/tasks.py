@@ -15,6 +15,7 @@ from uuid import uuid4
 from .config import (
     ACTIVE_QUEUES,
     get_base_branch,
+    get_scope,
 )
 from .sdk import get_sdk, get_orchestrator_id
 from .task_logger import get_task_logger
@@ -589,10 +590,18 @@ def get_task_by_id(task_id: str) -> dict[str, Any] | None:
         return None
 
 def list_tasks(subdir: str) -> list[dict[str, Any]]:
-    """List all tasks in a queue."""
+    """List all tasks in a queue, filtered to the current scope."""
     try:
         sdk = get_sdk()
         tasks = sdk.tasks.list(queue=subdir)
+
+        # Filter by scope as a client-side safety net.
+        # The SDK sends scope as a query param, but if the server does not filter
+        # by it (e.g. older server version), tasks from other scopes would leak
+        # into queue counts and status displays, blocking capacity checks.
+        scope = get_scope()
+        if scope:
+            tasks = [t for t in tasks if t.get("scope") == scope]
 
         priority_order = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
         tasks.sort(key=lambda t: (
