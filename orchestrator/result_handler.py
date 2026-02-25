@@ -16,6 +16,11 @@ from pathlib import Path
 
 from . import queue_utils
 
+# Queues that represent a finished task — a PID associated with a task in one
+# of these states can never be useful again, so returning True (PID safe to
+# remove) is always correct.
+_TERMINAL_QUEUES: frozenset[str] = frozenset({"done", "failed"})
+
 
 def debug_log(message: str) -> None:
     """Forward to scheduler.debug_log.
@@ -226,9 +231,17 @@ def _handle_done_outcome(sdk: object, task_id: str, task: dict, result: dict, ta
 
     current_queue = task.get("queue", "unknown")
     if current_queue != "claimed":
-        # Task is not in "claimed" — do not transition. Return False so the
-        # caller keeps the PID and retries next tick. This prevents orphaning
-        # a task that is still claimed but was observed in a transient state.
+        if current_queue in _TERMINAL_QUEUES:
+            # Task already reached a terminal state (done/failed) — the agent
+            # process is dead and nothing will ever move it back to claimed.
+            # Return True so the caller removes the stale PID from the pool.
+            debug_log(
+                f"Task {task_id}: stale PID cleanup — task already in terminal state "
+                f"'{current_queue}' (outcome=done), returning True"
+            )
+            return True
+        # Task is in a transient non-claimed state (incoming, provisional, etc.)
+        # Keep the PID for retry — the task may still transition through claimed.
         debug_log(f"Task {task_id}: outcome=done but queue={current_queue}, skipping")
         return False
 
@@ -275,6 +288,13 @@ def _handle_fail_outcome(sdk: object, task_id: str, task: dict, reason: str, cur
         sdk.tasks.update(task_id, queue=fail_target)
         debug_log(f"Task {task_id}: failed (claimed → {fail_target}): {reason}")
         return True
+    elif current_queue in _TERMINAL_QUEUES:
+        # Task already reached a terminal state — stale PID, safe to remove.
+        debug_log(
+            f"Task {task_id}: stale PID cleanup — task already in terminal state "
+            f"'{current_queue}' (outcome=failed), returning True"
+        )
+        return True
     else:
         debug_log(f"Task {task_id}: outcome=failed but queue={current_queue}, skipping")
         return False
@@ -296,6 +316,13 @@ def _handle_continuation_outcome(sdk: object, task_id: str, task: dict, agent_na
         continuation_target = _get_continuation_target_from_flow(task, current_queue)
         sdk.tasks.update(task_id, queue=continuation_target)
         debug_log(f"Task {task_id}: needs continuation by {agent_name} (→ {continuation_target})")
+        return True
+    elif current_queue in _TERMINAL_QUEUES:
+        # Task already reached a terminal state — stale PID, safe to remove.
+        debug_log(
+            f"Task {task_id}: stale PID cleanup — task already in terminal state "
+            f"'{current_queue}' (outcome=needs_continuation), returning True"
+        )
         return True
     else:
         debug_log(f"Task {task_id}: outcome=needs_continuation but queue={current_queue}, skipping")
