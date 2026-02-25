@@ -727,6 +727,134 @@ def _get_server_url_from_config() -> str:
     return ""
 
 
+def _load_global_instructions(agent_dir: str) -> str:
+    """Load global + agent-specific instructions.
+
+    Reads the global instructions file and appends any agent-specific
+    instructions.md found in the agent directory.
+
+    Args:
+        agent_dir: Path to the agent directory.
+
+    Returns:
+        Combined instructions string.
+    """
+    global_instructions = ""
+    gi_path = get_global_instructions_path()
+    if gi_path.exists():
+        global_instructions = gi_path.read_text()
+
+    instructions_md_path = Path(agent_dir) / "instructions.md"
+    if instructions_md_path.exists():
+        instructions_content = instructions_md_path.read_text()
+        global_instructions = global_instructions + "\n\n" + instructions_content
+        debug_log(f"Included instructions.md from agent directory: {instructions_md_path}")
+
+    return global_instructions
+
+
+def _build_required_steps(task: dict) -> str:
+    """Parse agent hooks and build the required-steps section.
+
+    Reads 'hooks' from the task dict, filters to agent hooks, and builds
+    a markdown section listing required steps before writing result.json.
+    The 'create_pr' hook is intentionally skipped (handled by the scheduler).
+
+    Args:
+        task: Task dict, may contain a 'hooks' key.
+
+    Returns:
+        Markdown string for the required-steps section, or empty string.
+    """
+    import json as _json
+
+    hooks = task.get("hooks")
+    agent_hooks: list[dict] = []
+    if hooks:
+        if isinstance(hooks, str):
+            agent_hooks = [h for h in _json.loads(hooks) if h.get("type") == "agent"]
+        elif isinstance(hooks, list):
+            agent_hooks = [h for h in hooks if h.get("type") == "agent"]
+
+    if not agent_hooks:
+        return ""
+
+    lines = ["## Required Steps Before Writing result.json", ""]
+    lines.append("You must complete these steps before writing result.json:")
+    for i, hook in enumerate(agent_hooks, 1):
+        name = hook["name"]
+        if name == "run_tests":
+            lines.append(f"{i}. Run tests: `../scripts/run-tests`")
+        elif name == "create_pr":
+            # Scheduler handles PR creation — skip this hook for the agent
+            continue
+        else:
+            lines.append(f"{i}. {name}")
+    return "\n".join(lines)
+
+
+def _load_review_section(task_id: str) -> str:
+    """Load and format the task message thread for the prompt.
+
+    Args:
+        task_id: Task identifier string.
+
+    Returns:
+        Formatted markdown review section, or empty string if unavailable.
+    """
+    if not task_id:
+        return ""
+    try:
+        from .task_thread import get_thread, format_thread_for_prompt
+        thread_messages = get_thread(task_id)
+        return format_thread_for_prompt(thread_messages)
+    except Exception as e:
+        debug_log(f"Failed to load task thread for {task_id}: {e}")
+        return ""
+
+
+def _render_prompt(task: dict, agent_config: dict) -> str:
+    """Build the rendered prompt string from template, instructions, hooks, and thread.
+
+    Args:
+        task: Task dict with id, title, content, priority, branch, type, hooks.
+        agent_config: Agent configuration dict with 'agent_dir' key.
+
+    Returns:
+        Fully substituted prompt text (not written to disk here).
+
+    Raises:
+        ValueError: If the agent directory or prompt.md is missing.
+    """
+    from string import Template
+
+    agent_dir = agent_config.get("agent_dir")
+    if not agent_dir or not (Path(agent_dir) / "prompt.md").exists():
+        raise ValueError(f"Agent directory or prompt.md not found: {agent_dir}")
+
+    prompt_template_path = Path(agent_dir) / "prompt.md"
+    prompt_template = prompt_template_path.read_text()
+    debug_log(f"Using prompt template from agent directory: {prompt_template_path}")
+
+    global_instructions = _load_global_instructions(agent_dir)
+    required_steps = _build_required_steps(task)
+    review_section = _load_review_section(task.get("id", ""))
+
+    return Template(prompt_template).safe_substitute(
+        task_id=task.get("id", "unknown"),
+        task_title=task.get("title", "Untitled"),
+        task_content=task.get("content", ""),
+        task_priority=task.get("priority", "P2"),
+        task_branch=task.get("branch") or get_base_branch(),
+        task_type=task.get("type", ""),
+        scripts_dir="../scripts",
+        global_instructions=global_instructions,
+        required_steps=required_steps,
+        review_section=review_section,
+        continuation_section="",
+    )
+
+
 def prepare_task_directory(
     task: dict,
     agent_name: str,
@@ -809,87 +937,8 @@ def prepare_task_directory(
     ]
     (task_dir / "env.sh").write_text("\n".join(env_lines) + "\n")
 
-    # Render prompt from agent directory
-    agent_dir = agent_config.get("agent_dir")
-    if not agent_dir or not (Path(agent_dir) / "prompt.md").exists():
-        raise ValueError(f"Agent directory or prompt.md not found: {agent_dir}")
-
-    # Use prompt template from agent directory
-    prompt_template_path = Path(agent_dir) / "prompt.md"
-    prompt_template = prompt_template_path.read_text()
-    debug_log(f"Using prompt template from agent directory: {prompt_template_path}")
-
-    # Load global instructions
-    global_instructions = ""
-    gi_path = get_global_instructions_path()
-    if gi_path.exists():
-        global_instructions = gi_path.read_text()
-
-    # Load instructions.md from agent directory if available
-    instructions_md_path = Path(agent_dir) / "instructions.md"
-    if instructions_md_path.exists():
-        instructions_content = instructions_md_path.read_text()
-        # Append instructions to global instructions
-        global_instructions = global_instructions + "\n\n" + instructions_content
-        debug_log(f"Included instructions.md from agent directory: {instructions_md_path}")
-
-    # Get agent hooks from task
-    hooks = task.get("hooks")
-    agent_hooks = None
-    if hooks:
-        if isinstance(hooks, str):
-            agent_hooks = [
-                h for h in json.loads(hooks)
-                if h.get("type") == "agent"
-            ]
-        elif isinstance(hooks, list):
-            agent_hooks = [h for h in hooks if h.get("type") == "agent"]
-
-    # Build required_steps section
-    required_steps = ""
-    if agent_hooks:
-        lines = ["## Required Steps Before Writing result.json", ""]
-        lines.append("You must complete these steps before writing result.json:")
-        for i, hook in enumerate(agent_hooks, 1):
-            name = hook["name"]
-            if name == "run_tests":
-                lines.append(f"{i}. Run tests: `../scripts/run-tests`")
-            elif name == "create_pr":
-                # Scheduler handles PR creation — skip this hook for the agent
-                continue
-            else:
-                lines.append(f"{i}. {name}")
-        required_steps = "\n".join(lines)
-
-    # Load task message thread for review_section
-    review_section = ""
-    task_id_for_thread = task.get("id", "")
-    if task_id_for_thread:
-        try:
-            from .task_thread import get_thread, format_thread_for_prompt
-            thread_messages = get_thread(task_id_for_thread)
-            review_section = format_thread_for_prompt(thread_messages)
-        except Exception as e:
-            debug_log(f"Failed to load task thread for {task_id_for_thread}: {e}")
-
-    # Perform template substitution
-    from string import Template
-    template = Template(prompt_template)
-    prompt = template.safe_substitute(
-        task_id=task.get("id", "unknown"),
-        task_title=task.get("title", "Untitled"),
-        task_content=task.get("content", ""),
-        task_priority=task.get("priority", "P2"),
-        task_branch=task.get("branch") or get_base_branch(),
-        task_type=task.get("type", ""),
-        scripts_dir="../scripts",
-        global_instructions=global_instructions,
-        required_steps=required_steps,
-        review_section=review_section,
-        continuation_section="",
-    )
-
-    (task_dir / "prompt.md").write_text(prompt)
+    # Render and write prompt
+    (task_dir / "prompt.md").write_text(_render_prompt(task, agent_config))
 
     debug_log(f"Prepared task directory: {task_dir}")
     return task_dir
