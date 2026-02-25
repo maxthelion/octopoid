@@ -38,7 +38,7 @@ class TestCreateTaskProjectBranchInheritance:
         )
 
         # create_task returns "TASK-{id}"
-        assert task_name.startswith("TASK-"), f"Expected TASK-... prefix, got: {task_name}"
+        assert not task_name.startswith("TASK-"), f"Expected bare ID, got TASK- prefix: {task_name}"
 
         # SDK create must have been called with the project branch
         mock_sdk_for_unit_tests.projects.get.assert_called_once_with(project_id)
@@ -78,7 +78,7 @@ class TestCreateTaskProjectBranchInheritance:
             branch=explicit_branch,
         )
 
-        assert task_name.startswith("TASK-")
+        assert not task_name.startswith("TASK-")
 
         call_kwargs = mock_sdk_for_unit_tests.tasks.create.call_args[1]
         assert call_kwargs["branch"] == explicit_branch
@@ -108,7 +108,7 @@ class TestCreateTaskProjectBranchInheritance:
                 acceptance_criteria=["Done"],
             )
 
-        assert task_name.startswith("TASK-")
+        assert not task_name.startswith("TASK-")
         call_kwargs = mock_sdk_for_unit_tests.tasks.create.call_args[1]
         assert "BRANCH: main" in call_kwargs["content"]
 
@@ -232,7 +232,7 @@ class TestCreateTaskFlowParameter:
                 project_id=project_id,
             )
 
-        assert task_name.startswith("TASK-")
+        assert not task_name.startswith("TASK-")
         call_kwargs = mock_sdk_for_unit_tests.tasks.create.call_args[1]
         assert "BRANCH: main" in call_kwargs["content"]
 

@@ -24,9 +24,10 @@ class TestSDKMocking:
             acceptance_criteria=["SDK calls are mocked", "No production side effects"],
         )
 
-        # create_task() returns "TASK-{id}" string (no file written)
+        # create_task() returns the bare hex ID string (no file written)
         assert isinstance(task_name, str), "create_task() must return a string"
-        assert task_name.startswith("TASK-"), f"Expected TASK-... prefix, got: {task_name}"
+        assert not task_name.startswith("TASK-"), f"Expected bare ID, got TASK- prefix: {task_name}"
+        assert len(task_name) == 8, f"Expected 8-char hex ID, got: {task_name}"
 
         # Verify the mocked SDK's create method was called (not a real HTTP request)
         mock_sdk_for_unit_tests.tasks.create.assert_called_once()
