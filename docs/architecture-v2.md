@@ -103,6 +103,20 @@ Octopoid v2.0 transforms from a single-machine Python orchestrator to a distribu
 - Push to share results
 - Server only stores metadata
 
+## Architectural Principles
+
+These principles emerged from operational experience running the system. They guide design decisions across the codebase.
+
+**Implementer agents are pure functions.** They receive a task, do the work, and report a result. They should never manage their own lifecycle — no rebasing, no merging, no PR management. Keeping agents focused on the actual task makes them simpler, more predictable, and easier to debug.
+
+**The scheduler owns mechanical operations.** Rebasing, merging, PR creation, and cleanup are the scheduler's responsibility, not the agent's. If a mechanical operation fails (e.g. rebase conflict), the scheduler should attempt to resolve it mechanically first. Only if that fails should it hand the problem to an agent — and then as a specific, scoped task (e.g. "resolve these merge conflicts"), not "re-implement the whole thing."
+
+**Failed should be an outlier outcome.** Most problems can be resolved within the system: reject back to incoming with feedback, retry with a different approach, escalate to a specialist agent. The `failed` queue should be a last resort, not the default error path. Every task in `failed` represents a gap in the system's ability to self-recover.
+
+**Prefer mechanical solutions over LLM calls for cost.** But don't shy away from automating LLM use when it reduces human intervention. The goal is minimising total cost (human time + compute), not minimising compute alone.
+
+**Git worktrees must stay on detached HEAD.** Agents get a worktree pulled from origin, fully rebased to the base branch. Named branches are only created when the agent is ready to push. This prevents git from refusing to check out a branch that's already checked out in another worktree.
+
 ## Components
 
 ### Server (@octopoid/server)

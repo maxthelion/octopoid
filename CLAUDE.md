@@ -15,6 +15,8 @@ For upgrading the local octopoid installation after code changes, see `docs/loca
 
 Read `docs/flows.md` for how the declarative flow system works — this is the core architecture for task transitions. All task state changes go through flows, not hardcoded logic.
 
+Read `docs/architecture-v2.md` for the system architecture, including the "Architectural Principles" section which documents key design decisions (agents as pure functions, scheduler owns mechanics, etc.).
+
 ## Scheduler and Python caching
 
 The scheduler automatically clears all `__pycache__` directories under `orchestrator/` on every startup (via `_clear_pycache()` in `scheduler.py`), and `orchestrator/__init__.py` sets `sys.dont_write_bytecode = True` so that no process importing the orchestrator package will write new `.pyc` files.
