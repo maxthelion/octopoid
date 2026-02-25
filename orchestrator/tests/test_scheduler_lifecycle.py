@@ -25,7 +25,7 @@ import pytest
 @pytest.fixture
 def tmp_task_dir(tmp_path):
     """Create a minimal task directory structure."""
-    task_dir = tmp_path / "TASK-test123"
+    task_dir = tmp_path / "test123"
     task_dir.mkdir()
     worktree = task_dir / "worktree"
     worktree.mkdir()
@@ -44,7 +44,7 @@ def mock_sdk():
 def sample_task():
     """A minimal task dict for testing."""
     return {
-        "id": "TASK-test123",
+        "id": "test123",
         "title": "Test task",
         "role": "implement",
         "queue": "claimed",
@@ -77,7 +77,7 @@ class TestPrepareTaskDirectoryCreatesBranch:
         from orchestrator.scheduler import prepare_task_directory
 
         # Set up paths
-        task_dir = tmp_path / "TASK-abc123"
+        task_dir = tmp_path / "abc123"
         task_dir.mkdir()
         worktree_path = task_dir / "worktree"
         worktree_path.mkdir()
@@ -99,7 +99,7 @@ class TestPrepareTaskDirectoryCreatesBranch:
         (agent_dir / "prompt.md").write_text("Task: $task_id")
 
         task = {
-            "id": "TASK-abc123",
+            "id": "abc123",
             "title": "Test task",
             "role": "implement",
         }
@@ -115,7 +115,7 @@ class TestPrepareTaskDirectoryCreatesBranch:
             # Verify RepoManager was created with the worktree path
             MockRepoManager.assert_called_once_with(worktree_path)
             # Verify ensure_on_branch was called with the task branch
-            mock_repo.ensure_on_branch.assert_called_once_with("agent/TASK-abc123")
+            mock_repo.ensure_on_branch.assert_called_once_with("agent/abc123")
 
 
 # ---------------------------------------------------------------------------
@@ -149,7 +149,7 @@ class TestHandleAgentResultFlowSteps:
             mock_load_flow.return_value = mock_flow
 
             from orchestrator.scheduler import handle_agent_result
-            handle_agent_result("TASK-test123", "agent-1", tmp_task_dir)
+            handle_agent_result("test123", "agent-1", tmp_task_dir)
 
             # Verify flow was loaded and steps executed
             mock_load_flow.assert_called_once_with("default")
@@ -162,7 +162,7 @@ class TestHandleAgentResultFlowSteps:
             )
             # Engine performs the transition after steps
             mock_sdk.tasks.submit.assert_called_once_with(
-                task_id="TASK-test123", commits_count=0, turns_used=0
+                task_id="test123", commits_count=0, turns_used=0
             )
 
     def test_done_outcome_no_runs_still_transitions(self, tmp_task_dir, mock_sdk, sample_task):
@@ -187,13 +187,13 @@ class TestHandleAgentResultFlowSteps:
             mock_load_flow.return_value = mock_flow
 
             from orchestrator.scheduler import handle_agent_result
-            handle_agent_result("TASK-test123", "agent-1", tmp_task_dir)
+            handle_agent_result("test123", "agent-1", tmp_task_dir)
 
             # No steps executed
             mock_execute.assert_not_called()
             # Engine still performs the transition via submit
             mock_sdk.tasks.submit.assert_called_once_with(
-                task_id="TASK-test123", commits_count=0, turns_used=0,
+                task_id="test123", commits_count=0, turns_used=0,
             )
 
     def test_done_outcome_fallback_direct_submit_when_no_transitions(self, tmp_task_dir, mock_sdk, sample_task):
@@ -215,13 +215,13 @@ class TestHandleAgentResultFlowSteps:
             mock_load_flow.return_value = mock_flow
 
             from orchestrator.scheduler import handle_agent_result
-            handle_agent_result("TASK-test123", "agent-1", tmp_task_dir)
+            handle_agent_result("test123", "agent-1", tmp_task_dir)
 
             # Should NOT execute steps
             mock_execute.assert_not_called()
             # Should fall back to direct submit
             mock_sdk.tasks.submit.assert_called_once_with(
-                task_id="TASK-test123", commits_count=0, turns_used=0,
+                task_id="test123", commits_count=0, turns_used=0,
             )
 
     def test_child_flow_done_outcome_accepts_task(self, tmp_task_dir, mock_sdk):
@@ -230,7 +230,7 @@ class TestHandleAgentResultFlowSteps:
         result_path.write_text(json.dumps({"outcome": "done"}))
 
         project_task = {
-            "id": "TASK-test123",
+            "id": "test123",
             "title": "Child task",
             "queue": "claimed",
             "flow": "project",
@@ -257,7 +257,7 @@ class TestHandleAgentResultFlowSteps:
             mock_load_flow.return_value = mock_flow
 
             from orchestrator.scheduler import handle_agent_result
-            handle_agent_result("TASK-test123", "agent-1", tmp_task_dir)
+            handle_agent_result("test123", "agent-1", tmp_task_dir)
 
             # Steps executed
             mock_execute.assert_called_once_with(
@@ -268,7 +268,7 @@ class TestHandleAgentResultFlowSteps:
             )
             # Engine accepts (not submits) for claimed -> done
             mock_sdk.tasks.accept.assert_called_once_with(
-                task_id="TASK-test123", accepted_by="flow-engine"
+                task_id="test123", accepted_by="flow-engine"
             )
             mock_sdk.tasks.submit.assert_not_called()
 
@@ -294,9 +294,9 @@ class TestHandleAgentResultFailed:
             mock_qu.get_sdk.return_value = mock_sdk
 
             from orchestrator.scheduler import handle_agent_result
-            handle_agent_result("TASK-test123", "agent-1", tmp_task_dir)
+            handle_agent_result("test123", "agent-1", tmp_task_dir)
 
-            mock_sdk.tasks.update.assert_called_once_with("TASK-test123", queue="failed")
+            mock_sdk.tasks.update.assert_called_once_with("test123", queue="failed")
 
     def test_error_outcome_moves_to_failed(self, tmp_task_dir, mock_sdk, sample_task):
         """When result.json is invalid, task should move to failed queue."""
@@ -309,9 +309,9 @@ class TestHandleAgentResultFailed:
             mock_qu.get_sdk.return_value = mock_sdk
 
             from orchestrator.scheduler import handle_agent_result
-            handle_agent_result("TASK-test123", "agent-1", tmp_task_dir)
+            handle_agent_result("test123", "agent-1", tmp_task_dir)
 
-            mock_sdk.tasks.update.assert_called_once_with("TASK-test123", queue="failed")
+            mock_sdk.tasks.update.assert_called_once_with("test123", queue="failed")
 
 
 # ---------------------------------------------------------------------------
@@ -329,9 +329,9 @@ class TestHandleAgentResultNoResult:
             mock_qu.get_sdk.return_value = mock_sdk
 
             from orchestrator.scheduler import handle_agent_result
-            handle_agent_result("TASK-test123", "agent-1", tmp_task_dir)
+            handle_agent_result("test123", "agent-1", tmp_task_dir)
 
-            mock_sdk.tasks.update.assert_called_once_with("TASK-test123", queue="failed")
+            mock_sdk.tasks.update.assert_called_once_with("test123", queue="failed")
 
     def test_no_result_json_with_notes_continues(self, tmp_task_dir, mock_sdk, sample_task):
         """No result.json but has notes = needs_continuation."""
@@ -343,10 +343,10 @@ class TestHandleAgentResultNoResult:
             mock_qu.get_sdk.return_value = mock_sdk
 
             from orchestrator.scheduler import handle_agent_result
-            handle_agent_result("TASK-test123", "agent-1", tmp_task_dir)
+            handle_agent_result("test123", "agent-1", tmp_task_dir)
 
             mock_sdk.tasks.update.assert_called_once_with(
-                "TASK-test123", queue="needs_continuation"
+                "test123", queue="needs_continuation"
             )
 
     def test_done_outcome_non_claimed_queue_skips(self, tmp_task_dir, mock_sdk):
@@ -355,7 +355,7 @@ class TestHandleAgentResultNoResult:
         result_path.write_text(json.dumps({"outcome": "done"}))
 
         task = {
-            "id": "TASK-test123",
+            "id": "test123",
             "title": "Test task",
             "queue": "provisional",
             "flow": "default",
@@ -369,7 +369,7 @@ class TestHandleAgentResultNoResult:
             mock_qu.get_sdk.return_value = mock_sdk
 
             from orchestrator.scheduler import handle_agent_result
-            handle_agent_result("TASK-test123", "agent-1", tmp_task_dir)
+            handle_agent_result("test123", "agent-1", tmp_task_dir)
 
             # Should NOT execute steps or submit — task already moved past claimed
             mock_execute.assert_not_called()
@@ -390,7 +390,7 @@ class TestChildFlowDispatch:
 
         # Task is a child of a project
         project_task = {
-            "id": "TASK-test123",
+            "id": "test123",
             "title": "Child task",
             "role": "implement",
             "queue": "claimed",
@@ -420,7 +420,7 @@ class TestChildFlowDispatch:
             mock_load_flow.return_value = mock_flow
 
             from orchestrator.scheduler import handle_agent_result
-            handle_agent_result("TASK-test123", "agent-1", tmp_task_dir)
+            handle_agent_result("test123", "agent-1", tmp_task_dir)
 
             # child_flow transitions should be used, not parent flow
             mock_child_flow.get_transitions_from.assert_called_once_with("claimed")
@@ -433,7 +433,7 @@ class TestChildFlowDispatch:
             )
             # Engine accepts for claimed -> done
             mock_sdk.tasks.accept.assert_called_once_with(
-                task_id="TASK-test123", accepted_by="flow-engine"
+                task_id="test123", accepted_by="flow-engine"
             )
 
     def test_non_project_task_uses_normal_flow_in_handle_done(self, tmp_task_dir, mock_sdk, sample_task):
@@ -461,7 +461,7 @@ class TestChildFlowDispatch:
             mock_load_flow.return_value = mock_flow
 
             from orchestrator.scheduler import handle_agent_result
-            handle_agent_result("TASK-test123", "agent-1", tmp_task_dir)
+            handle_agent_result("test123", "agent-1", tmp_task_dir)
 
             # Top-level flow transitions should be used
             mock_flow.get_transitions_from.assert_called_once_with("claimed")
@@ -474,7 +474,7 @@ class TestChildFlowDispatch:
             )
             # Engine submits for claimed -> provisional
             mock_sdk.tasks.submit.assert_called_once_with(
-                task_id="TASK-test123", commits_count=0, turns_used=0
+                task_id="test123", commits_count=0, turns_used=0
             )
 
     def test_project_task_uses_child_flow_in_flow_dispatch(self, tmp_task_dir, mock_sdk):
@@ -484,7 +484,7 @@ class TestChildFlowDispatch:
         result_path.write_text(json.dumps({"status": "success", "decision": "approve"}))
 
         project_task = {
-            "id": "TASK-test123",
+            "id": "test123",
             "title": "Child task",
             "role": "implement",
             "queue": "claimed",
@@ -512,7 +512,7 @@ class TestChildFlowDispatch:
             mock_load_flow.return_value = mock_flow
 
             from orchestrator.scheduler import handle_agent_result_via_flow
-            handle_agent_result_via_flow("TASK-test123", "agent-1", tmp_task_dir)
+            handle_agent_result_via_flow("test123", "agent-1", tmp_task_dir)
 
             mock_child_flow.get_transitions_from.assert_called_once_with("claimed")
             mock_flow.get_transitions_from.assert_not_called()
@@ -544,7 +544,7 @@ class TestChildFlowDispatch:
             mock_load_flow.return_value = mock_flow
 
             from orchestrator.scheduler import handle_agent_result_via_flow
-            handle_agent_result_via_flow("TASK-test123", "agent-1", tmp_task_dir)
+            handle_agent_result_via_flow("test123", "agent-1", tmp_task_dir)
 
             mock_flow.get_transitions_from.assert_called_once_with("claimed")
             mock_child_flow.get_transitions_from.assert_not_called()
@@ -581,7 +581,7 @@ class TestStepFailureRetry:
             with patch("orchestrator.steps.execute_steps", side_effect=RuntimeError("Tests failed")):
                 from orchestrator.scheduler import handle_agent_result
                 with pytest.raises(RuntimeError, match="Tests failed"):
-                    handle_agent_result("TASK-test123", "agent-1", tmp_task_dir)
+                    handle_agent_result("test123", "agent-1", tmp_task_dir)
 
         # Failure count file should have been incremented
         counter_file = tmp_task_dir / "step_failure_count"
@@ -613,12 +613,12 @@ class TestStepFailureRetry:
             with patch("orchestrator.steps.execute_steps", side_effect=RuntimeError("Step failed again")):
                 from orchestrator.scheduler import handle_agent_result
                 # Should NOT raise — returns cleanly so PID gets removed
-                handle_agent_result("TASK-test123", "agent-1", tmp_task_dir)
+                handle_agent_result("test123", "agent-1", tmp_task_dir)
 
         # Task moved to failed
         mock_sdk.tasks.update.assert_called_once()
         call_args = mock_sdk.tasks.update.call_args
-        assert call_args[0][0] == "TASK-test123"
+        assert call_args[0][0] == "test123"
         assert call_args[1]["queue"] == "failed"
 
         # Counter reset
@@ -646,11 +646,11 @@ class TestStepFailureRetry:
 
             from orchestrator.scheduler import handle_agent_result
             # Should not raise
-            handle_agent_result("TASK-test123", "agent-1", tmp_task_dir)
+            handle_agent_result("test123", "agent-1", tmp_task_dir)
 
         # submit called (transition worked)
         mock_sdk.tasks.submit.assert_called_once_with(
-            task_id="TASK-test123", commits_count=0, turns_used=0
+            task_id="test123", commits_count=0, turns_used=0
         )
 
 

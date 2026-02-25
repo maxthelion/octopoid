@@ -18,21 +18,21 @@ def temp_logs_dir():
 def test_task_logger_init(temp_logs_dir):
     """Test TaskLogger initialization."""
     logger = TaskLogger("abc123", logs_dir=temp_logs_dir)
-    assert logger.task_id == "TASK-abc123"
+    assert logger.task_id == "abc123"
     assert logger.logs_dir == temp_logs_dir
     assert logger.log_path == temp_logs_dir / "TASK-abc123.log"
     assert temp_logs_dir.exists()
 
 
-def test_task_logger_normalizes_task_id(temp_logs_dir):
-    """Test that task ID is normalized with TASK- prefix."""
-    # With prefix
-    logger1 = TaskLogger("TASK-abc123", logs_dir=temp_logs_dir)
-    assert logger1.task_id == "TASK-abc123"
+def test_task_logger_stores_bare_id(temp_logs_dir):
+    """Test that task ID is stored as-is (bare, without TASK- prefix)."""
+    logger1 = TaskLogger("abc123", logs_dir=temp_logs_dir)
+    assert logger1.task_id == "abc123"
+    assert logger1.log_path == temp_logs_dir / "TASK-abc123.log"
 
-    # Without prefix
     logger2 = TaskLogger("xyz789", logs_dir=temp_logs_dir)
-    assert logger2.task_id == "TASK-xyz789"
+    assert logger2.task_id == "xyz789"
+    assert logger2.log_path == temp_logs_dir / "TASK-xyz789.log"
 
 
 def test_log_created(temp_logs_dir):
@@ -225,7 +225,7 @@ def test_get_task_logger_factory():
     """Test the factory function."""
     logger = get_task_logger("abc123")
     assert isinstance(logger, TaskLogger)
-    assert logger.task_id == "TASK-abc123"
+    assert logger.task_id == "abc123"
 
 
 def test_event_parsing_with_spaces(temp_logs_dir):

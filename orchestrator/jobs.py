@@ -432,7 +432,7 @@ def _create_task_from_github_issue(issue: dict) -> str | None:
     ]
 
     try:
-        task_name = create_task(
+        task_id = create_task(
             title=f"[GH-{issue_number}] {title}",
             role=role,
             context=context,
@@ -440,8 +440,6 @@ def _create_task_from_github_issue(issue: dict) -> str | None:
             priority=priority,
             created_by="poll_github_issues",
         )
-        # create_task() returns "TASK-{id}", extract the hex ID
-        task_id = task_name.removeprefix("TASK-")
         _debug_log(f"poll_github_issues: created task {task_id} for issue #{issue_number}")
         return task_id
     except Exception as e:

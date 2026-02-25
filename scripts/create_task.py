@@ -117,7 +117,7 @@ def main():
             checks=checks,
         )
 
-        # create_task() returns "TASK-{id}"
+        # create_task() returns the bare hex ID (e.g. "47766b7e")
         print(task_name)
         sys.exit(0)
 

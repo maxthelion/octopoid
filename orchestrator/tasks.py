@@ -468,7 +468,8 @@ def create_task(
 ) -> str:
     """Create a new task and register it on the server with full content.
 
-    Returns the task ID in "TASK-{id}" format.
+    Returns the bare task ID (e.g. "47766b7e"), not "TASK-47766b7e".
+    Callers that need the filename can construct it themselves (e.g. f"TASK-{task_id}.md").
     """
     if not branch:
         if project_id:
@@ -563,7 +564,7 @@ CREATED_BY: {created_by}
         queue=queue,
     )
 
-    return f"TASK-{task_id}"
+    return task_id
 
 def is_task_still_valid(task_id: str) -> bool:
     """Check if a task still exists in active queues."""

@@ -33,13 +33,9 @@ class TaskLogger:
         """Initialize TaskLogger for a specific task.
 
         Args:
-            task_id: Task identifier (with or without TASK- prefix)
+            task_id: Bare task identifier (e.g. "47766b7e"), without the TASK- prefix
             logs_dir: Override default logs directory (useful for testing)
         """
-        # Normalize task ID (ensure TASK- prefix)
-        if not task_id.startswith("TASK-"):
-            task_id = f"TASK-{task_id}"
-
         self.task_id = task_id
 
         # Determine logs directory
@@ -48,7 +44,7 @@ class TaskLogger:
             logs_dir = get_orchestrator_dir() / "logs" / "tasks"
 
         self.logs_dir = logs_dir
-        self.log_path = self.logs_dir / f"{task_id}.log"
+        self.log_path = self.logs_dir / f"TASK-{task_id}.log"
 
         # Ensure directory exists
         self.logs_dir.mkdir(parents=True, exist_ok=True)

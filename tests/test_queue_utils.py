@@ -205,9 +205,9 @@ class TestCreateTask:
             created_by="test",
         )
 
-        # Returns "TASK-{id}" string, no file written
+        # Returns bare hex ID string, no file written
         assert isinstance(task_name, str)
-        assert task_name.startswith("TASK-")
+        assert not task_name.startswith("TASK-")
 
         # Content sent to server
         content = self._get_content(mock_sdk_for_unit_tests)
