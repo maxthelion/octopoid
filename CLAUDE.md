@@ -32,6 +32,8 @@ find orchestrator -name '__pycache__' -type d -exec rm -rf {} +
 - When closing or merging PRs, never use `--delete-branch`. We may need to go back and check the branch later.
 - When rejecting a task, post the rejection feedback as a comment on the PR (not just in the task body).
 - When approving a task, post a review summary comment on the PR before merging.
+- **Agents must not write to CHANGELOG.md directly.** Instead, write a `changes.md` file in the task runtime dir (`.octopoid/runtime/tasks/<id>/changes.md`). The `update_changelog` flow step reads this file after merge and prepends it to CHANGELOG.md on main. This eliminates rebase conflicts on CHANGELOG.md.
+- **Terminal steps (rebase_on_base, merge_pr) are auto-injected** by `_inject_terminal_steps()` in `flow.py` for any transition targeting `done`. Flow YAMLs don't need to include them explicitly — they'll be appended automatically if missing.
 
 ## Git hygiene
 
