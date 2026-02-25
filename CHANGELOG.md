@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Auto-inject required terminal steps in flow loading** ([TASK-b8c2bf6c])
+  - `orchestrator/flow.py`: Added `_inject_terminal_steps()` helper that appends `rebase_on_base` and `merge_pr` to the `runs` list of any transition targeting `done` if those steps are not already present. Called in both `Flow.from_dict()` and `Flow.from_server_dict()`, so individual flow YAMLs can no longer accidentally omit them.
+  - `tests/test_flow.py`: Added `TestInjectTerminalSteps` class with 7 tests covering injection, no-duplication, ordering, and partial presence. Updated two existing tests whose `runs` assertions now correctly include the injected `rebase_on_base` step.
+
 - **Scheduler reads flows from server instead of local YAML** ([TASK-5ec31cc1])
   - `orchestrator/flow.py`: `load_flow()` now fetches from the server via `sdk.flows.list()` and raises `FileNotFoundError` if not found (no silent fallback to local YAML). `list_flows()` returns names from the server and returns `[]` on SDK error.
   - `orchestrator/flow.py`: Added `Flow.from_server_dict()` classmethod to parse server response into Flow objects — handles JSON-encoded strings, both `from_state`/`to_state` and `from`/`to` key names, and full transition detail (agent, runs, conditions, child_flow).
