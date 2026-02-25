@@ -49,33 +49,33 @@ DEFAULT_GATEKEEPER_CONFIG = {
 }
 
 def find_parent_project() -> Path:
-    """Find the parent project root by walking up from orchestrator/ to find .git.
+    """Find the parent project root by walking up to find .git.
 
     Returns the directory containing .git (the parent project root).
 
-    When ORCHESTRATOR_DIR env var is set (e.g. in tests or subprocess environments),
-    returns its parent directory instead of walking the filesystem.
+    Resolution order:
+    1. ORCHESTRATOR_DIR env var → its parent directory
+    2. Walk up from cwd (correct when scheduler runs with WorkingDirectory set)
+    3. Walk up from __file__ (fallback for import-time usage)
     """
     env_override = os.environ.get("ORCHESTRATOR_DIR")
     if env_override:
         return Path(env_override).parent
 
-    current = Path(__file__).resolve().parent
-
-    # Walk up looking for .git
-    while current != current.parent:
-        # Skip if we're still inside the orchestrator submodule
-        if current.name == "orchestrator" and (current / "orchestrator").is_dir():
+    # Prefer cwd — each project's scheduler sets WorkingDirectory in its
+    # launchd plist, so cwd is the project root. Walking from __file__
+    # resolves to whichever project contains the orchestrator package,
+    # which breaks when multiple projects share the same package.
+    for start in (Path.cwd(), Path(__file__).resolve().parent):
+        current = start
+        while current != current.parent:
+            if (current / ".octopoid").is_dir() and (current / ".git").exists():
+                return current
             current = current.parent
-            continue
-
-        if (current / ".git").exists():
-            return current
-        current = current.parent
 
     raise RuntimeError(
         "Could not find parent project root. "
-        "Make sure orchestrator is installed as a submodule in a git repository."
+        "Make sure the working directory is inside a git repository with .octopoid/."
     )
 
 
