@@ -427,10 +427,12 @@ def handle_agent_result_via_flow(task_id: str, agent_name: str, task_dir: Path, 
                         task_id,
                         role="rejection",
                         content=(
-                            f"## Rebase/merge failed before completion\n\n"
+                            f"## Rebase/merge failed — resolve conflicts in existing worktree\n\n"
                             f"{err_msg}\n\n"
-                            f"The task will be requeued to incoming so it can be "
-                            f"re-implemented on a fresh base."
+                            f"The task will be requeued to incoming. Your previous work "
+                            f"is preserved in the existing worktree. Rebase onto the "
+                            f"latest base branch, resolve any conflicts, and continue — "
+                            f"do NOT re-implement from scratch."
                         ),
                         author="scheduler-merge",
                     )
