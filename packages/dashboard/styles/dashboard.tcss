@@ -425,6 +425,17 @@ FlowKanban {
     height: 100%;
 }
 
+/* ─── Matrix view ─────────────────────────────────────────────────────────── */
+
+MatrixView {
+    height: 100%;
+}
+
+.matrix-table {
+    height: 1fr;
+    background: $surface;
+}
+
 DoneTab > Vertical {
     height: 100%;
 }
