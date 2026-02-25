@@ -527,17 +527,6 @@ CREATED_BY: {created_by}
 {criteria_md}
 """
 
-    hooks_json = None
-    try:
-        from .hook_manager import HookManager
-        hm = HookManager(sdk=get_sdk())
-        hooks_list = hm.resolve_hooks_for_task(task_type=None)
-        if hooks_list:
-            import json as _json
-            hooks_json = _json.dumps(hooks_list)
-    except Exception as e:
-        print(f"Warning: Failed to resolve hooks: {e}", file=sys.stderr)
-
     try:
         sdk = get_sdk()
         create_kwargs: dict[str, Any] = dict(
@@ -548,7 +537,6 @@ CREATED_BY: {created_by}
             priority=priority,
             queue=queue,
             branch=branch,
-            hooks=hooks_json,
             content=content,
             flow=flow if flow is not None else ("project" if project_id else "default"),
             metadata={
