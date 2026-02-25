@@ -182,7 +182,7 @@ class TestChildTaskAssociation:
         )
 
         # 3. Retrieve the task from the server and verify branch
-        task_id = task_name.replace("TASK-", "")
+        task_id = task_name
         task = sdk.tasks.get(task_id)
         assert task is not None, f"Task {task_id} must be retrievable from server"
         assert task["branch"] == project_branch, (
