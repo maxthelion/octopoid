@@ -623,6 +623,66 @@ def update_changelog(task: dict, result: dict, task_dir: Path) -> None:
     print(f"update_changelog: CHANGELOG.md updated for task {task_id}")
 
 
+@register_step("aggregate_child_changes")
+def aggregate_child_changes(task: dict, result: dict, task_dir: Path) -> None:
+    """Collect changes.md files from all child tasks and write to project's changes.md.
+
+    Reads each child task's runtime changes.md and concatenates them into
+    task_dir/changes.md so that the subsequent update_changelog step can
+    prepend them to CHANGELOG.md.
+
+    Skips silently if no child tasks exist, if no child changes.md files are
+    found, or if a child's runtime dir has already been cleaned up.
+
+    This step is used in project flows (not task flows). The 'task' dict is a
+    project object (has 'id', 'title', 'branch', etc.).
+    """
+    from .config import get_tasks_dir
+    from .sdk import get_sdk
+
+    project_id = task["id"]
+    sdk = get_sdk()
+
+    try:
+        child_tasks = sdk.projects.get_tasks(project_id)
+    except Exception as e:
+        print(f"aggregate_child_changes: could not fetch child tasks for {project_id}: {e}, skipping")
+        return
+
+    if not child_tasks:
+        print(f"aggregate_child_changes: no child tasks for project {project_id}, skipping")
+        return
+
+    tasks_dir = get_tasks_dir()
+    all_changes: list[str] = []
+
+    for child in child_tasks:
+        child_id = child.get("id")
+        if not child_id:
+            continue
+        changes_file = tasks_dir / child_id / "changes.md"
+        if not changes_file.exists():
+            # Child's runtime dir may have been cleaned up, or it never wrote changes.md
+            continue
+        content = changes_file.read_text().strip()
+        if content:
+            all_changes.append(content)
+
+    if not all_changes:
+        print(
+            f"aggregate_child_changes: no child changes.md files found "
+            f"for project {project_id}, skipping"
+        )
+        return
+
+    combined = "\n\n".join(all_changes)
+    output_file = task_dir / "changes.md"
+    output_file.write_text(combined + "\n")
+    print(
+        f"aggregate_child_changes: wrote {len(all_changes)} child change(s) to {output_file}"
+    )
+
+
 @register_step("merge_project_pr")
 def merge_project_pr(project: dict, result: dict, project_dir: Path) -> None:
     """Merge the project's PR via gh CLI.

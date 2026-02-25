@@ -38,4 +38,8 @@ transitions:
     # no worktree/ subdirectory. The rebase_on_base step requires task_dir/worktree
     # and cannot run in this context. If rebase-before-merge is needed for project
     # PRs, a dedicated rebase_project_on_base step must be added to steps.py.
-    runs: [check_ci, merge_pr]
+    #
+    # aggregate_child_changes collects changes.md from each child task's runtime
+    # dir and writes them to task_dir/changes.md (the project root). update_changelog
+    # then prepends that content to CHANGELOG.md on the base branch.
+    runs: [check_ci, merge_pr, aggregate_child_changes, update_changelog]

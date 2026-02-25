@@ -624,3 +624,137 @@ class TestUpdateChangelogStep:
         from orchestrator.steps import STEP_REGISTRY
 
         assert "update_changelog" in STEP_REGISTRY
+
+
+class TestAggregateChildChangesStep:
+    """Tests for the aggregate_child_changes step."""
+
+    def test_is_registered(self):
+        """aggregate_child_changes is registered in STEP_REGISTRY."""
+        from orchestrator.steps import STEP_REGISTRY
+
+        assert "aggregate_child_changes" in STEP_REGISTRY
+
+    def test_skips_when_no_child_tasks(self, tmp_path, mock_sdk_for_unit_tests):
+        """aggregate_child_changes skips silently when SDK returns no child tasks."""
+        from orchestrator.steps import aggregate_child_changes
+
+        mock_sdk_for_unit_tests.projects.get_tasks.return_value = []
+
+        aggregate_child_changes({"id": "PROJ-test"}, {}, tmp_path)
+
+        assert not (tmp_path / "changes.md").exists()
+
+    def test_skips_when_sdk_raises(self, tmp_path, mock_sdk_for_unit_tests):
+        """aggregate_child_changes skips silently when SDK raises an exception."""
+        from orchestrator.steps import aggregate_child_changes
+
+        mock_sdk_for_unit_tests.projects.get_tasks.side_effect = RuntimeError("connection error")
+
+        # Should not raise
+        aggregate_child_changes({"id": "PROJ-test"}, {}, tmp_path)
+
+        assert not (tmp_path / "changes.md").exists()
+
+    def test_skips_when_no_child_changes_files(self, tmp_path, mock_sdk_for_unit_tests):
+        """aggregate_child_changes skips silently when no child has a changes.md."""
+        from orchestrator.steps import aggregate_child_changes
+
+        mock_sdk_for_unit_tests.projects.get_tasks.return_value = [
+            {"id": "TASK-abc"},
+            {"id": "TASK-def"},
+        ]
+
+        tasks_dir = tmp_path / "runtime" / "tasks"
+        tasks_dir.mkdir(parents=True)
+        # No changes.md files created for children
+
+        with patch("orchestrator.config.get_tasks_dir", return_value=tasks_dir):
+            aggregate_child_changes({"id": "PROJ-test"}, {}, tmp_path)
+
+        assert not (tmp_path / "changes.md").exists()
+
+    def test_skips_child_with_cleaned_up_dir(self, tmp_path, mock_sdk_for_unit_tests):
+        """aggregate_child_changes skips children whose runtime dirs don't exist."""
+        from orchestrator.steps import aggregate_child_changes
+
+        mock_sdk_for_unit_tests.projects.get_tasks.return_value = [
+            {"id": "TASK-gone"},  # runtime dir cleaned up
+            {"id": "TASK-here"},  # has changes.md
+        ]
+
+        tasks_dir = tmp_path / "runtime" / "tasks"
+        tasks_dir.mkdir(parents=True)
+        # Only create runtime dir for second child
+        (tasks_dir / "TASK-here").mkdir()
+        (tasks_dir / "TASK-here" / "changes.md").write_text("### Added\n\n- Feature B\n")
+
+        with patch("orchestrator.config.get_tasks_dir", return_value=tasks_dir):
+            aggregate_child_changes({"id": "PROJ-test"}, {}, tmp_path)
+
+        result = (tmp_path / "changes.md").read_text()
+        assert "Feature B" in result
+        # No error about the missing TASK-gone dir
+
+    def test_concatenates_multiple_children(self, tmp_path, mock_sdk_for_unit_tests):
+        """aggregate_child_changes concatenates all child changes.md files."""
+        from orchestrator.steps import aggregate_child_changes
+
+        mock_sdk_for_unit_tests.projects.get_tasks.return_value = [
+            {"id": "TASK-aaa"},
+            {"id": "TASK-bbb"},
+        ]
+
+        tasks_dir = tmp_path / "runtime" / "tasks"
+        (tasks_dir / "TASK-aaa").mkdir(parents=True)
+        (tasks_dir / "TASK-bbb").mkdir(parents=True)
+        (tasks_dir / "TASK-aaa" / "changes.md").write_text("### Added\n\n- Feature A\n")
+        (tasks_dir / "TASK-bbb" / "changes.md").write_text("### Fixed\n\n- Bug fix B\n")
+
+        with patch("orchestrator.config.get_tasks_dir", return_value=tasks_dir):
+            aggregate_child_changes({"id": "PROJ-test"}, {}, tmp_path)
+
+        result = (tmp_path / "changes.md").read_text()
+        assert "Feature A" in result
+        assert "Bug fix B" in result
+
+    def test_skips_empty_child_changes(self, tmp_path, mock_sdk_for_unit_tests):
+        """aggregate_child_changes skips child changes.md files that are empty."""
+        from orchestrator.steps import aggregate_child_changes
+
+        mock_sdk_for_unit_tests.projects.get_tasks.return_value = [
+            {"id": "TASK-empty"},
+            {"id": "TASK-full"},
+        ]
+
+        tasks_dir = tmp_path / "runtime" / "tasks"
+        (tasks_dir / "TASK-empty").mkdir(parents=True)
+        (tasks_dir / "TASK-full").mkdir(parents=True)
+        (tasks_dir / "TASK-empty" / "changes.md").write_text("   \n  ")
+        (tasks_dir / "TASK-full" / "changes.md").write_text("### Added\n\n- Feature\n")
+
+        with patch("orchestrator.config.get_tasks_dir", return_value=tasks_dir):
+            aggregate_child_changes({"id": "PROJ-test"}, {}, tmp_path)
+
+        result = (tmp_path / "changes.md").read_text()
+        assert "Feature" in result
+
+    def test_skips_child_with_no_id(self, tmp_path, mock_sdk_for_unit_tests):
+        """aggregate_child_changes skips child task dicts that have no id."""
+        from orchestrator.steps import aggregate_child_changes
+
+        mock_sdk_for_unit_tests.projects.get_tasks.return_value = [
+            {},  # no id
+            {"id": "TASK-valid"},
+        ]
+
+        tasks_dir = tmp_path / "runtime" / "tasks"
+        (tasks_dir / "TASK-valid").mkdir(parents=True)
+        (tasks_dir / "TASK-valid" / "changes.md").write_text("### Changed\n\n- Updated\n")
+
+        with patch("orchestrator.config.get_tasks_dir", return_value=tasks_dir):
+            # Should not raise
+            aggregate_child_changes({"id": "PROJ-test"}, {}, tmp_path)
+
+        result = (tmp_path / "changes.md").read_text()
+        assert "Updated" in result
