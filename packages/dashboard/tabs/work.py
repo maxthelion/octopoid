@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import deque
 
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.events import Key
 from textual.message import Message
@@ -210,15 +211,37 @@ class MatrixView(Widget):
             return ""
         return self._state_icon(state, frame)
 
+    def _task_recency_key(self, task: dict) -> str:
+        """Return the best available timestamp for a task (for descending sort)."""
+        for field in ("updated_at", "claimed_at", "created_at"):
+            val = task.get(field)
+            if val:
+                return val
+        return ""
+
     def _build_rows(self) -> list[tuple[dict, str]]:
         """Return ordered (task, indent_prefix) pairs.
 
-        Parent tasks come first with their children indented beneath them.
-        Tasks with no parent follow. Orphaned children (parent not in list)
+        Rows are sorted by most recent activity first (updated_at > claimed_at >
+        created_at). Done tasks are capped at the 5 most recent. Parent tasks
+        come first with their children indented beneath them. Orphaned children
         appear last with the indent prefix.
         """
+        # Limit done tasks to the 5 most recent
+        done_tasks = [t for t in self._all_tasks if (t.get("queue") or "incoming") == "done"]
+        done_tasks_sorted = sorted(done_tasks, key=self._task_recency_key, reverse=True)
+        allowed_done_ids: set[str] = {t.get("id", "") for t in done_tasks_sorted[:5]}
+
+        filtered: list[dict] = [
+            t for t in self._all_tasks
+            if (t.get("queue") or "incoming") != "done" or t.get("id", "") in allowed_done_ids
+        ]
+
+        # Sort all tasks by most recent activity (descending)
+        filtered.sort(key=self._task_recency_key, reverse=True)
+
         children_map: dict[str, list[dict]] = {}
-        for task in self._all_tasks:
+        for task in filtered:
             pid = task.get("parent_id")
             if pid:
                 children_map.setdefault(pid, []).append(task)
@@ -226,7 +249,7 @@ class MatrixView(Widget):
         rows: list[tuple[dict, str]] = []
         seen: set[str] = set()
 
-        for task in self._all_tasks:
+        for task in filtered:
             tid = task.get("id", "")
             if tid in seen or task.get("parent_id"):
                 continue
@@ -239,7 +262,7 @@ class MatrixView(Widget):
                     seen.add(cid)
 
         # Orphaned children whose parent is not in the task list
-        for task in self._all_tasks:
+        for task in filtered:
             tid = task.get("id", "")
             if tid and tid not in seen:
                 rows.append((task, "  - "))
@@ -254,7 +277,7 @@ class MatrixView(Widget):
             cursor_type="row",
             zebra_stripes=True,
         )
-        table.add_column("Task", key="task_name", width=30)
+        table.add_column("Task", key="task_name", width=42)
         for col in columns:
             # Abbreviate headers to keep columns narrow
             abbrev = col[:7]
@@ -272,9 +295,12 @@ class MatrixView(Widget):
         for task, prefix in self._build_rows():
             tid = task.get("id", "")
             title = task.get("title") or "Untitled"
-            cells: list[str] = [f"{prefix}{title}"]
+            short_id = tid[:8] if tid else ""
+            task_label = f"{prefix}{short_id} {title}" if short_id else f"{prefix}{title}"
+            cells: list[str | Text] = [task_label]
             for col in columns:
-                cells.append(self._cell_value(task, col, self._chevron_frame))
+                icon = self._cell_value(task, col, self._chevron_frame)
+                cells.append(Text(icon, justify="center"))
             row_key = tid if tid else None
             table.add_row(*cells, key=row_key)
             if tid:
@@ -293,7 +319,7 @@ class MatrixView(Widget):
             if queue in self._STATIC_STATES:
                 continue
             try:
-                table.update_cell(tid, f"col_{queue}", self._CHEVRON_FRAMES[frame])
+                table.update_cell(tid, f"col_{queue}", Text(self._CHEVRON_FRAMES[frame], justify="center"))
             except Exception:
                 pass
 
