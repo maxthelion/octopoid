@@ -521,13 +521,6 @@ jobs:
     type: script
     group: remote
 
-  # Run orchestrator-side hooks (e.g. merge_pr) on provisional tasks.
-  # Uses poll_data.provisional_tasks to skip the sdk.tasks.list() call.
-  - name: process_orchestrator_hooks
-    interval: 60
-    type: script
-    group: remote
-
   # Detect projects whose children are all done and run flow transitions.
   - name: check_project_completion
     interval: 60

@@ -5,7 +5,6 @@ Covers:
 - can_claim_task() with and without pre-fetched queue_counts
 - scheduler_state.json per-job interval management
 - _register_orchestrator skipping when orchestrator_registered=True
-- process_orchestrator_hooks using pre-fetched provisional_tasks
 """
 
 import json
@@ -17,16 +16,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from orchestrator.backpressure import can_claim_task
-from orchestrator.flow import Condition, Flow, Transition
 from orchestrator.jobs import load_jobs_yaml
 from orchestrator.scheduler import (
     AgentContext,
-    _has_flow_blocking_conditions,
     _register_orchestrator,
     guard_backpressure,
     is_job_due,
     load_scheduler_state,
-    process_orchestrator_hooks,
     record_job_run,
     save_scheduler_state,
 )
@@ -246,7 +242,6 @@ class TestJobIntervalManagement:
             "check_and_update_finished_agents",
             "_register_orchestrator",
             "check_and_requeue_expired_leases",
-            "process_orchestrator_hooks",
             "check_project_completion",
             "_check_queue_health_throttled",
             "agent_evaluation_loop",
@@ -314,191 +309,3 @@ class TestRegisterOrchestratorSkip:
             _register_orchestrator()
         # _request is called at least once for registration; flow sync may add more calls
         assert mock_sdk._request.call_count >= 1
-
-
-# =============================================================================
-# process_orchestrator_hooks uses pre-fetched provisional_tasks
-# =============================================================================
-
-
-class TestProcessOrchestratorHooksWithPreFetched:
-    """process_orchestrator_hooks should use pre-fetched provisional_tasks when provided."""
-
-    def test_skips_list_call_when_tasks_provided(self):
-        """When provisional_tasks is provided, sdk.tasks.list is not called."""
-        mock_sdk = MagicMock()
-        mock_sdk.tasks.list.return_value = []
-        mock_hook_manager = MagicMock()
-        mock_hook_manager.get_pending_hooks.return_value = []
-
-        with (
-            patch("orchestrator.queue_utils.get_sdk", return_value=mock_sdk),
-            patch("orchestrator.scheduler.HookManager", return_value=mock_hook_manager),
-        ):
-            process_orchestrator_hooks(provisional_tasks=[])
-
-        mock_sdk.tasks.list.assert_not_called()
-
-    def test_uses_api_when_tasks_is_none(self):
-        """When provisional_tasks is None, sdk.tasks.list is called."""
-        mock_sdk = MagicMock()
-        mock_sdk.tasks.list.return_value = []
-        mock_hook_manager = MagicMock()
-        mock_hook_manager.get_pending_hooks.return_value = []
-
-        with (
-            patch("orchestrator.queue_utils.get_sdk", return_value=mock_sdk),
-            patch("orchestrator.scheduler.HookManager", return_value=mock_hook_manager),
-        ):
-            process_orchestrator_hooks(provisional_tasks=None)
-
-        mock_sdk.tasks.list.assert_called_once_with(queue="provisional")
-
-    def test_processes_provided_tasks(self):
-        """Tasks from provisional_tasks are passed to the hook manager."""
-        task = {"id": "TASK-abc", "hooks": "[]", "pr_number": None}
-        mock_sdk = MagicMock()
-        mock_hook_manager = MagicMock()
-        mock_hook_manager.get_pending_hooks.return_value = []
-
-        with (
-            patch("orchestrator.queue_utils.get_sdk", return_value=mock_sdk),
-            patch("orchestrator.scheduler.HookManager", return_value=mock_hook_manager),
-            # Suppress flow-blocking check so hook processing is reached
-            patch("orchestrator.scheduler._has_flow_blocking_conditions", return_value=False),
-        ):
-            process_orchestrator_hooks(provisional_tasks=[task])
-
-        mock_hook_manager.get_pending_hooks.assert_called_once_with(task, hook_type="orchestrator")
-
-
-# =============================================================================
-# _has_flow_blocking_conditions — GH-143 fix
-# =============================================================================
-
-
-def _make_flow(conditions: list) -> Flow:
-    """Build a minimal Flow with one provisional->done transition."""
-    return Flow(
-        name="test",
-        description="",
-        transitions=[
-            Transition(
-                from_state="provisional",
-                to_state="done",
-                conditions=conditions,
-            )
-        ],
-    )
-
-
-class TestHasFlowBlockingConditions:
-    """_has_flow_blocking_conditions detects agent/manual gates correctly."""
-
-    def test_returns_false_when_no_conditions(self):
-        """Transitions with no conditions are not blocking."""
-        flow = _make_flow([])
-        task = {"id": "t1", "flow": "default", "queue": "provisional"}
-        with patch("orchestrator.flow.load_flow", return_value=flow):
-            assert _has_flow_blocking_conditions(task) is False
-
-    def test_returns_true_for_agent_condition(self):
-        """Agent-type conditions are blocking (require gatekeeper)."""
-        cond = Condition(name="gatekeeper_review", type="agent", agent="gatekeeper")
-        flow = _make_flow([cond])
-        task = {"id": "t1", "flow": "default", "queue": "provisional"}
-        with patch("orchestrator.flow.load_flow", return_value=flow):
-            assert _has_flow_blocking_conditions(task) is True
-
-    def test_returns_true_for_manual_condition(self):
-        """Manual-type conditions are blocking (require human)."""
-        cond = Condition(name="human_approval", type="manual")
-        flow = _make_flow([cond])
-        task = {"id": "t1", "flow": "default", "queue": "provisional"}
-        with patch("orchestrator.flow.load_flow", return_value=flow):
-            assert _has_flow_blocking_conditions(task) is True
-
-    def test_returns_false_for_script_condition_only(self):
-        """Script-type conditions are not blocking (evaluated inline)."""
-        cond = Condition(name="tests_pass", type="script", script="run-tests")
-        flow = _make_flow([cond])
-        task = {"id": "t1", "flow": "default", "queue": "provisional"}
-        with patch("orchestrator.flow.load_flow", return_value=flow):
-            assert _has_flow_blocking_conditions(task) is False
-
-    def test_returns_true_when_agent_and_script_conditions_mixed(self):
-        """Mixed conditions: True if any are agent/manual."""
-        cond_script = Condition(name="tests_pass", type="script", script="run-tests")
-        cond_agent = Condition(name="review", type="agent", agent="gatekeeper")
-        flow = _make_flow([cond_script, cond_agent])
-        task = {"id": "t1", "flow": "default", "queue": "provisional"}
-        with patch("orchestrator.flow.load_flow", return_value=flow):
-            assert _has_flow_blocking_conditions(task) is True
-
-    def test_returns_false_when_agent_condition_is_skipped(self):
-        """Skipped conditions are not blocking."""
-        cond = Condition(name="review", type="agent", agent="gatekeeper", skip=True)
-        flow = _make_flow([cond])
-        task = {"id": "t1", "flow": "default", "queue": "provisional"}
-        with patch("orchestrator.flow.load_flow", return_value=flow):
-            assert _has_flow_blocking_conditions(task) is False
-
-    def test_returns_false_when_no_transition_from_current_queue(self):
-        """Tasks in a queue not covered by the flow are not blocking."""
-        flow = _make_flow([Condition(name="review", type="agent", agent="gatekeeper")])
-        task = {"id": "t1", "flow": "default", "queue": "incoming"}  # no transition from incoming
-        with patch("orchestrator.flow.load_flow", return_value=flow):
-            assert _has_flow_blocking_conditions(task) is False
-
-    def test_returns_false_on_load_flow_exception(self):
-        """Fails open: if flow can't be loaded, don't block legacy tasks."""
-        task = {"id": "t1", "flow": "nonexistent", "queue": "provisional"}
-        with patch("orchestrator.flow.load_flow", side_effect=FileNotFoundError("no flow")):
-            assert _has_flow_blocking_conditions(task) is False
-
-    def test_defaults_flow_to_default(self):
-        """Tasks without a flow field default to 'default' flow."""
-        cond = Condition(name="review", type="agent", agent="gatekeeper")
-        flow = _make_flow([cond])
-        task = {"id": "t1", "queue": "provisional"}  # no flow field
-        with patch("orchestrator.flow.load_flow", return_value=flow) as mock_load:
-            result = _has_flow_blocking_conditions(task)
-        mock_load.assert_called_once_with("default")
-        assert result is True
-
-
-class TestProcessOrchestratorHooksSkipsBlockedTasks:
-    """process_orchestrator_hooks skips tasks with flow blocking conditions (GH-143)."""
-
-    def test_skips_task_with_blocking_agent_condition(self):
-        """Tasks with agent conditions are not auto-accepted by orchestrator hooks."""
-        task = {"id": "TASK-xyz", "hooks": "[]", "queue": "provisional", "flow": "default"}
-        mock_sdk = MagicMock()
-        mock_hook_manager = MagicMock()
-
-        with (
-            patch("orchestrator.queue_utils.get_sdk", return_value=mock_sdk),
-            patch("orchestrator.scheduler.HookManager", return_value=mock_hook_manager),
-            patch("orchestrator.scheduler._has_flow_blocking_conditions", return_value=True),
-        ):
-            process_orchestrator_hooks(provisional_tasks=[task])
-
-        # Hook manager must not be invoked for blocked tasks
-        mock_hook_manager.get_pending_hooks.assert_not_called()
-        mock_sdk.tasks.accept.assert_not_called()
-
-    def test_processes_task_without_blocking_conditions(self):
-        """Tasks without blocking conditions still go through hook processing."""
-        task = {"id": "TASK-abc", "hooks": "[]", "queue": "provisional", "flow": "simple"}
-        mock_sdk = MagicMock()
-        mock_hook_manager = MagicMock()
-        mock_hook_manager.get_pending_hooks.return_value = []
-
-        with (
-            patch("orchestrator.queue_utils.get_sdk", return_value=mock_sdk),
-            patch("orchestrator.scheduler.HookManager", return_value=mock_hook_manager),
-            patch("orchestrator.scheduler._has_flow_blocking_conditions", return_value=False),
-        ):
-            process_orchestrator_hooks(provisional_tasks=[task])
-
-        mock_hook_manager.get_pending_hooks.assert_called_once_with(task, hook_type="orchestrator")

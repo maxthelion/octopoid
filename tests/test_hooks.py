@@ -6,7 +6,6 @@ from unittest.mock import MagicMock, patch, call
 
 import pytest
 
-from orchestrator.hook_manager import DEFAULT_HOOKS
 from orchestrator.hooks import (
     HookContext,
     HookPoint,

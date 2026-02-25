@@ -29,7 +29,6 @@ from .config import (
     get_tasks_dir,
 )
 from .git_utils import run_git
-from .hook_manager import HookManager
 from . import queue_utils
 from .pool import count_running_instances, load_blueprint_pids, save_blueprint_pids
 from .state_utils import is_process_running
@@ -284,18 +283,6 @@ def check_and_requeue_expired_leases(ctx: JobContext) -> None:
     """Requeue tasks whose claim lease has expired."""
     from .scheduler import check_and_requeue_expired_leases as _impl
     _impl()
-
-
-@register_job
-def process_orchestrator_hooks(ctx: JobContext) -> None:
-    """Run orchestrator-side hooks on provisional tasks.
-
-    Passes pre-fetched provisional_tasks from poll_data so the implementation
-    can skip the sdk.tasks.list() call when poll data is available.
-    """
-    from .scheduler import process_orchestrator_hooks as _impl
-    provisional_tasks = (ctx.poll_data or {}).get("provisional_tasks")
-    _impl(provisional_tasks=provisional_tasks)
 
 
 @register_job
