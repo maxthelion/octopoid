@@ -30,6 +30,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Scope leaking: tasks from different scopes no longer share pool capacity or appear in each other's queue** ([GH-227])
+  - `orchestrator/tasks.py`: `list_tasks()` now filters returned tasks by the current scope as a client-side safety net. The SDK already sends `?scope=X` on every GET request, but if the server returns all-scope results (server-side bug), tasks from other projects were leaking into queue counts, status displays, and backpressure checks.
+  - `orchestrator/backpressure.py`: `can_claim_task()` now always re-fetches the claimed count via `count_queue("claimed")` (scope-filtered) even when `queue_counts` from the poll endpoint is available. The poll endpoint may return unscoped global counts; using it for the `max_claimed` check caused cross-scope capacity blocking where claimed tasks from another scope filled the limit and prevented current-scope tasks from being picked up.
+  - `project-management/tasks/octopoid-server/enforce-scope-on-all-endpoints.md`: Updated with GH-227 context and the correct poll endpoint path (`GET /api/v1/scheduler/poll`) to track the server-side fix.
+
 - **Dashboard drafts tab shows empty content for new drafts** ([TASK-403fd51f])
   - `packages/dashboard/tabs/drafts.py`: `update_data()` now re-renders the content pane when the selected draft's `file_path` transitions from empty to a real path (handles the two-step creation pattern in `/draft-idea` where `file_path` is initially `None` and PATCHed in a second step). `on_list_view_selected()` now triggers a background refresh via `app.action_refresh()` when a draft with no `file_path` is selected, so content appears automatically once the draft is fully initialised — no restart needed.
   - `tests/test_dashboard.py`: Added `TestDraftsTabStalePath` with 6 unit tests covering the re-render trigger, no-op cases, and `_load_draft_content` edge cases.

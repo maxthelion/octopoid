@@ -29,15 +29,21 @@ def can_claim_task(queue_counts: dict | None = None) -> tuple[bool, str]:
 
     Args:
         queue_counts: Pre-fetched queue counts from the poll endpoint.
-            If provided, uses these counts instead of making individual API calls.
-            Expected keys: 'incoming', 'claimed', 'provisional'.
-            If None, falls back to individual count_queue() calls.
+            If provided, uses incoming/provisional counts from it but always
+            re-fetches 'claimed' via count_queue() to ensure scope isolation.
+            The poll endpoint may return global counts across all scopes;
+            using it for the 'claimed' limit check can block a scope when
+            another scope has tasks claimed.
+            If None, falls back to individual count_queue() calls for all queues.
     """
     limits = get_queue_limits()
     if queue_counts is not None:
         incoming = queue_counts.get("incoming", 0)
-        claimed = queue_counts.get("claimed", 0)
         provisional = queue_counts.get("provisional", 0)
+        # Always fetch claimed via count_queue() for scope-filtered results.
+        # The poll endpoint may return unscoped counts; using it for the
+        # max_claimed check causes cross-scope capacity blocking (GH-227).
+        claimed = count_queue("claimed")
     else:
         incoming = count_queue("incoming")
         if incoming == 0:

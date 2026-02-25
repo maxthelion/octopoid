@@ -35,7 +35,7 @@ class TestQueueOperationsFileBased:
         tasks = list_tasks("incoming")
         assert tasks == []
 
-    def test_list_tasks_sorted_by_priority(self, mock_orchestrator_dir, mock_sdk_for_unit_tests):
+    def test_list_tasks_sorted_by_priority(self, mock_config, mock_sdk_for_unit_tests):
         """Test that tasks are sorted by priority."""
         mock_sdk_for_unit_tests.tasks.list.return_value = [
             {"id": "p2", "title": "P2 task", "priority": "P2", "created_at": "2024-01-15T10:02:00"},
@@ -438,7 +438,7 @@ class TestRetryTask:
 class TestGetQueueStatus:
     """Tests for get_queue_status function."""
 
-    def test_get_queue_status(self, mock_orchestrator_dir, sample_task_file, mock_sdk_for_unit_tests):
+    def test_get_queue_status(self, mock_config, sample_task_file, mock_sdk_for_unit_tests):
         """Test getting queue status via SDK."""
         def mock_list_tasks(queue=None):
             if queue == "incoming":
