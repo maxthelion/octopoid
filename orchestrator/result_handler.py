@@ -226,9 +226,16 @@ def _handle_done_outcome(sdk: object, task_id: str, task: dict, result: dict, ta
 
     current_queue = task.get("queue", "unknown")
     if current_queue != "claimed":
-        # Task is not in "claimed" — do not transition. Return False so the
-        # caller keeps the PID and retries next tick. This prevents orphaning
-        # a task that is still claimed but was observed in a transient state.
+        # Task is not in "claimed" — decide based on whether the queue is terminal.
+        _TERMINAL_QUEUES = {"done", "failed"}
+        if current_queue in _TERMINAL_QUEUES:
+            # Task already reached a terminal state (e.g. lease expiry, manual
+            # intervention, or a 409 race). The process is dead and the task
+            # will never return to "claimed". Return True so the PID is removed.
+            debug_log(f"Task {task_id}: outcome=done but queue={current_queue} (terminal), removing stale PID")
+            return True
+        # Non-terminal, non-claimed (e.g. "incoming", "provisional") — the task
+        # may be mid-transition. Keep the PID and retry next tick.
         debug_log(f"Task {task_id}: outcome=done but queue={current_queue}, skipping")
         return False
 
@@ -276,6 +283,13 @@ def _handle_fail_outcome(sdk: object, task_id: str, task: dict, reason: str, cur
         debug_log(f"Task {task_id}: failed (claimed → {fail_target}): {reason}")
         return True
     else:
+        _TERMINAL_QUEUES = {"done", "failed"}
+        if current_queue in _TERMINAL_QUEUES:
+            # Task already in a terminal state — process is dead, nothing to retry.
+            # Return True so the stale PID is removed from the pool.
+            debug_log(f"Task {task_id}: outcome=failed but queue={current_queue} (terminal), removing stale PID")
+            return True
+        # Non-terminal, non-claimed (e.g. "incoming", "provisional") — keep PID for retry.
         debug_log(f"Task {task_id}: outcome=failed but queue={current_queue}, skipping")
         return False
 
@@ -298,6 +312,13 @@ def _handle_continuation_outcome(sdk: object, task_id: str, task: dict, agent_na
         debug_log(f"Task {task_id}: needs continuation by {agent_name} (→ {continuation_target})")
         return True
     else:
+        _TERMINAL_QUEUES = {"done", "failed"}
+        if current_queue in _TERMINAL_QUEUES:
+            # Task already in a terminal state — process is dead, nothing to retry.
+            # Return True so the stale PID is removed from the pool.
+            debug_log(f"Task {task_id}: outcome=needs_continuation but queue={current_queue} (terminal), removing stale PID")
+            return True
+        # Non-terminal, non-claimed (e.g. "incoming", "provisional") — keep PID for retry.
         debug_log(f"Task {task_id}: outcome=needs_continuation but queue={current_queue}, skipping")
         return False
 
