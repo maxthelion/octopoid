@@ -14,6 +14,7 @@ from orchestrator.scheduler import (
     _build_required_steps,
     _load_global_instructions,
     _load_review_section,
+    _parse_agent_hooks,
     _render_prompt,
 )
 
@@ -57,6 +58,52 @@ class TestLoadGlobalInstructions:
         with patch("orchestrator.scheduler.get_global_instructions_path", return_value=tmp_path / "nonexistent.md"):
             result = _load_global_instructions(str(agent_dir))
         assert result == "\n\nOnly agent."
+
+
+# =============================================================================
+# _parse_agent_hooks
+# =============================================================================
+
+
+class TestParseAgentHooks:
+    def test_no_hooks_returns_empty(self):
+        assert _parse_agent_hooks({}) == []
+
+    def test_none_hooks_returns_empty(self):
+        assert _parse_agent_hooks({"hooks": None}) == []
+
+    def test_empty_list_returns_empty(self):
+        assert _parse_agent_hooks({"hooks": []}) == []
+
+    def test_filters_non_agent_hooks(self):
+        task = {"hooks": [{"type": "scheduler", "name": "run_tests"}]}
+        assert _parse_agent_hooks(task) == []
+
+    def test_returns_agent_hooks(self):
+        task = {"hooks": [{"type": "agent", "name": "run_tests"}]}
+        result = _parse_agent_hooks(task)
+        assert result == [{"type": "agent", "name": "run_tests"}]
+
+    def test_parses_json_string(self):
+        hooks = json.dumps([{"type": "agent", "name": "deploy"}, {"type": "scheduler", "name": "x"}])
+        task = {"hooks": hooks}
+        result = _parse_agent_hooks(task)
+        assert result == [{"type": "agent", "name": "deploy"}]
+
+    def test_mixed_hook_types_filtered(self):
+        task = {
+            "hooks": [
+                {"type": "agent", "name": "run_tests"},
+                {"type": "scheduler", "name": "something"},
+                {"type": "agent", "name": "create_pr"},
+            ]
+        }
+        result = _parse_agent_hooks(task)
+        assert len(result) == 2
+        assert all(h["type"] == "agent" for h in result)
+
+    def test_invalid_hooks_type_returns_empty(self):
+        assert _parse_agent_hooks({"hooks": 42}) == []
 
 
 # =============================================================================

@@ -753,11 +753,32 @@ def _load_global_instructions(agent_dir: str) -> str:
     return global_instructions
 
 
-def _build_required_steps(task: dict) -> str:
-    """Parse agent hooks and build the required-steps section.
+def _parse_agent_hooks(task: dict) -> list[dict]:
+    """Parse agent hooks from the task dict.
 
-    Reads 'hooks' from the task dict, filters to agent hooks, and builds
-    a markdown section listing required steps before writing result.json.
+    Args:
+        task: Task dict, may contain a 'hooks' key (JSON string or list).
+
+    Returns:
+        List of hook dicts with type == "agent".
+    """
+    import json as _json
+
+    hooks = task.get("hooks")
+    if not hooks:
+        return []
+    if isinstance(hooks, str):
+        raw = _json.loads(hooks)
+    elif isinstance(hooks, list):
+        raw = hooks
+    else:
+        return []
+    return [h for h in raw if h.get("type") == "agent"]
+
+
+def _build_required_steps(task: dict) -> str:
+    """Build the required-steps section from agent hooks.
+
     The 'create_pr' hook is intentionally skipped (handled by the scheduler).
 
     Args:
@@ -766,16 +787,7 @@ def _build_required_steps(task: dict) -> str:
     Returns:
         Markdown string for the required-steps section, or empty string.
     """
-    import json as _json
-
-    hooks = task.get("hooks")
-    agent_hooks: list[dict] = []
-    if hooks:
-        if isinstance(hooks, str):
-            agent_hooks = [h for h in _json.loads(hooks) if h.get("type") == "agent"]
-        elif isinstance(hooks, list):
-            agent_hooks = [h for h in hooks if h.get("type") == "agent"]
-
+    agent_hooks = _parse_agent_hooks(task)
     if not agent_hooks:
         return ""
 
@@ -783,11 +795,11 @@ def _build_required_steps(task: dict) -> str:
     lines.append("You must complete these steps before writing result.json:")
     for i, hook in enumerate(agent_hooks, 1):
         name = hook["name"]
-        if name == "run_tests":
-            lines.append(f"{i}. Run tests: `../scripts/run-tests`")
-        elif name == "create_pr":
+        if name == "create_pr":
             # Scheduler handles PR creation — skip this hook for the agent
             continue
+        elif name == "run_tests":
+            lines.append(f"{i}. Run tests: `../scripts/run-tests`")
         else:
             lines.append(f"{i}. {name}")
     return "\n".join(lines)
