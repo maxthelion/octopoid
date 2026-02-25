@@ -527,6 +527,102 @@ def create_project_pr(project: dict, result: dict, project_dir: Path) -> None:
         sdk.projects.update(project_id, **update_kwargs)
 
 
+@register_step("update_changelog")
+def update_changelog(task: dict, result: dict, task_dir: Path) -> None:
+    """Read changes.md from task runtime dir and prepend to CHANGELOG.md on main.
+
+    The agent writes ../changes.md (relative to the worktree) during its work.
+    This step runs after merge_pr, reads that file, and inserts the content
+    into CHANGELOG.md under ## [Unreleased], then commits and pushes to main.
+
+    Skips silently if changes.md does not exist or is empty.
+    """
+    from .config import find_parent_project, get_base_branch
+
+    changes_file = task_dir / "changes.md"
+    if not changes_file.exists():
+        print(f"update_changelog: no changes.md at {changes_file}, skipping")
+        return
+
+    changes_content = changes_file.read_text().strip()
+    if not changes_content:
+        print("update_changelog: changes.md is empty, skipping")
+        return
+
+    project_root = find_parent_project()
+    changelog_path = project_root / "CHANGELOG.md"
+
+    if not changelog_path.exists():
+        print(f"update_changelog: CHANGELOG.md not found at {changelog_path}, skipping")
+        return
+
+    base_branch = get_base_branch()
+
+    # Pull latest before modifying so we don't clobber concurrent changes
+    fetch = subprocess.run(
+        ["git", "fetch", "origin"],
+        cwd=project_root, capture_output=True, text=True,
+    )
+    if fetch.returncode != 0:
+        raise RuntimeError(f"update_changelog: git fetch failed:\n{fetch.stderr}")
+
+    pull = subprocess.run(
+        ["git", "pull", "--ff-only", "origin", base_branch],
+        cwd=project_root, capture_output=True, text=True,
+    )
+    if pull.returncode != 0:
+        raise RuntimeError(
+            f"update_changelog: git pull --ff-only failed (local branch has diverged):\n"
+            f"{pull.stderr}"
+        )
+
+    # Re-read after pull in case CHANGELOG.md changed
+    changelog = changelog_path.read_text()
+
+    unreleased_marker = "## [Unreleased]"
+    idx = changelog.find(unreleased_marker)
+    if idx == -1:
+        print("update_changelog: no '## [Unreleased]' section in CHANGELOG.md, skipping")
+        return
+
+    insert_at = idx + len(unreleased_marker)
+    new_changelog = (
+        changelog[:insert_at]
+        + "\n\n"
+        + changes_content
+        + "\n"
+        + changelog[insert_at:].lstrip("\n")
+    )
+    changelog_path.write_text(new_changelog)
+
+    task_id = task["id"]
+    task_title = task.get("title", task_id)
+
+    subprocess.run(
+        ["git", "add", "CHANGELOG.md"],
+        cwd=project_root, check=True, capture_output=True,
+    )
+
+    commit = subprocess.run(
+        ["git", "commit", "-m", f"changelog: [{task_id}] {task_title}"],
+        cwd=project_root, capture_output=True, text=True,
+    )
+    if commit.returncode != 0:
+        if "nothing to commit" in commit.stdout or "nothing to commit" in commit.stderr:
+            print("update_changelog: no changes to commit, skipping")
+            return
+        raise RuntimeError(f"update_changelog: git commit failed:\n{commit.stderr}")
+
+    push = subprocess.run(
+        ["git", "push", "origin", f"HEAD:{base_branch}"],
+        cwd=project_root, capture_output=True, text=True,
+    )
+    if push.returncode != 0:
+        raise RuntimeError(f"update_changelog: git push failed:\n{push.stderr}")
+
+    print(f"update_changelog: CHANGELOG.md updated for task {task_id}")
+
+
 @register_step("merge_project_pr")
 def merge_project_pr(project: dict, result: dict, project_dir: Path) -> None:
     """Merge the project's PR via gh CLI.
