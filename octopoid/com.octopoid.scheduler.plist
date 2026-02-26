@@ -10,7 +10,7 @@
     <array>
         <string>/opt/homebrew/bin/python3</string>
         <string>-m</string>
-        <string>orchestrator.scheduler</string>
+        <string>octopoid.scheduler</string>
         <string>--once</string>
         <string>--debug</string>
     </array>
