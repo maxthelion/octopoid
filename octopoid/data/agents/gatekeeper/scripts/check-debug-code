@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# Find leftover debug code in the diff (advisory only)
+# Always exits 0 (non-blocking)
+
+set -euo pipefail
+
+# Source environment variables if available
+if [ -f "../env.sh" ]; then
+    source "../env.sh"
+fi
+
+echo "=== Checking for Debug Code ==="
+
+# Get the diff (added lines only)
+DIFF=$(git diff main..HEAD)
+
+# Patterns to search for
+PATTERNS=(
+    "console\.log"
+    "console\.debug"
+    "console\.warn"
+    "print\("
+    "debugger"
+    "TODO"
+    "FIXME"
+    "HACK"
+    "XXX"
+)
+
+FOUND_DEBUG=0
+
+for pattern in "${PATTERNS[@]}"; do
+    # Search for pattern in added lines (lines starting with +)
+    MATCHES=$(echo "$DIFF" | grep "^+" | grep -v "^+++" | grep -E "$pattern" || true)
+
+    if [ -n "$MATCHES" ]; then
+        if [ $FOUND_DEBUG -eq 0 ]; then
+            echo ""
+            echo "Advisory: Found potential debug code in diff:"
+            FOUND_DEBUG=1
+        fi
+        echo ""
+        echo "Pattern: $pattern"
+        echo "$MATCHES" | head -n 5 | sed 's/^/  /'
+
+        # Count total matches
+        MATCH_COUNT=$(echo "$MATCHES" | wc -l | tr -d ' ')
+        if [ "$MATCH_COUNT" -gt 5 ]; then
+            echo "  ... and $((MATCH_COUNT - 5)) more occurrences"
+        fi
+    fi
+done
+
+if [ $FOUND_DEBUG -eq 0 ]; then
+    echo "No debug code patterns detected in diff."
+fi
+
+echo ""
+echo "Note: This is advisory only. Some of these may be legitimate (e.g., TODO in comments, print in scripts)."
+echo ""
+
+# Always exit 0 (advisory check)
+exit 0

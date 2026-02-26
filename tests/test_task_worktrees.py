@@ -6,7 +6,7 @@ from unittest.mock import patch, MagicMock
 # Note: These imports will work when run from the orchestrator/ directory
 # with the proper PYTHONPATH setup
 try:
-    from orchestrator.git_utils import (
+    from octopoid.git_utils import (
         cleanup_task_worktree,
         create_task_worktree,
         get_task_worktree_path,
@@ -16,7 +16,7 @@ except ImportError:
     # Fallback for different import contexts
     import sys
     sys.path.insert(0, str(Path(__file__).parent.parent))
-    from orchestrator.git_utils import (
+    from octopoid.git_utils import (
         cleanup_task_worktree,
         create_task_worktree,
         get_task_worktree_path,
@@ -72,7 +72,7 @@ class TestPrepareTaskDirectoryCleansStaleFiles:
 
     def test_cleans_stale_result_json(self, tmp_path, monkeypatch):
         """Stale result.json from a previous run is deleted."""
-        monkeypatch.setattr('orchestrator.scheduler.get_tasks_dir', lambda: tmp_path)
+        monkeypatch.setattr('octopoid.scheduler.get_tasks_dir', lambda: tmp_path)
 
         # Create fake agent directory with scripts and prompt
         agent_dir = tmp_path / "agent"
@@ -86,9 +86,9 @@ class TestPrepareTaskDirectoryCleansStaleFiles:
         (task_dir / "result.json").write_text('{"outcome": "submitted"}')
 
         from unittest.mock import patch
-        from orchestrator.scheduler import prepare_task_directory
+        from octopoid.scheduler import prepare_task_directory
 
-        with patch('orchestrator.git_utils.create_task_worktree', return_value=tmp_path / "worktree"):
+        with patch('octopoid.git_utils.create_task_worktree', return_value=tmp_path / "worktree"):
             prepare_task_directory(
                 {"id": task_id, "role": "implement", "title": "test"},
                 "implementer-1",
@@ -99,7 +99,7 @@ class TestPrepareTaskDirectoryCleansStaleFiles:
 
     def test_cleans_stale_notes_md(self, tmp_path, monkeypatch):
         """Stale notes.md from a previous run is deleted."""
-        monkeypatch.setattr('orchestrator.scheduler.get_tasks_dir', lambda: tmp_path)
+        monkeypatch.setattr('octopoid.scheduler.get_tasks_dir', lambda: tmp_path)
 
         # Create fake agent directory with scripts and prompt
         agent_dir = tmp_path / "agent"
@@ -113,9 +113,9 @@ class TestPrepareTaskDirectoryCleansStaleFiles:
         (task_dir / "notes.md").write_text("# Old notes")
 
         from unittest.mock import patch
-        from orchestrator.scheduler import prepare_task_directory
+        from octopoid.scheduler import prepare_task_directory
 
-        with patch('orchestrator.git_utils.create_task_worktree', return_value=tmp_path / "worktree"):
+        with patch('octopoid.git_utils.create_task_worktree', return_value=tmp_path / "worktree"):
             prepare_task_directory(
                 {"id": task_id, "role": "implement", "title": "test"},
                 "implementer-1",
@@ -161,10 +161,10 @@ class TestCreateTaskWorktree:
         worktree_path = temp_dir / "worktree"
         mock_run_git, calls = self._make_mock_run_git(worktree_path=worktree_path, **kwargs)
 
-        with patch('orchestrator.git_utils.find_parent_project', return_value=temp_dir), \
-             patch('orchestrator.git_utils.get_task_worktree_path', return_value=worktree_path), \
-             patch('orchestrator.git_utils.get_base_branch', return_value="main"), \
-             patch('orchestrator.git_utils.run_git', side_effect=mock_run_git):
+        with patch('octopoid.git_utils.find_parent_project', return_value=temp_dir), \
+             patch('octopoid.git_utils.get_task_worktree_path', return_value=worktree_path), \
+             patch('octopoid.git_utils.get_base_branch', return_value="main"), \
+             patch('octopoid.git_utils.run_git', side_effect=mock_run_git):
             result = create_task_worktree(task)
 
         return result, calls, worktree_path
@@ -217,9 +217,9 @@ class TestCreateTaskWorktree:
             result.stdout = "abc123\n"
             return result
 
-        with patch('orchestrator.git_utils.find_parent_project', return_value=temp_dir), \
-             patch('orchestrator.git_utils.get_task_worktree_path', return_value=worktree_path), \
-             patch('orchestrator.git_utils.run_git', side_effect=mock_run_git) as mock_run:
+        with patch('octopoid.git_utils.find_parent_project', return_value=temp_dir), \
+             patch('octopoid.git_utils.get_task_worktree_path', return_value=worktree_path), \
+             patch('octopoid.git_utils.run_git', side_effect=mock_run_git) as mock_run:
             result = create_task_worktree(task)
 
         assert result == worktree_path

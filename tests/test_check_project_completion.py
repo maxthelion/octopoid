@@ -55,8 +55,8 @@ class TestCheckProjectCompletion:
     def test_no_active_projects_does_nothing(self):
         sdk = _make_sdk(projects=[])
 
-        with patch("orchestrator.scheduler.queue_utils.get_sdk", return_value=sdk):
-            from orchestrator.scheduler import check_project_completion
+        with patch("octopoid.scheduler.queue_utils.get_sdk", return_value=sdk):
+            from octopoid.scheduler import check_project_completion
             check_project_completion()
 
         sdk.projects.get_tasks.assert_not_called()
@@ -68,8 +68,8 @@ class TestCheckProjectCompletion:
             tasks_by_project={"PROJ-abc": []},
         )
 
-        with patch("orchestrator.scheduler.queue_utils.get_sdk", return_value=sdk):
-            from orchestrator.scheduler import check_project_completion
+        with patch("octopoid.scheduler.queue_utils.get_sdk", return_value=sdk):
+            from octopoid.scheduler import check_project_completion
             check_project_completion()
 
         sdk.projects.update.assert_not_called()
@@ -85,8 +85,8 @@ class TestCheckProjectCompletion:
             },
         )
 
-        with patch("orchestrator.scheduler.queue_utils.get_sdk", return_value=sdk):
-            from orchestrator.scheduler import check_project_completion
+        with patch("octopoid.scheduler.queue_utils.get_sdk", return_value=sdk):
+            from octopoid.scheduler import check_project_completion
             check_project_completion()
 
         sdk.projects.update.assert_not_called()
@@ -112,12 +112,12 @@ class TestCheckProjectCompletion:
         mock_flow = _make_flow("children_complete", "provisional", runs=["create_project_pr"])
 
         with (
-            patch("orchestrator.scheduler.queue_utils.get_sdk", return_value=sdk),
-            patch("orchestrator.scheduler.find_parent_project", return_value=Path("/fake/project")),
-            patch("orchestrator.flow.load_flow", return_value=mock_flow),
-            patch("orchestrator.steps.execute_steps") as mock_execute_steps,
+            patch("octopoid.scheduler.queue_utils.get_sdk", return_value=sdk),
+            patch("octopoid.scheduler.find_parent_project", return_value=Path("/fake/project")),
+            patch("octopoid.flow.load_flow", return_value=mock_flow),
+            patch("octopoid.steps.execute_steps") as mock_execute_steps,
         ):
-            from orchestrator.scheduler import check_project_completion
+            from octopoid.scheduler import check_project_completion
             check_project_completion()
 
         # Flow steps should have been executed with the project dict
@@ -132,8 +132,8 @@ class TestCheckProjectCompletion:
             projects=[{"id": "PROJ-prov", "status": "provisional", "branch": "feature/prov", "title": "In Review"}],
         )
 
-        with patch("orchestrator.scheduler.queue_utils.get_sdk", return_value=sdk):
-            from orchestrator.scheduler import check_project_completion
+        with patch("octopoid.scheduler.queue_utils.get_sdk", return_value=sdk):
+            from octopoid.scheduler import check_project_completion
             check_project_completion()
 
         sdk.projects.get_tasks.assert_not_called()
@@ -144,8 +144,8 @@ class TestCheckProjectCompletion:
             projects=[{"id": "PROJ-done", "status": "review", "branch": "feature/done", "title": "Done"}],
         )
 
-        with patch("orchestrator.scheduler.queue_utils.get_sdk", return_value=sdk):
-            from orchestrator.scheduler import check_project_completion
+        with patch("octopoid.scheduler.queue_utils.get_sdk", return_value=sdk):
+            from octopoid.scheduler import check_project_completion
             check_project_completion()
 
         sdk.projects.get_tasks.assert_not_called()
@@ -156,8 +156,8 @@ class TestCheckProjectCompletion:
             projects=[{"id": "PROJ-comp", "status": "completed", "branch": "feature/comp", "title": "Completed"}],
         )
 
-        with patch("orchestrator.scheduler.queue_utils.get_sdk", return_value=sdk):
-            from orchestrator.scheduler import check_project_completion
+        with patch("octopoid.scheduler.queue_utils.get_sdk", return_value=sdk):
+            from octopoid.scheduler import check_project_completion
             check_project_completion()
 
         sdk.projects.get_tasks.assert_not_called()
@@ -171,8 +171,8 @@ class TestCheckProjectCompletion:
             tasks_by_project={project_id: [{"id": "TASK-1", "queue": "done"}]},
         )
 
-        with patch("orchestrator.scheduler.queue_utils.get_sdk", return_value=sdk):
-            from orchestrator.scheduler import check_project_completion
+        with patch("octopoid.scheduler.queue_utils.get_sdk", return_value=sdk):
+            from octopoid.scheduler import check_project_completion
             check_project_completion()
 
         # Project must not be transitioned (no branch → cannot create PR)
@@ -187,10 +187,10 @@ class TestCheckProjectCompletion:
 
     def test_sdk_error_does_not_crash(self):
         with patch(
-            "orchestrator.scheduler.queue_utils.get_sdk",
+            "octopoid.scheduler.queue_utils.get_sdk",
             side_effect=Exception("connection refused"),
         ):
-            from orchestrator.scheduler import check_project_completion
+            from octopoid.scheduler import check_project_completion
             check_project_completion()  # Should not raise
 
     def test_flow_not_found_does_not_crash(self):
@@ -204,11 +204,11 @@ class TestCheckProjectCompletion:
         )
 
         with (
-            patch("orchestrator.scheduler.queue_utils.get_sdk", return_value=sdk),
-            patch("orchestrator.scheduler.find_parent_project", return_value=Path("/fake")),
-            patch("orchestrator.flow.load_flow", side_effect=FileNotFoundError("not found")),
+            patch("octopoid.scheduler.queue_utils.get_sdk", return_value=sdk),
+            patch("octopoid.scheduler.find_parent_project", return_value=Path("/fake")),
+            patch("octopoid.flow.load_flow", side_effect=FileNotFoundError("not found")),
         ):
-            from orchestrator.scheduler import check_project_completion
+            from octopoid.scheduler import check_project_completion
             check_project_completion()
 
         sdk.projects.update.assert_not_called()
@@ -235,13 +235,13 @@ class TestCheckProjectCompletion:
         )
 
         with (
-            patch("orchestrator.scheduler.queue_utils.get_sdk", return_value=sdk),
-            patch("orchestrator.scheduler.find_parent_project", return_value=Path("/fake")),
-            patch("orchestrator.flow.load_flow", return_value=mock_flow),
-            patch("orchestrator.scheduler._evaluate_project_script_condition", return_value=False),
-            patch("orchestrator.steps.execute_steps") as mock_execute_steps,
+            patch("octopoid.scheduler.queue_utils.get_sdk", return_value=sdk),
+            patch("octopoid.scheduler.find_parent_project", return_value=Path("/fake")),
+            patch("octopoid.flow.load_flow", return_value=mock_flow),
+            patch("octopoid.scheduler._evaluate_project_script_condition", return_value=False),
+            patch("octopoid.steps.execute_steps") as mock_execute_steps,
         ):
-            from orchestrator.scheduler import check_project_completion
+            from octopoid.scheduler import check_project_completion
             check_project_completion()
 
         mock_execute_steps.assert_not_called()
@@ -270,13 +270,13 @@ class TestCheckProjectCompletion:
         )
 
         with (
-            patch("orchestrator.scheduler.queue_utils.get_sdk", return_value=sdk),
-            patch("orchestrator.scheduler.find_parent_project", return_value=Path("/fake")),
-            patch("orchestrator.flow.load_flow", return_value=mock_flow),
-            patch("orchestrator.scheduler._evaluate_project_script_condition", return_value=True),
-            patch("orchestrator.steps.execute_steps"),
+            patch("octopoid.scheduler.queue_utils.get_sdk", return_value=sdk),
+            patch("octopoid.scheduler.find_parent_project", return_value=Path("/fake")),
+            patch("octopoid.flow.load_flow", return_value=mock_flow),
+            patch("octopoid.scheduler._evaluate_project_script_condition", return_value=True),
+            patch("octopoid.steps.execute_steps"),
         ):
-            from orchestrator.scheduler import check_project_completion
+            from octopoid.scheduler import check_project_completion
             check_project_completion()
 
         sdk.projects.update.assert_called_once_with(project_id, status="provisional")
@@ -300,12 +300,12 @@ class TestCheckProjectCompletion:
         mock_flow = _make_flow("children_complete", "provisional", runs=["create_project_pr"])
 
         with (
-            patch("orchestrator.scheduler.queue_utils.get_sdk", return_value=sdk),
-            patch("orchestrator.scheduler.find_parent_project", return_value=Path("/fake")),
-            patch("orchestrator.flow.load_flow", return_value=mock_flow),
-            patch("orchestrator.steps.execute_steps"),
+            patch("octopoid.scheduler.queue_utils.get_sdk", return_value=sdk),
+            patch("octopoid.scheduler.find_parent_project", return_value=Path("/fake")),
+            patch("octopoid.flow.load_flow", return_value=mock_flow),
+            patch("octopoid.steps.execute_steps"),
         ):
-            from orchestrator.scheduler import check_project_completion
+            from octopoid.scheduler import check_project_completion
             check_project_completion()
 
         # Only proj1 should be updated (proj2 has tasks not done)
@@ -332,12 +332,12 @@ class TestCheckProjectCompletion:
         )
 
         with (
-            patch("orchestrator.scheduler.queue_utils.get_sdk", return_value=sdk),
-            patch("orchestrator.scheduler.find_parent_project", return_value=Path("/fake")),
-            patch("orchestrator.flow.load_flow", return_value=mock_flow),
-            patch("orchestrator.steps.execute_steps") as mock_execute_steps,
+            patch("octopoid.scheduler.queue_utils.get_sdk", return_value=sdk),
+            patch("octopoid.scheduler.find_parent_project", return_value=Path("/fake")),
+            patch("octopoid.flow.load_flow", return_value=mock_flow),
+            patch("octopoid.steps.execute_steps") as mock_execute_steps,
         ):
-            from orchestrator.scheduler import check_project_completion
+            from octopoid.scheduler import check_project_completion
             check_project_completion()
 
         mock_execute_steps.assert_not_called()
@@ -349,7 +349,7 @@ class TestEvaluateProjectScriptCondition:
 
     def test_condition_without_script_passes(self):
         """A condition with no script name passes by default."""
-        from orchestrator.scheduler import _evaluate_project_script_condition
+        from octopoid.scheduler import _evaluate_project_script_condition
 
         condition = MagicMock()
         condition.name = "empty_condition"
@@ -360,7 +360,7 @@ class TestEvaluateProjectScriptCondition:
 
     def test_run_tests_with_no_test_runner_passes(self, tmp_path):
         """run-tests condition passes when no test runner is detected."""
-        from orchestrator.scheduler import _evaluate_project_script_condition
+        from octopoid.scheduler import _evaluate_project_script_condition
 
         condition = MagicMock()
         condition.name = "all_tests_pass"
@@ -372,7 +372,7 @@ class TestEvaluateProjectScriptCondition:
 
     def test_run_tests_passes_on_success(self, tmp_path):
         """run-tests condition passes when the test command exits 0."""
-        from orchestrator.scheduler import _evaluate_project_script_condition
+        from octopoid.scheduler import _evaluate_project_script_condition
 
         (tmp_path / "pyproject.toml").write_text("[tool.pytest.ini_options]\n")
 
@@ -383,14 +383,14 @@ class TestEvaluateProjectScriptCondition:
         mock_result = MagicMock()
         mock_result.returncode = 0
 
-        with patch("orchestrator.scheduler.subprocess.run", return_value=mock_result):
+        with patch("octopoid.scheduler.subprocess.run", return_value=mock_result):
             result = _evaluate_project_script_condition(condition, tmp_path, "PROJ-1")
 
         assert result is True
 
     def test_run_tests_fails_on_nonzero_exit(self, tmp_path):
         """run-tests condition fails when the test command exits non-zero."""
-        from orchestrator.scheduler import _evaluate_project_script_condition
+        from octopoid.scheduler import _evaluate_project_script_condition
 
         (tmp_path / "pyproject.toml").write_text("[tool.pytest.ini_options]\n")
 
@@ -403,7 +403,7 @@ class TestEvaluateProjectScriptCondition:
         mock_result.stdout = "FAILED test_foo"
         mock_result.stderr = ""
 
-        with patch("orchestrator.scheduler.subprocess.run", return_value=mock_result):
+        with patch("octopoid.scheduler.subprocess.run", return_value=mock_result):
             result = _evaluate_project_script_condition(condition, tmp_path, "PROJ-1")
 
         assert result is False
@@ -411,7 +411,7 @@ class TestEvaluateProjectScriptCondition:
     def test_timeout_returns_false(self, tmp_path):
         """run-tests condition fails gracefully on timeout."""
         import subprocess as subprocess_mod
-        from orchestrator.scheduler import _evaluate_project_script_condition
+        from octopoid.scheduler import _evaluate_project_script_condition
 
         (tmp_path / "pyproject.toml").write_text("[tool.pytest.ini_options]\n")
 
@@ -420,7 +420,7 @@ class TestEvaluateProjectScriptCondition:
         condition.script = "run-tests"
 
         with patch(
-            "orchestrator.scheduler.subprocess.run",
+            "octopoid.scheduler.subprocess.run",
             side_effect=subprocess_mod.TimeoutExpired("pytest", 300),
         ):
             result = _evaluate_project_script_condition(condition, tmp_path, "PROJ-1")
@@ -432,22 +432,22 @@ class TestApproveProjectViaFlow:
     """Tests for approve_project_via_flow() in projects.py."""
 
     def test_project_not_found_returns_error(self):
-        from orchestrator.projects import approve_project_via_flow
+        from octopoid.projects import approve_project_via_flow
 
-        with patch("orchestrator.projects.get_project", return_value=None):
+        with patch("octopoid.projects.get_project", return_value=None):
             result = approve_project_via_flow("PROJ-missing")
 
         assert result["success"] is False
         assert "not found" in result["error"]
 
     def test_flow_not_found_returns_error(self):
-        from orchestrator.projects import approve_project_via_flow
+        from octopoid.projects import approve_project_via_flow
 
         project = {"id": "PROJ-1", "flow": "project"}
 
         with (
-            patch("orchestrator.projects.get_project", return_value=project),
-            patch("orchestrator.flow.load_flow", side_effect=FileNotFoundError("not found")),
+            patch("octopoid.projects.get_project", return_value=project),
+            patch("octopoid.flow.load_flow", side_effect=FileNotFoundError("not found")),
         ):
             result = approve_project_via_flow("PROJ-1")
 
@@ -455,7 +455,7 @@ class TestApproveProjectViaFlow:
         assert "not found" in result["error"]
 
     def test_no_transition_from_provisional_returns_error(self):
-        from orchestrator.projects import approve_project_via_flow
+        from octopoid.projects import approve_project_via_flow
 
         project = {"id": "PROJ-1", "flow": "project"}
 
@@ -463,8 +463,8 @@ class TestApproveProjectViaFlow:
         mock_flow.get_transitions_from.return_value = []  # No transition
 
         with (
-            patch("orchestrator.projects.get_project", return_value=project),
-            patch("orchestrator.flow.load_flow", return_value=mock_flow),
+            patch("octopoid.projects.get_project", return_value=project),
+            patch("octopoid.flow.load_flow", return_value=mock_flow),
         ):
             result = approve_project_via_flow("PROJ-1")
 
@@ -473,7 +473,7 @@ class TestApproveProjectViaFlow:
 
     def test_successful_approval_runs_steps_and_updates_status(self):
         """Successful approval runs transition steps and updates project to done."""
-        from orchestrator.projects import approve_project_via_flow
+        from octopoid.projects import approve_project_via_flow
 
         project = {"id": "PROJ-1", "flow": "project", "pr_number": 42}
         sdk = MagicMock()
@@ -489,11 +489,11 @@ class TestApproveProjectViaFlow:
         )
 
         with (
-            patch("orchestrator.projects.get_project", return_value=project),
-            patch("orchestrator.flow.load_flow", return_value=mock_flow),
-            patch("orchestrator.steps.execute_steps") as mock_execute_steps,
-            patch("orchestrator.projects.get_sdk", return_value=sdk),
-            patch("orchestrator.config.find_parent_project", return_value=Path("/fake")),
+            patch("octopoid.projects.get_project", return_value=project),
+            patch("octopoid.flow.load_flow", return_value=mock_flow),
+            patch("octopoid.steps.execute_steps") as mock_execute_steps,
+            patch("octopoid.projects.get_sdk", return_value=sdk),
+            patch("octopoid.config.find_parent_project", return_value=Path("/fake")),
         ):
             result = approve_project_via_flow("PROJ-1")
 
@@ -506,7 +506,7 @@ class TestApproveProjectViaFlow:
 
     def test_step_failure_returns_error(self):
         """If a step raises, approve_project_via_flow returns an error dict."""
-        from orchestrator.projects import approve_project_via_flow
+        from octopoid.projects import approve_project_via_flow
 
         project = {"id": "PROJ-1", "flow": "project", "pr_number": 42}
 
@@ -520,11 +520,11 @@ class TestApproveProjectViaFlow:
         sdk = MagicMock()
 
         with (
-            patch("orchestrator.projects.get_project", return_value=project),
-            patch("orchestrator.flow.load_flow", return_value=mock_flow),
-            patch("orchestrator.steps.execute_steps", side_effect=RuntimeError("merge failed")),
-            patch("orchestrator.projects.get_sdk", return_value=sdk),
-            patch("orchestrator.config.find_parent_project", return_value=Path("/fake")),
+            patch("octopoid.projects.get_project", return_value=project),
+            patch("octopoid.flow.load_flow", return_value=mock_flow),
+            patch("octopoid.steps.execute_steps", side_effect=RuntimeError("merge failed")),
+            patch("octopoid.projects.get_sdk", return_value=sdk),
+            patch("octopoid.config.find_parent_project", return_value=Path("/fake")),
         ):
             result = approve_project_via_flow("PROJ-1")
 

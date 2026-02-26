@@ -49,10 +49,10 @@ class TestStateIO:
     def test_load_state_missing_file_returns_empty(self, tmp_path):
         state_path = tmp_path / "state.json"
         with patch(
-            "orchestrator.message_dispatcher._get_state_path",
+            "octopoid.message_dispatcher._get_state_path",
             return_value=state_path,
         ):
-            from orchestrator.message_dispatcher import _load_state
+            from octopoid.message_dispatcher import _load_state
             state = _load_state()
 
         assert state == {"done": [], "failed": [], "processing": {}}
@@ -61,10 +61,10 @@ class TestStateIO:
         state_path = tmp_path / "state.json"
         state_path.write_text("NOT JSON")
         with patch(
-            "orchestrator.message_dispatcher._get_state_path",
+            "octopoid.message_dispatcher._get_state_path",
             return_value=state_path,
         ):
-            from orchestrator.message_dispatcher import _load_state
+            from octopoid.message_dispatcher import _load_state
             state = _load_state()
 
         assert state == {"done": [], "failed": [], "processing": {}}
@@ -77,10 +77,10 @@ class TestStateIO:
             "processing": {"msg-003": {"started_at": "2026-01-01T00:00:00+00:00"}},
         }
         with patch(
-            "orchestrator.message_dispatcher._get_state_path",
+            "octopoid.message_dispatcher._get_state_path",
             return_value=state_path,
         ):
-            from orchestrator.message_dispatcher import _save_state, _load_state
+            from octopoid.message_dispatcher import _save_state, _load_state
             _save_state(payload)
             result = _load_state()
 
@@ -101,10 +101,10 @@ class TestBuildAgentPrompt:
         msg = _make_message(content="archive draft 80 as superseded", msg_id="msg-001")
 
         with patch(
-            "orchestrator.message_dispatcher.get_global_instructions_path",
+            "octopoid.message_dispatcher.get_global_instructions_path",
             return_value=gi_path,
         ):
-            from orchestrator.message_dispatcher import _build_agent_prompt
+            from octopoid.message_dispatcher import _build_agent_prompt
             prompt = _build_agent_prompt(msg)
 
         assert "archive draft 80 as superseded" in prompt
@@ -118,10 +118,10 @@ class TestBuildAgentPrompt:
         msg = _make_message()
 
         with patch(
-            "orchestrator.message_dispatcher.get_global_instructions_path",
+            "octopoid.message_dispatcher.get_global_instructions_path",
             return_value=gi_path,
         ):
-            from orchestrator.message_dispatcher import _build_agent_prompt
+            from octopoid.message_dispatcher import _build_agent_prompt
             prompt = _build_agent_prompt(msg)
 
         assert "project-management/" in prompt
@@ -133,10 +133,10 @@ class TestBuildAgentPrompt:
         msg = _make_message(content="do something")
 
         with patch(
-            "orchestrator.message_dispatcher.get_global_instructions_path",
+            "octopoid.message_dispatcher.get_global_instructions_path",
             return_value=gi_path,
         ):
-            from orchestrator.message_dispatcher import _build_agent_prompt
+            from octopoid.message_dispatcher import _build_agent_prompt
             prompt = _build_agent_prompt(msg)
 
         assert "do something" in prompt
@@ -161,12 +161,12 @@ class TestDispatchActionMessages:
         sdk = self._mock_sdk([])
 
         with (
-            patch("orchestrator.message_dispatcher.queue_utils.get_sdk", return_value=sdk),
-            patch("orchestrator.message_dispatcher._get_state_path", return_value=state_path),
-            patch("orchestrator.message_dispatcher._run_action_agent") as mock_run,
-            patch("orchestrator.message_dispatcher.find_parent_project", return_value=tmp_path),
+            patch("octopoid.message_dispatcher.queue_utils.get_sdk", return_value=sdk),
+            patch("octopoid.message_dispatcher._get_state_path", return_value=state_path),
+            patch("octopoid.message_dispatcher._run_action_agent") as mock_run,
+            patch("octopoid.message_dispatcher.find_parent_project", return_value=tmp_path),
         ):
-            from orchestrator.message_dispatcher import dispatch_action_messages
+            from octopoid.message_dispatcher import dispatch_action_messages
             dispatch_action_messages()
 
         mock_run.assert_not_called()
@@ -182,12 +182,12 @@ class TestDispatchActionMessages:
         sdk = self._mock_sdk([msg])
 
         with (
-            patch("orchestrator.message_dispatcher.queue_utils.get_sdk", return_value=sdk),
-            patch("orchestrator.message_dispatcher._get_state_path", return_value=state_path),
-            patch("orchestrator.message_dispatcher._run_action_agent") as mock_run,
-            patch("orchestrator.message_dispatcher.find_parent_project", return_value=tmp_path),
+            patch("octopoid.message_dispatcher.queue_utils.get_sdk", return_value=sdk),
+            patch("octopoid.message_dispatcher._get_state_path", return_value=state_path),
+            patch("octopoid.message_dispatcher._run_action_agent") as mock_run,
+            patch("octopoid.message_dispatcher.find_parent_project", return_value=tmp_path),
         ):
-            from orchestrator.message_dispatcher import dispatch_action_messages
+            from octopoid.message_dispatcher import dispatch_action_messages
             dispatch_action_messages()
 
         mock_run.assert_not_called()
@@ -201,12 +201,12 @@ class TestDispatchActionMessages:
         sdk = self._mock_sdk([msg])
 
         with (
-            patch("orchestrator.message_dispatcher.queue_utils.get_sdk", return_value=sdk),
-            patch("orchestrator.message_dispatcher._get_state_path", return_value=state_path),
-            patch("orchestrator.message_dispatcher._run_action_agent") as mock_run,
-            patch("orchestrator.message_dispatcher.find_parent_project", return_value=tmp_path),
+            patch("octopoid.message_dispatcher.queue_utils.get_sdk", return_value=sdk),
+            patch("octopoid.message_dispatcher._get_state_path", return_value=state_path),
+            patch("octopoid.message_dispatcher._run_action_agent") as mock_run,
+            patch("octopoid.message_dispatcher.find_parent_project", return_value=tmp_path),
         ):
-            from orchestrator.message_dispatcher import dispatch_action_messages
+            from octopoid.message_dispatcher import dispatch_action_messages
             dispatch_action_messages()
 
         mock_run.assert_not_called()
@@ -221,19 +221,19 @@ class TestDispatchActionMessages:
         sdk = self._mock_sdk([msg])
 
         with (
-            patch("orchestrator.message_dispatcher.queue_utils.get_sdk", return_value=sdk),
-            patch("orchestrator.message_dispatcher._get_state_path", return_value=state_path),
+            patch("octopoid.message_dispatcher.queue_utils.get_sdk", return_value=sdk),
+            patch("octopoid.message_dispatcher._get_state_path", return_value=state_path),
             patch(
-                "orchestrator.message_dispatcher.get_global_instructions_path",
+                "octopoid.message_dispatcher.get_global_instructions_path",
                 return_value=gi_path,
             ),
             patch(
-                "orchestrator.message_dispatcher._run_action_agent",
+                "octopoid.message_dispatcher._run_action_agent",
                 return_value=(True, "Draft archived successfully."),
             ),
-            patch("orchestrator.message_dispatcher.find_parent_project", return_value=tmp_path),
+            patch("octopoid.message_dispatcher.find_parent_project", return_value=tmp_path),
         ):
-            from orchestrator.message_dispatcher import dispatch_action_messages
+            from octopoid.message_dispatcher import dispatch_action_messages
             dispatch_action_messages()
 
         # worker_result posted to human inbox
@@ -260,19 +260,19 @@ class TestDispatchActionMessages:
         sdk = self._mock_sdk([msg])
 
         with (
-            patch("orchestrator.message_dispatcher.queue_utils.get_sdk", return_value=sdk),
-            patch("orchestrator.message_dispatcher._get_state_path", return_value=state_path),
+            patch("octopoid.message_dispatcher.queue_utils.get_sdk", return_value=sdk),
+            patch("octopoid.message_dispatcher._get_state_path", return_value=state_path),
             patch(
-                "orchestrator.message_dispatcher.get_global_instructions_path",
+                "octopoid.message_dispatcher.get_global_instructions_path",
                 return_value=gi_path,
             ),
             patch(
-                "orchestrator.message_dispatcher._run_action_agent",
+                "octopoid.message_dispatcher._run_action_agent",
                 return_value=(False, "Exit code 1: something went wrong"),
             ),
-            patch("orchestrator.message_dispatcher.find_parent_project", return_value=tmp_path),
+            patch("octopoid.message_dispatcher.find_parent_project", return_value=tmp_path),
         ):
-            from orchestrator.message_dispatcher import dispatch_action_messages
+            from octopoid.message_dispatcher import dispatch_action_messages
             dispatch_action_messages()
 
         # Error posted to human inbox
@@ -300,19 +300,19 @@ class TestDispatchActionMessages:
         sdk = self._mock_sdk(messages)
 
         with (
-            patch("orchestrator.message_dispatcher.queue_utils.get_sdk", return_value=sdk),
-            patch("orchestrator.message_dispatcher._get_state_path", return_value=state_path),
+            patch("octopoid.message_dispatcher.queue_utils.get_sdk", return_value=sdk),
+            patch("octopoid.message_dispatcher._get_state_path", return_value=state_path),
             patch(
-                "orchestrator.message_dispatcher.get_global_instructions_path",
+                "octopoid.message_dispatcher.get_global_instructions_path",
                 return_value=gi_path,
             ),
             patch(
-                "orchestrator.message_dispatcher._run_action_agent",
+                "octopoid.message_dispatcher._run_action_agent",
                 return_value=(True, "done"),
             ) as mock_run,
-            patch("orchestrator.message_dispatcher.find_parent_project", return_value=tmp_path),
+            patch("octopoid.message_dispatcher.find_parent_project", return_value=tmp_path),
         ):
-            from orchestrator.message_dispatcher import dispatch_action_messages
+            from octopoid.message_dispatcher import dispatch_action_messages
             dispatch_action_messages()
 
         # Only one agent spawned
@@ -343,19 +343,19 @@ class TestDispatchActionMessages:
         sdk = self._mock_sdk([msg])
 
         with (
-            patch("orchestrator.message_dispatcher.queue_utils.get_sdk", return_value=sdk),
-            patch("orchestrator.message_dispatcher._get_state_path", return_value=state_path),
+            patch("octopoid.message_dispatcher.queue_utils.get_sdk", return_value=sdk),
+            patch("octopoid.message_dispatcher._get_state_path", return_value=state_path),
             patch(
-                "orchestrator.message_dispatcher.get_global_instructions_path",
+                "octopoid.message_dispatcher.get_global_instructions_path",
                 return_value=gi_path,
             ),
             patch(
-                "orchestrator.message_dispatcher._run_action_agent",
+                "octopoid.message_dispatcher._run_action_agent",
                 return_value=(True, "done"),
             ) as mock_run,
-            patch("orchestrator.message_dispatcher.find_parent_project", return_value=tmp_path),
+            patch("octopoid.message_dispatcher.find_parent_project", return_value=tmp_path),
         ):
-            from orchestrator.message_dispatcher import dispatch_action_messages
+            from octopoid.message_dispatcher import dispatch_action_messages
             dispatch_action_messages()
 
         # Stuck message moved to failed
@@ -380,12 +380,12 @@ class TestDispatchActionMessages:
         state_path = tmp_path / "state.json"
 
         with (
-            patch("orchestrator.message_dispatcher.queue_utils.get_sdk", return_value=sdk),
-            patch("orchestrator.message_dispatcher._get_state_path", return_value=state_path),
-            patch("orchestrator.message_dispatcher._run_action_agent") as mock_run,
-            patch("orchestrator.message_dispatcher.find_parent_project", return_value=tmp_path),
+            patch("octopoid.message_dispatcher.queue_utils.get_sdk", return_value=sdk),
+            patch("octopoid.message_dispatcher._get_state_path", return_value=state_path),
+            patch("octopoid.message_dispatcher._run_action_agent") as mock_run,
+            patch("octopoid.message_dispatcher.find_parent_project", return_value=tmp_path),
         ):
-            from orchestrator.message_dispatcher import dispatch_action_messages
+            from octopoid.message_dispatcher import dispatch_action_messages
             dispatch_action_messages()
 
         mock_run.assert_not_called()

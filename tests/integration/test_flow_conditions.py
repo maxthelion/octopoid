@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from orchestrator.flow import Condition, Flow, evaluate_script_conditions
+from octopoid.flow import Condition, Flow, evaluate_script_conditions
 
 
 class TestScriptConditionEvaluate:

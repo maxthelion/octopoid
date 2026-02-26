@@ -23,13 +23,13 @@ from pathlib import Path
 
 import pytest
 
-from orchestrator.pool import (
+from octopoid.pool import (
     get_active_task_ids,
     get_blueprint_pids_path,
     register_instance_pid,
 )
-from orchestrator.scheduler import AgentContext, guard_claim_task
-from orchestrator.state_utils import AgentState
+from octopoid.scheduler import AgentContext, guard_claim_task
+from octopoid.state_utils import AgentState
 
 
 # ---------------------------------------------------------------------------
@@ -99,7 +99,7 @@ class TestDuplicateClaimPrevention:
         # Patch get_orchestrator_id so that claim_task uses the registered
         # test orchestrator ID (the prod ID from local config is not
         # registered on the test server and would cause a FK constraint error).
-        monkeypatch.setattr("orchestrator.tasks.get_orchestrator_id", lambda: orchestrator_id)
+        monkeypatch.setattr("octopoid.tasks.get_orchestrator_id", lambda: orchestrator_id)
 
         try:
             # 1. Create task in incoming.
@@ -177,7 +177,7 @@ class TestDuplicateClaimPrevention:
         Both instances end up working on distinct tasks.
         """
         # Same FK constraint fix — claim_task needs the registered test orchestrator.
-        monkeypatch.setattr("orchestrator.tasks.get_orchestrator_id", lambda: orchestrator_id)
+        monkeypatch.setattr("octopoid.tasks.get_orchestrator_id", lambda: orchestrator_id)
 
         blueprint_name = _make_blueprint()
         task_id_1 = _make_task_id()

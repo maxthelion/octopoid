@@ -64,7 +64,7 @@ class TestProjectCreationWithoutBranch:
         must generate a branch name (feature/{short_id}) and pass it to the server.
         The server must store it and return it on retrieval.
         """
-        from orchestrator.projects import create_project
+        from octopoid.projects import create_project
 
         project = create_project(
             title="Auto-branch project",
@@ -89,7 +89,7 @@ class TestProjectCreationWithoutBranch:
 
     def test_auto_generated_branch_derived_from_project_id(self, sdk):
         """The auto-generated branch is derived from the project ID (feature/{short_id})."""
-        from orchestrator.projects import create_project
+        from octopoid.projects import create_project
 
         project = create_project(
             title="Branch ID derivation test",
@@ -160,8 +160,8 @@ class TestChildTaskAssociation:
         it fetches the project, extracts its branch, and passes it to the server.
         The server must store the branch on the task record.
         """
-        from orchestrator.projects import create_project
-        from orchestrator.tasks import create_task
+        from octopoid.projects import create_project
+        from octopoid.tasks import create_task
 
         # 1. Create a project (auto-generates branch via create_project)
         project = create_project(

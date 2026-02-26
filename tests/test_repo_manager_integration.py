@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from orchestrator.repo_manager import RebaseStatus, RepoManager
+from octopoid.repo_manager import RebaseStatus, RepoManager
 
 
 def _git(args: list[str], cwd: Path) -> subprocess.CompletedProcess:

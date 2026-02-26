@@ -59,11 +59,11 @@ def sample_task():
 class TestPrepareTaskDirectoryCreatesBranch:
     """Verify that after prepare_task_directory, the worktree is on a named branch."""
 
-    @patch("orchestrator.scheduler.get_tasks_dir")
-    @patch("orchestrator.scheduler.find_parent_project")
-    @patch("orchestrator.scheduler.get_main_branch", return_value="main")
-    @patch("orchestrator.scheduler.get_global_instructions_path")
-    @patch("orchestrator.scheduler.get_orchestrator_dir")
+    @patch("octopoid.scheduler.get_tasks_dir")
+    @patch("octopoid.scheduler.find_parent_project")
+    @patch("octopoid.scheduler.get_main_branch", return_value="main")
+    @patch("octopoid.scheduler.get_global_instructions_path")
+    @patch("octopoid.scheduler.get_orchestrator_dir")
     def test_prepare_calls_ensure_on_branch(
         self,
         mock_orch_dir,
@@ -74,7 +74,7 @@ class TestPrepareTaskDirectoryCreatesBranch:
         tmp_path,
     ):
         """After prepare_task_directory, ensure_on_branch is called with the task branch."""
-        from orchestrator.scheduler import prepare_task_directory
+        from octopoid.scheduler import prepare_task_directory
 
         # Set up paths
         task_dir = tmp_path / "abc123"
@@ -105,8 +105,8 @@ class TestPrepareTaskDirectoryCreatesBranch:
         }
         agent_config = {"agent_dir": str(agent_dir)}
 
-        with patch("orchestrator.git_utils.create_task_worktree", return_value=worktree_path), \
-             patch("orchestrator.scheduler.RepoManager") as MockRepoManager:
+        with patch("octopoid.git_utils.create_task_worktree", return_value=worktree_path), \
+             patch("octopoid.scheduler.RepoManager") as MockRepoManager:
             mock_repo = MagicMock()
             MockRepoManager.return_value = mock_repo
 
@@ -134,9 +134,9 @@ class TestHandleAgentResultFlowSteps:
         # Mock the SDK to return a claimed task
         mock_sdk.tasks.get.return_value = sample_task
 
-        with patch("orchestrator.result_handler.queue_utils") as mock_qu, \
-             patch("orchestrator.steps.execute_steps") as mock_execute, \
-             patch("orchestrator.flow.load_flow") as mock_load_flow:
+        with patch("octopoid.result_handler.queue_utils") as mock_qu, \
+             patch("octopoid.steps.execute_steps") as mock_execute, \
+             patch("octopoid.flow.load_flow") as mock_load_flow:
 
             mock_qu.get_sdk.return_value = mock_sdk
 
@@ -148,7 +148,7 @@ class TestHandleAgentResultFlowSteps:
             mock_flow.get_transitions_from.return_value = [mock_transition]
             mock_load_flow.return_value = mock_flow
 
-            from orchestrator.scheduler import handle_agent_result
+            from octopoid.scheduler import handle_agent_result
             handle_agent_result("test123", "agent-1", tmp_task_dir)
 
             # Verify flow was loaded and steps executed
@@ -172,9 +172,9 @@ class TestHandleAgentResultFlowSteps:
 
         mock_sdk.tasks.get.return_value = sample_task
 
-        with patch("orchestrator.result_handler.queue_utils") as mock_qu, \
-             patch("orchestrator.steps.execute_steps") as mock_execute, \
-             patch("orchestrator.flow.load_flow") as mock_load_flow:
+        with patch("octopoid.result_handler.queue_utils") as mock_qu, \
+             patch("octopoid.steps.execute_steps") as mock_execute, \
+             patch("octopoid.flow.load_flow") as mock_load_flow:
 
             mock_qu.get_sdk.return_value = mock_sdk
 
@@ -186,7 +186,7 @@ class TestHandleAgentResultFlowSteps:
             mock_flow.get_transitions_from.return_value = [mock_transition]
             mock_load_flow.return_value = mock_flow
 
-            from orchestrator.scheduler import handle_agent_result
+            from octopoid.scheduler import handle_agent_result
             handle_agent_result("test123", "agent-1", tmp_task_dir)
 
             # No steps executed
@@ -203,9 +203,9 @@ class TestHandleAgentResultFlowSteps:
 
         mock_sdk.tasks.get.return_value = sample_task
 
-        with patch("orchestrator.result_handler.queue_utils") as mock_qu, \
-             patch("orchestrator.steps.execute_steps") as mock_execute, \
-             patch("orchestrator.flow.load_flow") as mock_load_flow:
+        with patch("octopoid.result_handler.queue_utils") as mock_qu, \
+             patch("octopoid.steps.execute_steps") as mock_execute, \
+             patch("octopoid.flow.load_flow") as mock_load_flow:
 
             mock_qu.get_sdk.return_value = mock_sdk
 
@@ -214,7 +214,7 @@ class TestHandleAgentResultFlowSteps:
             mock_flow.get_transitions_from.return_value = []
             mock_load_flow.return_value = mock_flow
 
-            from orchestrator.scheduler import handle_agent_result
+            from octopoid.scheduler import handle_agent_result
             handle_agent_result("test123", "agent-1", tmp_task_dir)
 
             # Should NOT execute steps
@@ -238,9 +238,9 @@ class TestHandleAgentResultFlowSteps:
         }
         mock_sdk.tasks.get.return_value = project_task
 
-        with patch("orchestrator.result_handler.queue_utils") as mock_qu, \
-             patch("orchestrator.steps.execute_steps") as mock_execute, \
-             patch("orchestrator.flow.load_flow") as mock_load_flow:
+        with patch("octopoid.result_handler.queue_utils") as mock_qu, \
+             patch("octopoid.steps.execute_steps") as mock_execute, \
+             patch("octopoid.flow.load_flow") as mock_load_flow:
 
             mock_qu.get_sdk.return_value = mock_sdk
 
@@ -256,7 +256,7 @@ class TestHandleAgentResultFlowSteps:
             mock_flow.get_transitions_from.return_value = []
             mock_load_flow.return_value = mock_flow
 
-            from orchestrator.scheduler import handle_agent_result
+            from octopoid.scheduler import handle_agent_result
             handle_agent_result("test123", "agent-1", tmp_task_dir)
 
             # Steps executed
@@ -290,10 +290,10 @@ class TestHandleAgentResultFailed:
 
         mock_sdk.tasks.get.return_value = sample_task
 
-        with patch("orchestrator.result_handler.queue_utils") as mock_qu:
+        with patch("octopoid.result_handler.queue_utils") as mock_qu:
             mock_qu.get_sdk.return_value = mock_sdk
 
-            from orchestrator.scheduler import handle_agent_result
+            from octopoid.scheduler import handle_agent_result
             handle_agent_result("test123", "agent-1", tmp_task_dir)
 
             mock_sdk.tasks.update.assert_called_once_with("test123", queue="failed")
@@ -305,10 +305,10 @@ class TestHandleAgentResultFailed:
 
         mock_sdk.tasks.get.return_value = sample_task
 
-        with patch("orchestrator.result_handler.queue_utils") as mock_qu:
+        with patch("octopoid.result_handler.queue_utils") as mock_qu:
             mock_qu.get_sdk.return_value = mock_sdk
 
-            from orchestrator.scheduler import handle_agent_result
+            from octopoid.scheduler import handle_agent_result
             handle_agent_result("test123", "agent-1", tmp_task_dir)
 
             mock_sdk.tasks.update.assert_called_once_with("test123", queue="failed")
@@ -325,10 +325,10 @@ class TestHandleAgentResultNoResult:
         """No result.json and no notes = failure."""
         mock_sdk.tasks.get.return_value = sample_task
 
-        with patch("orchestrator.result_handler.queue_utils") as mock_qu:
+        with patch("octopoid.result_handler.queue_utils") as mock_qu:
             mock_qu.get_sdk.return_value = mock_sdk
 
-            from orchestrator.scheduler import handle_agent_result
+            from octopoid.scheduler import handle_agent_result
             handle_agent_result("test123", "agent-1", tmp_task_dir)
 
             mock_sdk.tasks.update.assert_called_once_with("test123", queue="failed")
@@ -339,10 +339,10 @@ class TestHandleAgentResultNoResult:
 
         mock_sdk.tasks.get.return_value = sample_task
 
-        with patch("orchestrator.result_handler.queue_utils") as mock_qu:
+        with patch("octopoid.result_handler.queue_utils") as mock_qu:
             mock_qu.get_sdk.return_value = mock_sdk
 
-            from orchestrator.scheduler import handle_agent_result
+            from octopoid.scheduler import handle_agent_result
             handle_agent_result("test123", "agent-1", tmp_task_dir)
 
             mock_sdk.tasks.update.assert_called_once_with(
@@ -362,13 +362,13 @@ class TestHandleAgentResultNoResult:
         }
         mock_sdk.tasks.get.return_value = task
 
-        with patch("orchestrator.result_handler.queue_utils") as mock_qu, \
-             patch("orchestrator.steps.execute_steps") as mock_execute, \
-             patch("orchestrator.flow.load_flow") as mock_load_flow:
+        with patch("octopoid.result_handler.queue_utils") as mock_qu, \
+             patch("octopoid.steps.execute_steps") as mock_execute, \
+             patch("octopoid.flow.load_flow") as mock_load_flow:
 
             mock_qu.get_sdk.return_value = mock_sdk
 
-            from orchestrator.scheduler import handle_agent_result
+            from octopoid.scheduler import handle_agent_result
             handle_agent_result("test123", "agent-1", tmp_task_dir)
 
             # Should NOT execute steps or submit — task already moved past claimed
@@ -399,9 +399,9 @@ class TestChildFlowDispatch:
         }
         mock_sdk.tasks.get.return_value = project_task
 
-        with patch("orchestrator.result_handler.queue_utils") as mock_qu, \
-             patch("orchestrator.steps.execute_steps") as mock_execute, \
-             patch("orchestrator.flow.load_flow") as mock_load_flow:
+        with patch("octopoid.result_handler.queue_utils") as mock_qu, \
+             patch("octopoid.steps.execute_steps") as mock_execute, \
+             patch("octopoid.flow.load_flow") as mock_load_flow:
 
             mock_qu.get_sdk.return_value = mock_sdk
 
@@ -419,7 +419,7 @@ class TestChildFlowDispatch:
             mock_flow.get_transitions_from.return_value = []
             mock_load_flow.return_value = mock_flow
 
-            from orchestrator.scheduler import handle_agent_result
+            from octopoid.scheduler import handle_agent_result
             handle_agent_result("test123", "agent-1", tmp_task_dir)
 
             # child_flow transitions should be used, not parent flow
@@ -443,9 +443,9 @@ class TestChildFlowDispatch:
 
         mock_sdk.tasks.get.return_value = sample_task
 
-        with patch("orchestrator.result_handler.queue_utils") as mock_qu, \
-             patch("orchestrator.steps.execute_steps") as mock_execute, \
-             patch("orchestrator.flow.load_flow") as mock_load_flow:
+        with patch("octopoid.result_handler.queue_utils") as mock_qu, \
+             patch("octopoid.steps.execute_steps") as mock_execute, \
+             patch("octopoid.flow.load_flow") as mock_load_flow:
 
             mock_qu.get_sdk.return_value = mock_sdk
 
@@ -460,7 +460,7 @@ class TestChildFlowDispatch:
             mock_flow.get_transitions_from.return_value = [mock_transition]
             mock_load_flow.return_value = mock_flow
 
-            from orchestrator.scheduler import handle_agent_result
+            from octopoid.scheduler import handle_agent_result
             handle_agent_result("test123", "agent-1", tmp_task_dir)
 
             # Top-level flow transitions should be used
@@ -493,9 +493,9 @@ class TestChildFlowDispatch:
         }
         mock_sdk.tasks.get.return_value = project_task
 
-        with patch("orchestrator.result_handler.queue_utils") as mock_qu, \
-             patch("orchestrator.steps.execute_steps") as mock_execute, \
-             patch("orchestrator.flow.load_flow") as mock_load_flow:
+        with patch("octopoid.result_handler.queue_utils") as mock_qu, \
+             patch("octopoid.steps.execute_steps") as mock_execute, \
+             patch("octopoid.flow.load_flow") as mock_load_flow:
 
             mock_qu.get_sdk.return_value = mock_sdk
 
@@ -511,7 +511,7 @@ class TestChildFlowDispatch:
             mock_flow.get_transitions_from.return_value = []
             mock_load_flow.return_value = mock_flow
 
-            from orchestrator.scheduler import handle_agent_result_via_flow
+            from octopoid.scheduler import handle_agent_result_via_flow
             handle_agent_result_via_flow("test123", "agent-1", tmp_task_dir)
 
             mock_child_flow.get_transitions_from.assert_called_once_with("claimed")
@@ -525,9 +525,9 @@ class TestChildFlowDispatch:
 
         mock_sdk.tasks.get.return_value = sample_task
 
-        with patch("orchestrator.result_handler.queue_utils") as mock_qu, \
-             patch("orchestrator.steps.execute_steps") as mock_execute, \
-             patch("orchestrator.flow.load_flow") as mock_load_flow:
+        with patch("octopoid.result_handler.queue_utils") as mock_qu, \
+             patch("octopoid.steps.execute_steps") as mock_execute, \
+             patch("octopoid.flow.load_flow") as mock_load_flow:
 
             mock_qu.get_sdk.return_value = mock_sdk
 
@@ -543,7 +543,7 @@ class TestChildFlowDispatch:
             mock_flow.get_transitions_from.return_value = [mock_transition]
             mock_load_flow.return_value = mock_flow
 
-            from orchestrator.scheduler import handle_agent_result_via_flow
+            from octopoid.scheduler import handle_agent_result_via_flow
             handle_agent_result_via_flow("test123", "agent-1", tmp_task_dir)
 
             mock_flow.get_transitions_from.assert_called_once_with("claimed")
@@ -565,8 +565,8 @@ class TestStepFailureRetry:
 
         mock_sdk.tasks.get.return_value = sample_task
 
-        with patch("orchestrator.result_handler.queue_utils") as mock_qu, \
-             patch("orchestrator.flow.load_flow") as mock_load_flow:
+        with patch("octopoid.result_handler.queue_utils") as mock_qu, \
+             patch("octopoid.flow.load_flow") as mock_load_flow:
 
             mock_qu.get_sdk.return_value = mock_sdk
 
@@ -578,8 +578,8 @@ class TestStepFailureRetry:
             mock_load_flow.return_value = mock_flow
 
             # Make execute_steps raise
-            with patch("orchestrator.steps.execute_steps", side_effect=RuntimeError("Tests failed")):
-                from orchestrator.scheduler import handle_agent_result
+            with patch("octopoid.steps.execute_steps", side_effect=RuntimeError("Tests failed")):
+                from octopoid.scheduler import handle_agent_result
                 with pytest.raises(RuntimeError, match="Tests failed"):
                     handle_agent_result("test123", "agent-1", tmp_task_dir)
 
@@ -598,8 +598,8 @@ class TestStepFailureRetry:
 
         mock_sdk.tasks.get.return_value = sample_task
 
-        with patch("orchestrator.result_handler.queue_utils") as mock_qu, \
-             patch("orchestrator.flow.load_flow") as mock_load_flow:
+        with patch("octopoid.result_handler.queue_utils") as mock_qu, \
+             patch("octopoid.flow.load_flow") as mock_load_flow:
 
             mock_qu.get_sdk.return_value = mock_sdk
 
@@ -610,8 +610,8 @@ class TestStepFailureRetry:
             mock_flow.get_transitions_from.return_value = [mock_transition]
             mock_load_flow.return_value = mock_flow
 
-            with patch("orchestrator.steps.execute_steps", side_effect=RuntimeError("Step failed again")):
-                from orchestrator.scheduler import handle_agent_result
+            with patch("octopoid.steps.execute_steps", side_effect=RuntimeError("Step failed again")):
+                from octopoid.scheduler import handle_agent_result
                 # Should NOT raise — returns cleanly so PID gets removed
                 handle_agent_result("test123", "agent-1", tmp_task_dir)
 
@@ -632,8 +632,8 @@ class TestStepFailureRetry:
 
         mock_sdk.tasks.get.return_value = sample_task
 
-        with patch("orchestrator.result_handler.queue_utils") as mock_qu, \
-             patch("orchestrator.flow.load_flow") as mock_load_flow:
+        with patch("octopoid.result_handler.queue_utils") as mock_qu, \
+             patch("octopoid.flow.load_flow") as mock_load_flow:
 
             mock_qu.get_sdk.return_value = mock_sdk
 
@@ -644,7 +644,7 @@ class TestStepFailureRetry:
             mock_flow.get_transitions_from.return_value = [mock_transition]
             mock_load_flow.return_value = mock_flow
 
-            from orchestrator.scheduler import handle_agent_result
+            from octopoid.scheduler import handle_agent_result
             # Should not raise
             handle_agent_result("test123", "agent-1", tmp_task_dir)
 
@@ -662,8 +662,8 @@ class TestGuardTaskDescriptionNonempty:
     """Verify guard_task_description_nonempty blocks spawning for empty tasks."""
 
     def _make_ctx(self, claimed_task: dict | None, spawn_mode: str = "scripts") -> object:
-        from orchestrator.scheduler import AgentContext
-        from orchestrator.state_utils import AgentState
+        from octopoid.scheduler import AgentContext
+        from octopoid.state_utils import AgentState
         state = AgentState()
         return AgentContext(
             agent_config={"spawn_mode": spawn_mode},
@@ -677,7 +677,7 @@ class TestGuardTaskDescriptionNonempty:
 
     def test_no_claimed_task_passes(self):
         """Guard passes when no task is claimed."""
-        from orchestrator.scheduler import guard_task_description_nonempty
+        from octopoid.scheduler import guard_task_description_nonempty
         ctx = self._make_ctx(None)
         proceed, reason = guard_task_description_nonempty(ctx)
         assert proceed is True
@@ -685,7 +685,7 @@ class TestGuardTaskDescriptionNonempty:
 
     def test_non_scripts_mode_passes(self):
         """Guard passes for non-scripts-mode agents (they claim their own tasks)."""
-        from orchestrator.scheduler import guard_task_description_nonempty
+        from octopoid.scheduler import guard_task_description_nonempty
         ctx = self._make_ctx({"id": "abc123", "content": ""}, spawn_mode="worktree")
         proceed, reason = guard_task_description_nonempty(ctx)
         assert proceed is True
@@ -693,7 +693,7 @@ class TestGuardTaskDescriptionNonempty:
 
     def test_task_with_nonempty_content_passes(self):
         """Guard passes when task content is present and non-empty."""
-        from orchestrator.scheduler import guard_task_description_nonempty
+        from octopoid.scheduler import guard_task_description_nonempty
         ctx = self._make_ctx({
             "id": "abc123",
             "content": "# Task\n\nDo something useful.\n",
@@ -704,12 +704,12 @@ class TestGuardTaskDescriptionNonempty:
 
     def test_task_with_whitespace_only_content_fails(self):
         """Guard blocks spawn and fails task when content is only whitespace."""
-        from orchestrator.scheduler import guard_task_description_nonempty
+        from octopoid.scheduler import guard_task_description_nonempty
 
         mock_sdk = MagicMock()
         ctx = self._make_ctx({"id": "abc123", "content": "   \n   "})
 
-        with patch("orchestrator.scheduler.queue_utils") as mock_qu:
+        with patch("octopoid.scheduler.queue_utils") as mock_qu:
             mock_qu.get_sdk.return_value = mock_sdk
             proceed, reason = guard_task_description_nonempty(ctx)
 
@@ -719,12 +719,12 @@ class TestGuardTaskDescriptionNonempty:
 
     def test_task_with_no_content_field_fails(self):
         """Guard blocks spawn when task has no content field at all."""
-        from orchestrator.scheduler import guard_task_description_nonempty
+        from octopoid.scheduler import guard_task_description_nonempty
 
         mock_sdk = MagicMock()
         ctx = self._make_ctx({"id": "abc123"})
 
-        with patch("orchestrator.scheduler.queue_utils") as mock_qu:
+        with patch("octopoid.scheduler.queue_utils") as mock_qu:
             mock_qu.get_sdk.return_value = mock_sdk
             proceed, reason = guard_task_description_nonempty(ctx)
 
@@ -735,12 +735,12 @@ class TestGuardTaskDescriptionNonempty:
 
     def test_empty_content_reason_mentions_task_id(self):
         """Error reason mentions expected task ID when content is missing."""
-        from orchestrator.scheduler import guard_task_description_nonempty
+        from octopoid.scheduler import guard_task_description_nonempty
 
         mock_sdk = MagicMock()
         ctx = self._make_ctx({"id": "abc123", "content": ""})
 
-        with patch("orchestrator.scheduler.queue_utils") as mock_qu:
+        with patch("octopoid.scheduler.queue_utils") as mock_qu:
             mock_qu.get_sdk.return_value = mock_sdk
             proceed, reason = guard_task_description_nonempty(ctx)
 
@@ -749,12 +749,12 @@ class TestGuardTaskDescriptionNonempty:
 
     def test_empty_content_fails_task(self):
         """Guard blocks spawn and fails task when content is empty string."""
-        from orchestrator.scheduler import guard_task_description_nonempty
+        from octopoid.scheduler import guard_task_description_nonempty
 
         mock_sdk = MagicMock()
         ctx = self._make_ctx({"id": "abc123", "content": ""})
 
-        with patch("orchestrator.scheduler.queue_utils") as mock_qu:
+        with patch("octopoid.scheduler.queue_utils") as mock_qu:
             mock_qu.get_sdk.return_value = mock_sdk
             proceed, reason = guard_task_description_nonempty(ctx)
 
@@ -764,13 +764,13 @@ class TestGuardTaskDescriptionNonempty:
 
     def test_sdk_failure_still_blocks_spawn(self):
         """Guard still blocks spawn even if the SDK call to fail the task throws."""
-        from orchestrator.scheduler import guard_task_description_nonempty
+        from octopoid.scheduler import guard_task_description_nonempty
 
         mock_sdk = MagicMock()
         mock_sdk.tasks.update.side_effect = RuntimeError("network error")
         ctx = self._make_ctx({"id": "abc123", "content": ""})
 
-        with patch("orchestrator.scheduler.queue_utils") as mock_qu:
+        with patch("octopoid.scheduler.queue_utils") as mock_qu:
             mock_qu.get_sdk.return_value = mock_sdk
             proceed, reason = guard_task_description_nonempty(ctx)
 

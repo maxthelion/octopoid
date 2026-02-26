@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from orchestrator.init import init_orchestrator, main
+from octopoid.init import init_orchestrator, main
 
 
 @pytest.fixture
@@ -39,8 +39,8 @@ class TestInitWelcomeMessage:
         """Init shows a welcome message with project path."""
         project_dir, submodule = mock_project
 
-        with patch("orchestrator.init.find_parent_project", return_value=project_dir):
-            with patch("orchestrator.init.get_orchestrator_submodule", return_value=submodule):
+        with patch("octopoid.init.find_parent_project", return_value=project_dir):
+            with patch("octopoid.init.get_orchestrator_submodule", return_value=submodule):
                 init_orchestrator(
                     install_skills=False,
                     update_gitignore=False,
@@ -55,8 +55,8 @@ class TestInitWelcomeMessage:
         """Init shows a description of what octopoid is."""
         project_dir, submodule = mock_project
 
-        with patch("orchestrator.init.find_parent_project", return_value=project_dir):
-            with patch("orchestrator.init.get_orchestrator_submodule", return_value=submodule):
+        with patch("octopoid.init.find_parent_project", return_value=project_dir):
+            with patch("octopoid.init.get_orchestrator_submodule", return_value=submodule):
                 init_orchestrator(
                     install_skills=False,
                     update_gitignore=False,
@@ -74,8 +74,8 @@ class TestInitDirectoryCreation:
         """Fresh init reports how many directories were created."""
         project_dir, submodule = mock_project
 
-        with patch("orchestrator.init.find_parent_project", return_value=project_dir):
-            with patch("orchestrator.init.get_orchestrator_submodule", return_value=submodule):
+        with patch("octopoid.init.find_parent_project", return_value=project_dir):
+            with patch("octopoid.init.get_orchestrator_submodule", return_value=submodule):
                 init_orchestrator(
                     install_skills=False,
                     update_gitignore=False,
@@ -90,8 +90,8 @@ class TestInitDirectoryCreation:
         """Second init reports directories already exist."""
         project_dir, submodule = mock_project
 
-        with patch("orchestrator.init.find_parent_project", return_value=project_dir):
-            with patch("orchestrator.init.get_orchestrator_submodule", return_value=submodule):
+        with patch("octopoid.init.find_parent_project", return_value=project_dir):
+            with patch("octopoid.init.get_orchestrator_submodule", return_value=submodule):
                 # Run init twice
                 init_orchestrator(
                     install_skills=False,
@@ -114,8 +114,8 @@ class TestInitDirectoryCreation:
         """Reports agents.yaml creation on fresh init."""
         project_dir, submodule = mock_project
 
-        with patch("orchestrator.init.find_parent_project", return_value=project_dir):
-            with patch("orchestrator.init.get_orchestrator_submodule", return_value=submodule):
+        with patch("octopoid.init.find_parent_project", return_value=project_dir):
+            with patch("octopoid.init.get_orchestrator_submodule", return_value=submodule):
                 init_orchestrator(
                     install_skills=False,
                     update_gitignore=False,
@@ -135,8 +135,8 @@ class TestInitDirectoryCreation:
         agents_yaml = orchestrator_dir / "agents.yaml"
         agents_yaml.write_text("# custom config")
 
-        with patch("orchestrator.init.find_parent_project", return_value=project_dir):
-            with patch("orchestrator.init.get_orchestrator_submodule", return_value=submodule):
+        with patch("octopoid.init.find_parent_project", return_value=project_dir):
+            with patch("octopoid.init.get_orchestrator_submodule", return_value=submodule):
                 init_orchestrator(
                     install_skills=False,
                     update_gitignore=False,
@@ -155,8 +155,8 @@ class TestInitNextSteps:
         """Init shows next steps after setup."""
         project_dir, submodule = mock_project
 
-        with patch("orchestrator.init.find_parent_project", return_value=project_dir):
-            with patch("orchestrator.init.get_orchestrator_submodule", return_value=submodule):
+        with patch("octopoid.init.find_parent_project", return_value=project_dir):
+            with patch("octopoid.init.get_orchestrator_submodule", return_value=submodule):
                 init_orchestrator(
                     install_skills=False,
                     update_gitignore=False,
@@ -170,8 +170,8 @@ class TestInitNextSteps:
         """Next steps includes CLAUDE.md setup instructions."""
         project_dir, submodule = mock_project
 
-        with patch("orchestrator.init.find_parent_project", return_value=project_dir):
-            with patch("orchestrator.init.get_orchestrator_submodule", return_value=submodule):
+        with patch("octopoid.init.find_parent_project", return_value=project_dir):
+            with patch("octopoid.init.get_orchestrator_submodule", return_value=submodule):
                 init_orchestrator(
                     install_skills=False,
                     update_gitignore=False,
@@ -186,8 +186,8 @@ class TestInitNextSteps:
         """Next steps includes how to start the scheduler."""
         project_dir, submodule = mock_project
 
-        with patch("orchestrator.init.find_parent_project", return_value=project_dir):
-            with patch("orchestrator.init.get_orchestrator_submodule", return_value=submodule):
+        with patch("octopoid.init.find_parent_project", return_value=project_dir):
+            with patch("octopoid.init.get_orchestrator_submodule", return_value=submodule):
                 init_orchestrator(
                     install_skills=False,
                     update_gitignore=False,
@@ -202,8 +202,8 @@ class TestInitNextSteps:
         """Next steps includes how to create tasks."""
         project_dir, submodule = mock_project
 
-        with patch("orchestrator.init.find_parent_project", return_value=project_dir):
-            with patch("orchestrator.init.get_orchestrator_submodule", return_value=submodule):
+        with patch("octopoid.init.find_parent_project", return_value=project_dir):
+            with patch("octopoid.init.get_orchestrator_submodule", return_value=submodule):
                 init_orchestrator(
                     install_skills=False,
                     update_gitignore=False,
@@ -217,8 +217,8 @@ class TestInitNextSteps:
         """Next steps includes status check commands."""
         project_dir, submodule = mock_project
 
-        with patch("orchestrator.init.find_parent_project", return_value=project_dir):
-            with patch("orchestrator.init.get_orchestrator_submodule", return_value=submodule):
+        with patch("octopoid.init.find_parent_project", return_value=project_dir):
+            with patch("octopoid.init.get_orchestrator_submodule", return_value=submodule):
                 init_orchestrator(
                     install_skills=False,
                     update_gitignore=False,
@@ -233,8 +233,8 @@ class TestInitNextSteps:
         """Next steps includes documentation reference."""
         project_dir, submodule = mock_project
 
-        with patch("orchestrator.init.find_parent_project", return_value=project_dir):
-            with patch("orchestrator.init.get_orchestrator_submodule", return_value=submodule):
+        with patch("octopoid.init.find_parent_project", return_value=project_dir):
+            with patch("octopoid.init.get_orchestrator_submodule", return_value=submodule):
                 init_orchestrator(
                     install_skills=False,
                     update_gitignore=False,
@@ -249,8 +249,8 @@ class TestInitNextSteps:
         """Shows a clear 'setup complete' banner."""
         project_dir, submodule = mock_project
 
-        with patch("orchestrator.init.find_parent_project", return_value=project_dir):
-            with patch("orchestrator.init.get_orchestrator_submodule", return_value=submodule):
+        with patch("octopoid.init.find_parent_project", return_value=project_dir):
+            with patch("octopoid.init.get_orchestrator_submodule", return_value=submodule):
                 init_orchestrator(
                     install_skills=False,
                     update_gitignore=False,
@@ -268,8 +268,8 @@ class TestInitSkillInstallation:
         """Reports how many skills were installed."""
         project_dir, submodule = mock_project
 
-        with patch("orchestrator.init.find_parent_project", return_value=project_dir):
-            with patch("orchestrator.init.get_orchestrator_submodule", return_value=submodule):
+        with patch("octopoid.init.find_parent_project", return_value=project_dir):
+            with patch("octopoid.init.get_orchestrator_submodule", return_value=submodule):
                 init_orchestrator(
                     install_skills=True,
                     update_gitignore=False,
@@ -283,8 +283,8 @@ class TestInitSkillInstallation:
         """Lists installed skill command names."""
         project_dir, submodule = mock_project
 
-        with patch("orchestrator.init.find_parent_project", return_value=project_dir):
-            with patch("orchestrator.init.get_orchestrator_submodule", return_value=submodule):
+        with patch("octopoid.init.find_parent_project", return_value=project_dir):
+            with patch("octopoid.init.get_orchestrator_submodule", return_value=submodule):
                 init_orchestrator(
                     install_skills=True,
                     update_gitignore=False,
@@ -299,8 +299,8 @@ class TestInitSkillInstallation:
         """Skipping skills shows how to install them later."""
         project_dir, submodule = mock_project
 
-        with patch("orchestrator.init.find_parent_project", return_value=project_dir):
-            with patch("orchestrator.init.get_orchestrator_submodule", return_value=submodule):
+        with patch("octopoid.init.find_parent_project", return_value=project_dir):
+            with patch("octopoid.init.get_orchestrator_submodule", return_value=submodule):
                 init_orchestrator(
                     install_skills=False,
                     update_gitignore=False,
@@ -319,8 +319,8 @@ class TestInitGitignore:
         """Reports how many gitignore entries were added."""
         project_dir, submodule = mock_project
 
-        with patch("orchestrator.init.find_parent_project", return_value=project_dir):
-            with patch("orchestrator.init.get_orchestrator_submodule", return_value=submodule):
+        with patch("octopoid.init.find_parent_project", return_value=project_dir):
+            with patch("octopoid.init.get_orchestrator_submodule", return_value=submodule):
                 init_orchestrator(
                     install_skills=False,
                     update_gitignore=True,
@@ -335,8 +335,8 @@ class TestInitGitignore:
         """Skipping gitignore shows how to add entries later."""
         project_dir, submodule = mock_project
 
-        with patch("orchestrator.init.find_parent_project", return_value=project_dir):
-            with patch("orchestrator.init.get_orchestrator_submodule", return_value=submodule):
+        with patch("octopoid.init.find_parent_project", return_value=project_dir):
+            with patch("octopoid.init.get_orchestrator_submodule", return_value=submodule):
                 init_orchestrator(
                     install_skills=False,
                     update_gitignore=False,
@@ -355,8 +355,8 @@ class TestInitModeSelection:
         """Running init without mode flag shows 'local' mode."""
         project_dir, submodule = mock_project
 
-        with patch("orchestrator.init.find_parent_project", return_value=project_dir):
-            with patch("orchestrator.init.get_orchestrator_submodule", return_value=submodule):
+        with patch("octopoid.init.find_parent_project", return_value=project_dir):
+            with patch("octopoid.init.get_orchestrator_submodule", return_value=submodule):
                 init_orchestrator(
                     install_skills=False,
                     update_gitignore=False,
@@ -370,8 +370,8 @@ class TestInitModeSelection:
         """Passing mode='local' explicitly shows in output."""
         project_dir, submodule = mock_project
 
-        with patch("orchestrator.init.find_parent_project", return_value=project_dir):
-            with patch("orchestrator.init.get_orchestrator_submodule", return_value=submodule):
+        with patch("octopoid.init.find_parent_project", return_value=project_dir):
+            with patch("octopoid.init.get_orchestrator_submodule", return_value=submodule):
                 init_orchestrator(
                     install_skills=False,
                     update_gitignore=False,

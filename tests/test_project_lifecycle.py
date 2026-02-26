@@ -21,7 +21,7 @@ from unittest.mock import patch
 
 import pytest
 
-from orchestrator.git_utils import (
+from octopoid.git_utils import (
     create_task_worktree,
     cleanup_task_worktree,
     run_git,
@@ -98,7 +98,7 @@ def lifecycle_env(tmp_path):
 def _patch_git_utils(main_repo: Path, tasks_dir: Path):
     """Return a context manager patching git_utils to use the test repos."""
     return patch.multiple(
-        "orchestrator.git_utils",
+        "octopoid.git_utils",
         find_parent_project=lambda: main_repo,
         get_base_branch=lambda: "main",
         get_tasks_dir=lambda: tasks_dir,

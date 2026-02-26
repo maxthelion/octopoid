@@ -10,14 +10,14 @@ from unittest.mock import patch
 
 import pytest
 
-from orchestrator.pool import (
+from octopoid.pool import (
     count_running_instances,
     load_blueprint_pids,
     register_instance_pid,
     save_blueprint_pids,
 )
-from orchestrator.scheduler import AgentContext, guard_pool_capacity
-from orchestrator.state_utils import AgentState
+from octopoid.scheduler import AgentContext, guard_pool_capacity
+from octopoid.state_utils import AgentState
 
 
 # ---------------------------------------------------------------------------
@@ -63,7 +63,7 @@ class TestPoolCapacityRespected:
         """guard_pool_capacity returns False at capacity, True after a slot frees."""
         blueprint = "test-blueprint"
 
-        with patch("orchestrator.pool.get_agents_runtime_dir", return_value=tmp_path):
+        with patch("octopoid.pool.get_agents_runtime_dir", return_value=tmp_path):
             # Register 2 alive PIDs (current process and its parent are guaranteed alive)
             alive_pid1 = os.getpid()
             alive_pid2 = os.getppid()
@@ -102,7 +102,7 @@ class TestCountOnlyAlivePids:
         blueprint = "test-blueprint-alive"
         dead_pid = _find_dead_pid()
 
-        with patch("orchestrator.pool.get_agents_runtime_dir", return_value=tmp_path):
+        with patch("octopoid.pool.get_agents_runtime_dir", return_value=tmp_path):
             alive_pid1 = os.getpid()
             alive_pid2 = os.getppid()
             register_instance_pid(blueprint, alive_pid1, "TASK-A", f"{blueprint}-1")

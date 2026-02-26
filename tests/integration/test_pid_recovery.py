@@ -18,12 +18,12 @@ from unittest.mock import patch
 
 import pytest
 
-from orchestrator.pool import (
+from octopoid.pool import (
     cleanup_dead_pids,
     load_blueprint_pids,
     register_instance_pid,
 )
-from orchestrator.scheduler import check_and_update_finished_agents
+from octopoid.scheduler import check_and_update_finished_agents
 
 
 def _make_task_id() -> str:
@@ -85,11 +85,11 @@ class TestDeadPIDRecovery:
         task_dir.mkdir(parents=True)
 
         # 4. Register dead PID using real pool functions (real running_pids.json)
-        with patch("orchestrator.pool.get_agents_runtime_dir", return_value=agents_dir):
+        with patch("octopoid.pool.get_agents_runtime_dir", return_value=agents_dir):
             register_instance_pid(blueprint_name, dead_pid, task_id, "implementer-test")
 
         # Confirm PID is in running_pids.json before check
-        with patch("orchestrator.pool.get_agents_runtime_dir", return_value=agents_dir):
+        with patch("octopoid.pool.get_agents_runtime_dir", return_value=agents_dir):
             pids_before = load_blueprint_pids(blueprint_name)
         assert dead_pid in pids_before, (
             f"Dead PID {dead_pid} should be registered before check"
@@ -99,17 +99,17 @@ class TestDeadPIDRecovery:
         #    - scheduler uses get_agents_runtime_dir() to scan agent dirs
         #    - pool uses get_agents_runtime_dir() inside load/save_blueprint_pids
         with (
-            patch("orchestrator.scheduler.get_agents_runtime_dir", return_value=agents_dir),
-            patch("orchestrator.pool.get_agents_runtime_dir", return_value=agents_dir),
-            patch("orchestrator.scheduler.get_tasks_dir", return_value=tasks_dir),
-            patch("orchestrator.scheduler.get_agents", return_value=[
+            patch("octopoid.scheduler.get_agents_runtime_dir", return_value=agents_dir),
+            patch("octopoid.pool.get_agents_runtime_dir", return_value=agents_dir),
+            patch("octopoid.scheduler.get_tasks_dir", return_value=tasks_dir),
+            patch("octopoid.scheduler.get_agents", return_value=[
                 {"blueprint_name": blueprint_name, "claim_from": "incoming"}
             ]),
         ):
             check_and_update_finished_agents()
 
         # 6. Assert: dead PID removed from running_pids.json
-        with patch("orchestrator.pool.get_agents_runtime_dir", return_value=agents_dir):
+        with patch("octopoid.pool.get_agents_runtime_dir", return_value=agents_dir):
             pids_after = load_blueprint_pids(blueprint_name)
         assert dead_pid not in pids_after, (
             f"Dead PID {dead_pid} should have been removed from running_pids.json"
@@ -166,18 +166,18 @@ class TestAlivePIDPreservation:
         agents_dir = tmp_path / "agents"
         blueprint_name = "implementer"
 
-        with patch("orchestrator.pool.get_agents_runtime_dir", return_value=agents_dir):
+        with patch("octopoid.pool.get_agents_runtime_dir", return_value=agents_dir):
             register_instance_pid(blueprint_name, alive_pid, task_id, "implementer-test")
 
         # Confirm PID is registered
-        with patch("orchestrator.pool.get_agents_runtime_dir", return_value=agents_dir):
+        with patch("octopoid.pool.get_agents_runtime_dir", return_value=agents_dir):
             pids_before = load_blueprint_pids(blueprint_name)
         assert alive_pid in pids_before, (
             f"Alive PID {alive_pid} should be registered before cleanup"
         )
 
         # 3. Call cleanup_dead_pids — should leave the alive PID untouched
-        with patch("orchestrator.pool.get_agents_runtime_dir", return_value=agents_dir):
+        with patch("octopoid.pool.get_agents_runtime_dir", return_value=agents_dir):
             removed_count = cleanup_dead_pids(blueprint_name)
 
         # 4. Assert: alive PID still in running_pids.json
@@ -185,7 +185,7 @@ class TestAlivePIDPreservation:
             f"Expected 0 PIDs removed, got {removed_count}"
         )
 
-        with patch("orchestrator.pool.get_agents_runtime_dir", return_value=agents_dir):
+        with patch("octopoid.pool.get_agents_runtime_dir", return_value=agents_dir):
             pids_after = load_blueprint_pids(blueprint_name)
         assert alive_pid in pids_after, (
             f"Alive PID {alive_pid} should still be in running_pids.json after cleanup"

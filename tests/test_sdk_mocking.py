@@ -6,7 +6,7 @@ class TestSDKMocking:
 
     def test_sdk_is_mocked_by_default(self, mock_sdk_for_unit_tests):
         """Verify that the autouse fixture mocks get_sdk() for unit tests."""
-        from orchestrator.sdk import get_sdk
+        from octopoid.sdk import get_sdk
 
         sdk = get_sdk()
 
@@ -15,7 +15,7 @@ class TestSDKMocking:
 
     def test_create_task_uses_mocked_sdk(self, mock_orchestrator_dir, mock_sdk_for_unit_tests):
         """Verify create_task() uses the mocked SDK and doesn't hit production."""
-        from orchestrator.queue_utils import create_task
+        from octopoid.queue_utils import create_task
 
         task_name = create_task(
             title="Test task for SDK mocking",

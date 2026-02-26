@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import yaml
 
-from orchestrator.flow import (
+from octopoid.flow import (
     Condition,
     Flow,
     Transition,
@@ -508,7 +508,7 @@ class TestLoadFlowFromServer:
         sdk = self._make_sdk([
             {"name": "default", "transitions": [{"from_state": "incoming", "to_state": "claimed"}]},
         ])
-        with patch("orchestrator.sdk.get_sdk", return_value=sdk):
+        with patch("octopoid.sdk.get_sdk", return_value=sdk):
             flow = load_flow("default")
         assert flow.name == "default"
         assert len(flow.transitions) == 1
@@ -516,7 +516,7 @@ class TestLoadFlowFromServer:
     def test_raises_file_not_found_when_missing(self):
         """load_flow raises FileNotFoundError if flow not on server."""
         sdk = self._make_sdk([{"name": "other", "transitions": []}])
-        with patch("orchestrator.sdk.get_sdk", return_value=sdk):
+        with patch("octopoid.sdk.get_sdk", return_value=sdk):
             with pytest.raises(FileNotFoundError, match="not found on server"):
                 load_flow("default")
 
@@ -524,7 +524,7 @@ class TestLoadFlowFromServer:
         """load_flow re-raises when the SDK call fails (no silent fallback)."""
         sdk = MagicMock()
         sdk.flows.list.side_effect = RuntimeError("server down")
-        with patch("orchestrator.sdk.get_sdk", return_value=sdk):
+        with patch("octopoid.sdk.get_sdk", return_value=sdk):
             with pytest.raises(RuntimeError, match="server down"):
                 load_flow("default")
 
@@ -546,7 +546,7 @@ class TestLoadFlowFromServer:
                 ],
             }
         ])
-        with patch("orchestrator.sdk.get_sdk", return_value=sdk):
+        with patch("octopoid.sdk.get_sdk", return_value=sdk):
             flow = load_flow("default")
         t = flow.transitions[0]
         # rebase_on_base is auto-injected because this transition targets 'done'
@@ -564,7 +564,7 @@ class TestListFlowsFromServer:
             {"name": "default"},
             {"name": "project"},
         ]
-        with patch("orchestrator.sdk.get_sdk", return_value=sdk):
+        with patch("octopoid.sdk.get_sdk", return_value=sdk):
             names = list_flows()
         assert names == ["default", "project"]
 
@@ -572,7 +572,7 @@ class TestListFlowsFromServer:
         """list_flows returns empty list if server is unreachable."""
         sdk = MagicMock()
         sdk.flows.list.side_effect = RuntimeError("server down")
-        with patch("orchestrator.sdk.get_sdk", return_value=sdk):
+        with patch("octopoid.sdk.get_sdk", return_value=sdk):
             names = list_flows()
         assert names == []
 
@@ -580,7 +580,7 @@ class TestListFlowsFromServer:
         """list_flows skips flows without a name field."""
         sdk = MagicMock()
         sdk.flows.list.return_value = [{"name": "default"}, {"transitions": []}]
-        with patch("orchestrator.sdk.get_sdk", return_value=sdk):
+        with patch("octopoid.sdk.get_sdk", return_value=sdk):
             names = list_flows()
         assert names == ["default"]
 

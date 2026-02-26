@@ -4,7 +4,7 @@ This module contains the functions responsible for processing agent results and
 driving task state-machine transitions. It was extracted from scheduler.py to
 give this well-scoped concern its own home.
 
-Public API (also re-exported from orchestrator.scheduler for backwards compat):
+Public API (also re-exported from octopoid.scheduler for backwards compat):
     read_result_json            – Parse result.json from a task directory
     handle_agent_result_via_flow – Handle gatekeeper/review agent results via flow
     handle_agent_result          – Handle implementer agent results via outcome dispatch

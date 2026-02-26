@@ -10,7 +10,7 @@ class TestQueueOperationsFileBased:
         """Test counting an empty queue."""
         mock_sdk_for_unit_tests.tasks.list.return_value = []
 
-        from orchestrator.queue_utils import count_queue
+        from octopoid.queue_utils import count_queue
 
         count = count_queue("incoming")
         assert count == 0
@@ -21,7 +21,7 @@ class TestQueueOperationsFileBased:
             {"id": "abc12345", "title": "Implement feature X", "priority": "P1"},
         ]
 
-        from orchestrator.queue_utils import count_queue
+        from octopoid.queue_utils import count_queue
 
         count = count_queue("incoming")
         assert count == 1
@@ -30,7 +30,7 @@ class TestQueueOperationsFileBased:
         """Test listing empty queue."""
         mock_sdk_for_unit_tests.tasks.list.return_value = []
 
-        from orchestrator.queue_utils import list_tasks
+        from octopoid.queue_utils import list_tasks
 
         tasks = list_tasks("incoming")
         assert tasks == []
@@ -43,7 +43,7 @@ class TestQueueOperationsFileBased:
             {"id": "p1", "title": "P1 task", "priority": "P1", "created_at": "2024-01-15T10:01:00"},
         ]
 
-        from orchestrator.queue_utils import list_tasks
+        from octopoid.queue_utils import list_tasks
 
         tasks = list_tasks("incoming")
 
@@ -65,9 +65,9 @@ class TestClaimTask:
             "content": "# [TASK-abc12345] Implement feature X\n\nROLE: implement\n",
         }
 
-        with patch('orchestrator.sdk.get_orchestrator_id', return_value="test-orch"):
-            with patch('orchestrator.config.get_queue_limits', return_value={"max_claimed": 5}):
-                from orchestrator.queue_utils import claim_task
+        with patch('octopoid.sdk.get_orchestrator_id', return_value="test-orch"):
+            with patch('octopoid.config.get_queue_limits', return_value={"max_claimed": 5}):
+                from octopoid.queue_utils import claim_task
 
                 task = claim_task(agent_name="test-agent")
 
@@ -86,9 +86,9 @@ class TestClaimTask:
             "queue": "claimed",
         }
 
-        with patch('orchestrator.sdk.get_orchestrator_id', return_value="test-orch"):
-            with patch('orchestrator.config.get_queue_limits', return_value={"max_claimed": 5}):
-                from orchestrator.queue_utils import claim_task
+        with patch('octopoid.sdk.get_orchestrator_id', return_value="test-orch"):
+            with patch('octopoid.config.get_queue_limits', return_value={"max_claimed": 5}):
+                from octopoid.queue_utils import claim_task
 
                 task = claim_task(role_filter="implement")
 
@@ -101,9 +101,9 @@ class TestClaimTask:
         """Test claiming when no tasks available."""
         mock_sdk_for_unit_tests.tasks.claim.return_value = None
 
-        with patch('orchestrator.sdk.get_orchestrator_id', return_value="test-orch"):
-            with patch('orchestrator.config.get_queue_limits', return_value={"max_claimed": 5}):
-                from orchestrator.queue_utils import claim_task
+        with patch('octopoid.sdk.get_orchestrator_id', return_value="test-orch"):
+            with patch('octopoid.config.get_queue_limits', return_value={"max_claimed": 5}):
+                from octopoid.queue_utils import claim_task
 
                 task = claim_task()
                 assert task is None
@@ -116,9 +116,9 @@ class TestClaimTask:
             "queue": "claimed",
         }
 
-        with patch('orchestrator.sdk.get_orchestrator_id', return_value="test-orch"):
-            with patch('orchestrator.config.get_queue_limits', return_value={"max_claimed": 5}):
-                from orchestrator.queue_utils import claim_task
+        with patch('octopoid.sdk.get_orchestrator_id', return_value="test-orch"):
+            with patch('octopoid.config.get_queue_limits', return_value={"max_claimed": 5}):
+                from octopoid.queue_utils import claim_task
 
                 claim_task(agent_name="my-agent")
 
@@ -136,8 +136,8 @@ class TestCompleteTask:
             "queue": "done",
         }
 
-        with patch('orchestrator.task_notes.cleanup_task_notes'):
-            from orchestrator.queue_utils import complete_task
+        with patch('octopoid.task_notes.cleanup_task_notes'):
+            from octopoid.queue_utils import complete_task
 
             result = complete_task("abc12345")
 
@@ -166,7 +166,7 @@ class TestSubmitCompletion:
             "queue": "provisional",
         }
 
-        from orchestrator.queue_utils import submit_completion
+        from octopoid.queue_utils import submit_completion
 
         result = submit_completion("abc12345", commits_count=5, turns_used=30)
 
@@ -193,7 +193,7 @@ class TestCreateTask:
 
     def test_create_task_server_based(self, mock_orchestrator_dir, mock_sdk_for_unit_tests):
         """Test creating a task sends content to server (no file written)."""
-        from orchestrator.queue_utils import create_task
+        from octopoid.queue_utils import create_task
 
         task_name = create_task(
             title="New feature",
@@ -221,7 +221,7 @@ class TestCreateTask:
 
     def test_create_task_with_dependencies(self, mock_orchestrator_dir, mock_sdk_for_unit_tests):
         """Test creating a task with dependencies."""
-        from orchestrator.queue_utils import create_task
+        from octopoid.queue_utils import create_task
 
         create_task(
             title="Dependent task",
@@ -240,7 +240,7 @@ class TestCreateTask:
         Regression test: previously, passing a string would iterate character-by-character,
         producing one '- [ ] <char>' line per character instead of per line.
         """
-        from orchestrator.queue_utils import create_task
+        from octopoid.queue_utils import create_task
 
         criteria_str = "Feature works correctly\nTests are added\nDocs updated"
 
@@ -269,7 +269,7 @@ class TestCreateTask:
 
     def test_create_task_acceptance_criteria_string_with_existing_prefixes(self, mock_orchestrator_dir, mock_sdk_for_unit_tests):
         """Test that lines already prefixed with '- [ ]' are not double-wrapped."""
-        from orchestrator.queue_utils import create_task
+        from octopoid.queue_utils import create_task
 
         criteria_str = "- [ ] Already prefixed\n- [ ] Also prefixed"
 
@@ -290,7 +290,7 @@ class TestCreateTask:
 
     def test_create_task_acceptance_criteria_list_with_existing_prefixes(self, mock_orchestrator_dir, mock_sdk_for_unit_tests):
         """Test that list items already prefixed with '- [ ]' are not double-wrapped."""
-        from orchestrator.queue_utils import create_task
+        from octopoid.queue_utils import create_task
 
         create_task(
             title="Pre-prefixed list criteria",
@@ -307,7 +307,7 @@ class TestCreateTask:
 
     def test_create_task_acceptance_criteria_single_string(self, mock_orchestrator_dir, mock_sdk_for_unit_tests):
         """Test that a single-line string works correctly."""
-        from orchestrator.queue_utils import create_task
+        from octopoid.queue_utils import create_task
 
         create_task(
             title="Single line criteria",
@@ -338,9 +338,9 @@ class TestFailTask:
 
         mock_logger = MagicMock()
 
-        with patch('orchestrator.tasks.get_task_logger', return_value=mock_logger):
-            with patch('orchestrator.git_utils.cleanup_task_worktree'):
-                from orchestrator.queue_utils import fail_task
+        with patch('octopoid.tasks.get_task_logger', return_value=mock_logger):
+            with patch('octopoid.git_utils.cleanup_task_worktree'):
+                from octopoid.queue_utils import fail_task
 
                 result = fail_task("abc12345", error="Something went wrong")
 
@@ -362,9 +362,9 @@ class TestFailTask:
 
         mock_logger = MagicMock()
 
-        with patch('orchestrator.tasks.get_task_logger', return_value=mock_logger):
-            with patch('orchestrator.git_utils.cleanup_task_worktree'):
-                from orchestrator.queue_utils import fail_task
+        with patch('octopoid.tasks.get_task_logger', return_value=mock_logger):
+            with patch('octopoid.git_utils.cleanup_task_worktree'):
+                from octopoid.queue_utils import fail_task
 
                 result = fail_task("abc12345", error=long_error)
 
@@ -387,7 +387,7 @@ class TestRejectTask:
             "queue": "rejected",
         }
 
-        from orchestrator.queue_utils import reject_task
+        from octopoid.queue_utils import reject_task
 
         result = reject_task(
             "abc12345",
@@ -420,7 +420,7 @@ class TestRetryTask:
             "queue": "incoming",
         }
 
-        from orchestrator.queue_utils import retry_task
+        from octopoid.queue_utils import retry_task
 
         result = retry_task("abc12345")
 
@@ -449,9 +449,9 @@ class TestGetQueueStatus:
         mock_sdk_for_unit_tests.tasks.list.side_effect = mock_list_tasks
         mock_sdk_for_unit_tests.tasks.list.return_value = None  # Clear return_value when using side_effect
 
-        with patch('orchestrator.config.get_queue_limits', return_value={"max_incoming": 20, "max_claimed": 5, "max_provisional": 10}):
-            with patch('orchestrator.projects.list_projects', return_value=[]):
-                from orchestrator.backpressure import get_queue_status
+        with patch('octopoid.config.get_queue_limits', return_value={"max_incoming": 20, "max_claimed": 5, "max_provisional": 10}):
+            with patch('octopoid.projects.list_projects', return_value=[]):
+                from octopoid.backpressure import get_queue_status
 
                 status = get_queue_status()
 
@@ -477,7 +477,7 @@ class TestGetTaskById:
             "queue": "incoming",
         }
 
-        from orchestrator.queue_utils import get_task_by_id
+        from octopoid.queue_utils import get_task_by_id
 
         task = get_task_by_id("abc12345")
 
@@ -489,7 +489,7 @@ class TestGetTaskById:
         """Test getting a non-existent task."""
         mock_sdk_for_unit_tests.tasks.get.return_value = None
 
-        from orchestrator.queue_utils import get_task_by_id
+        from octopoid.queue_utils import get_task_by_id
 
         task = get_task_by_id("nonexistent")
         assert task is None
@@ -500,9 +500,9 @@ class TestBackpressure:
 
     def test_can_create_task_within_limit(self, mock_config):
         """Test can_create_task when within limits."""
-        with patch('orchestrator.config.get_queue_limits', return_value={"max_incoming": 20, "max_claimed": 5, "max_provisional": 10}):
-            with patch('orchestrator.queue_utils.count_queue', return_value=5):
-                from orchestrator.queue_utils import can_create_task
+        with patch('octopoid.config.get_queue_limits', return_value={"max_incoming": 20, "max_claimed": 5, "max_provisional": 10}):
+            with patch('octopoid.queue_utils.count_queue', return_value=5):
+                from octopoid.queue_utils import can_create_task
 
                 can_create, reason = can_create_task()
 
@@ -513,8 +513,8 @@ class TestBackpressure:
         """Test can_create_task when queue is full."""
         mock_sdk_for_unit_tests.tasks.list.return_value = [{"id": f"task{i}"} for i in range(15)]
 
-        with patch('orchestrator.config.get_queue_limits', return_value={"max_incoming": 20, "max_claimed": 5, "max_provisional": 10}):
-            from orchestrator.queue_utils import can_create_task
+        with patch('octopoid.config.get_queue_limits', return_value={"max_incoming": 20, "max_claimed": 5, "max_provisional": 10}):
+            from octopoid.queue_utils import can_create_task
 
             can_create, reason = can_create_task()
 
@@ -523,9 +523,9 @@ class TestBackpressure:
 
     def test_can_claim_task_no_tasks(self, mock_config):
         """Test can_claim_task when no tasks available."""
-        with patch('orchestrator.config.get_queue_limits', return_value={"max_incoming": 20, "max_claimed": 5, "max_provisional": 10}):
-            with patch('orchestrator.queue_utils.count_queue', side_effect=[0, 0]):
-                from orchestrator.queue_utils import can_claim_task
+        with patch('octopoid.config.get_queue_limits', return_value={"max_incoming": 20, "max_claimed": 5, "max_provisional": 10}):
+            with patch('octopoid.queue_utils.count_queue', side_effect=[0, 0]):
+                from octopoid.queue_utils import can_claim_task
 
                 can_claim, reason = can_claim_task()
 
@@ -538,7 +538,7 @@ class TestCreateTaskBlockedByNormalization:
 
     def test_create_task_no_blocked_by_no_blocked_by_in_content(self, mock_orchestrator_dir, mock_sdk_for_unit_tests):
         """create_task without blocked_by should not include BLOCKED_BY in content."""
-        from orchestrator.queue_utils import create_task
+        from octopoid.queue_utils import create_task
 
         create_task(
             title="No blockers",
@@ -553,7 +553,7 @@ class TestCreateTaskBlockedByNormalization:
 
     def test_create_task_string_none_blocked_by_no_blocked_by_in_content(self, mock_orchestrator_dir, mock_sdk_for_unit_tests):
         """create_task with blocked_by='None' should not include BLOCKED_BY in content."""
-        from orchestrator.queue_utils import create_task
+        from octopoid.queue_utils import create_task
 
         create_task(
             title="String None blocker",
@@ -568,7 +568,7 @@ class TestCreateTaskBlockedByNormalization:
 
     def test_create_task_empty_string_blocked_by_no_blocked_by_in_content(self, mock_orchestrator_dir, mock_sdk_for_unit_tests):
         """create_task with blocked_by='' should not include BLOCKED_BY in content."""
-        from orchestrator.queue_utils import create_task
+        from octopoid.queue_utils import create_task
 
         create_task(
             title="Empty string blocker",
@@ -583,7 +583,7 @@ class TestCreateTaskBlockedByNormalization:
 
     def test_create_task_valid_blocked_by_in_content(self, mock_orchestrator_dir, mock_sdk_for_unit_tests):
         """create_task with a real blocked_by includes BLOCKED_BY in content."""
-        from orchestrator.queue_utils import create_task
+        from octopoid.queue_utils import create_task
 
         create_task(
             title="Valid blocker",
@@ -602,7 +602,7 @@ class TestCreateTaskChecks:
 
     def test_create_task_with_checks_in_content(self, mock_orchestrator_dir, mock_sdk_for_unit_tests):
         """create_task with checks includes CHECKS line in server content."""
-        from orchestrator.queue_utils import create_task
+        from octopoid.queue_utils import create_task
 
         create_task(
             title="Task with checks",
@@ -617,7 +617,7 @@ class TestCreateTaskChecks:
 
     def test_create_task_without_checks_no_checks_line(self, mock_orchestrator_dir, mock_sdk_for_unit_tests):
         """create_task without checks does not include CHECKS line in content."""
-        from orchestrator.queue_utils import create_task
+        from octopoid.queue_utils import create_task
 
         create_task(
             title="Task without checks",
@@ -635,7 +635,7 @@ class TestCreateTaskOrchestratorImplDefaultChecks:
 
     def test_orchestrator_impl_no_default_checks(self, mock_orchestrator_dir, mock_sdk_for_unit_tests):
         """Creating orchestrator_impl task without checks gets no default checks."""
-        from orchestrator.queue_utils import create_task
+        from octopoid.queue_utils import create_task
 
         create_task(
             title="Orchestrator impl task",
@@ -649,7 +649,7 @@ class TestCreateTaskOrchestratorImplDefaultChecks:
 
     def test_orchestrator_impl_explicit_checks_override_default(self, mock_orchestrator_dir, mock_sdk_for_unit_tests):
         """Creating orchestrator_impl task with explicit checks uses those instead."""
-        from orchestrator.queue_utils import create_task
+        from octopoid.queue_utils import create_task
 
         create_task(
             title="Orchestrator impl task with custom checks",
@@ -665,7 +665,7 @@ class TestCreateTaskOrchestratorImplDefaultChecks:
 
     def test_non_orchestrator_impl_no_default_checks(self, mock_orchestrator_dir, mock_sdk_for_unit_tests):
         """Non-orchestrator_impl tasks do NOT get default checks."""
-        from orchestrator.queue_utils import create_task
+        from octopoid.queue_utils import create_task
 
         create_task(
             title="Normal implement task",

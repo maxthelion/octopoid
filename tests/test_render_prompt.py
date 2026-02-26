@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import pytest
 
-from orchestrator.scheduler import (
+from octopoid.scheduler import (
     _build_required_steps,
     _load_global_instructions,
     _load_review_section,
@@ -28,7 +28,7 @@ class TestLoadGlobalInstructions:
     def test_returns_empty_when_no_files(self, tmp_path):
         agent_dir = str(tmp_path / "agent")
         Path(agent_dir).mkdir()
-        with patch("orchestrator.scheduler.get_global_instructions_path", return_value=tmp_path / "nonexistent.md"):
+        with patch("octopoid.scheduler.get_global_instructions_path", return_value=tmp_path / "nonexistent.md"):
             result = _load_global_instructions(agent_dir)
         assert result == ""
 
@@ -37,7 +37,7 @@ class TestLoadGlobalInstructions:
         gi_path.write_text("Global instructions here.")
         agent_dir = str(tmp_path / "agent")
         Path(agent_dir).mkdir()
-        with patch("orchestrator.scheduler.get_global_instructions_path", return_value=gi_path):
+        with patch("octopoid.scheduler.get_global_instructions_path", return_value=gi_path):
             result = _load_global_instructions(agent_dir)
         assert result == "Global instructions here."
 
@@ -47,7 +47,7 @@ class TestLoadGlobalInstructions:
         agent_dir = tmp_path / "agent"
         agent_dir.mkdir()
         (agent_dir / "instructions.md").write_text("Agent specific.")
-        with patch("orchestrator.scheduler.get_global_instructions_path", return_value=gi_path):
+        with patch("octopoid.scheduler.get_global_instructions_path", return_value=gi_path):
             result = _load_global_instructions(str(agent_dir))
         assert result == "Global.\n\nAgent specific."
 
@@ -55,7 +55,7 @@ class TestLoadGlobalInstructions:
         agent_dir = tmp_path / "agent"
         agent_dir.mkdir()
         (agent_dir / "instructions.md").write_text("Only agent.")
-        with patch("orchestrator.scheduler.get_global_instructions_path", return_value=tmp_path / "nonexistent.md"):
+        with patch("octopoid.scheduler.get_global_instructions_path", return_value=tmp_path / "nonexistent.md"):
             result = _load_global_instructions(str(agent_dir))
         assert result == "\n\nOnly agent."
 
@@ -187,11 +187,11 @@ class TestLoadReviewSection:
         assert _load_review_section("") == ""
 
     def test_no_thread_returns_empty(self):
-        with patch("orchestrator.scheduler._load_review_section") as mock:
+        with patch("octopoid.scheduler._load_review_section") as mock:
             # Test via actual function with mocked get_thread
             pass
 
-        with patch("orchestrator.task_thread.get_thread", return_value=[]):
+        with patch("octopoid.task_thread.get_thread", return_value=[]):
             result = _load_review_section("abc123")
         assert result == ""
 
@@ -199,13 +199,13 @@ class TestLoadReviewSection:
         messages = [
             {"role": "rejection", "content": "Fix the bug.", "timestamp": "2026-01-01T00:00:00"}
         ]
-        with patch("orchestrator.task_thread.get_thread", return_value=messages):
+        with patch("octopoid.task_thread.get_thread", return_value=messages):
             result = _load_review_section("abc123")
         assert "Previous Rejection Feedback" in result
         assert "Fix the bug." in result
 
     def test_exception_returns_empty(self):
-        with patch("orchestrator.task_thread.get_thread", side_effect=RuntimeError("network error")):
+        with patch("octopoid.task_thread.get_thread", side_effect=RuntimeError("network error")):
             result = _load_review_section("abc123")
         assert result == ""
 
@@ -241,9 +241,9 @@ class TestRenderPrompt:
             "type": "feature",
         }
         with (
-            patch("orchestrator.scheduler.get_global_instructions_path", return_value=tmp_path / "none.md"),
-            patch("orchestrator.scheduler._load_review_section", return_value=""),
-            patch("orchestrator.scheduler.get_base_branch", return_value="main"),
+            patch("octopoid.scheduler.get_global_instructions_path", return_value=tmp_path / "none.md"),
+            patch("octopoid.scheduler._load_review_section", return_value=""),
+            patch("octopoid.scheduler.get_base_branch", return_value="main"),
         ):
             result = _render_prompt(task, {"agent_dir": str(agent_dir)})
 
@@ -257,9 +257,9 @@ class TestRenderPrompt:
         task = {"id": "t1", "hooks": [{"type": "agent", "name": "run_tests"}]}
 
         with (
-            patch("orchestrator.scheduler.get_global_instructions_path", return_value=tmp_path / "gi.md"),
-            patch("orchestrator.scheduler._load_review_section", return_value="REVIEW"),
-            patch("orchestrator.scheduler.get_base_branch", return_value="main"),
+            patch("octopoid.scheduler.get_global_instructions_path", return_value=tmp_path / "gi.md"),
+            patch("octopoid.scheduler._load_review_section", return_value="REVIEW"),
+            patch("octopoid.scheduler.get_base_branch", return_value="main"),
         ):
             result = _render_prompt(task, {"agent_dir": str(agent_dir)})
 
@@ -272,9 +272,9 @@ class TestRenderPrompt:
         (agent_dir / "prompt.md").write_text("id=$task_id title=$task_title priority=$task_priority")
 
         with (
-            patch("orchestrator.scheduler.get_global_instructions_path", return_value=tmp_path / "none.md"),
-            patch("orchestrator.scheduler._load_review_section", return_value=""),
-            patch("orchestrator.scheduler.get_base_branch", return_value="main"),
+            patch("octopoid.scheduler.get_global_instructions_path", return_value=tmp_path / "none.md"),
+            patch("octopoid.scheduler._load_review_section", return_value=""),
+            patch("octopoid.scheduler.get_base_branch", return_value="main"),
         ):
             result = _render_prompt({}, {"agent_dir": str(agent_dir)})
 

@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# Run the project test suite on the PR branch
+# Exit 0 if all pass, 1 if any fail
+
+set -euo pipefail
+
+# Source environment variables if available
+if [ -f "../env.sh" ]; then
+    source "../env.sh"
+fi
+
+echo "=== Running Test Suite ==="
+
+# Detect test runner and run tests
+if [ -f "package.json" ]; then
+    # Node.js project
+    if grep -q '"test"' package.json; then
+        echo "Detected npm test script"
+        npm test
+    elif command -v jest &> /dev/null; then
+        echo "Detected Jest"
+        jest
+    else
+        echo "No test runner found in package.json"
+        exit 1
+    fi
+elif [ -f "pyproject.toml" ] || [ -f "setup.py" ] || [ -f "pytest.ini" ]; then
+    # Python project
+    if command -v pytest &> /dev/null; then
+        echo "Detected pytest"
+        pytest
+    elif command -v python &> /dev/null; then
+        echo "Running python -m pytest"
+        python -m pytest
+    else
+        echo "pytest not found"
+        exit 1
+    fi
+elif [ -f "Cargo.toml" ]; then
+    # Rust project
+    echo "Detected Cargo"
+    cargo test
+elif [ -f "go.mod" ]; then
+    # Go project
+    echo "Detected Go modules"
+    go test ./...
+elif [ -f "Makefile" ] && grep -q "^test:" Makefile; then
+    # Generic Makefile with test target
+    echo "Detected Makefile test target"
+    make test
+else
+    echo "Warning: No test runner detected. Searched for:"
+    echo "  - package.json (npm/jest)"
+    echo "  - pyproject.toml/setup.py (pytest)"
+    echo "  - Cargo.toml (cargo)"
+    echo "  - go.mod (go test)"
+    echo "  - Makefile (make test)"
+    echo ""
+    echo "Assuming no tests required for this project."
+    exit 0
+fi
+
+echo ""
+echo "=== Tests Passed ==="
+exit 0

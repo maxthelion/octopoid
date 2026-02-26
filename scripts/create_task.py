@@ -12,7 +12,7 @@ from pathlib import Path
 # Add orchestrator package to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from orchestrator.queue_utils import create_task
+from octopoid.queue_utils import create_task
 
 
 VALID_ROLES = [

@@ -66,7 +66,7 @@ def isolate_from_production(sdk):
     test SDK. This ensures scheduler functions (claim_task, handle_agent_result,
     etc.) use the same scope as the session `sdk` fixture.
     """
-    import orchestrator.sdk as sdk_module
+    import octopoid.sdk as sdk_module
 
     old_sdk = sdk_module._sdk
     sdk_module._sdk = sdk
@@ -107,7 +107,7 @@ def verify_test_server():
 
 def _register_all_flows(sdk_client):
     """Register all flow YAML definitions on the server via the given SDK client."""
-    from orchestrator.flow import Flow, flow_to_server_registration
+    from octopoid.flow import Flow, flow_to_server_registration
 
     flows_dir = Path(__file__).resolve().parents[2] / ".octopoid" / "flows"
     if not flows_dir.exists():
@@ -203,7 +203,7 @@ def scoped_sdk(test_server_url):
     Registers flows in the new scope so load_flow("default") works.
     """
     import uuid
-    import orchestrator.sdk as sdk_module
+    import octopoid.sdk as sdk_module
 
     scope = f"test-{uuid.uuid4().hex[:8]}"
     client = OctopoidSDK(server_url=test_server_url, scope=scope)

@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "octopoid"
+version = "0.1.0"
+description = "Local multi-agent scheduler for Claude Code"
+requires-python = ">=3.10"
+dependencies = [
+    "pyyaml>=6.0",
+    "requests>=2.31.0",
+    "textual>=8.0.0",
+    "octopoid-sdk @ git+https://github.com/maxthelion/octopoid.git#subdirectory=packages/python-sdk",
+]
+
+[project.scripts]
+octopoid = "octopoid.cli:main"
+orchestrator-scheduler = "octopoid.scheduler:main"
+orchestrator-init = "octopoid.init:init_orchestrator"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["octopoid*"]
+exclude = [
+    "tests*",
+    "project-management*",
+    "submodules*",
+    "packages*",
+    "docs*",
+    "agents*",
+    ".octopoid*",
+    ".claude*",
+    "scripts*",
+    "commands*",
+    "templates*",
+]
+
+[tool.setuptools.package-data]
+"octopoid" = [
+    "data/**/*",
+    "data/agents/**/*",
+    "data/flows/*",
+]

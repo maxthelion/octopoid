@@ -22,7 +22,7 @@ class TestCreateProjectBranchAutoGeneration:
             "status": "draft",
         }
 
-        from orchestrator.projects import create_project
+        from octopoid.projects import create_project
 
         project = create_project(
             title="My Project",
@@ -48,7 +48,7 @@ class TestCreateProjectBranchAutoGeneration:
 
         mock_sdk_for_unit_tests.projects.create.side_effect = capture_create
 
-        from orchestrator.projects import create_project
+        from octopoid.projects import create_project
 
         project = create_project(
             title="Test",
@@ -74,7 +74,7 @@ class TestCreateProjectBranchAutoGeneration:
             "status": "draft",
         }
 
-        from orchestrator.projects import create_project
+        from octopoid.projects import create_project
 
         create_project(
             title="Custom Branch Project",
@@ -97,7 +97,7 @@ class TestCreateProjectBranchAutoGeneration:
             "status": "draft",
         }
 
-        from orchestrator.projects import create_project
+        from octopoid.projects import create_project
 
         for _ in range(5):
             create_project(title="Test", description="desc")

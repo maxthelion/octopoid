@@ -91,7 +91,7 @@ def _load_draft_content(draft: dict) -> str:
 def _post_inbox_message(draft_id: int | str, message: str) -> None:
     """Post a draft action command message via sdk.messages.create()."""
     try:
-        from orchestrator.sdk import get_sdk
+        from octopoid.sdk import get_sdk
         sdk = get_sdk()
         sdk.messages.create(
             task_id=str(draft_id),

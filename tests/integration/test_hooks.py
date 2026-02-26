@@ -14,7 +14,7 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
-from orchestrator.hooks import (
+from octopoid.hooks import (
     HookContext,
     HookPoint,
     HookStatus,
@@ -162,7 +162,7 @@ class TestHookResolutionWithConfig:
             "    - merge_pr\n"
         )
 
-        with patch("orchestrator.config.find_parent_project", return_value=tmp_path):
+        with patch("octopoid.config.find_parent_project", return_value=tmp_path):
             submit_hooks = resolve_hooks(HookPoint.BEFORE_SUBMIT, task_type=None)
             merge_hooks = resolve_hooks(HookPoint.BEFORE_MERGE, task_type=None)
 
@@ -175,7 +175,7 @@ class TestHookResolutionWithConfig:
 
     def test_no_config_uses_defaults(self):
         """No config file at all uses DEFAULT_HOOKS (just create_pr)."""
-        with patch("orchestrator.config.find_parent_project", return_value=Path("/nonexistent")):
+        with patch("octopoid.config.find_parent_project", return_value=Path("/nonexistent")):
             hooks = resolve_hooks(HookPoint.BEFORE_SUBMIT, task_type=None)
 
         assert len(hooks) == 1
@@ -204,7 +204,7 @@ class TestHookExecution:
             m.stderr = ""
             return m
 
-        with patch("orchestrator.git_utils.run_git", side_effect=mock_run_git):
+        with patch("octopoid.git_utils.run_git", side_effect=mock_run_git):
             result = hook_rebase_on_base(ctx)
 
         assert result.status == HookStatus.SKIP
@@ -214,7 +214,7 @@ class TestHookExecution:
         (tmp_path / "pyproject.toml").write_text("[tool.pytest]\n")
         ctx = _make_ctx(worktree=tmp_path)
 
-        with patch("orchestrator.hooks.subprocess.run") as mock_run:
+        with patch("octopoid.hooks.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stdout="3 passed", stderr="")
             result = hook_run_tests(ctx)
 
@@ -236,8 +236,8 @@ class TestHookExecution:
 
         ctx = _make_ctx(extra={"stdout": "implemented feature"})
 
-        with patch("orchestrator.config.find_parent_project", return_value=tmp_path), \
-             patch("orchestrator.git_utils.create_pull_request", return_value="https://github.com/test/pr/42"):
+        with patch("octopoid.config.find_parent_project", return_value=tmp_path), \
+             patch("octopoid.git_utils.create_pull_request", return_value="https://github.com/test/pr/42"):
             all_ok, results = run_hooks(HookPoint.BEFORE_SUBMIT, ctx)
 
         assert all_ok is True
@@ -264,9 +264,9 @@ class TestHookExecution:
 
         ctx = _make_ctx(worktree=worktree)
 
-        with patch("orchestrator.config.find_parent_project", return_value=tmp_path), \
-             patch("orchestrator.hooks.subprocess.run") as mock_subprocess, \
-             patch("orchestrator.git_utils.create_pull_request") as mock_pr:
+        with patch("octopoid.config.find_parent_project", return_value=tmp_path), \
+             patch("octopoid.hooks.subprocess.run") as mock_subprocess, \
+             patch("octopoid.git_utils.create_pull_request") as mock_pr:
             # Tests fail
             mock_subprocess.return_value = MagicMock(
                 returncode=1, stdout="FAILED test_foo.py", stderr=""

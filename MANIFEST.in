@@ -1,0 +1,19 @@
+# Include package data (agent templates and default flows)
+recursive-include octopoid/data *
+
+# Include top-level documentation
+include README.md
+include CHANGELOG.md
+
+# Exclude everything else
+prune tests
+prune project-management
+prune submodules
+prune packages
+prune docs
+prune agents
+prune .octopoid
+prune .claude
+prune scripts
+prune commands
+prune templates

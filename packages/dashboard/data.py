@@ -23,7 +23,7 @@ class DataManager:
         Raises:
             RuntimeError: If the SDK is not installed or not configured.
         """
-        from orchestrator.sdk import get_sdk, get_orchestrator_id
+        from octopoid.sdk import get_sdk, get_orchestrator_id
 
         sdk = get_sdk()
         orch_id = get_orchestrator_id()
@@ -41,8 +41,8 @@ class DataManager:
         Raises:
             RuntimeError: If the SDK is not installed or not configured.
         """
-        from orchestrator.sdk import get_sdk
-        from orchestrator.reports import get_project_report
+        from octopoid.sdk import get_sdk
+        from octopoid.reports import get_project_report
 
         sdk = get_sdk()
         return get_project_report(sdk)

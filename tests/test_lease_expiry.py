@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 
-from orchestrator.scheduler import _requeue_task, check_and_requeue_expired_leases
+from octopoid.scheduler import _requeue_task, check_and_requeue_expired_leases
 
 
 def _make_task(
@@ -64,8 +64,8 @@ class TestCheckAndRequeueExpiredLeases:
         mock_sdk.tasks.list.side_effect = _list
 
         with (
-            patch("orchestrator.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
-            patch("orchestrator.scheduler._get_circuit_breaker_threshold", return_value=threshold),
+            patch("octopoid.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("octopoid.scheduler._get_circuit_breaker_threshold", return_value=threshold),
         ):
             check_and_requeue_expired_leases()
 
@@ -124,8 +124,8 @@ class TestCheckAndRequeueExpiredLeases:
         mock_sdk.tasks.list.side_effect = lambda queue=None: None
 
         with (
-            patch("orchestrator.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
-            patch("orchestrator.scheduler._get_circuit_breaker_threshold", return_value=3),
+            patch("octopoid.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("octopoid.scheduler._get_circuit_breaker_threshold", return_value=3),
         ):
             check_and_requeue_expired_leases()  # must not raise
 
@@ -144,8 +144,8 @@ class TestCheckAndRequeueExpiredLeases:
         mock_sdk.tasks.list.side_effect = RuntimeError("network error")
 
         with (
-            patch("orchestrator.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
-            patch("orchestrator.scheduler._get_circuit_breaker_threshold", return_value=3),
+            patch("octopoid.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("octopoid.scheduler._get_circuit_breaker_threshold", return_value=3),
         ):
             check_and_requeue_expired_leases()  # must not raise
 
@@ -302,8 +302,8 @@ class TestRequeuTask:
         mock_sdk.tasks.get.return_value = task or {"attempt_count": 0}
 
         with (
-            patch("orchestrator.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
-            patch("orchestrator.scheduler._get_circuit_breaker_threshold", return_value=threshold),
+            patch("octopoid.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("octopoid.scheduler._get_circuit_breaker_threshold", return_value=threshold),
         ):
             _requeue_task(task_id, source_queue=source_queue, task=task)
 
@@ -315,8 +315,8 @@ class TestRequeuTask:
         mock_sdk.tasks.get.return_value = {"attempt_count": 0}
 
         with (
-            patch("orchestrator.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
-            patch("orchestrator.scheduler._get_circuit_breaker_threshold", return_value=3),
+            patch("octopoid.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("octopoid.scheduler._get_circuit_breaker_threshold", return_value=3),
         ):
             _requeue_task("TASK-abc", task={"attempt_count": 0})
 
@@ -358,8 +358,8 @@ class TestRequeuTask:
         mock_sdk.tasks.get.return_value = {"attempt_count": 0}
 
         with (
-            patch("orchestrator.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
-            patch("orchestrator.scheduler._get_circuit_breaker_threshold", return_value=3),
+            patch("octopoid.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("octopoid.scheduler._get_circuit_breaker_threshold", return_value=3),
         ):
             _requeue_task("TASK-fail", task={"attempt_count": 0})  # must not raise
 
@@ -401,8 +401,8 @@ class TestRequeuTask:
         mock_sdk.tasks.get.return_value = {"attempt_count": 0}
 
         with (
-            patch("orchestrator.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
-            patch("orchestrator.scheduler._get_circuit_breaker_threshold", return_value=3),
+            patch("octopoid.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("octopoid.scheduler._get_circuit_breaker_threshold", return_value=3),
         ):
             _requeue_task("TASK-fetch", source_queue="incoming")
 

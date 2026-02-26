@@ -21,8 +21,8 @@ class TestReviewUtils:
 
     def test_init_task_review(self, mock_config):
         """Test initializing review tracking for a task."""
-        with patch('orchestrator.review_utils.get_orchestrator_dir', return_value=mock_config):
-            from orchestrator.review_utils import init_task_review, load_review_meta
+        with patch('octopoid.review_utils.get_orchestrator_dir', return_value=mock_config):
+            from octopoid.review_utils import init_task_review, load_review_meta
 
             review_dir = init_task_review(
                 "test1",
@@ -43,8 +43,8 @@ class TestReviewUtils:
 
     def test_record_review_result(self, mock_config):
         """Test recording a single review check result."""
-        with patch('orchestrator.review_utils.get_orchestrator_dir', return_value=mock_config):
-            from orchestrator.review_utils import (
+        with patch('octopoid.review_utils.get_orchestrator_dir', return_value=mock_config):
+            from octopoid.review_utils import (
                 init_task_review, record_review_result, load_check_result,
             )
 
@@ -66,8 +66,8 @@ class TestReviewUtils:
 
     def test_all_reviews_complete_when_all_done(self, mock_config):
         """Test all_reviews_complete returns True when all checks are done."""
-        with patch('orchestrator.review_utils.get_orchestrator_dir', return_value=mock_config):
-            from orchestrator.review_utils import (
+        with patch('octopoid.review_utils.get_orchestrator_dir', return_value=mock_config):
+            from octopoid.review_utils import (
                 init_task_review, record_review_result, all_reviews_complete,
             )
 
@@ -82,8 +82,8 @@ class TestReviewUtils:
 
     def test_all_reviews_passed(self, mock_config):
         """Test all_reviews_passed correctly identifies failures."""
-        with patch('orchestrator.review_utils.get_orchestrator_dir', return_value=mock_config):
-            from orchestrator.review_utils import (
+        with patch('octopoid.review_utils.get_orchestrator_dir', return_value=mock_config):
+            from octopoid.review_utils import (
                 init_task_review, record_review_result, all_reviews_passed,
             )
 
@@ -98,8 +98,8 @@ class TestReviewUtils:
 
     def test_all_reviews_passed_when_all_pass(self, mock_config):
         """Test all_reviews_passed returns True when all pass."""
-        with patch('orchestrator.review_utils.get_orchestrator_dir', return_value=mock_config):
-            from orchestrator.review_utils import (
+        with patch('octopoid.review_utils.get_orchestrator_dir', return_value=mock_config):
+            from octopoid.review_utils import (
                 init_task_review, record_review_result, all_reviews_passed,
             )
 
@@ -113,8 +113,8 @@ class TestReviewUtils:
 
     def test_get_review_feedback_aggregates(self, mock_config):
         """Test get_review_feedback aggregates failed check details."""
-        with patch('orchestrator.review_utils.get_orchestrator_dir', return_value=mock_config):
-            from orchestrator.review_utils import (
+        with patch('octopoid.review_utils.get_orchestrator_dir', return_value=mock_config):
+            from octopoid.review_utils import (
                 init_task_review, record_review_result,
                 get_review_feedback as review_feedback,
             )
@@ -131,8 +131,8 @@ class TestReviewUtils:
 
     def test_cleanup_review(self, mock_config):
         """Test cleanup_review removes the review directory."""
-        with patch('orchestrator.review_utils.get_orchestrator_dir', return_value=mock_config):
-            from orchestrator.review_utils import init_task_review, cleanup_review, get_review_dir
+        with patch('octopoid.review_utils.get_orchestrator_dir', return_value=mock_config):
+            from octopoid.review_utils import init_task_review, cleanup_review, get_review_dir
 
             init_task_review("clean1", branch="b")
             assert get_review_dir("clean1").exists()
@@ -143,8 +143,8 @@ class TestReviewUtils:
 
     def test_has_active_review(self, mock_config):
         """Test has_active_review checks for in-progress reviews."""
-        with patch('orchestrator.review_utils.get_orchestrator_dir', return_value=mock_config):
-            from orchestrator.review_utils import init_task_review, has_active_review
+        with patch('octopoid.review_utils.get_orchestrator_dir', return_value=mock_config):
+            from octopoid.review_utils import init_task_review, has_active_review
 
             assert has_active_review("norev") is False
 
@@ -153,8 +153,8 @@ class TestReviewUtils:
 
     def test_idempotent_init(self, mock_config):
         """Test that initializing review twice doesn't corrupt state."""
-        with patch('orchestrator.review_utils.get_orchestrator_dir', return_value=mock_config):
-            from orchestrator.review_utils import (
+        with patch('octopoid.review_utils.get_orchestrator_dir', return_value=mock_config):
+            from octopoid.review_utils import (
                 init_task_review, record_review_result, load_check_result,
             )
 

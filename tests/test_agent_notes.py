@@ -11,8 +11,8 @@ class TestNotesReadWrite:
         """save_task_notes creates a file that get_task_notes can read."""
         notes_dir = tmp_path / "shared" / "notes"
 
-        with patch('orchestrator.config.get_notes_dir', return_value=notes_dir):
-            from orchestrator.queue_utils import save_task_notes, get_task_notes
+        with patch('octopoid.config.get_notes_dir', return_value=notes_dir):
+            from octopoid.queue_utils import save_task_notes, get_task_notes
 
             save_task_notes("abc123", "impl-agent-1", "Found the test file at src/foo.ts", commits=0, turns=50)
 
@@ -28,8 +28,8 @@ class TestNotesReadWrite:
         """Multiple saves append new attempt sections."""
         notes_dir = tmp_path / "shared" / "notes"
 
-        with patch('orchestrator.config.get_notes_dir', return_value=notes_dir):
-            from orchestrator.queue_utils import save_task_notes, get_task_notes
+        with patch('octopoid.config.get_notes_dir', return_value=notes_dir):
+            from octopoid.queue_utils import save_task_notes, get_task_notes
 
             save_task_notes("abc123", "impl-agent-1", "First attempt: explored codebase", commits=0, turns=50)
             save_task_notes("abc123", "impl-agent-1", "Second attempt: made progress", commits=1, turns=80)
@@ -47,8 +47,8 @@ class TestNotesReadWrite:
         notes_dir = tmp_path / "shared" / "notes"
         notes_dir.mkdir(parents=True)
 
-        with patch('orchestrator.config.get_notes_dir', return_value=notes_dir):
-            from orchestrator.queue_utils import get_task_notes
+        with patch('octopoid.config.get_notes_dir', return_value=notes_dir):
+            from octopoid.queue_utils import get_task_notes
 
             assert get_task_notes("nonexistent") is None
 
@@ -56,8 +56,8 @@ class TestNotesReadWrite:
         """Long stdout is truncated to the tail."""
         notes_dir = tmp_path / "shared" / "notes"
 
-        with patch('orchestrator.config.get_notes_dir', return_value=notes_dir):
-            from orchestrator.queue_utils import save_task_notes, get_task_notes, NOTES_STDOUT_LIMIT
+        with patch('octopoid.config.get_notes_dir', return_value=notes_dir):
+            from octopoid.queue_utils import save_task_notes, get_task_notes, NOTES_STDOUT_LIMIT
 
             long_stdout = "x" * (NOTES_STDOUT_LIMIT + 5000)
             save_task_notes("abc123", "impl-agent-1", long_stdout, commits=0, turns=100)
@@ -77,8 +77,8 @@ class TestNotesCleanup:
         """cleanup_task_notes removes the notes file."""
         notes_dir = tmp_path / "shared" / "notes"
 
-        with patch('orchestrator.config.get_notes_dir', return_value=notes_dir):
-            from orchestrator.queue_utils import save_task_notes, cleanup_task_notes, get_task_notes
+        with patch('octopoid.config.get_notes_dir', return_value=notes_dir):
+            from octopoid.queue_utils import save_task_notes, cleanup_task_notes, get_task_notes
 
             save_task_notes("abc123", "impl-agent-1", "Some notes", commits=0, turns=50)
             assert get_task_notes("abc123") is not None
@@ -92,8 +92,8 @@ class TestNotesCleanup:
         notes_dir = tmp_path / "shared" / "notes"
         notes_dir.mkdir(parents=True)
 
-        with patch('orchestrator.config.get_notes_dir', return_value=notes_dir):
-            from orchestrator.queue_utils import cleanup_task_notes
+        with patch('octopoid.config.get_notes_dir', return_value=notes_dir):
+            from octopoid.queue_utils import cleanup_task_notes
 
             result = cleanup_task_notes("nonexistent")
             assert result is False

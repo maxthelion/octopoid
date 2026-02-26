@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from orchestrator.reports import (
+from octopoid.reports import (
     _extract_staging_url,
     _format_task,
     _gather_agents,
@@ -33,12 +33,12 @@ from orchestrator.reports import (
 class TestGetProjectReport:
     """Tests for the main get_project_report() function."""
 
-    @patch("orchestrator.reports._gather_work")
-    @patch("orchestrator.reports._gather_done_tasks")
-    @patch("orchestrator.reports._gather_proposals")
-    @patch("orchestrator.reports._gather_messages")
-    @patch("orchestrator.reports._gather_agents")
-    @patch("orchestrator.reports._gather_health")
+    @patch("octopoid.reports._gather_work")
+    @patch("octopoid.reports._gather_done_tasks")
+    @patch("octopoid.reports._gather_proposals")
+    @patch("octopoid.reports._gather_messages")
+    @patch("octopoid.reports._gather_agents")
+    @patch("octopoid.reports._gather_health")
     def test_report_has_all_top_level_keys(
         self,
         mock_health,
@@ -67,12 +67,12 @@ class TestGetProjectReport:
         assert "health" in report
         assert "generated_at" in report
 
-    @patch("orchestrator.reports._gather_work")
-    @patch("orchestrator.reports._gather_done_tasks")
-    @patch("orchestrator.reports._gather_proposals")
-    @patch("orchestrator.reports._gather_messages")
-    @patch("orchestrator.reports._gather_agents")
-    @patch("orchestrator.reports._gather_health")
+    @patch("octopoid.reports._gather_work")
+    @patch("octopoid.reports._gather_done_tasks")
+    @patch("octopoid.reports._gather_proposals")
+    @patch("octopoid.reports._gather_messages")
+    @patch("octopoid.reports._gather_agents")
+    @patch("octopoid.reports._gather_health")
     def test_generated_at_is_iso_timestamp(
         self,
         mock_health,
@@ -94,12 +94,12 @@ class TestGetProjectReport:
         dt = datetime.fromisoformat(report["generated_at"])
         assert isinstance(dt, datetime)
 
-    @patch("orchestrator.reports._gather_work")
-    @patch("orchestrator.reports._gather_done_tasks")
-    @patch("orchestrator.reports._gather_proposals")
-    @patch("orchestrator.reports._gather_messages")
-    @patch("orchestrator.reports._gather_agents")
-    @patch("orchestrator.reports._gather_health")
+    @patch("octopoid.reports._gather_work")
+    @patch("octopoid.reports._gather_done_tasks")
+    @patch("octopoid.reports._gather_proposals")
+    @patch("octopoid.reports._gather_messages")
+    @patch("octopoid.reports._gather_agents")
+    @patch("octopoid.reports._gather_health")
     def test_work_has_expected_sub_keys(
         self,
         mock_health,
@@ -495,7 +495,7 @@ class TestGatherDrafts:
 class TestGatherProposals:
     """Tests for _gather_proposals()."""
 
-    @patch("orchestrator.proposal_utils.list_proposals")
+    @patch("octopoid.proposal_utils.list_proposals")
     def test_returns_formatted_proposals(self, mock_list):
         mock_list.return_value = [
             {
@@ -518,7 +518,7 @@ class TestGatherProposals:
         # Should not include full content
         assert "content" not in proposals[0]
 
-    @patch("orchestrator.proposal_utils.list_proposals", side_effect=Exception("no proposals dir"))
+    @patch("octopoid.proposal_utils.list_proposals", side_effect=Exception("no proposals dir"))
     def test_returns_empty_on_error(self, mock_list):
         proposals = _gather_proposals()
         assert proposals == []
@@ -627,10 +627,10 @@ class TestGetAgentNotes:
 class TestGatherAgents:
     """Tests for _gather_agents() using the pool model."""
 
-    @patch("orchestrator.config.get_notes_dir")
-    @patch("orchestrator.config.get_agents")
-    @patch("orchestrator.pool.get_active_task_ids", return_value=set())
-    @patch("orchestrator.pool.count_running_instances", return_value=0)
+    @patch("octopoid.config.get_notes_dir")
+    @patch("octopoid.config.get_agents")
+    @patch("octopoid.pool.get_active_task_ids", return_value=set())
+    @patch("octopoid.pool.count_running_instances", return_value=0)
     def test_returns_agent_entries_with_pool_fields(
         self, mock_count, mock_tasks, mock_agents, mock_notes_dir, tmp_path
     ):
@@ -661,10 +661,10 @@ class TestGatherAgents:
         assert agent["current_tasks"] == []
         assert agent["notes"] is None
 
-    @patch("orchestrator.config.get_notes_dir")
-    @patch("orchestrator.config.get_agents")
-    @patch("orchestrator.pool.get_active_task_ids", return_value=set())
-    @patch("orchestrator.pool.count_running_instances", return_value=0)
+    @patch("octopoid.config.get_notes_dir")
+    @patch("octopoid.config.get_agents")
+    @patch("octopoid.pool.get_active_task_ids", return_value=set())
+    @patch("octopoid.pool.count_running_instances", return_value=0)
     def test_paused_agent_shows_paused_status(
         self, mock_count, mock_tasks, mock_agents, mock_notes_dir, tmp_path
     ):
@@ -683,10 +683,10 @@ class TestGatherAgents:
         agents = _gather_agents()
         assert agents[0]["status"] == "paused"
 
-    @patch("orchestrator.config.get_notes_dir")
-    @patch("orchestrator.config.get_agents")
-    @patch("orchestrator.pool.get_active_task_ids", return_value={"TASK-abc", "TASK-def"})
-    @patch("orchestrator.pool.count_running_instances", return_value=2)
+    @patch("octopoid.config.get_notes_dir")
+    @patch("octopoid.config.get_agents")
+    @patch("octopoid.pool.get_active_task_ids", return_value={"TASK-abc", "TASK-def"})
+    @patch("octopoid.pool.count_running_instances", return_value=2)
     def test_running_instances_shown_in_status(
         self, mock_count, mock_tasks, mock_agents, mock_notes_dir, tmp_path
     ):
@@ -708,10 +708,10 @@ class TestGatherAgents:
         assert agents[0]["idle_capacity"] == 1
         assert set(agents[0]["current_tasks"]) == {"TASK-abc", "TASK-def"}
 
-    @patch("orchestrator.config.get_notes_dir")
-    @patch("orchestrator.config.get_agents")
-    @patch("orchestrator.pool.get_active_task_ids", return_value=set())
-    @patch("orchestrator.pool.count_running_instances", return_value=0)
+    @patch("octopoid.config.get_notes_dir")
+    @patch("octopoid.config.get_agents")
+    @patch("octopoid.pool.get_active_task_ids", return_value=set())
+    @patch("octopoid.pool.count_running_instances", return_value=0)
     def test_idle_capacity_is_max_when_no_instances_running(
         self, mock_count, mock_tasks, mock_agents, mock_notes_dir, tmp_path
     ):
@@ -740,11 +740,11 @@ class TestGatherAgents:
 class TestGatherHealth:
     """Tests for _gather_health()."""
 
-    @patch("orchestrator.reports._get_scheduler_status", return_value="running")
-    @patch("orchestrator.queue_utils.count_queue")
-    @patch("orchestrator.config.is_system_paused", return_value=False)
-    @patch("orchestrator.config.get_agents")
-    @patch("orchestrator.pool.count_running_instances")
+    @patch("octopoid.reports._get_scheduler_status", return_value="running")
+    @patch("octopoid.queue_utils.count_queue")
+    @patch("octopoid.config.is_system_paused", return_value=False)
+    @patch("octopoid.config.get_agents")
+    @patch("octopoid.pool.count_running_instances")
     def test_returns_health_fields(
         self, mock_count_running, mock_agents, mock_paused, mock_count, mock_sched
     ):
@@ -768,11 +768,11 @@ class TestGatherHealth:
         assert health["total_agents"] == 2
         assert health["queue_depth"] == 4
 
-    @patch("orchestrator.reports._get_scheduler_status", return_value="not_loaded")
-    @patch("orchestrator.queue_utils.count_queue", return_value=0)
-    @patch("orchestrator.config.is_system_paused", return_value=True)
-    @patch("orchestrator.config.get_agents", return_value=[])
-    @patch("orchestrator.pool.count_running_instances", return_value=0)
+    @patch("octopoid.reports._get_scheduler_status", return_value="not_loaded")
+    @patch("octopoid.queue_utils.count_queue", return_value=0)
+    @patch("octopoid.config.is_system_paused", return_value=True)
+    @patch("octopoid.config.get_agents", return_value=[])
+    @patch("octopoid.pool.count_running_instances", return_value=0)
     def test_handles_empty_agents(
         self, mock_count_running, mock_agents, mock_paused, mock_count, mock_sched
     ):
