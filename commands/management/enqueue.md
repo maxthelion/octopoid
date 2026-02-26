@@ -29,10 +29,10 @@ When run without arguments, I'll ask for:
 
 ## Implementation
 
-Use `create_task()` from `orchestrator.tasks` to create tasks. This function writes the task file to `.octopoid/tasks/` **and** registers it on the server in one step:
+Use `create_task()` from `octopoid.tasks` to create tasks. This function writes the task file to `.octopoid/tasks/` **and** registers it on the server in one step:
 
 ```python
-from orchestrator.tasks import create_task
+from octopoid.tasks import create_task
 
 create_task(
     title="Add rate limiting to API",

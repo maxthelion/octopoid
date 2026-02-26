@@ -18,7 +18,7 @@ from pathlib import Path
 # Ensure the orchestrator package is importable
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from orchestrator.review_orch import main
+from octopoid.review_orch import main
 
 if __name__ == "__main__":
     main()

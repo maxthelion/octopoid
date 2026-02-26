@@ -18,7 +18,7 @@ Extract:
 Fetch existing drafts via the SDK:
 
 ```python
-from orchestrator.queue_utils import get_sdk
+from octopoid.queue_utils import get_sdk
 sdk = get_sdk()
 existing = sdk.drafts.list()
 ```
@@ -33,7 +33,7 @@ Scan titles for ideas that overlap with this one. If a duplicate or near-duplica
 Register the draft on the server. The server auto-assigns the next integer ID.
 
 ```python
-from orchestrator.queue_utils import get_sdk
+from octopoid.queue_utils import get_sdk
 sdk = get_sdk()
 result = sdk.drafts.create(
     title=title,

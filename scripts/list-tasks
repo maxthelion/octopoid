@@ -8,7 +8,7 @@ from pathlib import Path
 # Add parent to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from orchestrator.queue_utils import list_tasks
+from octopoid.queue_utils import list_tasks
 
 
 def main():
