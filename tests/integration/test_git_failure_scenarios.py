@@ -277,14 +277,15 @@ class TestPushFailureScenarios:
         # Detach HEAD so push_branch can create the task-specific branch
         _git(["checkout", "--detach", "HEAD"], cwd=impl_worktree)
 
-        # Delete the remote so git push has nowhere to go
+        # Delete the remote so git operations have nowhere to go
         remote = _remote_path(impl_worktree)
         shutil.rmtree(remote)
 
-        # handle_agent_result tries push_branch → CalledProcessError → re-raised
-        # on first attempt (retry mechanism: attempt 1/3). The task stays in
-        # claimed because the step failure prevents the transition.
-        with pytest.raises(subprocess.CalledProcessError):
+        # handle_agent_result tries rebase_on_base (first step) → RuntimeError
+        # because git fetch fails. Re-raised on first attempt (retry mechanism:
+        # attempt 1/3). The task stays in claimed because the step failure
+        # prevents the transition.
+        with pytest.raises(RuntimeError):
             handle_agent_result(task_id, "mock-implementer", impl_task_dir)
 
         task = scoped_sdk.tasks.get(task_id)

@@ -456,7 +456,7 @@ class TestImplementerFlow:
             transitions = flow.get_transitions_from("claimed")
             assert len(transitions) > 0, "No transitions from 'claimed' in default flow"
             transition = transitions[0]
-            expected = ["push_branch", "run_tests", "create_pr"]
+            expected = ["rebase_on_base", "push_branch", "run_tests", "create_pr"]
             assert transition.runs == expected, (
                 f"Expected runs {expected}, got {transition.runs}"
             )

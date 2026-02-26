@@ -80,7 +80,7 @@ class TestCustomQueueFlows:
         # Register a flow that includes custom queues (cluster defaults to 'default')
         _register_flow(
             scoped_sdk,
-            name="default",
+            name="custom-test",
             states=["incoming", "claimed", "testing", "staging", "done", "failed", "provisional"],
             transitions=[
                 {"from": "incoming", "to": "claimed"},
@@ -90,8 +90,8 @@ class TestCustomQueueFlows:
             ],
         )
 
-        # Create a task (starts in incoming)
-        task = create_task(scoped_sdk, role="implement")
+        # Create a task using the custom flow (starts in incoming)
+        task = create_task(scoped_sdk, role="implement", flow="custom-test")
         task_id = task["id"]
         assert task["queue"] == "incoming"
 
@@ -135,7 +135,7 @@ class TestCustomQueueFlows:
         # Register a flow with a known, limited set of queues
         _register_flow(
             scoped_sdk,
-            name="default",
+            name="custom-test",
             states=["incoming", "claimed", "testing", "staging", "done", "failed", "provisional"],
             transitions=[
                 {"from": "incoming", "to": "claimed"},
@@ -145,8 +145,8 @@ class TestCustomQueueFlows:
             ],
         )
 
-        # Create a task
-        task = create_task(scoped_sdk, role="implement")
+        # Create a task using the custom flow
+        task = create_task(scoped_sdk, role="implement", flow="custom-test")
         task_id = task["id"]
         assert task["queue"] == "incoming"
 

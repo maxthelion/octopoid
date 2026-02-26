@@ -24,6 +24,7 @@ os.environ["OCTOPOID_SERVER_URL"] = TEST_SERVER_URL
 os.environ.pop("OCTOPOID_API_KEY", None)
 
 import socket
+from pathlib import Path
 
 import pytest
 from octopoid_sdk import OctopoidSDK
@@ -102,6 +103,27 @@ def verify_test_server():
             f"Run: ./tests/integration/bin/start-test-server.sh  "
             f"Error: {e}"
         )
+
+
+@pytest.fixture(scope="session", autouse=True)
+def sync_flows_to_test_server(sdk):
+    """Register all flow definitions on the test server.
+
+    The CI test server starts fresh with no flows. Tests that call
+    handle_agent_result_via_flow() → load_flow("default") will fail
+    with FileNotFoundError unless flows are registered first.
+    """
+    from orchestrator.flow import Flow, flow_to_server_registration
+
+    flows_dir = Path(__file__).resolve().parents[2] / ".octopoid" / "flows"
+    if not flows_dir.exists():
+        pytest.skip(f"Flows directory not found: {flows_dir}")
+
+    for yaml_file in sorted(flows_dir.glob("*.yaml")):
+        flow = Flow.from_yaml_file(yaml_file)
+        reg = flow_to_server_registration(flow)
+        sdk.flows.register(name=flow.name, **reg)
+        print(f"✓ Registered flow '{flow.name}' on test server")
 
 
 @pytest.fixture(scope="session")

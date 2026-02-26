@@ -290,14 +290,21 @@ class TestHappyPath:
         )
         assert result.returncode == 0, f"Mock gatekeeper failed: {result.stderr}"
 
-        # handle_agent_result_via_flow → post_review_comment, merge_pr → done
-        # Mock merge_pr to skip real git rebase/merge — just accept the task
+        # handle_agent_result_via_flow → post_review_comment, check_ci,
+        # rebase_on_base, merge_pr, update_changelog → done
+        # Mock merge_pr to skip real git rebase/merge — just accept the task.
+        # Mock rebase_on_base and update_changelog — they need a real worktree
+        # which gatekeeper tests don't set up.
         def _mock_approve(task_id, merge_method="merge"):
             from orchestrator.queue_utils import get_sdk
             get_sdk().tasks.accept(task_id, accepted_by="mock-gatekeeper")
             return {"task_id": task_id, "merged": True}
 
-        with patch("orchestrator.queue_utils.approve_and_merge", side_effect=_mock_approve):
+        _noop = lambda task, result, task_dir: None
+        with (
+            patch("orchestrator.queue_utils.approve_and_merge", side_effect=_mock_approve),
+            patch("orchestrator.steps.STEP_REGISTRY", {**__import__("orchestrator.steps", fromlist=["STEP_REGISTRY"]).STEP_REGISTRY, "rebase_on_base": _noop, "update_changelog": _noop}),
+        ):
             handle_agent_result_via_flow(task_id, "mock-gatekeeper", gk_task_dir)
 
         task = scoped_sdk.tasks.get(task_id)
@@ -680,13 +687,18 @@ class TestIdempotentResultHandling:
         )
         assert result.returncode == 0, f"Mock gatekeeper failed: {result.stderr}"
 
-        # Mock merge_pr to skip real git rebase/merge
+        # Mock merge_pr to skip real git rebase/merge.
+        # Mock rebase_on_base and update_changelog — they need a real worktree.
         def _mock_approve(task_id, merge_method="merge"):
             from orchestrator.queue_utils import get_sdk
             get_sdk().tasks.accept(task_id, accepted_by="mock-gatekeeper")
             return {"task_id": task_id, "merged": True}
 
-        with patch("orchestrator.queue_utils.approve_and_merge", side_effect=_mock_approve):
+        _noop = lambda task, result, task_dir: None
+        with (
+            patch("orchestrator.queue_utils.approve_and_merge", side_effect=_mock_approve),
+            patch("orchestrator.steps.STEP_REGISTRY", {**__import__("orchestrator.steps", fromlist=["STEP_REGISTRY"]).STEP_REGISTRY, "rebase_on_base": _noop, "update_changelog": _noop}),
+        ):
             handle_agent_result_via_flow(task_id, "mock-gatekeeper", gk_task_dir)
 
         task = scoped_sdk.tasks.get(task_id)
@@ -724,7 +736,7 @@ class TestMergePrFlows:
     errors during gh pr merge.
     """
 
-    def test_merge_pr_failure_goes_to_failed(
+    def test_merge_pr_failure_rejects_to_incoming(
         self,
         scoped_sdk,
         orchestrator_id: str,
@@ -732,7 +744,7 @@ class TestMergePrFlows:
         clean_tasks,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """When merge_pr raises (gh pr merge exits non-zero), task goes to failed."""
+        """When merge_pr raises, task is rejected to incoming for retry (not failed)."""
         # Advance task to provisional queue
         task_id = _make_provisional(scoped_sdk, orchestrator_id)
 
@@ -753,17 +765,22 @@ class TestMergePrFlows:
         )
         assert result.returncode == 0, f"Mock gatekeeper failed: {result.stderr}"
 
-        # Mock approve_and_merge to simulate merge failure
+        # Mock approve_and_merge to simulate merge failure.
+        # Mock rebase_on_base and update_changelog — they need a real worktree.
         def _mock_approve_fail(task_id, merge_method="merge"):
             return {"task_id": task_id, "merged": False, "error": "Merge conflict"}
 
-        with patch("orchestrator.queue_utils.approve_and_merge", side_effect=_mock_approve_fail):
+        _noop = lambda task, result, task_dir: None
+        with (
+            patch("orchestrator.queue_utils.approve_and_merge", side_effect=_mock_approve_fail),
+            patch("orchestrator.steps.STEP_REGISTRY", {**__import__("orchestrator.steps", fromlist=["STEP_REGISTRY"]).STEP_REGISTRY, "rebase_on_base": _noop, "update_changelog": _noop}),
+        ):
             handle_agent_result_via_flow(task_id, "mock-gatekeeper", gk_task_dir)
 
         task = scoped_sdk.tasks.get(task_id)
         assert task is not None
-        assert task["queue"] == "failed", (
-            f"Expected failed after merge_pr error, got {task['queue']}"
+        assert task["queue"] == "incoming", (
+            f"Expected incoming after merge_pr error (recoverable), got {task['queue']}"
         )
 
     def test_merge_pr_success_goes_to_done(
@@ -795,13 +812,18 @@ class TestMergePrFlows:
         )
         assert result.returncode == 0, f"Mock gatekeeper failed: {result.stderr}"
 
-        # Mock approve_and_merge to simulate successful merge
+        # Mock approve_and_merge to simulate successful merge.
+        # Mock rebase_on_base and update_changelog — they need a real worktree.
         def _mock_approve_ok(task_id, merge_method="merge"):
             from orchestrator.queue_utils import get_sdk
             get_sdk().tasks.accept(task_id, accepted_by="mock-gatekeeper")
             return {"task_id": task_id, "merged": True}
 
-        with patch("orchestrator.queue_utils.approve_and_merge", side_effect=_mock_approve_ok):
+        _noop = lambda task, result, task_dir: None
+        with (
+            patch("orchestrator.queue_utils.approve_and_merge", side_effect=_mock_approve_ok),
+            patch("orchestrator.steps.STEP_REGISTRY", {**__import__("orchestrator.steps", fromlist=["STEP_REGISTRY"]).STEP_REGISTRY, "rebase_on_base": _noop, "update_changelog": _noop}),
+        ):
             handle_agent_result_via_flow(task_id, "mock-gatekeeper", gk_task_dir)
 
         task = scoped_sdk.tasks.get(task_id)
