@@ -105,6 +105,20 @@ def verify_test_server():
         )
 
 
+def _register_all_flows(sdk_client):
+    """Register all flow YAML definitions on the server via the given SDK client."""
+    from orchestrator.flow import Flow, flow_to_server_registration
+
+    flows_dir = Path(__file__).resolve().parents[2] / ".octopoid" / "flows"
+    if not flows_dir.exists():
+        return
+
+    for yaml_file in sorted(flows_dir.glob("*.yaml")):
+        flow = Flow.from_yaml_file(yaml_file)
+        reg = flow_to_server_registration(flow)
+        sdk_client.flows.register(name=flow.name, **reg)
+
+
 @pytest.fixture(scope="session", autouse=True)
 def sync_flows_to_test_server(sdk):
     """Register all flow definitions on the test server.
@@ -112,18 +126,12 @@ def sync_flows_to_test_server(sdk):
     The CI test server starts fresh with no flows. Tests that call
     handle_agent_result_via_flow() → load_flow("default") will fail
     with FileNotFoundError unless flows are registered first.
+
+    Registers once at session start for the session-scoped SDK.
+    Per-test scoped_sdk fixtures also register flows in their scope.
     """
-    from orchestrator.flow import Flow, flow_to_server_registration
-
-    flows_dir = Path(__file__).resolve().parents[2] / ".octopoid" / "flows"
-    if not flows_dir.exists():
-        pytest.skip(f"Flows directory not found: {flows_dir}")
-
-    for yaml_file in sorted(flows_dir.glob("*.yaml")):
-        flow = Flow.from_yaml_file(yaml_file)
-        reg = flow_to_server_registration(flow)
-        sdk.flows.register(name=flow.name, **reg)
-        print(f"✓ Registered flow '{flow.name}' on test server")
+    _register_all_flows(sdk)
+    print("✓ Registered flows on test server (session scope)")
 
 
 @pytest.fixture(scope="session")
@@ -191,12 +199,17 @@ def scoped_sdk(test_server_url):
     Also patches orchestrator.sdk._sdk so that get_sdk() returns this scoped
     client. This ensures that scheduler functions (handle_agent_result,
     check_and_requeue_expired_leases, etc.) use the same scope as the test.
+
+    Registers flows in the new scope so load_flow("default") works.
     """
     import uuid
     import orchestrator.sdk as sdk_module
 
     scope = f"test-{uuid.uuid4().hex[:8]}"
     client = OctopoidSDK(server_url=test_server_url, scope=scope)
+
+    # Register flows in this scope so load_flow() finds them
+    _register_all_flows(client)
 
     # Patch get_sdk() to return this scoped client
     old_sdk = sdk_module._sdk
