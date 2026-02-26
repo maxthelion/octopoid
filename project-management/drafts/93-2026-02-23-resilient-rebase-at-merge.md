@@ -1,6 +1,6 @@
 # Make rebase-at-merge more resilient to concurrent main changes
 
-**Status:** Idea
+**Status:** Superseded (by draft #160 — git robustness)
 **Captured:** 2026-02-23
 
 ## Raw
