@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `tests/test_repo_manager_integration.py`: Integration tests for `RepoManager.rebase_on_base()` using real git operations (no mocking). Covers three scenarios: UP_TO_DATE, successful rebase, and conflict with clean abort verification.
 ### Changed
 
 - **Auto-inject required terminal steps in flow loading** ([TASK-b8c2bf6c])
