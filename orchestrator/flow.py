@@ -370,7 +370,7 @@ class Flow:
         Always includes built-in states (failed) that the server requires
         even if no flow transition references them directly.
         """
-        states = {"failed"}
+        states = {"failed", "needs_continuation"}
         for trans in self.transitions:
             states.add(trans.from_state)
             states.add(trans.to_state)
@@ -612,6 +612,44 @@ def _serialize_transitions(transitions: list[Transition]) -> list[dict]:
     return result
 
 
+def _implicit_reverse_transitions(transitions: list[Transition]) -> list[dict]:
+    """Derive implicit reverse transitions that the server needs for reject/requeue.
+
+    The server's canTransition() checks the transitions array for explicit
+    {from, to} entries. Without these, reject (provisional → incoming) and
+    requeue (claimed → incoming) return 409.
+
+    This function adds:
+    1. on_fail transitions: if a condition has on_fail, the task can move from
+       the transition's from_state (where it sits waiting) to the on_fail state.
+    2. claimed → incoming: agents can always requeue from claimed.
+    """
+    seen: set[tuple[str, str]] = set()
+    for t in transitions:
+        seen.add((t.from_state, t.to_state))
+
+    implicit: list[dict] = []
+
+    # on_fail reverse transitions
+    for t in transitions:
+        for c in t.conditions:
+            if c.on_fail and (t.from_state, c.on_fail) not in seen:
+                implicit.append({"from": t.from_state, "to": c.on_fail})
+                seen.add((t.from_state, c.on_fail))
+
+    # Implicit requeue: claimed → incoming (agents can always fail/requeue)
+    if ("claimed", "incoming") not in seen:
+        implicit.append({"from": "claimed", "to": "incoming"})
+        seen.add(("claimed", "incoming"))
+
+    # Implicit continuation: claimed → needs_continuation
+    if ("claimed", "needs_continuation") not in seen:
+        implicit.append({"from": "claimed", "to": "needs_continuation"})
+        seen.add(("claimed", "needs_continuation"))
+
+    return implicit
+
+
 def flow_to_server_registration(flow: Flow) -> dict:
     """Convert a Flow to the dict format expected by sdk.flows.register().
 
@@ -624,12 +662,15 @@ def flow_to_server_registration(flow: Flow) -> dict:
         all_states |= flow.child_flow.get_all_states()
     states = sorted(all_states)
     transitions = _serialize_transitions(flow.transitions)
+    transitions += _implicit_reverse_transitions(flow.transitions)
     reg: dict[str, Any] = {"states": states, "transitions": transitions}
     if flow.description:
         reg["description"] = flow.description
     if flow.child_flow:
+        child_transitions = _serialize_transitions(flow.child_flow.transitions)
+        child_transitions += _implicit_reverse_transitions(flow.child_flow.transitions)
         reg["child_flow"] = {
-            "transitions": _serialize_transitions(flow.child_flow.transitions),
+            "transitions": child_transitions,
         }
     return reg
 

@@ -320,6 +320,11 @@ class TestLeaseRecoveryProvisional:
             f"lease_expires_at should be cleared, got {task.get('lease_expires_at')}"
         )
 
+    @pytest.mark.xfail(
+        reason="Known bug: PATCH /tasks/:id doesn't accept lease_expires_at. "
+               "See project-management/tasks/octopoid-server/fix-patch-lease-expires-at.md",
+        strict=True,
+    )
     def test_stale_lease_without_claimed_by_is_still_cleared(
         self,
         scoped_sdk,
