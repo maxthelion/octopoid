@@ -410,9 +410,10 @@ class Flow:
                     changed = True
 
         unreachable = valid_states - reachable
-        # Filter out terminal states that are only reached via on_fail
-        terminal_states = {"done", "failed", "rejected"}
-        unreachable = unreachable - terminal_states
+        # Filter out terminal/built-in states that may not be explicitly targeted
+        # by transitions but are valid implicit destinations
+        builtin_states = {"done", "failed", "rejected", "needs_continuation"}
+        unreachable = unreachable - builtin_states
 
         if unreachable:
             errors.append(

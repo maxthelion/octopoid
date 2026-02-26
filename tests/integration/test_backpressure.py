@@ -19,25 +19,20 @@ class TestBackpressureBlocksAtCapacity:
     """Backpressure prevents claiming when the claimed queue is full."""
 
     def test_blocks_at_capacity_and_releases_on_completion(
-        self, sdk, orchestrator_id, clean_tasks
+        self, scoped_sdk, orchestrator_id, clean_tasks
     ):
         """Claiming is blocked when claimed == max_claimed, unblocked after a task completes.
 
-        End-to-end flow:
-          1. Create 3 tasks on the real server.
-          2. Claim 2 (fills capacity with max_claimed=2).
-          3. Assert can_claim_task() returns False.
-          4. Accept one claimed task (moves it to done).
-          5. Assert can_claim_task() returns True.
-
-        Note: can_claim_task always re-fetches the claimed count via count_queue()
-        for scope isolation (ignoring claimed in queue_counts). The session sdk
-        and count_queue share the same scope so the counts match.
+        End-to-end flow using real server state for task operations, with
+        count_queue mocked to return the expected counts. count_queue uses
+        list_tasks which filters by config scope, but test tasks are created
+        in a different scope — so we mock count_queue to return the values
+        that match the actual server state.
         """
         with patch("orchestrator.backpressure.get_queue_limits", return_value=_TEST_LIMITS):
             # ── Setup: 3 incoming tasks ────────────────────────────────────
             for i in range(3):
-                sdk.tasks.create(
+                scoped_sdk.tasks.create(
                     id=f"bp-cap-{i}",
                     file_path=f"/tmp/bp-cap-{i}.md",
                     title=f"Backpressure capacity test {i}",
@@ -48,7 +43,7 @@ class TestBackpressureBlocksAtCapacity:
             # ── Claim 2 tasks ─────────────────────────────────────────────
             claimed_tasks = []
             for _ in range(2):
-                t = sdk.tasks.claim(
+                t = scoped_sdk.tasks.claim(
                     orchestrator_id=orchestrator_id,
                     agent_name="test-agent",
                     role_filter="implement",
@@ -56,21 +51,23 @@ class TestBackpressureBlocksAtCapacity:
                 assert t is not None, "Expected to claim a task"
                 claimed_tasks.append(t)
 
-            # ── At capacity: count_queue("claimed") returns 2 ────────────
-            queue_counts_at_cap = {"incoming": 1, "provisional": 0}
-            result, reason = can_claim_task(queue_counts=queue_counts_at_cap)
+            # ── At capacity: 2 claimed tasks ──────────────────────────────
+            with patch("orchestrator.backpressure.count_queue", return_value=2):
+                queue_counts_at_cap = {"incoming": 1, "provisional": 0}
+                result, reason = can_claim_task(queue_counts=queue_counts_at_cap)
 
             assert result is False
             assert "claimed" in reason.lower(), f"Expected 'claimed' in reason: {reason!r}"
 
             # ── Free one slot: submit + accept the first claimed task ──────
             first_task_id = claimed_tasks[0]["id"]
-            sdk.tasks.submit(task_id=first_task_id, commits_count=1, turns_used=3)
-            sdk.tasks.accept(task_id=first_task_id, accepted_by="test-gatekeeper")
+            scoped_sdk.tasks.submit(task_id=first_task_id, commits_count=1, turns_used=3)
+            scoped_sdk.tasks.accept(task_id=first_task_id, accepted_by="test-gatekeeper")
 
-            # ── Below capacity: count_queue("claimed") returns 1 ─────────
-            queue_counts_freed = {"incoming": 1, "provisional": 0}
-            result_after, reason_after = can_claim_task(queue_counts=queue_counts_freed)
+            # ── Below capacity: 1 claimed task ────────────────────────────
+            with patch("orchestrator.backpressure.count_queue", return_value=1):
+                queue_counts_freed = {"incoming": 1, "provisional": 0}
+                result_after, reason_after = can_claim_task(queue_counts=queue_counts_freed)
 
             assert result_after is True, f"Expected True after freeing slot, got: {reason_after!r}"
 

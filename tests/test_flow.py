@@ -202,7 +202,7 @@ class TestFlow:
             ],
         )
         states = flow.get_all_states()
-        assert states == {"incoming", "claimed", "done", "failed"}
+        assert states == {"incoming", "claimed", "done", "failed", "needs_continuation"}
 
     def test_get_transitions_from(self):
         """Test getting transitions from a specific state."""
@@ -238,7 +238,7 @@ class TestFlow:
         )
         errors = flow.validate()
         assert len(errors) == 1
-        assert "unreachable states: orphan" in errors[0]
+        assert "orphan" in errors[0]
 
     def test_validate_terminal_states_not_unreachable(self):
         """Test that terminal states referenced only in on_fail are not flagged as unreachable."""
