@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `fail_task(task_id, reason, source, **kwargs)` in `octopoid/tasks.py` is now the single canonical path to the failed queue. All 5 raw `sdk.tasks.update(queue='failed')` callsites replaced:
+  - `result_handler.py` flow-dispatch-error (catch-all exception)
+  - `result_handler.py` step-failure-circuit-breaker (3 consecutive step failures)
+  - `scheduler.py` lease-expiry-circuit-breaker
+  - `scheduler.py` spawn-failure-circuit-breaker
+  - `scheduler.py` guard-empty-description
+
+### Added
+
+- `fail_task()` now sets `execution_notes` on the server, writes a `FAILED` entry to `.octopoid/logs/tasks/TASK-{id}.log` (with `source` and `reason` fields), and prints to stdout with timestamp, task ID, source, and truncated reason
+- `sdk.tasks.fail(task_id, reason)` convenience method added to `packages/python-sdk/octopoid_sdk/client.py`
 ### Fixed
 
 - `update_changelog` step errors are now non-fatal: if any git operation (fetch, pull, commit, push) fails after a PR has been merged, the error is caught, a warning is printed, and the step returns without raising. This prevents the catch-all exception handler in `handle_agent_result_via_flow` from moving the task from `done` to `failed` when the PR is already merged and the task already accepted.
