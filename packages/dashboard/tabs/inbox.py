@@ -77,7 +77,7 @@ def _content_preview(content: str, max_len: int = 60) -> str:
 def _post_action_command(task_id: str, content: str) -> None:
     """Post an action_command reply via sdk.messages.create()."""
     try:
-        from orchestrator.sdk import get_sdk
+        from octopoid.sdk import get_sdk
         sdk = get_sdk()
         sdk.messages.create(
             task_id=task_id,

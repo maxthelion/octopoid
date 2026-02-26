@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from orchestrator.pool import (
+from octopoid.pool import (
     cleanup_dead_pids,
     count_running_instances,
     get_blueprint_pids_path,
@@ -23,7 +23,7 @@ def agents_runtime_dir(tmp_path, monkeypatch):
     runtime = tmp_path / "agents"
     runtime.mkdir()
     monkeypatch.setattr(
-        "orchestrator.pool.get_agents_runtime_dir", lambda: runtime
+        "octopoid.pool.get_agents_runtime_dir", lambda: runtime
     )
     return runtime
 
@@ -174,7 +174,7 @@ class TestCountRunningInstances:
                 raise ProcessLookupError
             # alive_pid succeeds silently
 
-        with patch("orchestrator.pool.os.kill", side_effect=fake_kill):
+        with patch("octopoid.pool.os.kill", side_effect=fake_kill):
             save_blueprint_pids(
                 "implementer",
                 {
@@ -190,7 +190,7 @@ class TestCountRunningInstances:
         def fake_kill(pid, sig):
             pass  # all alive
 
-        with patch("orchestrator.pool.os.kill", side_effect=fake_kill):
+        with patch("octopoid.pool.os.kill", side_effect=fake_kill):
             save_blueprint_pids(
                 "implementer",
                 {
@@ -207,7 +207,7 @@ class TestCountRunningInstances:
         def fake_kill(pid, sig):
             raise OSError
 
-        with patch("orchestrator.pool.os.kill", side_effect=fake_kill):
+        with patch("octopoid.pool.os.kill", side_effect=fake_kill):
             save_blueprint_pids(
                 "implementer",
                 {
@@ -248,7 +248,7 @@ class TestCleanupDeadPids:
             },
         )
 
-        with patch("orchestrator.pool.os.kill", side_effect=fake_kill):
+        with patch("octopoid.pool.os.kill", side_effect=fake_kill):
             removed = cleanup_dead_pids("implementer")
 
         assert removed == 2
@@ -269,7 +269,7 @@ class TestCleanupDeadPids:
 
         mtime_before = (agents_runtime_dir / "implementer" / "running_pids.json").stat().st_mtime
 
-        with patch("orchestrator.pool.os.kill", side_effect=fake_kill):
+        with patch("octopoid.pool.os.kill", side_effect=fake_kill):
             removed = cleanup_dead_pids("implementer")
 
         mtime_after = (agents_runtime_dir / "implementer" / "running_pids.json").stat().st_mtime
@@ -289,7 +289,7 @@ class TestCleanupDeadPids:
             },
         )
 
-        with patch("orchestrator.pool.os.kill", side_effect=fake_kill):
+        with patch("octopoid.pool.os.kill", side_effect=fake_kill):
             removed = cleanup_dead_pids("implementer")
 
         assert removed == 2

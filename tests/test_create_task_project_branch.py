@@ -27,7 +27,7 @@ class TestCreateTaskProjectBranchInheritance:
             "status": "active",
         }
 
-        from orchestrator.tasks import create_task
+        from octopoid.tasks import create_task
 
         task_name = create_task(
             title="Child task without explicit branch",
@@ -67,7 +67,7 @@ class TestCreateTaskProjectBranchInheritance:
             "status": "active",
         }
 
-        from orchestrator.tasks import create_task
+        from octopoid.tasks import create_task
 
         task_name = create_task(
             title="Child task with explicit branch",
@@ -97,9 +97,9 @@ class TestCreateTaskProjectBranchInheritance:
     ):
         """Task without project_id falls back to get_base_branch()."""
         with patch(
-            "orchestrator.tasks.get_base_branch", return_value="main"
+            "octopoid.tasks.get_base_branch", return_value="main"
         ):
-            from orchestrator.tasks import create_task
+            from octopoid.tasks import create_task
 
             task_name = create_task(
                 title="Standalone task no project",
@@ -121,9 +121,9 @@ class TestCreateTaskFlowParameter:
     ):
         """Explicit flow= is forwarded to sdk.tasks.create()."""
         with patch(
-            "orchestrator.tasks.get_base_branch", return_value="main"
+            "octopoid.tasks.get_base_branch", return_value="main"
         ):
-            from orchestrator.tasks import create_task
+            from octopoid.tasks import create_task
 
             create_task(
                 title="Fast task",
@@ -141,9 +141,9 @@ class TestCreateTaskFlowParameter:
     ):
         """Without flow= or project_id, flow defaults to 'default'."""
         with patch(
-            "orchestrator.tasks.get_base_branch", return_value="main"
+            "octopoid.tasks.get_base_branch", return_value="main"
         ):
-            from orchestrator.tasks import create_task
+            from octopoid.tasks import create_task
 
             create_task(
                 title="Default flow task",
@@ -167,7 +167,7 @@ class TestCreateTaskFlowParameter:
             "status": "active",
         }
 
-        from orchestrator.tasks import create_task
+        from octopoid.tasks import create_task
 
         create_task(
             title="Project task",
@@ -192,7 +192,7 @@ class TestCreateTaskFlowParameter:
             "status": "active",
         }
 
-        from orchestrator.tasks import create_task
+        from octopoid.tasks import create_task
 
         create_task(
             title="Project task with custom flow",
@@ -220,9 +220,9 @@ class TestCreateTaskFlowParameter:
         }
 
         with patch(
-            "orchestrator.tasks.get_base_branch", return_value="main"
+            "octopoid.tasks.get_base_branch", return_value="main"
         ):
-            from orchestrator.tasks import create_task
+            from octopoid.tasks import create_task
 
             task_name = create_task(
                 title="Task under branchless project",
@@ -249,8 +249,8 @@ class TestCreateTaskFlowParameter:
             "status": "draft",
         }
 
-        with patch("orchestrator.tasks.get_base_branch", return_value="main"):
-            from orchestrator.tasks import create_task
+        with patch("octopoid.tasks.get_base_branch", return_value="main"):
+            from octopoid.tasks import create_task
 
             create_task(
                 title="Task under branchless project",

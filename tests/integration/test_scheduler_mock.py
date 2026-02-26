@@ -29,7 +29,7 @@ from unittest.mock import patch
 
 import pytest
 
-from orchestrator.scheduler import handle_agent_result, handle_agent_result_via_flow
+from octopoid.scheduler import handle_agent_result, handle_agent_result_via_flow
 
 # ---------------------------------------------------------------------------
 # Paths to test fixtures
@@ -296,14 +296,14 @@ class TestHappyPath:
         # Mock rebase_on_base and update_changelog — they need a real worktree
         # which gatekeeper tests don't set up.
         def _mock_approve(task_id, merge_method="merge"):
-            from orchestrator.queue_utils import get_sdk
+            from octopoid.queue_utils import get_sdk
             get_sdk().tasks.accept(task_id, accepted_by="mock-gatekeeper")
             return {"task_id": task_id, "merged": True}
 
         _noop = lambda task, result, task_dir: None
         with (
-            patch("orchestrator.queue_utils.approve_and_merge", side_effect=_mock_approve),
-            patch("orchestrator.steps.STEP_REGISTRY", {**__import__("orchestrator.steps", fromlist=["STEP_REGISTRY"]).STEP_REGISTRY, "rebase_on_base": _noop, "update_changelog": _noop}),
+            patch("octopoid.queue_utils.approve_and_merge", side_effect=_mock_approve),
+            patch("octopoid.steps.STEP_REGISTRY", {**__import__("octopoid.steps", fromlist=["STEP_REGISTRY"]).STEP_REGISTRY, "rebase_on_base": _noop, "update_changelog": _noop}),
         ):
             handle_agent_result_via_flow(task_id, "mock-gatekeeper", gk_task_dir)
 
@@ -690,14 +690,14 @@ class TestIdempotentResultHandling:
         # Mock merge_pr to skip real git rebase/merge.
         # Mock rebase_on_base and update_changelog — they need a real worktree.
         def _mock_approve(task_id, merge_method="merge"):
-            from orchestrator.queue_utils import get_sdk
+            from octopoid.queue_utils import get_sdk
             get_sdk().tasks.accept(task_id, accepted_by="mock-gatekeeper")
             return {"task_id": task_id, "merged": True}
 
         _noop = lambda task, result, task_dir: None
         with (
-            patch("orchestrator.queue_utils.approve_and_merge", side_effect=_mock_approve),
-            patch("orchestrator.steps.STEP_REGISTRY", {**__import__("orchestrator.steps", fromlist=["STEP_REGISTRY"]).STEP_REGISTRY, "rebase_on_base": _noop, "update_changelog": _noop}),
+            patch("octopoid.queue_utils.approve_and_merge", side_effect=_mock_approve),
+            patch("octopoid.steps.STEP_REGISTRY", {**__import__("octopoid.steps", fromlist=["STEP_REGISTRY"]).STEP_REGISTRY, "rebase_on_base": _noop, "update_changelog": _noop}),
         ):
             handle_agent_result_via_flow(task_id, "mock-gatekeeper", gk_task_dir)
 
@@ -772,8 +772,8 @@ class TestMergePrFlows:
 
         _noop = lambda task, result, task_dir: None
         with (
-            patch("orchestrator.queue_utils.approve_and_merge", side_effect=_mock_approve_fail),
-            patch("orchestrator.steps.STEP_REGISTRY", {**__import__("orchestrator.steps", fromlist=["STEP_REGISTRY"]).STEP_REGISTRY, "rebase_on_base": _noop, "update_changelog": _noop}),
+            patch("octopoid.queue_utils.approve_and_merge", side_effect=_mock_approve_fail),
+            patch("octopoid.steps.STEP_REGISTRY", {**__import__("octopoid.steps", fromlist=["STEP_REGISTRY"]).STEP_REGISTRY, "rebase_on_base": _noop, "update_changelog": _noop}),
         ):
             handle_agent_result_via_flow(task_id, "mock-gatekeeper", gk_task_dir)
 
@@ -815,14 +815,14 @@ class TestMergePrFlows:
         # Mock approve_and_merge to simulate successful merge.
         # Mock rebase_on_base and update_changelog — they need a real worktree.
         def _mock_approve_ok(task_id, merge_method="merge"):
-            from orchestrator.queue_utils import get_sdk
+            from octopoid.queue_utils import get_sdk
             get_sdk().tasks.accept(task_id, accepted_by="mock-gatekeeper")
             return {"task_id": task_id, "merged": True}
 
         _noop = lambda task, result, task_dir: None
         with (
-            patch("orchestrator.queue_utils.approve_and_merge", side_effect=_mock_approve_ok),
-            patch("orchestrator.steps.STEP_REGISTRY", {**__import__("orchestrator.steps", fromlist=["STEP_REGISTRY"]).STEP_REGISTRY, "rebase_on_base": _noop, "update_changelog": _noop}),
+            patch("octopoid.queue_utils.approve_and_merge", side_effect=_mock_approve_ok),
+            patch("octopoid.steps.STEP_REGISTRY", {**__import__("octopoid.steps", fromlist=["STEP_REGISTRY"]).STEP_REGISTRY, "rebase_on_base": _noop, "update_changelog": _noop}),
         ):
             handle_agent_result_via_flow(task_id, "mock-gatekeeper", gk_task_dir)
 

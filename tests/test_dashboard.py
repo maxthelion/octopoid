@@ -109,8 +109,8 @@ class TestDataManager:
         }
 
         # Imports are inside fetch_sync(), so patch the source modules
-        with patch("orchestrator.sdk.get_sdk", return_value=mock_sdk), \
-             patch("orchestrator.reports.get_project_report", return_value=mock_report) as mock_gpr:
+        with patch("octopoid.sdk.get_sdk", return_value=mock_sdk), \
+             patch("octopoid.reports.get_project_report", return_value=mock_report) as mock_gpr:
             dm = DataManager()
             result = dm.fetch_sync()
 
@@ -121,7 +121,7 @@ class TestDataManager:
         from packages.dashboard.data import DataManager
         import pytest
 
-        with patch("orchestrator.sdk.get_sdk", side_effect=RuntimeError("no config")):
+        with patch("octopoid.sdk.get_sdk", side_effect=RuntimeError("no config")):
             dm = DataManager()
             with pytest.raises(RuntimeError, match="no config"):
                 dm.fetch_sync()

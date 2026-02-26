@@ -12,7 +12,7 @@ def find_parent_project() -> Path:
     current = Path(__file__).resolve().parent
 
     while current != current.parent:
-        if current.name == "orchestrator" and (current / "orchestrator").is_dir():
+        if current.name == "octopoid" and (current / "octopoid").is_dir():
             current = current.parent
             continue
 
@@ -26,8 +26,13 @@ def find_parent_project() -> Path:
     )
 
 
+def get_package_data_dir() -> Path:
+    """Get path to the package data directory bundled with the octopoid package."""
+    return Path(__file__).resolve().parent / "data"
+
+
 def get_orchestrator_submodule() -> Path:
-    """Get path to the orchestrator submodule."""
+    """Get path to the orchestrator submodule (legacy; prefer get_package_data_dir)."""
     return Path(__file__).resolve().parent.parent
 
 
@@ -96,6 +101,8 @@ def init_orchestrator(
     """
     parent = find_parent_project()
     submodule = get_orchestrator_submodule()
+    # Package data directory (bundled with pip-installed package)
+    pkg_data = get_package_data_dir()
 
     print()
     print("  Welcome to Octopoid!")
@@ -185,8 +192,10 @@ def init_orchestrator(
     # Scaffold gatekeeper agent directory
     gatekeeper_dir = octopoid_dir / "agents" / "gatekeeper"
     if not gatekeeper_dir.exists():
-        # Copy from the orchestrator's built-in gatekeeper template
-        builtin_gatekeeper = submodule / ".octopoid" / "agents" / "gatekeeper"
+        # Prefer package data (pip install); fall back to submodule path; then minimal scaffolding
+        builtin_gatekeeper = pkg_data / "agents" / "gatekeeper"
+        if not builtin_gatekeeper.exists():
+            builtin_gatekeeper = submodule / ".octopoid" / "agents" / "gatekeeper"
         if builtin_gatekeeper.exists():
             shutil.copytree(builtin_gatekeeper, gatekeeper_dir)
             print(f"  Created: {gatekeeper_dir.relative_to(parent)}/ (from template)")
@@ -206,8 +215,9 @@ def init_orchestrator(
     # Scaffold implementer agent directory
     implementer_dir = octopoid_dir / "agents" / "implementer"
     if not implementer_dir.exists():
-        # Copy from the orchestrator's built-in implementer template
-        builtin_implementer = submodule / ".octopoid" / "agents" / "implementer"
+        builtin_implementer = pkg_data / "agents" / "implementer"
+        if not builtin_implementer.exists():
+            builtin_implementer = submodule / ".octopoid" / "agents" / "implementer"
         if builtin_implementer.exists():
             shutil.copytree(builtin_implementer, implementer_dir)
             print(f"  Created: {implementer_dir.relative_to(parent)}/ (from template)")
@@ -220,7 +230,9 @@ def init_orchestrator(
     # Scaffold codebase-analyst agent directory
     codebase_analyst_dir = octopoid_dir / "agents" / "codebase-analyst"
     if not codebase_analyst_dir.exists():
-        builtin_codebase_analyst = submodule / ".octopoid" / "agents" / "codebase-analyst"
+        builtin_codebase_analyst = pkg_data / "agents" / "codebase-analyst"
+        if not builtin_codebase_analyst.exists():
+            builtin_codebase_analyst = submodule / ".octopoid" / "agents" / "codebase-analyst"
         if builtin_codebase_analyst.exists():
             shutil.copytree(builtin_codebase_analyst, codebase_analyst_dir)
             print(f"  Created: {codebase_analyst_dir.relative_to(parent)}/ (from template)")
@@ -233,7 +245,9 @@ def init_orchestrator(
     # Scaffold testing-analyst agent directory
     testing_analyst_dir = octopoid_dir / "agents" / "testing-analyst"
     if not testing_analyst_dir.exists():
-        builtin_testing_analyst = submodule / ".octopoid" / "agents" / "testing-analyst"
+        builtin_testing_analyst = pkg_data / "agents" / "testing-analyst"
+        if not builtin_testing_analyst.exists():
+            builtin_testing_analyst = submodule / ".octopoid" / "agents" / "testing-analyst"
         if builtin_testing_analyst.exists():
             shutil.copytree(builtin_testing_analyst, testing_analyst_dir)
             print(f"  Created: {testing_analyst_dir.relative_to(parent)}/ (from template)")
@@ -246,7 +260,9 @@ def init_orchestrator(
     # Scaffold architecture-analyst agent directory
     architecture_analyst_dir = octopoid_dir / "agents" / "architecture-analyst"
     if not architecture_analyst_dir.exists():
-        builtin_architecture_analyst = submodule / ".octopoid" / "agents" / "architecture-analyst"
+        builtin_architecture_analyst = pkg_data / "agents" / "architecture-analyst"
+        if not builtin_architecture_analyst.exists():
+            builtin_architecture_analyst = submodule / ".octopoid" / "agents" / "architecture-analyst"
         if builtin_architecture_analyst.exists():
             shutil.copytree(builtin_architecture_analyst, architecture_analyst_dir)
             print(f"  Created: {architecture_analyst_dir.relative_to(parent)}/ (from template)")

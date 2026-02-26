@@ -19,7 +19,7 @@ from unittest.mock import MagicMock, Mock, patch, call
 
 import pytest
 
-from orchestrator.scheduler import (
+from octopoid.scheduler import (
     AGENT_GUARDS,
     HOUSEKEEPING_JOBS,
     AgentContext,
@@ -35,7 +35,7 @@ from orchestrator.scheduler import (
     spawn_implementer,
     spawn_job_agent,
 )
-from orchestrator.state_utils import AgentState
+from octopoid.state_utils import AgentState
 
 
 # =============================================================================
@@ -150,7 +150,7 @@ class TestGuardEnabled:
 class TestGuardPoolCapacity:
     """Test guard_pool_capacity function."""
 
-    @patch("orchestrator.scheduler.count_running_instances", return_value=0)
+    @patch("octopoid.scheduler.count_running_instances", return_value=0)
     def test_under_capacity_returns_true(self, mock_count, tmp_path):
         """Test that under capacity (0 of 1) returns True."""
         state_path = tmp_path / "state.json"
@@ -169,7 +169,7 @@ class TestGuardPoolCapacity:
         assert reason == ""
         mock_count.assert_called_once_with("implementer")
 
-    @patch("orchestrator.scheduler.count_running_instances", return_value=2)
+    @patch("octopoid.scheduler.count_running_instances", return_value=2)
     def test_at_capacity_returns_false(self, mock_count, tmp_path):
         """Test that at capacity (2 of 2) returns False."""
         state_path = tmp_path / "state.json"
@@ -188,7 +188,7 @@ class TestGuardPoolCapacity:
         assert "at_capacity" in reason
         assert "2/2" in reason
 
-    @patch("orchestrator.scheduler.count_running_instances", return_value=0)
+    @patch("octopoid.scheduler.count_running_instances", return_value=0)
     def test_no_cleanup_dead_pids_called(self, mock_count, tmp_path):
         """guard_pool_capacity must NOT call cleanup_dead_pids (race condition fix).
 
@@ -210,7 +210,7 @@ class TestGuardPoolCapacity:
         assert proceed is True
         mock_count.assert_called_once_with("proposer")
 
-    @patch("orchestrator.scheduler.count_running_instances", return_value=1)
+    @patch("octopoid.scheduler.count_running_instances", return_value=1)
     def test_uses_agent_name_as_fallback_blueprint(self, mock_count, tmp_path):
         """Test that agent_name is used as blueprint_name when blueprint_name is absent."""
         state_path = tmp_path / "state.json"
@@ -228,7 +228,7 @@ class TestGuardPoolCapacity:
         assert proceed is True
         mock_count.assert_called_once_with("gatekeeper")
 
-    @patch("orchestrator.scheduler.count_running_instances", return_value=0)
+    @patch("octopoid.scheduler.count_running_instances", return_value=0)
     def test_max_instances_defaults_to_1(self, mock_count, tmp_path):
         """Test that max_instances defaults to 1 when not specified."""
         state_path = tmp_path / "state.json"
@@ -260,7 +260,7 @@ class TestGuardPoolCapacity:
 class TestGuardInterval:
     """Test guard_interval function."""
 
-    @patch("orchestrator.scheduler.is_overdue")
+    @patch("octopoid.scheduler.is_overdue")
     def test_interval_due_returns_true(self, mock_is_overdue, tmp_path):
         """Test that an overdue agent passes the interval guard."""
         mock_is_overdue.return_value = True
@@ -283,7 +283,7 @@ class TestGuardInterval:
         assert reason == ""
         mock_is_overdue.assert_called_once_with(state, 300)
 
-    @patch("orchestrator.scheduler.is_overdue")
+    @patch("octopoid.scheduler.is_overdue")
     def test_interval_not_due_returns_false(self, mock_is_overdue, tmp_path):
         """Test that a non-overdue agent is blocked."""
         mock_is_overdue.return_value = False
@@ -309,7 +309,7 @@ class TestGuardInterval:
 class TestGuardBackpressure:
     """Test guard_backpressure function."""
 
-    @patch("orchestrator.backpressure.count_queue", return_value=0)
+    @patch("octopoid.backpressure.count_queue", return_value=0)
     def test_backpressure_no_tasks_returns_false(self, mock_count, tmp_path):
         """Test that no tasks in incoming queue returns False."""
         state_path = tmp_path / "state.json"
@@ -329,8 +329,8 @@ class TestGuardBackpressure:
         assert proceed is False
         assert "no_tasks" in reason
 
-    @patch("orchestrator.backpressure.can_claim_task", return_value=(False, "wip limit reached"))
-    @patch("orchestrator.backpressure.count_queue", return_value=3)
+    @patch("octopoid.backpressure.can_claim_task", return_value=(False, "wip limit reached"))
+    @patch("octopoid.backpressure.count_queue", return_value=3)
     def test_backpressure_wip_limit_returns_false(self, mock_count, mock_can_claim, tmp_path):
         """Test that WIP limit blocks claiming."""
         state_path = tmp_path / "state.json"
@@ -350,8 +350,8 @@ class TestGuardBackpressure:
         assert proceed is False
         assert "backpressure" in reason
 
-    @patch("orchestrator.backpressure.can_claim_task", return_value=(True, ""))
-    @patch("orchestrator.backpressure.count_queue", return_value=2)
+    @patch("octopoid.backpressure.can_claim_task", return_value=(True, ""))
+    @patch("octopoid.backpressure.count_queue", return_value=2)
     def test_backpressure_clear_returns_true(self, mock_count, mock_can_claim, tmp_path):
         """Test that available tasks and no WIP limit returns True."""
         state_path = tmp_path / "state.json"
@@ -371,7 +371,7 @@ class TestGuardBackpressure:
         assert proceed is True
         assert reason == ""
 
-    @patch("orchestrator.backpressure.count_queue", return_value=0)
+    @patch("octopoid.backpressure.count_queue", return_value=0)
     def test_backpressure_non_incoming_no_tasks_returns_false(self, mock_count, tmp_path):
         """Test that no tasks in non-incoming queue returns False."""
         state_path = tmp_path / "state.json"
@@ -391,7 +391,7 @@ class TestGuardBackpressure:
         assert proceed is False
         assert "no_provisional_tasks" in reason
 
-    @patch("orchestrator.backpressure.count_queue", return_value=1)
+    @patch("octopoid.backpressure.count_queue", return_value=1)
     def test_backpressure_non_incoming_with_tasks_returns_true(self, mock_count, tmp_path):
         """Test that tasks in non-incoming queue returns True."""
         state_path = tmp_path / "state.json"
@@ -415,7 +415,7 @@ class TestGuardBackpressure:
 class TestGuardPreCheck:
     """Test guard_pre_check function."""
 
-    @patch("orchestrator.scheduler.run_pre_check")
+    @patch("octopoid.scheduler.run_pre_check")
     def test_pre_check_pass_returns_true(self, mock_run_pre_check, tmp_path):
         """Test that a passing pre-check returns True."""
         mock_run_pre_check.return_value = True
@@ -436,7 +436,7 @@ class TestGuardPreCheck:
         assert reason == ""
         mock_run_pre_check.assert_called_once_with("test-agent", ctx.agent_config)
 
-    @patch("orchestrator.scheduler.run_pre_check")
+    @patch("octopoid.scheduler.run_pre_check")
     def test_pre_check_fail_returns_false(self, mock_run_pre_check, tmp_path):
         """Test that a failing pre-check returns False."""
         mock_run_pre_check.return_value = False
@@ -484,7 +484,7 @@ class TestEvaluateAgent:
             state_path=state_path,
         )
 
-        with patch("orchestrator.scheduler.AGENT_GUARDS", mock_guards):
+        with patch("octopoid.scheduler.AGENT_GUARDS", mock_guards):
             result = evaluate_agent(ctx)
 
         assert result is True
@@ -516,7 +516,7 @@ class TestEvaluateAgent:
             state_path=state_path,
         )
 
-        with patch("orchestrator.scheduler.AGENT_GUARDS", mock_guards):
+        with patch("octopoid.scheduler.AGENT_GUARDS", mock_guards):
             result = evaluate_agent(ctx)
 
         assert result is False
@@ -546,7 +546,7 @@ class TestEvaluateAgent:
             state_path=state_path,
         )
 
-        with patch("orchestrator.scheduler.AGENT_GUARDS", mock_guards):
+        with patch("octopoid.scheduler.AGENT_GUARDS", mock_guards):
             result = evaluate_agent(ctx)
 
         assert result is False
@@ -609,7 +609,7 @@ class TestRunHousekeeping:
         # Mock all jobs in the list
         mock_jobs = [Mock() for _ in HOUSEKEEPING_JOBS]
 
-        with patch("orchestrator.scheduler.HOUSEKEEPING_JOBS", mock_jobs):
+        with patch("octopoid.scheduler.HOUSEKEEPING_JOBS", mock_jobs):
             run_housekeeping()
 
         # Verify each job was called
@@ -627,7 +627,7 @@ class TestRunHousekeeping:
 
         mock_jobs = [failing_job, succeeding_job]
 
-        with patch("orchestrator.scheduler.HOUSEKEEPING_JOBS", mock_jobs):
+        with patch("octopoid.scheduler.HOUSEKEEPING_JOBS", mock_jobs):
             # Should not raise exception
             run_housekeeping()
 
@@ -640,8 +640,8 @@ class TestRunHousekeeping:
         failing_job = Mock(side_effect=ValueError("Test error"))
         failing_job.__name__ = "test_failing_job"
 
-        with patch("orchestrator.scheduler.HOUSEKEEPING_JOBS", [failing_job]):
-            with patch("orchestrator.scheduler.debug_log") as mock_log:
+        with patch("octopoid.scheduler.HOUSEKEEPING_JOBS", [failing_job]):
+            with patch("octopoid.scheduler.debug_log") as mock_log:
                 run_housekeeping()
 
                 # Verify error was logged
@@ -694,10 +694,10 @@ class TestHandleAgentResultViaFlowDecisions:
         mock_flow = _make_flow_mock(runs=runs)
 
         with (
-            patch("orchestrator.queue_utils.get_sdk", return_value=mock_sdk),
-            patch("orchestrator.flow.load_flow", return_value=mock_flow),
-            patch("orchestrator.steps.execute_steps") as mock_execute,
-            patch("orchestrator.steps.reject_with_feedback") as mock_reject,
+            patch("octopoid.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("octopoid.flow.load_flow", return_value=mock_flow),
+            patch("octopoid.steps.execute_steps") as mock_execute,
+            patch("octopoid.steps.reject_with_feedback") as mock_reject,
         ):
             handle_agent_result_via_flow("TASK-test", "gatekeeper-1", task_dir)
             return mock_execute, mock_reject
@@ -739,11 +739,11 @@ class TestHandleAgentResultViaFlowDecisions:
         mock_flow = _make_flow_mock()
 
         with (
-            patch("orchestrator.queue_utils.get_sdk", return_value=mock_sdk),
-            patch("orchestrator.flow.load_flow", return_value=mock_flow),
-            patch("orchestrator.steps.execute_steps"),
-            patch("orchestrator.steps.reject_with_feedback"),
-            patch("orchestrator.scheduler.debug_log") as mock_log,
+            patch("octopoid.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("octopoid.flow.load_flow", return_value=mock_flow),
+            patch("octopoid.steps.execute_steps"),
+            patch("octopoid.steps.reject_with_feedback"),
+            patch("octopoid.scheduler.debug_log") as mock_log,
         ):
             handle_agent_result_via_flow("TASK-test", "gatekeeper-1", tmp_path)
 
@@ -760,8 +760,8 @@ class TestHandleAgentResultViaFlowDecisions:
         mock_sdk = _make_sdk_mock()
         # Make execute_steps raise to trigger the except branch
         with (
-            patch("orchestrator.queue_utils.get_sdk", return_value=mock_sdk),
-            patch("orchestrator.flow.load_flow", side_effect=RuntimeError("pnpm not in PATH")),
+            patch("octopoid.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("octopoid.flow.load_flow", side_effect=RuntimeError("pnpm not in PATH")),
         ):
             handle_agent_result_via_flow("TASK-test", "implementer-1", tmp_path)
 
@@ -778,9 +778,9 @@ class TestHandleAgentResultViaFlowDecisions:
 
         mock_sdk = _make_sdk_mock()
         with (
-            patch("orchestrator.queue_utils.get_sdk", return_value=mock_sdk),
-            patch("orchestrator.flow.load_flow", side_effect=RuntimeError("boom")),
-            patch("orchestrator.scheduler.debug_log") as mock_log,
+            patch("octopoid.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("octopoid.flow.load_flow", side_effect=RuntimeError("boom")),
+            patch("octopoid.scheduler.debug_log") as mock_log,
         ):
             handle_agent_result_via_flow("TASK-test", "implementer-1", tmp_path)
 
@@ -799,9 +799,9 @@ class TestHandleAgentResultViaFlowDecisions:
         mock_sdk.tasks.update.side_effect = RuntimeError("SDK unavailable")
 
         with (
-            patch("orchestrator.queue_utils.get_sdk", return_value=mock_sdk),
-            patch("orchestrator.flow.load_flow", side_effect=RuntimeError("pnpm not in PATH")),
-            patch("orchestrator.scheduler.debug_log") as mock_log,
+            patch("octopoid.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("octopoid.flow.load_flow", side_effect=RuntimeError("pnpm not in PATH")),
+            patch("octopoid.scheduler.debug_log") as mock_log,
         ):
             # Should not raise even when the recovery itself fails
             handle_agent_result_via_flow("TASK-test", "implementer-1", tmp_path)
@@ -846,11 +846,11 @@ class TestHandleAgentResultRebaseMergeFailure:
         rebase_error = RuntimeError("rebase_on_base: git rebase onto origin/main failed:\nCONFLICT")
 
         with (
-            patch("orchestrator.queue_utils.get_sdk", return_value=mock_sdk),
-            patch("orchestrator.flow.load_flow", return_value=mock_flow),
-            patch("orchestrator.steps.execute_steps", side_effect=rebase_error),
-            patch("orchestrator.result_handler.debug_log"),
-            patch("orchestrator.task_thread.post_message"),
+            patch("octopoid.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("octopoid.flow.load_flow", return_value=mock_flow),
+            patch("octopoid.steps.execute_steps", side_effect=rebase_error),
+            patch("octopoid.result_handler.debug_log"),
+            patch("octopoid.task_thread.post_message"),
         ):
             result_val = handle_agent_result_via_flow("TASK-test", "gatekeeper-1", tmp_path)
 
@@ -872,11 +872,11 @@ class TestHandleAgentResultRebaseMergeFailure:
         merge_error = RuntimeError("merge_pr failed: Pull Request is not mergeable")
 
         with (
-            patch("orchestrator.queue_utils.get_sdk", return_value=mock_sdk),
-            patch("orchestrator.flow.load_flow", return_value=mock_flow),
-            patch("orchestrator.steps.execute_steps", side_effect=merge_error),
-            patch("orchestrator.result_handler.debug_log"),
-            patch("orchestrator.task_thread.post_message"),
+            patch("octopoid.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("octopoid.flow.load_flow", return_value=mock_flow),
+            patch("octopoid.steps.execute_steps", side_effect=merge_error),
+            patch("octopoid.result_handler.debug_log"),
+            patch("octopoid.task_thread.post_message"),
         ):
             result_val = handle_agent_result_via_flow("TASK-test", "gatekeeper-1", tmp_path)
 
@@ -895,10 +895,10 @@ class TestHandleAgentResultRebaseMergeFailure:
         other_error = RuntimeError("Some unexpected error during post_review_comment")
 
         with (
-            patch("orchestrator.queue_utils.get_sdk", return_value=mock_sdk),
-            patch("orchestrator.flow.load_flow", return_value=mock_flow),
-            patch("orchestrator.steps.execute_steps", side_effect=other_error),
-            patch("orchestrator.result_handler.debug_log"),
+            patch("octopoid.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("octopoid.flow.load_flow", return_value=mock_flow),
+            patch("octopoid.steps.execute_steps", side_effect=other_error),
+            patch("octopoid.result_handler.debug_log"),
         ):
             handle_agent_result_via_flow("TASK-test", "gatekeeper-1", tmp_path)
 
@@ -917,13 +917,13 @@ class TestHandleAgentResultRebaseMergeFailure:
 def _make_prepare_task_patches(tmp_path: Path) -> dict:
     """Return context manager patches needed to run prepare_task_directory in tests."""
     return {
-        "orchestrator.git_utils.create_task_worktree": None,  # set per-test
-        "orchestrator.scheduler.get_task_branch": None,       # set per-test
-        "orchestrator.scheduler.get_tasks_dir": tmp_path / "tasks",
-        "orchestrator.scheduler.get_base_branch": "main",
-        "orchestrator.scheduler.get_global_instructions_path": tmp_path / "gi.md",
-        "orchestrator.scheduler.find_parent_project": tmp_path,
-        "orchestrator.scheduler._get_server_url_from_config": "http://localhost",
+        "octopoid.git_utils.create_task_worktree": None,  # set per-test
+        "octopoid.scheduler.get_task_branch": None,       # set per-test
+        "octopoid.scheduler.get_tasks_dir": tmp_path / "tasks",
+        "octopoid.scheduler.get_base_branch": "main",
+        "octopoid.scheduler.get_global_instructions_path": tmp_path / "gi.md",
+        "octopoid.scheduler.find_parent_project": tmp_path,
+        "octopoid.scheduler._get_server_url_from_config": "http://localhost",
     }
 
 
@@ -967,7 +967,7 @@ class TestPrepareTaskDirectoryDetachedHead:
         The worktree is returned by create_task_worktree already in detached HEAD state,
         and prepare_task_directory must not call ensure_on_branch or any checkout.
         """
-        from orchestrator.scheduler import prepare_task_directory
+        from octopoid.scheduler import prepare_task_directory
 
         worktree_path = tmp_path / "worktree"
         worktree_path.mkdir()
@@ -975,13 +975,13 @@ class TestPrepareTaskDirectoryDetachedHead:
         task = self._make_task()
 
         with (
-            patch("orchestrator.git_utils.create_task_worktree", return_value=worktree_path),
-            patch("orchestrator.scheduler.get_task_branch", return_value="agent/TASK-abc123"),
-            patch("orchestrator.scheduler.get_tasks_dir", return_value=tmp_path / "tasks"),
-            patch("orchestrator.scheduler.get_base_branch", return_value="main"),
-            patch("orchestrator.scheduler.get_global_instructions_path", return_value=tmp_path / "gi.md"),
-            patch("orchestrator.scheduler.find_parent_project", return_value=tmp_path),
-            patch("orchestrator.scheduler._get_server_url_from_config", return_value="http://localhost"),
+            patch("octopoid.git_utils.create_task_worktree", return_value=worktree_path),
+            patch("octopoid.scheduler.get_task_branch", return_value="agent/TASK-abc123"),
+            patch("octopoid.scheduler.get_tasks_dir", return_value=tmp_path / "tasks"),
+            patch("octopoid.scheduler.get_base_branch", return_value="main"),
+            patch("octopoid.scheduler.get_global_instructions_path", return_value=tmp_path / "gi.md"),
+            patch("octopoid.scheduler.find_parent_project", return_value=tmp_path),
+            patch("octopoid.scheduler._get_server_url_from_config", return_value="http://localhost"),
         ):
             # Must complete without error — on current code, fails with NameError (get_main_branch)
             # after the fix: runs cleanly and never touches git branch state
@@ -1002,7 +1002,7 @@ class TestPrepareTaskDirectoryDetachedHead:
 
         After the fix: ensure_on_branch is never called, so no git error can occur.
         """
-        from orchestrator.scheduler import prepare_task_directory
+        from octopoid.scheduler import prepare_task_directory
 
         worktree_path = tmp_path / "worktree"
         worktree_path.mkdir()
@@ -1010,13 +1010,13 @@ class TestPrepareTaskDirectoryDetachedHead:
         task = self._make_project_task()
 
         with (
-            patch("orchestrator.git_utils.create_task_worktree", return_value=worktree_path),
-            patch("orchestrator.scheduler.get_task_branch", return_value="feature/client-server-architecture"),
-            patch("orchestrator.scheduler.get_tasks_dir", return_value=tmp_path / "tasks"),
-            patch("orchestrator.scheduler.get_base_branch", return_value="main"),
-            patch("orchestrator.scheduler.get_global_instructions_path", return_value=tmp_path / "gi.md"),
-            patch("orchestrator.scheduler.find_parent_project", return_value=tmp_path),
-            patch("orchestrator.scheduler._get_server_url_from_config", return_value="http://localhost"),
+            patch("octopoid.git_utils.create_task_worktree", return_value=worktree_path),
+            patch("octopoid.scheduler.get_task_branch", return_value="feature/client-server-architecture"),
+            patch("octopoid.scheduler.get_tasks_dir", return_value=tmp_path / "tasks"),
+            patch("octopoid.scheduler.get_base_branch", return_value="main"),
+            patch("octopoid.scheduler.get_global_instructions_path", return_value=tmp_path / "gi.md"),
+            patch("octopoid.scheduler.find_parent_project", return_value=tmp_path),
+            patch("octopoid.scheduler._get_server_url_from_config", return_value="http://localhost"),
         ):
             # Must not raise — on current code raises because ensure_on_branch is called
             # and the branch is already checked out in the main worktree
@@ -1028,8 +1028,8 @@ class TestPrepareTaskDirectoryDetachedHead:
         Worktrees stay on detached HEAD throughout prepare_task_directory.
         If ensure_on_branch is called at all, the test fails with AssertionError.
         """
-        from orchestrator.scheduler import prepare_task_directory
-        from orchestrator.repo_manager import RepoManager
+        from octopoid.scheduler import prepare_task_directory
+        from octopoid.repo_manager import RepoManager
 
         worktree_path = tmp_path / "worktree"
         worktree_path.mkdir()
@@ -1040,13 +1040,13 @@ class TestPrepareTaskDirectoryDetachedHead:
             raise AssertionError("ensure_on_branch must not be called during spawn")
 
         with (
-            patch("orchestrator.git_utils.create_task_worktree", return_value=worktree_path),
-            patch("orchestrator.scheduler.get_task_branch", return_value="agent/TASK-abc123"),
-            patch("orchestrator.scheduler.get_tasks_dir", return_value=tmp_path / "tasks"),
-            patch("orchestrator.scheduler.get_base_branch", return_value="main"),
-            patch("orchestrator.scheduler.get_global_instructions_path", return_value=tmp_path / "gi.md"),
-            patch("orchestrator.scheduler.find_parent_project", return_value=tmp_path),
-            patch("orchestrator.scheduler._get_server_url_from_config", return_value="http://localhost"),
+            patch("octopoid.git_utils.create_task_worktree", return_value=worktree_path),
+            patch("octopoid.scheduler.get_task_branch", return_value="agent/TASK-abc123"),
+            patch("octopoid.scheduler.get_tasks_dir", return_value=tmp_path / "tasks"),
+            patch("octopoid.scheduler.get_base_branch", return_value="main"),
+            patch("octopoid.scheduler.get_global_instructions_path", return_value=tmp_path / "gi.md"),
+            patch("octopoid.scheduler.find_parent_project", return_value=tmp_path),
+            patch("octopoid.scheduler._get_server_url_from_config", return_value="http://localhost"),
             patch.object(RepoManager, "ensure_on_branch", side_effect=fail_if_ensure_on_branch_called),
         ):
             # Must not raise AssertionError — currently raises because ensure_on_branch is called
@@ -1065,7 +1065,7 @@ class TestCreateTaskWorktreeDetachedHead:
         for rev-parse --abbrev-ref HEAD, and checking that create_task_worktree
         raises AssertionError.
         """
-        from orchestrator.git_utils import create_task_worktree
+        from octopoid.git_utils import create_task_worktree
 
         task = {
             "id": "TASK-detach01",
@@ -1092,10 +1092,10 @@ class TestCreateTaskWorktreeDetachedHead:
             return result
 
         with (
-            patch("orchestrator.git_utils.find_parent_project", return_value=tmp_path),
-            patch("orchestrator.git_utils.get_task_worktree_path", return_value=worktree_path),
-            patch("orchestrator.git_utils.get_base_branch", return_value="main"),
-            patch("orchestrator.git_utils.run_git", side_effect=fake_run_git),
+            patch("octopoid.git_utils.find_parent_project", return_value=tmp_path),
+            patch("octopoid.git_utils.get_task_worktree_path", return_value=worktree_path),
+            patch("octopoid.git_utils.get_base_branch", return_value="main"),
+            patch("octopoid.git_utils.run_git", side_effect=fake_run_git),
         ):
             # Must raise AssertionError because the worktree ended up on a named branch.
             # Currently does NOT raise (no assertion exists) — so this test fails.

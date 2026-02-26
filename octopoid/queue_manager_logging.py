@@ -14,7 +14,7 @@ if __name__ == "__main__":
     SCRIPT_DIR = Path(__file__).parent
     sys.path.insert(0, str(SCRIPT_DIR.parent))
 
-from orchestrator.config import get_orchestrator_dir  # noqa: E402
+from octopoid.config import get_orchestrator_dir  # noqa: E402
 
 
 FixType = Literal[

@@ -30,7 +30,7 @@ def _get_base_branch() -> str:
         repo_str = str(repo_root)
         if repo_str not in sys.path:
             sys.path.insert(0, repo_str)
-        from orchestrator.config import get_base_branch
+        from octopoid.config import get_base_branch
         return get_base_branch()
     except Exception:
         return "feature/client-server-architecture"
@@ -74,7 +74,7 @@ def _fetch_tab_content(task_id: str, tab_index: int) -> str:
             repo_root_str = str(repo_root)
             if repo_root_str not in sys.path:
                 sys.path.insert(0, repo_root_str)
-            from orchestrator.sdk import get_sdk
+            from octopoid.sdk import get_sdk
             sdk = get_sdk()
             task = sdk.tasks.get(task_id)
             if task and task.get("content"):

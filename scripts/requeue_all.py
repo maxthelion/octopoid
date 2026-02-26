@@ -4,7 +4,7 @@
 import sys
 sys.path.insert(0, ".")
 
-from orchestrator.queue_utils import get_sdk
+from octopoid.queue_utils import get_sdk
 
 
 def main():

@@ -18,8 +18,8 @@ class TestGetScope:
         config_path.parent.mkdir(parents=True)
         config_path.write_text(yaml.dump(config))
 
-        with patch("orchestrator.config.find_parent_project", return_value=tmp_path):
-            from orchestrator.config import get_scope
+        with patch("octopoid.config.find_parent_project", return_value=tmp_path):
+            from octopoid.config import get_scope
             assert get_scope() == "myproject"
 
     def test_returns_none_when_scope_missing(self, tmp_path: Path) -> None:
@@ -29,14 +29,14 @@ class TestGetScope:
         config_path.parent.mkdir(parents=True)
         config_path.write_text(yaml.dump(config))
 
-        with patch("orchestrator.config.find_parent_project", return_value=tmp_path):
-            from orchestrator.config import get_scope
+        with patch("octopoid.config.find_parent_project", return_value=tmp_path):
+            from octopoid.config import get_scope
             assert get_scope() is None
 
     def test_returns_none_when_config_missing(self, tmp_path: Path) -> None:
         """get_scope() returns None when config.yaml does not exist."""
-        with patch("orchestrator.config.find_parent_project", return_value=tmp_path):
-            from orchestrator.config import get_scope
+        with patch("octopoid.config.find_parent_project", return_value=tmp_path):
+            from octopoid.config import get_scope
             assert get_scope() is None
 
     def test_scope_coerced_to_string(self, tmp_path: Path) -> None:
@@ -46,8 +46,8 @@ class TestGetScope:
         config_path.parent.mkdir(parents=True)
         config_path.write_text(yaml.dump(config))
 
-        with patch("orchestrator.config.find_parent_project", return_value=tmp_path):
-            from orchestrator.config import get_scope
+        with patch("octopoid.config.find_parent_project", return_value=tmp_path):
+            from octopoid.config import get_scope
             assert get_scope() == "42"
 
 
@@ -126,14 +126,14 @@ class TestListTasksScopeFiltering:
             {"id": "t3", "scope": "octopoid", "queue": "incoming"},
         ]
         with (
-            patch("orchestrator.tasks.get_scope", return_value="octopoid"),
-            patch("orchestrator.tasks.get_sdk") as mock_get_sdk,
+            patch("octopoid.tasks.get_scope", return_value="octopoid"),
+            patch("octopoid.tasks.get_sdk") as mock_get_sdk,
         ):
             mock_sdk = MagicMock()
             mock_sdk.tasks.list.return_value = tasks_from_server
             mock_get_sdk.return_value = mock_sdk
 
-            from orchestrator.tasks import list_tasks
+            from octopoid.tasks import list_tasks
             result = list_tasks("incoming")
 
         assert len(result) == 2
@@ -148,14 +148,14 @@ class TestListTasksScopeFiltering:
             {"id": "t2", "scope": "boxen", "queue": "incoming"},
         ]
         with (
-            patch("orchestrator.tasks.get_scope", return_value=None),
-            patch("orchestrator.tasks.get_sdk") as mock_get_sdk,
+            patch("octopoid.tasks.get_scope", return_value=None),
+            patch("octopoid.tasks.get_sdk") as mock_get_sdk,
         ):
             mock_sdk = MagicMock()
             mock_sdk.tasks.list.return_value = tasks_from_server
             mock_get_sdk.return_value = mock_sdk
 
-            from orchestrator.tasks import list_tasks
+            from octopoid.tasks import list_tasks
             result = list_tasks("incoming")
 
         assert len(result) == 2
@@ -167,14 +167,14 @@ class TestListTasksScopeFiltering:
             {"id": "t2", "queue": "incoming"},  # No scope field
         ]
         with (
-            patch("orchestrator.tasks.get_scope", return_value="octopoid"),
-            patch("orchestrator.tasks.get_sdk") as mock_get_sdk,
+            patch("octopoid.tasks.get_scope", return_value="octopoid"),
+            patch("octopoid.tasks.get_sdk") as mock_get_sdk,
         ):
             mock_sdk = MagicMock()
             mock_sdk.tasks.list.return_value = tasks_from_server
             mock_get_sdk.return_value = mock_sdk
 
-            from orchestrator.tasks import list_tasks
+            from octopoid.tasks import list_tasks
             result = list_tasks("incoming")
 
         # Only the scoped task should be returned
@@ -191,12 +191,12 @@ class TestCanClaimTaskScopeIsolation:
         poll_queue_counts = {"incoming": 3, "claimed": 5, "provisional": 0}
 
         with (
-            patch("orchestrator.backpressure.get_queue_limits", return_value={
+            patch("octopoid.backpressure.get_queue_limits", return_value={
                 "max_incoming": 20, "max_claimed": 2, "max_provisional": 5
             }),
-            patch("orchestrator.backpressure.count_queue", return_value=0) as mock_count,
+            patch("octopoid.backpressure.count_queue", return_value=0) as mock_count,
         ):
-            from orchestrator.backpressure import can_claim_task
+            from octopoid.backpressure import can_claim_task
             can_proceed, reason = can_claim_task(queue_counts=poll_queue_counts)
 
         assert can_proceed is True
@@ -208,13 +208,13 @@ class TestCanClaimTaskScopeIsolation:
         poll_queue_counts = {"incoming": 3, "claimed": 0, "provisional": 0}
 
         with (
-            patch("orchestrator.backpressure.get_queue_limits", return_value={
+            patch("octopoid.backpressure.get_queue_limits", return_value={
                 "max_incoming": 20, "max_claimed": 2, "max_provisional": 5
             }),
             # count_queue returns 2 (at limit) for scope-filtered claimed tasks
-            patch("orchestrator.backpressure.count_queue", return_value=2),
+            patch("octopoid.backpressure.count_queue", return_value=2),
         ):
-            from orchestrator.backpressure import can_claim_task
+            from octopoid.backpressure import can_claim_task
             can_proceed, reason = can_claim_task(queue_counts=poll_queue_counts)
 
         assert can_proceed is False
@@ -230,13 +230,13 @@ class TestCanClaimTaskScopeIsolation:
         poll_queue_counts = {"incoming": 1, "claimed": 2, "provisional": 0}
 
         with (
-            patch("orchestrator.backpressure.get_queue_limits", return_value={
+            patch("octopoid.backpressure.get_queue_limits", return_value={
                 "max_incoming": 20, "max_claimed": 2, "max_provisional": 5
             }),
             # Scope-filtered count is 0 — we have no claimed tasks in our scope
-            patch("orchestrator.backpressure.count_queue", return_value=0),
+            patch("octopoid.backpressure.count_queue", return_value=0),
         ):
-            from orchestrator.backpressure import can_claim_task
+            from octopoid.backpressure import can_claim_task
             can_proceed, reason = can_claim_task(queue_counts=poll_queue_counts)
 
         assert can_proceed is True, f"Should be able to claim but got: {reason}"
@@ -247,11 +247,11 @@ class TestSchedulerScopeValidation:
 
     def test_scheduler_exits_when_scope_missing(self) -> None:
         """run_scheduler() exits with code 1 if scope is not configured."""
-        from orchestrator.scheduler import run_scheduler
+        from octopoid.scheduler import run_scheduler
 
         with (
-            patch("orchestrator.scheduler.is_system_paused", return_value=False),
-            patch("orchestrator.scheduler.get_scope", return_value=None),
+            patch("octopoid.scheduler.is_system_paused", return_value=False),
+            patch("octopoid.scheduler.get_scope", return_value=None),
             pytest.raises(SystemExit) as exc_info,
         ):
             run_scheduler()
@@ -262,12 +262,12 @@ class TestSchedulerScopeValidation:
         """run_scheduler() does not exit when scope is configured."""
         # run_due_jobs is imported locally inside run_scheduler(), so patch it at source
         with (
-            patch("orchestrator.scheduler.is_system_paused", return_value=False),
-            patch("orchestrator.scheduler.get_scope", return_value="octopoid"),
-            patch("orchestrator.scheduler.load_scheduler_state", return_value={}),
-            patch("orchestrator.jobs.run_due_jobs"),
-            patch("orchestrator.scheduler.save_scheduler_state"),
+            patch("octopoid.scheduler.is_system_paused", return_value=False),
+            patch("octopoid.scheduler.get_scope", return_value="octopoid"),
+            patch("octopoid.scheduler.load_scheduler_state", return_value={}),
+            patch("octopoid.jobs.run_due_jobs"),
+            patch("octopoid.scheduler.save_scheduler_state"),
         ):
-            from orchestrator.scheduler import run_scheduler
+            from octopoid.scheduler import run_scheduler
             # Should not raise SystemExit
             run_scheduler()

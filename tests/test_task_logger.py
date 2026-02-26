@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from orchestrator.task_logger import TaskLogger, get_task_logger
+from octopoid.task_logger import TaskLogger, get_task_logger
 
 
 @pytest.fixture

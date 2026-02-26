@@ -383,7 +383,7 @@ class TestTaskLifecycleFlow:
         original_env = os.environ.get("ORCHESTRATOR_DIR")
         try:
             os.environ["ORCHESTRATOR_DIR"] = str(octopoid_dir)
-            from orchestrator.flow import load_flow
+            from octopoid.flow import load_flow
             flow = load_flow("default")
             transitions = flow.get_transitions_from("provisional")
             assert len(transitions) > 0, "No transitions from 'provisional' in default flow"
@@ -432,7 +432,7 @@ class TestImplementerFlow:
 
     def test_implementer_flow_steps_registered(self):
         """All implementer flow steps are registered in STEP_REGISTRY."""
-        from orchestrator.steps import STEP_REGISTRY
+        from octopoid.steps import STEP_REGISTRY
 
         expected_steps = ["push_branch", "run_tests", "create_pr"]
         for step in expected_steps:
@@ -451,7 +451,7 @@ class TestImplementerFlow:
         original_env = os.environ.get("ORCHESTRATOR_DIR")
         try:
             os.environ["ORCHESTRATOR_DIR"] = str(octopoid_dir)
-            from orchestrator.flow import load_flow
+            from octopoid.flow import load_flow
             flow = load_flow("default")
             transitions = flow.get_transitions_from("claimed")
             assert len(transitions) > 0, "No transitions from 'claimed' in default flow"

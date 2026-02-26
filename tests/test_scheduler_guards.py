@@ -11,12 +11,12 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 
-from orchestrator.scheduler import (
+from octopoid.scheduler import (
     AgentContext,
     check_and_update_finished_agents,
     guard_claim_task,
 )
-from orchestrator.state_utils import AgentState
+from octopoid.state_utils import AgentState
 
 
 # =============================================================================
@@ -56,9 +56,9 @@ class TestCheckAndUpdateFinishedAgents:
         (agents_dir / "implementer").mkdir()  # no running_pids.json
 
         with (
-            patch("orchestrator.scheduler.get_agents_runtime_dir", return_value=agents_dir),
-            patch("orchestrator.scheduler.get_agents", return_value=[]),
-            patch("orchestrator.scheduler.handle_agent_result") as mock_handle,
+            patch("octopoid.scheduler.get_agents_runtime_dir", return_value=agents_dir),
+            patch("octopoid.scheduler.get_agents", return_value=[]),
+            patch("octopoid.scheduler.handle_agent_result") as mock_handle,
         ):
             check_and_update_finished_agents()
 
@@ -74,16 +74,16 @@ class TestCheckAndUpdateFinishedAgents:
         pids_data = self._make_pids_dict(12345, task_id, "implementer-1")
 
         with (
-            patch("orchestrator.scheduler.get_agents_runtime_dir", return_value=agents_dir),
-            patch("orchestrator.scheduler.get_agents", return_value=[
+            patch("octopoid.scheduler.get_agents_runtime_dir", return_value=agents_dir),
+            patch("octopoid.scheduler.get_agents", return_value=[
                 {"blueprint_name": "implementer", "claim_from": "incoming"}
             ]),
-            patch("orchestrator.scheduler.get_tasks_dir", return_value=tasks_dir),
-            patch("orchestrator.scheduler.load_blueprint_pids", return_value=pids_data),
-            patch("orchestrator.scheduler.save_blueprint_pids"),
-            patch("orchestrator.scheduler.is_process_running", return_value=False),
-            patch("orchestrator.scheduler.handle_agent_result") as mock_handle,
-            patch("orchestrator.scheduler.handle_agent_result_via_flow") as mock_flow,
+            patch("octopoid.scheduler.get_tasks_dir", return_value=tasks_dir),
+            patch("octopoid.scheduler.load_blueprint_pids", return_value=pids_data),
+            patch("octopoid.scheduler.save_blueprint_pids"),
+            patch("octopoid.scheduler.is_process_running", return_value=False),
+            patch("octopoid.scheduler.handle_agent_result") as mock_handle,
+            patch("octopoid.scheduler.handle_agent_result_via_flow") as mock_flow,
         ):
             check_and_update_finished_agents()
 
@@ -100,16 +100,16 @@ class TestCheckAndUpdateFinishedAgents:
         pids_data = self._make_pids_dict(99999, task_id, "gatekeeper-1")
 
         with (
-            patch("orchestrator.scheduler.get_agents_runtime_dir", return_value=agents_dir),
-            patch("orchestrator.scheduler.get_agents", return_value=[
+            patch("octopoid.scheduler.get_agents_runtime_dir", return_value=agents_dir),
+            patch("octopoid.scheduler.get_agents", return_value=[
                 {"blueprint_name": "gatekeeper", "claim_from": "provisional"}
             ]),
-            patch("orchestrator.scheduler.get_tasks_dir", return_value=tasks_dir),
-            patch("orchestrator.scheduler.load_blueprint_pids", return_value=pids_data),
-            patch("orchestrator.scheduler.save_blueprint_pids"),
-            patch("orchestrator.scheduler.is_process_running", return_value=False),
-            patch("orchestrator.scheduler.handle_agent_result") as mock_handle,
-            patch("orchestrator.scheduler.handle_agent_result_via_flow") as mock_flow,
+            patch("octopoid.scheduler.get_tasks_dir", return_value=tasks_dir),
+            patch("octopoid.scheduler.load_blueprint_pids", return_value=pids_data),
+            patch("octopoid.scheduler.save_blueprint_pids"),
+            patch("octopoid.scheduler.is_process_running", return_value=False),
+            patch("octopoid.scheduler.handle_agent_result") as mock_handle,
+            patch("octopoid.scheduler.handle_agent_result_via_flow") as mock_flow,
         ):
             check_and_update_finished_agents()
 
@@ -127,16 +127,16 @@ class TestCheckAndUpdateFinishedAgents:
         saved_args: list[tuple] = []
 
         with (
-            patch("orchestrator.scheduler.get_agents_runtime_dir", return_value=agents_dir),
-            patch("orchestrator.scheduler.get_agents", return_value=[
+            patch("octopoid.scheduler.get_agents_runtime_dir", return_value=agents_dir),
+            patch("octopoid.scheduler.get_agents", return_value=[
                 {"blueprint_name": "implementer", "claim_from": "incoming"}
             ]),
-            patch("orchestrator.scheduler.get_tasks_dir", return_value=tasks_dir),
-            patch("orchestrator.scheduler.load_blueprint_pids", return_value=pids_data),
-            patch("orchestrator.scheduler.save_blueprint_pids",
+            patch("octopoid.scheduler.get_tasks_dir", return_value=tasks_dir),
+            patch("octopoid.scheduler.load_blueprint_pids", return_value=pids_data),
+            patch("octopoid.scheduler.save_blueprint_pids",
                   side_effect=lambda name, p: saved_args.append((name, p))),
-            patch("orchestrator.scheduler.is_process_running", return_value=False),
-            patch("orchestrator.scheduler.handle_agent_result"),
+            patch("octopoid.scheduler.is_process_running", return_value=False),
+            patch("octopoid.scheduler.handle_agent_result"),
         ):
             check_and_update_finished_agents()
 
@@ -151,14 +151,14 @@ class TestCheckAndUpdateFinishedAgents:
         pids_data = self._make_pids_dict(12345, "TASK-alive", "implementer-1")
 
         with (
-            patch("orchestrator.scheduler.get_agents_runtime_dir", return_value=agents_dir),
-            patch("orchestrator.scheduler.get_agents", return_value=[
+            patch("octopoid.scheduler.get_agents_runtime_dir", return_value=agents_dir),
+            patch("octopoid.scheduler.get_agents", return_value=[
                 {"blueprint_name": "implementer", "claim_from": "incoming"}
             ]),
-            patch("orchestrator.scheduler.load_blueprint_pids", return_value=pids_data),
-            patch("orchestrator.scheduler.save_blueprint_pids") as mock_save,
-            patch("orchestrator.scheduler.is_process_running", return_value=True),
-            patch("orchestrator.scheduler.handle_agent_result") as mock_handle,
+            patch("octopoid.scheduler.load_blueprint_pids", return_value=pids_data),
+            patch("octopoid.scheduler.save_blueprint_pids") as mock_save,
+            patch("octopoid.scheduler.is_process_running", return_value=True),
+            patch("octopoid.scheduler.handle_agent_result") as mock_handle,
         ):
             check_and_update_finished_agents()
 
@@ -172,14 +172,14 @@ class TestCheckAndUpdateFinishedAgents:
         pids_data = {12345: {"task_id": "", "started_at": "...", "instance_name": "proposer-1"}}
 
         with (
-            patch("orchestrator.scheduler.get_agents_runtime_dir", return_value=agents_dir),
-            patch("orchestrator.scheduler.get_agents", return_value=[
+            patch("octopoid.scheduler.get_agents_runtime_dir", return_value=agents_dir),
+            patch("octopoid.scheduler.get_agents", return_value=[
                 {"blueprint_name": "proposer", "claim_from": "incoming"}
             ]),
-            patch("orchestrator.scheduler.load_blueprint_pids", return_value=pids_data),
-            patch("orchestrator.scheduler.save_blueprint_pids"),
-            patch("orchestrator.scheduler.is_process_running", return_value=False),
-            patch("orchestrator.scheduler.handle_agent_result") as mock_handle,
+            patch("octopoid.scheduler.load_blueprint_pids", return_value=pids_data),
+            patch("octopoid.scheduler.save_blueprint_pids"),
+            patch("octopoid.scheduler.is_process_running", return_value=False),
+            patch("octopoid.scheduler.handle_agent_result") as mock_handle,
         ):
             check_and_update_finished_agents()
 
@@ -216,9 +216,9 @@ class TestGuardClaimTaskDedup:
         ctx = _make_scripts_ctx()
 
         with (
-            patch("orchestrator.scheduler.claim_and_prepare_task", return_value=task),
-            patch("orchestrator.scheduler.get_active_task_ids", return_value={"TASK-projfix-2"}),
-            patch("orchestrator.scheduler.debug_log"),
+            patch("octopoid.scheduler.claim_and_prepare_task", return_value=task),
+            patch("octopoid.scheduler.get_active_task_ids", return_value={"TASK-projfix-2"}),
+            patch("octopoid.scheduler.debug_log"),
         ):
             proceed, reason = guard_claim_task(ctx)
 
@@ -233,10 +233,10 @@ class TestGuardClaimTaskDedup:
         ctx = _make_scripts_ctx()
 
         with (
-            patch("orchestrator.scheduler.claim_and_prepare_task", return_value=task),
-            patch("orchestrator.scheduler.get_active_task_ids", return_value=set()),
-            patch("orchestrator.scheduler.debug_log"),
-            patch("orchestrator.scheduler._requeue_task") as mock_requeue,
+            patch("octopoid.scheduler.claim_and_prepare_task", return_value=task),
+            patch("octopoid.scheduler.get_active_task_ids", return_value=set()),
+            patch("octopoid.scheduler.debug_log"),
+            patch("octopoid.scheduler._requeue_task") as mock_requeue,
         ):
             proceed, reason = guard_claim_task(ctx)
 
@@ -251,10 +251,10 @@ class TestGuardClaimTaskDedup:
         ctx = _make_scripts_ctx()
 
         with (
-            patch("orchestrator.scheduler.claim_and_prepare_task", return_value=task),
-            patch("orchestrator.scheduler.get_active_task_ids", return_value={"TASK-a"}),
-            patch("orchestrator.scheduler.debug_log"),
-            patch("orchestrator.scheduler._requeue_task") as mock_requeue,
+            patch("octopoid.scheduler.claim_and_prepare_task", return_value=task),
+            patch("octopoid.scheduler.get_active_task_ids", return_value={"TASK-a"}),
+            patch("octopoid.scheduler.debug_log"),
+            patch("octopoid.scheduler._requeue_task") as mock_requeue,
         ):
             proceed, reason = guard_claim_task(ctx)
 
@@ -267,9 +267,9 @@ class TestGuardClaimTaskDedup:
         ctx = _make_scripts_ctx()
 
         with (
-            patch("orchestrator.scheduler.claim_and_prepare_task", return_value=None),
-            patch("orchestrator.scheduler.get_active_task_ids") as mock_active,
-            patch("orchestrator.scheduler.debug_log"),
+            patch("octopoid.scheduler.claim_and_prepare_task", return_value=None),
+            patch("octopoid.scheduler.get_active_task_ids") as mock_active,
+            patch("octopoid.scheduler.debug_log"),
         ):
             proceed, reason = guard_claim_task(ctx)
 
@@ -289,8 +289,8 @@ class TestGuardClaimTaskDedup:
         )
 
         with (
-            patch("orchestrator.scheduler.claim_and_prepare_task") as mock_claim,
-            patch("orchestrator.scheduler.get_active_task_ids") as mock_active,
+            patch("octopoid.scheduler.claim_and_prepare_task") as mock_claim,
+            patch("octopoid.scheduler.get_active_task_ids") as mock_active,
         ):
             proceed, reason = guard_claim_task(ctx)
 

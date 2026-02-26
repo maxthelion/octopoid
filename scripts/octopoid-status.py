@@ -19,7 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from orchestrator.config import (
+from octopoid.config import (
     get_agents,
     get_agents_runtime_dir,
     get_notes_dir,
@@ -28,9 +28,9 @@ from orchestrator.config import (
     get_tasks_dir,
     is_system_paused,
 )
-from orchestrator.queue_utils import get_sdk
-from orchestrator.backpressure import count_queue
-from orchestrator.task_logger import get_task_logger
+from octopoid.queue_utils import get_sdk
+from octopoid.backpressure import count_queue
+from octopoid.task_logger import get_task_logger
 
 VERBOSE = "--verbose" in sys.argv or "-v" in sys.argv
 

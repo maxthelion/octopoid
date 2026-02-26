@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from orchestrator.repo_manager import (
+from octopoid.repo_manager import (
     PrInfo,
     RebaseResult,
     RebaseStatus,

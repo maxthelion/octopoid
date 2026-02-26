@@ -1,0 +1,45 @@
+name: project
+description: Multi-task project with shared branch
+
+# Flow applied to child tasks within this project.
+# Children don't create PRs — the project creates one PR at the end.
+child_flow:
+  transitions:
+    "incoming -> claimed":
+      agent: implementer
+
+    "claimed -> done":
+      runs: [rebase_on_project_branch, run_tests]
+      # Intentional omissions vs before_submit/before_merge hooks:
+      # - create_pr: omitted — children commit to the shared project branch;
+      #   the project itself creates one PR after all children complete.
+      # - rebase_on_base: replaced by rebase_on_project_branch, which rebases
+      #   onto the shared project branch rather than the base branch.
+      # - merge_pr: omitted — children have no individual PRs to merge.
+
+# Flow for the project itself, after all children complete.
+transitions:
+  "children_complete -> provisional":
+    # run_tests (from before_submit hooks) is handled by the all_tests_pass
+    # condition below rather than as a runs step — this blocks the transition
+    # if tests fail rather than running them after approval is granted.
+    runs: [create_pr]
+    conditions:
+      - name: all_tests_pass
+        type: script
+        script: run-tests
+
+  "provisional -> done":
+    conditions:
+      - name: human_approval
+        type: manual
+    # rebase_on_base (from before_merge hooks) is intentionally omitted:
+    # project flows are executed with parent_project_dir as task_dir, which has
+    # no worktree/ subdirectory. The rebase_on_base step requires task_dir/worktree
+    # and cannot run in this context. If rebase-before-merge is needed for project
+    # PRs, a dedicated rebase_project_on_base step must be added to steps.py.
+    #
+    # aggregate_child_changes collects changes.md from each child task's runtime
+    # dir and writes the concatenated result to task_dir/changes.md so that
+    # update_changelog can process it as normal.
+    runs: [check_ci, merge_pr, aggregate_child_changes, update_changelog]

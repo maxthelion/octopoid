@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch, call
 
 import pytest
 
-from orchestrator.hooks import (
+from octopoid.hooks import (
     HookContext,
     HookPoint,
     HookResult,
@@ -65,7 +65,7 @@ class TestHookRebaseOnBase:
             m.stderr = ""
             return m
 
-        with patch("orchestrator.git_utils.run_git", side_effect=mock_run_git):
+        with patch("octopoid.git_utils.run_git", side_effect=mock_run_git):
             result = hook_rebase_on_base(ctx)
 
         assert result.status == HookStatus.SKIP
@@ -87,7 +87,7 @@ class TestHookRebaseOnBase:
             m.stderr = ""
             return m
 
-        with patch("orchestrator.git_utils.run_git", side_effect=mock_run_git):
+        with patch("octopoid.git_utils.run_git", side_effect=mock_run_git):
             result = hook_rebase_on_base(ctx)
 
         assert result.status == HookStatus.SUCCESS
@@ -110,7 +110,7 @@ class TestHookRebaseOnBase:
                 return MagicMock(returncode=1, stdout="", stderr="CONFLICT in widget.py")
             return MagicMock(returncode=0, stdout="", stderr="")
 
-        with patch("orchestrator.git_utils.run_git", side_effect=mock_run_git):
+        with patch("octopoid.git_utils.run_git", side_effect=mock_run_git):
             result = hook_rebase_on_base(ctx)
 
         assert result.status == HookStatus.FAILURE
@@ -126,7 +126,7 @@ class TestHookRebaseOnBase:
                 raise subprocess.CalledProcessError(1, args, output="", stderr="network error")
             return MagicMock(returncode=0, stdout="0\n", stderr="")
 
-        with patch("orchestrator.git_utils.run_git", side_effect=mock_run_git):
+        with patch("octopoid.git_utils.run_git", side_effect=mock_run_git):
             result = hook_rebase_on_base(ctx)
 
         assert result.status == HookStatus.FAILURE
@@ -141,7 +141,7 @@ class TestHookRebaseOnBase:
                 raise subprocess.TimeoutExpired(args, 60)
             return MagicMock(returncode=0, stdout="", stderr="")
 
-        with patch("orchestrator.git_utils.run_git", side_effect=mock_run_git):
+        with patch("octopoid.git_utils.run_git", side_effect=mock_run_git):
             result = hook_rebase_on_base(ctx)
 
         assert result.status == HookStatus.FAILURE
@@ -160,7 +160,7 @@ class TestHookCreatePr:
         """Successful PR creation returns SUCCESS with pr_url in context."""
         ctx = _make_ctx(extra={"stdout": "some output"})
 
-        with patch("orchestrator.git_utils.create_pull_request", return_value="https://github.com/test/pr/1"):
+        with patch("octopoid.git_utils.create_pull_request", return_value="https://github.com/test/pr/1"):
             result = hook_create_pr(ctx)
 
         assert result.status == HookStatus.SUCCESS
@@ -170,7 +170,7 @@ class TestHookCreatePr:
         """Failed PR creation returns FAILURE."""
         ctx = _make_ctx()
 
-        with patch("orchestrator.git_utils.create_pull_request", side_effect=RuntimeError("push failed")):
+        with patch("octopoid.git_utils.create_pull_request", side_effect=RuntimeError("push failed")):
             result = hook_create_pr(ctx)
 
         assert result.status == HookStatus.FAILURE
@@ -181,7 +181,7 @@ class TestHookCreatePr:
         long_stdout = "x" * 5000
         ctx = _make_ctx(extra={"stdout": long_stdout})
 
-        with patch("orchestrator.git_utils.create_pull_request", return_value="https://example.com/pr/2") as mock_pr:
+        with patch("octopoid.git_utils.create_pull_request", return_value="https://example.com/pr/2") as mock_pr:
             hook_create_pr(ctx)
 
         # Check that the body passed to create_pull_request contains truncated output
@@ -210,7 +210,7 @@ class TestHookRunTests:
         (tmp_path / "pyproject.toml").write_text("[tool.pytest]")
         ctx = _make_ctx(worktree=tmp_path)
 
-        with patch("orchestrator.hooks.subprocess.run") as mock_run:
+        with patch("octopoid.hooks.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stdout="passed", stderr="")
             result = hook_run_tests(ctx)
 
@@ -223,7 +223,7 @@ class TestHookRunTests:
         (tmp_path / "pytest.ini").write_text("")
         ctx = _make_ctx(worktree=tmp_path)
 
-        with patch("orchestrator.hooks.subprocess.run") as mock_run:
+        with patch("octopoid.hooks.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(
                 returncode=1, stdout="FAILED test_foo.py", stderr=""
             )
@@ -238,7 +238,7 @@ class TestHookRunTests:
         (tmp_path / "package.json").write_text("{}")
         ctx = _make_ctx(worktree=tmp_path)
 
-        with patch("orchestrator.hooks.subprocess.run") as mock_run:
+        with patch("octopoid.hooks.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
             result = hook_run_tests(ctx)
 
@@ -250,7 +250,7 @@ class TestHookRunTests:
         (tmp_path / "pyproject.toml").write_text("")
         ctx = _make_ctx(worktree=tmp_path)
 
-        with patch("orchestrator.hooks.subprocess.run", side_effect=subprocess.TimeoutExpired(["pytest"], 300)):
+        with patch("octopoid.hooks.subprocess.run", side_effect=subprocess.TimeoutExpired(["pytest"], 300)):
             result = hook_run_tests(ctx)
 
         assert result.status == HookStatus.FAILURE
@@ -269,7 +269,7 @@ class TestHookMergePr:
         """Successful merge returns SUCCESS with pr_number in context."""
         ctx = _make_ctx(extra={"pr_number": 42, "pr_url": "https://github.com/test/pr/42"})
 
-        with patch("orchestrator.hooks.subprocess.run") as mock_run:
+        with patch("octopoid.hooks.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stdout="Merged", stderr="")
             result = hook_merge_pr(ctx)
 
@@ -286,7 +286,7 @@ class TestHookMergePr:
         """merge_method=squash passes --squash to gh."""
         ctx = _make_ctx(extra={"pr_number": 10, "merge_method": "squash"})
 
-        with patch("orchestrator.hooks.subprocess.run") as mock_run:
+        with patch("octopoid.hooks.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
             result = hook_merge_pr(ctx)
 
@@ -306,7 +306,7 @@ class TestHookMergePr:
         """Non-zero exit code returns FAILURE."""
         ctx = _make_ctx(extra={"pr_number": 99})
 
-        with patch("orchestrator.hooks.subprocess.run") as mock_run:
+        with patch("octopoid.hooks.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(
                 returncode=1, stdout="", stderr="PR is not mergeable"
             )
@@ -319,7 +319,7 @@ class TestHookMergePr:
         """Timeout during merge returns FAILURE."""
         ctx = _make_ctx(extra={"pr_number": 7})
 
-        with patch("orchestrator.hooks.subprocess.run",
+        with patch("octopoid.hooks.subprocess.run",
                     side_effect=subprocess.TimeoutExpired(["gh"], 60)):
             result = hook_merge_pr(ctx)
 
@@ -337,7 +337,7 @@ class TestResolveHooks:
 
     def test_defaults_when_no_config(self):
         """With no config, defaults to [create_pr] for before_submit."""
-        with patch("orchestrator.config.get_hooks_config", return_value={}):
+        with patch("octopoid.config.get_hooks_config", return_value={}):
             hooks = resolve_hooks(HookPoint.BEFORE_SUBMIT, task_type=None)
 
         assert len(hooks) == 1
@@ -345,7 +345,7 @@ class TestResolveHooks:
 
     def test_project_level_hooks(self):
         """Project-level hooks override defaults."""
-        with patch("orchestrator.config.get_hooks_config", return_value={
+        with patch("octopoid.config.get_hooks_config", return_value={
                  "before_submit": ["run_tests", "create_pr"]
              }):
             hooks = resolve_hooks(HookPoint.BEFORE_SUBMIT, task_type=None)
@@ -356,7 +356,7 @@ class TestResolveHooks:
 
     def test_unknown_hook_name_skipped(self):
         """Unknown hook names are silently skipped."""
-        with patch("orchestrator.config.get_hooks_config", return_value={
+        with patch("octopoid.config.get_hooks_config", return_value={
                  "before_submit": ["nonexistent_hook", "create_pr"]
              }):
             hooks = resolve_hooks(HookPoint.BEFORE_SUBMIT)
@@ -366,15 +366,15 @@ class TestResolveHooks:
 
     def test_empty_hook_point(self):
         """Hook points with no config and no defaults return empty list."""
-        with patch("orchestrator.config.get_hooks_config", return_value={}), \
-             patch("orchestrator.hooks.DEFAULT_HOOKS", {"before_submit": ["create_pr"]}):
+        with patch("octopoid.config.get_hooks_config", return_value={}), \
+             patch("octopoid.hooks.DEFAULT_HOOKS", {"before_submit": ["create_pr"]}):
             hooks = resolve_hooks(HookPoint.BEFORE_MERGE, task_type=None)
 
         assert hooks == []
 
     def test_before_merge_defaults(self):
         """BEFORE_MERGE defaults to [merge_pr] when no config."""
-        with patch("orchestrator.config.get_hooks_config", return_value={}):
+        with patch("octopoid.config.get_hooks_config", return_value={}):
             hooks = resolve_hooks(HookPoint.BEFORE_MERGE, task_type=None)
 
         assert len(hooks) == 1
@@ -393,7 +393,7 @@ class TestRunHooks:
         """No hooks configured → all_ok=True, empty results."""
         ctx = _make_ctx()
 
-        with patch("orchestrator.hooks.resolve_hooks", return_value=[]):
+        with patch("octopoid.hooks.resolve_hooks", return_value=[]):
             all_ok, results = run_hooks(HookPoint.BEFORE_SUBMIT, ctx)
 
         assert all_ok is True
@@ -405,7 +405,7 @@ class TestRunHooks:
         hook_a = MagicMock(return_value=HookResult(status=HookStatus.SUCCESS, message="ok"))
         hook_b = MagicMock(return_value=HookResult(status=HookStatus.SUCCESS, message="ok"))
 
-        with patch("orchestrator.hooks.resolve_hooks", return_value=[hook_a, hook_b]):
+        with patch("octopoid.hooks.resolve_hooks", return_value=[hook_a, hook_b]):
             all_ok, results = run_hooks(HookPoint.BEFORE_SUBMIT, ctx)
 
         assert all_ok is True
@@ -419,7 +419,7 @@ class TestRunHooks:
         hook_a = MagicMock(return_value=HookResult(status=HookStatus.FAILURE, message="boom"))
         hook_b = MagicMock(return_value=HookResult(status=HookStatus.SUCCESS, message="ok"))
 
-        with patch("orchestrator.hooks.resolve_hooks", return_value=[hook_a, hook_b]):
+        with patch("octopoid.hooks.resolve_hooks", return_value=[hook_a, hook_b]):
             all_ok, results = run_hooks(HookPoint.BEFORE_SUBMIT, ctx)
 
         assert all_ok is False
@@ -432,7 +432,7 @@ class TestRunHooks:
         hook_a = MagicMock(return_value=HookResult(status=HookStatus.SKIP, message="skipped"))
         hook_b = MagicMock(return_value=HookResult(status=HookStatus.SUCCESS, message="ok"))
 
-        with patch("orchestrator.hooks.resolve_hooks", return_value=[hook_a, hook_b]):
+        with patch("octopoid.hooks.resolve_hooks", return_value=[hook_a, hook_b]):
             all_ok, results = run_hooks(HookPoint.BEFORE_SUBMIT, ctx)
 
         assert all_ok is True
@@ -448,7 +448,7 @@ class TestRunHooks:
             remediation_prompt="fix conflicts please",
         ))
 
-        with patch("orchestrator.hooks.resolve_hooks", return_value=[hook_a]):
+        with patch("octopoid.hooks.resolve_hooks", return_value=[hook_a]):
             all_ok, results = run_hooks(HookPoint.BEFORE_SUBMIT, ctx)
 
         assert all_ok is False
@@ -465,16 +465,16 @@ class TestConfigIntegration:
 
     def test_get_hooks_config_returns_defaults_when_no_file(self):
         """When no config file exists, defaults are returned."""
-        from orchestrator.config import get_hooks_config, DEFAULT_HOOKS_CONFIG
+        from octopoid.config import get_hooks_config, DEFAULT_HOOKS_CONFIG
 
-        with patch("orchestrator.config.find_parent_project", return_value=Path("/nonexistent")):
+        with patch("octopoid.config.find_parent_project", return_value=Path("/nonexistent")):
             result = get_hooks_config()
 
         assert result == DEFAULT_HOOKS_CONFIG
 
     def test_get_hooks_config_reads_yaml(self, tmp_path):
         """Reads hooks from actual yaml config."""
-        from orchestrator.config import get_hooks_config
+        from octopoid.config import get_hooks_config
 
         config_dir = tmp_path / ".octopoid"
         config_dir.mkdir()
@@ -482,7 +482,7 @@ class TestConfigIntegration:
             "hooks:\n  before_submit:\n    - rebase_on_main\n    - create_pr\n"
         )
 
-        with patch("orchestrator.config.find_parent_project", return_value=tmp_path):
+        with patch("octopoid.config.find_parent_project", return_value=tmp_path):
             result = get_hooks_config()
 
         assert result == {"before_submit": ["rebase_on_main", "create_pr"]}
@@ -511,8 +511,8 @@ class TestApproveAndMerge:
         task.update(overrides)
         return task
 
-    @patch("orchestrator.task_notes.cleanup_task_notes")
-    @patch("orchestrator.hooks.run_hooks")
+    @patch("octopoid.task_notes.cleanup_task_notes")
+    @patch("octopoid.hooks.run_hooks")
     def test_success_flow(self, mock_run_hooks, mock_cleanup, mock_sdk_for_unit_tests):
         """Hooks pass → task accepted via SDK."""
         mock_sdk_for_unit_tests.tasks.get.return_value = self._mock_task()
@@ -521,7 +521,7 @@ class TestApproveAndMerge:
             HookResult(status=HookStatus.SUCCESS, message="Merged", context={"pr_number": 55}),
         ])
 
-        from orchestrator.queue_utils import approve_and_merge
+        from octopoid.queue_utils import approve_and_merge
 
         result = approve_and_merge("TSK-100")
 
@@ -530,8 +530,8 @@ class TestApproveAndMerge:
         mock_sdk_for_unit_tests.tasks.accept.assert_called_once_with("TSK-100", accepted_by="scheduler")
         mock_cleanup.assert_called_once_with("TSK-100")
 
-    @patch("orchestrator.task_notes.cleanup_task_notes")
-    @patch("orchestrator.hooks.run_hooks")
+    @patch("octopoid.task_notes.cleanup_task_notes")
+    @patch("octopoid.hooks.run_hooks")
     def test_hook_failure_blocks_accept(self, mock_run_hooks, mock_cleanup, mock_sdk_for_unit_tests):
         """Hook failure → task NOT accepted, error returned."""
         mock_sdk_for_unit_tests.tasks.get.return_value = self._mock_task()
@@ -540,7 +540,7 @@ class TestApproveAndMerge:
             HookResult(status=HookStatus.FAILURE, message="PR is not mergeable"),
         ])
 
-        from orchestrator.queue_utils import approve_and_merge
+        from octopoid.queue_utils import approve_and_merge
 
         result = approve_and_merge("TSK-100")
 
@@ -553,15 +553,15 @@ class TestApproveAndMerge:
         """Non-existent task returns error."""
         mock_sdk_for_unit_tests.tasks.get.return_value = None
 
-        from orchestrator.queue_utils import approve_and_merge
+        from octopoid.queue_utils import approve_and_merge
 
         result = approve_and_merge("TSK-MISSING")
 
         assert "error" in result
         assert "not found" in result["error"]
 
-    @patch("orchestrator.task_notes.cleanup_task_notes")
-    @patch("orchestrator.hooks.run_hooks")
+    @patch("octopoid.task_notes.cleanup_task_notes")
+    @patch("octopoid.hooks.run_hooks")
     def test_no_pr_skips_merge_still_accepts(self, mock_run_hooks, mock_cleanup, mock_sdk_for_unit_tests):
         """Task without PR: merge_pr hook skips, task still accepted."""
         mock_sdk_for_unit_tests.tasks.get.return_value = self._mock_task(pr_number=None, pr_url=None)
@@ -570,7 +570,7 @@ class TestApproveAndMerge:
             HookResult(status=HookStatus.SKIP, message="No pr_number"),
         ])
 
-        from orchestrator.queue_utils import approve_and_merge
+        from octopoid.queue_utils import approve_and_merge
 
         result = approve_and_merge("TSK-100")
 

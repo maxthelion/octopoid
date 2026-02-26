@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from orchestrator.pool import (
+from octopoid.pool import (
     cleanup_dead_pids,
     count_running_instances,
     load_blueprint_pids,
@@ -32,7 +32,7 @@ def runtime_dirs(tmp_path, monkeypatch):
     tasks_dir.mkdir()
 
     monkeypatch.setattr(
-        "orchestrator.pool.get_agents_runtime_dir", lambda: agents_dir
+        "octopoid.pool.get_agents_runtime_dir", lambda: agents_dir
     )
     return agents_dir, tasks_dir
 
@@ -88,7 +88,7 @@ class TestCleanupEatsPids:
         pids = load_blueprint_pids("implementer")
         assert DEAD_PID in pids
 
-        with patch("orchestrator.pool.os.kill", side_effect=_fake_kill_dead_only):
+        with patch("octopoid.pool.os.kill", side_effect=_fake_kill_dead_only):
             cleanup_dead_pids("implementer")
 
         pids_after = load_blueprint_pids("implementer")
@@ -109,7 +109,7 @@ class TestGuardPoolCapacityNoCleanup:
         agents_dir, tasks_dir = runtime_dirs
         _setup_finished_agent(agents_dir, tasks_dir)
 
-        import orchestrator.scheduler as sched_mod
+        import octopoid.scheduler as sched_mod
 
         # count_running_instances already ignores dead PIDs
         monkeypatch.setattr(sched_mod, "count_running_instances", MagicMock(return_value=0))
@@ -141,9 +141,9 @@ class TestGuardPoolCapacityNoCleanup:
             DEAD_PID: {"task_id": "TASK-2", "started_at": "t", "instance_name": "imp-2"},
         })
 
-        import orchestrator.scheduler as sched_mod
+        import octopoid.scheduler as sched_mod
 
-        with patch("orchestrator.pool.os.kill", side_effect=_fake_kill_dead_only):
+        with patch("octopoid.pool.os.kill", side_effect=_fake_kill_dead_only):
             ctx = sched_mod.AgentContext(
                 agent_name="implementer",
                 agent_config={"blueprint_name": "implementer", "max_instances": 2},
@@ -167,9 +167,9 @@ class TestGuardPoolCapacityNoCleanup:
             DEAD_PID: {"task_id": "TASK-2", "started_at": "t", "instance_name": "imp-2"},
         })
 
-        import orchestrator.scheduler as sched_mod
+        import octopoid.scheduler as sched_mod
 
-        with patch("orchestrator.pool.os.kill", side_effect=_fake_kill_dead_only):
+        with patch("octopoid.pool.os.kill", side_effect=_fake_kill_dead_only):
             ctx = sched_mod.AgentContext(
                 agent_name="implementer",
                 agent_config={"blueprint_name": "implementer", "max_instances": 1},
@@ -201,7 +201,7 @@ class TestGatherAgentsNoCleanup:
         _setup_finished_agent(agents_dir, tasks_dir)
 
         monkeypatch.setattr(
-            "orchestrator.config.get_agents",
+            "octopoid.config.get_agents",
             MagicMock(return_value=[{
                 "name": "implementer",
                 "blueprint_name": "implementer",
@@ -210,15 +210,15 @@ class TestGatherAgentsNoCleanup:
             }]),
         )
         monkeypatch.setattr(
-            "orchestrator.config.get_notes_dir",
+            "octopoid.config.get_notes_dir",
             MagicMock(return_value=agents_dir / "notes"),
         )
 
         # Track whether cleanup_dead_pids gets called
         cleanup_mock = MagicMock(return_value=0)
-        monkeypatch.setattr("orchestrator.pool.cleanup_dead_pids", cleanup_mock)
+        monkeypatch.setattr("octopoid.pool.cleanup_dead_pids", cleanup_mock)
 
-        from orchestrator.reports import _gather_agents
+        from octopoid.reports import _gather_agents
         _gather_agents()
 
         cleanup_mock.assert_not_called()
@@ -241,7 +241,7 @@ class TestCountRunningIgnoresDeadPids:
             DEAD_PID: {"task_id": "TASK-2", "started_at": "t", "instance_name": "imp-2"},
         })
 
-        with patch("orchestrator.pool.os.kill", side_effect=_fake_kill_dead_only):
+        with patch("octopoid.pool.os.kill", side_effect=_fake_kill_dead_only):
             count = count_running_instances("implementer")
 
         assert count == 1

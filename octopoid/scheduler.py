@@ -2259,14 +2259,14 @@ def _check_venv_integrity() -> None:
     If an agent runs `pip install -e .` inside its worktree, it hijacks the
     shared venv to load code from the wrong directory. Detect this and abort.
     """
-    import orchestrator as _orch
+    import octopoid as _orch
     mod_file = getattr(_orch, "__file__", None) or ""
     # Also check a submodule to catch editable installs that set __file__ on the package
     scheduler_file = str(Path(__file__).resolve())
     if "agents/" in scheduler_file and "worktree" in scheduler_file:
         print(
-            f"FATAL: orchestrator module loaded from agent worktree: {scheduler_file}\n"
-            f"Fix: cd orchestrator && pip install -e .",
+            f"FATAL: octopoid module loaded from agent worktree: {scheduler_file}\n"
+            f"Fix: pip install -e . from the repo root",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -2310,8 +2310,8 @@ def main() -> None:
     # its own DEBUG=False. Pre-register __main__ as the canonical name so all
     # imports share the same module (and the same DEBUG/_log_file globals).
     import sys
-    if "orchestrator.scheduler" not in sys.modules:
-        sys.modules["orchestrator.scheduler"] = sys.modules["__main__"]
+    if "octopoid.scheduler" not in sys.modules:
+        sys.modules["octopoid.scheduler"] = sys.modules["__main__"]
 
     DEBUG = args.debug
     if DEBUG:

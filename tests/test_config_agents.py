@@ -23,7 +23,7 @@ def _write_agents_yaml(project: Path, content: dict) -> None:
 
 def _patch_project(project: Path):
     """Context manager that patches config functions to use tmp_project."""
-    return patch("orchestrator.config.find_parent_project", return_value=project)
+    return patch("octopoid.config.find_parent_project", return_value=project)
 
 
 class TestGetAgentsNewFormat:
@@ -42,7 +42,7 @@ class TestGetAgentsNewFormat:
         })
 
         with _patch_project(tmp_project):
-            from orchestrator.config import get_agents
+            from octopoid.config import get_agents
             agents = get_agents()
 
         assert len(agents) == 1
@@ -63,7 +63,7 @@ class TestGetAgentsNewFormat:
         })
 
         with _patch_project(tmp_project):
-            from orchestrator.config import get_agents
+            from octopoid.config import get_agents
             agents = get_agents()
 
         assert agents[0]["blueprint_name"] == "my-agent"
@@ -78,7 +78,7 @@ class TestGetAgentsNewFormat:
         })
 
         with _patch_project(tmp_project):
-            from orchestrator.config import get_agents
+            from octopoid.config import get_agents
             agents = get_agents()
 
         assert agents[0]["max_instances"] == 1
@@ -93,7 +93,7 @@ class TestGetAgentsNewFormat:
         })
 
         with _patch_project(tmp_project):
-            from orchestrator.config import get_agents
+            from octopoid.config import get_agents
             agents = get_agents()
 
         assert agents[0]["name"] == "my-blueprint"
@@ -109,7 +109,7 @@ class TestGetAgentsNewFormat:
         })
 
         with _patch_project(tmp_project):
-            from orchestrator.config import get_agents
+            from octopoid.config import get_agents
             agents = get_agents()
 
         assert agents[0]["name"] == "custom-name"
@@ -131,7 +131,7 @@ class TestGetAgentsNewFormat:
         })
 
         with _patch_project(tmp_project):
-            from orchestrator.config import get_agents
+            from octopoid.config import get_agents
             agents = get_agents()
 
         assert len(agents) == 2
@@ -142,7 +142,7 @@ class TestGetAgentsNewFormat:
         _write_agents_yaml(tmp_project, {"agents": {}})
 
         with _patch_project(tmp_project):
-            from orchestrator.config import get_agents
+            from octopoid.config import get_agents
             agents = get_agents()
 
         assert agents == []
@@ -156,7 +156,7 @@ class TestGetAgentsNewFormat:
         })
 
         with _patch_project(tmp_project):
-            from orchestrator.config import get_agents
+            from octopoid.config import get_agents
             agents = get_agents()
 
         blueprint_names = [a["blueprint_name"] for a in agents]
@@ -186,7 +186,7 @@ class TestGetAgentsNewFormat:
         })
 
         with _patch_project(tmp_project):
-            from orchestrator.config import get_agents
+            from octopoid.config import get_agents
             agents = get_agents()
 
         assert len(agents) == 1
@@ -213,7 +213,7 @@ class TestGetAgentsLegacyFleetFormat:
         })
 
         with _patch_project(tmp_project):
-            from orchestrator.config import get_agents
+            from octopoid.config import get_agents
             agents = get_agents()
 
         assert len(agents) == 1
@@ -231,7 +231,7 @@ class TestGetAgentsLegacyFleetFormat:
         })
 
         with _patch_project(tmp_project):
-            from orchestrator.config import get_agents
+            from octopoid.config import get_agents
             agents = get_agents()
 
         assert len(agents) == 2
@@ -248,7 +248,7 @@ class TestGetAgentsLegacyFleetFormat:
         })
 
         with _patch_project(tmp_project):
-            from orchestrator.config import get_agents
+            from octopoid.config import get_agents
             agents = get_agents()
 
         # agents is not a dict, so falls back to fleet
@@ -259,7 +259,7 @@ class TestGetAgentsLegacyFleetFormat:
         _write_agents_yaml(tmp_project, {"fleet": []})
 
         with _patch_project(tmp_project):
-            from orchestrator.config import get_agents
+            from octopoid.config import get_agents
             agents = get_agents()
 
         assert agents == []
@@ -268,7 +268,7 @@ class TestGetAgentsLegacyFleetFormat:
         _write_agents_yaml(tmp_project, {"queue_limits": {"max_claimed": 1}})
 
         with _patch_project(tmp_project):
-            from orchestrator.config import get_agents
+            from octopoid.config import get_agents
             agents = get_agents()
 
         assert agents == []
@@ -288,7 +288,7 @@ class TestGetAgentsFormatPriority:
         })
 
         with _patch_project(tmp_project):
-            from orchestrator.config import get_agents
+            from octopoid.config import get_agents
             agents = get_agents()
 
         blueprint_names = [a["blueprint_name"] for a in agents]

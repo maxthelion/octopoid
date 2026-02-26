@@ -1,0 +1,17 @@
+name: default
+description: Standard implementation with review
+
+transitions:
+  "incoming -> claimed":
+    agent: implementer
+
+  "claimed -> provisional":
+    runs: [rebase_on_base, push_branch, run_tests, create_pr]
+
+  "provisional -> done":
+    conditions:
+      - name: gatekeeper_review
+        type: agent
+        agent: gatekeeper
+        on_fail: incoming
+    runs: [post_review_comment, check_ci, rebase_on_base, merge_pr, update_changelog]

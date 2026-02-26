@@ -22,7 +22,7 @@ from unittest.mock import patch
 
 import pytest
 
-from orchestrator.scheduler import (
+from octopoid.scheduler import (
     check_and_requeue_expired_leases,
     handle_agent_result,
 )
@@ -47,7 +47,7 @@ def _advance_time_to_future():
     preserved so the ISO string parsing in the lease check still works.
     """
     return patch(
-        "orchestrator.scheduler.datetime",
+        "octopoid.scheduler.datetime",
         **{
             "now.return_value": _FAR_FUTURE,
             "fromisoformat.side_effect": datetime.fromisoformat,

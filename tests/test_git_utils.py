@@ -11,13 +11,13 @@ class TestEnsureWorktree:
 
     def test_new_worktree_uses_origin_ref(self, temp_dir):
         """New worktrees are created from origin/{base_branch}, not local branch."""
-        from orchestrator.git_utils import ensure_worktree
+        from octopoid.git_utils import ensure_worktree
 
         worktree_path = temp_dir / "agents" / "test-agent" / "worktree"
 
-        with patch('orchestrator.git_utils.find_parent_project', return_value=temp_dir), \
-             patch('orchestrator.git_utils.get_worktree_path', return_value=worktree_path), \
-             patch('orchestrator.git_utils.run_git') as mock_run:
+        with patch('octopoid.git_utils.find_parent_project', return_value=temp_dir), \
+             patch('octopoid.git_utils.get_worktree_path', return_value=worktree_path), \
+             patch('octopoid.git_utils.run_git') as mock_run:
 
             mock_run.return_value = MagicMock(returncode=0)
 
@@ -33,13 +33,13 @@ class TestEnsureWorktree:
 
     def test_new_worktree_custom_branch_uses_origin(self, temp_dir):
         """Custom base_branch also uses origin/ prefix."""
-        from orchestrator.git_utils import ensure_worktree
+        from octopoid.git_utils import ensure_worktree
 
         worktree_path = temp_dir / "agents" / "test-agent" / "worktree"
 
-        with patch('orchestrator.git_utils.find_parent_project', return_value=temp_dir), \
-             patch('orchestrator.git_utils.get_worktree_path', return_value=worktree_path), \
-             patch('orchestrator.git_utils.run_git') as mock_run:
+        with patch('octopoid.git_utils.find_parent_project', return_value=temp_dir), \
+             patch('octopoid.git_utils.get_worktree_path', return_value=worktree_path), \
+             patch('octopoid.git_utils.run_git') as mock_run:
 
             mock_run.return_value = MagicMock(returncode=0)
 
@@ -52,7 +52,7 @@ class TestEnsureWorktree:
 
     def test_new_worktree_fetches_before_create(self, temp_dir):
         """Fetch happens before worktree creation."""
-        from orchestrator.git_utils import ensure_worktree
+        from octopoid.git_utils import ensure_worktree
 
         worktree_path = temp_dir / "agents" / "test-agent" / "worktree"
         call_order = []
@@ -61,9 +61,9 @@ class TestEnsureWorktree:
             call_order.append(args[:2])
             return MagicMock(returncode=0)
 
-        with patch('orchestrator.git_utils.find_parent_project', return_value=temp_dir), \
-             patch('orchestrator.git_utils.get_worktree_path', return_value=worktree_path), \
-             patch('orchestrator.git_utils.run_git', side_effect=tracking_run_git):
+        with patch('octopoid.git_utils.find_parent_project', return_value=temp_dir), \
+             patch('octopoid.git_utils.get_worktree_path', return_value=worktree_path), \
+             patch('octopoid.git_utils.run_git', side_effect=tracking_run_git):
 
             ensure_worktree("test-agent")
 
@@ -73,15 +73,15 @@ class TestEnsureWorktree:
 
     def test_existing_worktree_resets_to_origin(self, temp_dir):
         """Existing worktrees are reset to origin/{base_branch}."""
-        from orchestrator.git_utils import ensure_worktree
+        from octopoid.git_utils import ensure_worktree
 
         worktree_path = temp_dir / "agents" / "test-agent" / "worktree"
         worktree_path.mkdir(parents=True)
         (worktree_path / ".git").write_text("gitdir: ...")
 
-        with patch('orchestrator.git_utils.find_parent_project', return_value=temp_dir), \
-             patch('orchestrator.git_utils.get_worktree_path', return_value=worktree_path), \
-             patch('orchestrator.git_utils.run_git') as mock_run:
+        with patch('octopoid.git_utils.find_parent_project', return_value=temp_dir), \
+             patch('octopoid.git_utils.get_worktree_path', return_value=worktree_path), \
+             patch('octopoid.git_utils.run_git') as mock_run:
 
             mock_run.return_value = MagicMock(returncode=0)
 
@@ -95,7 +95,7 @@ class TestEnsureWorktree:
 
     def test_existing_worktree_fetches_first(self, temp_dir):
         """Existing worktrees fetch origin before resetting."""
-        from orchestrator.git_utils import ensure_worktree
+        from octopoid.git_utils import ensure_worktree
 
         worktree_path = temp_dir / "agents" / "test-agent" / "worktree"
         worktree_path.mkdir(parents=True)
@@ -107,9 +107,9 @@ class TestEnsureWorktree:
             call_order.append(args[:2])
             return MagicMock(returncode=0)
 
-        with patch('orchestrator.git_utils.find_parent_project', return_value=temp_dir), \
-             patch('orchestrator.git_utils.get_worktree_path', return_value=worktree_path), \
-             patch('orchestrator.git_utils.run_git', side_effect=tracking_run_git):
+        with patch('octopoid.git_utils.find_parent_project', return_value=temp_dir), \
+             patch('octopoid.git_utils.get_worktree_path', return_value=worktree_path), \
+             patch('octopoid.git_utils.run_git', side_effect=tracking_run_git):
 
             ensure_worktree("test-agent")
 
@@ -120,7 +120,7 @@ class TestEnsureWorktree:
 
     def test_new_worktree_fallback_to_local_on_missing_origin(self, temp_dir):
         """Falls back to local branch if origin ref doesn't exist."""
-        from orchestrator.git_utils import ensure_worktree
+        from octopoid.git_utils import ensure_worktree
 
         worktree_path = temp_dir / "agents" / "test-agent" / "worktree"
 
@@ -137,9 +137,9 @@ class TestEnsureWorktree:
                 # Second call with local main succeeds
             return MagicMock(returncode=0)
 
-        with patch('orchestrator.git_utils.find_parent_project', return_value=temp_dir), \
-             patch('orchestrator.git_utils.get_worktree_path', return_value=worktree_path), \
-             patch('orchestrator.git_utils.run_git', side_effect=mock_run_git):
+        with patch('octopoid.git_utils.find_parent_project', return_value=temp_dir), \
+             patch('octopoid.git_utils.get_worktree_path', return_value=worktree_path), \
+             patch('octopoid.git_utils.run_git', side_effect=mock_run_git):
 
             ensure_worktree("test-agent")
 
@@ -151,9 +151,9 @@ class TestCreateFeatureBranch:
 
     def test_branch_based_on_origin(self, temp_dir):
         """Feature branch is created from origin/{base_branch}."""
-        from orchestrator.git_utils import create_feature_branch
+        from octopoid.git_utils import create_feature_branch
 
-        with patch('orchestrator.git_utils.run_git') as mock_run:
+        with patch('octopoid.git_utils.run_git') as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
 
             branch = create_feature_branch(temp_dir, "test-task", base_branch="main")
@@ -166,9 +166,9 @@ class TestCreateFeatureBranch:
 
     def test_branch_based_on_origin_custom_base(self, temp_dir):
         """Custom base_branch uses origin/ prefix."""
-        from orchestrator.git_utils import create_feature_branch
+        from octopoid.git_utils import create_feature_branch
 
-        with patch('orchestrator.git_utils.run_git') as mock_run:
+        with patch('octopoid.git_utils.run_git') as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
 
             create_feature_branch(temp_dir, "test-task", base_branch="feature/xyz")
@@ -180,7 +180,7 @@ class TestCreateFeatureBranch:
 
     def test_fetches_before_checkout(self, temp_dir):
         """Fetch happens before creating the branch."""
-        from orchestrator.git_utils import create_feature_branch
+        from octopoid.git_utils import create_feature_branch
 
         call_order = []
 
@@ -188,7 +188,7 @@ class TestCreateFeatureBranch:
             call_order.append(args[:2])
             return MagicMock(returncode=0)
 
-        with patch('orchestrator.git_utils.run_git', side_effect=tracking_run_git):
+        with patch('octopoid.git_utils.run_git', side_effect=tracking_run_git):
             create_feature_branch(temp_dir, "test-task")
 
             fetch_idx = next(i for i, c in enumerate(call_order) if c == ["fetch", "origin"])
@@ -197,9 +197,9 @@ class TestCreateFeatureBranch:
 
     def test_does_not_checkout_local_main(self, temp_dir):
         """Does NOT check out bare 'main' (local) as the base."""
-        from orchestrator.git_utils import create_feature_branch
+        from octopoid.git_utils import create_feature_branch
 
-        with patch('orchestrator.git_utils.run_git') as mock_run:
+        with patch('octopoid.git_utils.run_git') as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
 
             create_feature_branch(temp_dir, "test-task", base_branch="main")
@@ -214,7 +214,7 @@ class TestCreateFeatureBranch:
 
     def test_fallback_to_local_on_origin_failure(self, temp_dir):
         """Falls back to local branch if origin ref fails."""
-        from orchestrator.git_utils import create_feature_branch
+        from octopoid.git_utils import create_feature_branch
 
         call_count = [0]
 
@@ -223,16 +223,16 @@ class TestCreateFeatureBranch:
                 raise subprocess.CalledProcessError(1, "git")
             return MagicMock(returncode=0)
 
-        with patch('orchestrator.git_utils.run_git', side_effect=mock_run_git):
+        with patch('octopoid.git_utils.run_git', side_effect=mock_run_git):
             branch = create_feature_branch(temp_dir, "test-task")
 
             assert branch.startswith("agent/test-task-")
 
     def test_branch_name_format(self, temp_dir):
         """Branch name follows agent/{task_id}-{timestamp} format."""
-        from orchestrator.git_utils import create_feature_branch
+        from octopoid.git_utils import create_feature_branch
 
-        with patch('orchestrator.git_utils.run_git') as mock_run:
+        with patch('octopoid.git_utils.run_git') as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
 
             branch = create_feature_branch(temp_dir, "abc12345")
@@ -248,10 +248,10 @@ class TestGetCommitCount:
 
     def test_get_commit_count_with_commits(self, temp_dir):
         """Test counting commits when there are commits."""
-        from orchestrator.git_utils import get_commit_count
+        from octopoid.git_utils import get_commit_count
 
         # Mock the git commands
-        with patch('orchestrator.git_utils.run_git') as mock_run:
+        with patch('octopoid.git_utils.run_git') as mock_run:
             # Mock merge-base finding common ancestor
             merge_base_result = MagicMock()
             merge_base_result.returncode = 0
@@ -270,9 +270,9 @@ class TestGetCommitCount:
 
     def test_get_commit_count_no_common_ancestor(self, temp_dir):
         """Test counting commits when there's no common ancestor with main."""
-        from orchestrator.git_utils import get_commit_count
+        from octopoid.git_utils import get_commit_count
 
-        with patch('orchestrator.git_utils.run_git') as mock_run:
+        with patch('octopoid.git_utils.run_git') as mock_run:
             # Mock merge-base failing (no common ancestor)
             merge_base_result = MagicMock()
             merge_base_result.returncode = 1
@@ -290,9 +290,9 @@ class TestGetCommitCount:
 
     def test_get_commit_count_with_since_ref(self, temp_dir):
         """Test counting commits since a specific ref."""
-        from orchestrator.git_utils import get_commit_count
+        from octopoid.git_utils import get_commit_count
 
-        with patch('orchestrator.git_utils.run_git') as mock_run:
+        with patch('octopoid.git_utils.run_git') as mock_run:
             count_result = MagicMock()
             count_result.returncode = 0
             count_result.stdout = "3\n"
@@ -309,9 +309,9 @@ class TestGetCommitCount:
 
     def test_get_commit_count_zero(self, temp_dir):
         """Test counting commits when there are none."""
-        from orchestrator.git_utils import get_commit_count
+        from octopoid.git_utils import get_commit_count
 
-        with patch('orchestrator.git_utils.run_git') as mock_run:
+        with patch('octopoid.git_utils.run_git') as mock_run:
             merge_base_result = MagicMock()
             merge_base_result.returncode = 0
             merge_base_result.stdout = "abc123\n"
@@ -328,9 +328,9 @@ class TestGetCommitCount:
 
     def test_get_commit_count_error(self, temp_dir):
         """Test that errors return 0."""
-        from orchestrator.git_utils import get_commit_count
+        from octopoid.git_utils import get_commit_count
 
-        with patch('orchestrator.git_utils.run_git') as mock_run:
+        with patch('octopoid.git_utils.run_git') as mock_run:
             mock_run.side_effect = subprocess.CalledProcessError(1, "git")
 
             count = get_commit_count(temp_dir)
@@ -339,9 +339,9 @@ class TestGetCommitCount:
 
     def test_get_commit_count_invalid_output(self, temp_dir):
         """Test handling invalid git output."""
-        from orchestrator.git_utils import get_commit_count
+        from octopoid.git_utils import get_commit_count
 
-        with patch('orchestrator.git_utils.run_git') as mock_run:
+        with patch('octopoid.git_utils.run_git') as mock_run:
             merge_base_result = MagicMock()
             merge_base_result.returncode = 0
             merge_base_result.stdout = "abc123\n"
@@ -362,7 +362,7 @@ class TestRunGit:
 
     def test_run_git_success(self, temp_dir):
         """Test successful git command."""
-        from orchestrator.git_utils import run_git
+        from octopoid.git_utils import run_git
 
         with patch('subprocess.run') as mock_run:
             mock_result = MagicMock()
@@ -379,7 +379,7 @@ class TestRunGit:
 
     def test_run_git_with_check(self, temp_dir):
         """Test that check=True raises on non-zero exit."""
-        from orchestrator.git_utils import run_git
+        from octopoid.git_utils import run_git
 
         with patch('subprocess.run') as mock_run:
             mock_run.side_effect = subprocess.CalledProcessError(1, "git status")
@@ -389,7 +389,7 @@ class TestRunGit:
 
     def test_run_git_without_check(self, temp_dir):
         """Test that check=False doesn't raise."""
-        from orchestrator.git_utils import run_git
+        from octopoid.git_utils import run_git
 
         with patch('subprocess.run') as mock_run:
             mock_result = MagicMock()
@@ -406,9 +406,9 @@ class TestHasUncommittedChanges:
 
     def test_has_uncommitted_changes_clean(self, temp_dir):
         """Test clean working directory."""
-        from orchestrator.git_utils import has_uncommitted_changes
+        from octopoid.git_utils import has_uncommitted_changes
 
-        with patch('orchestrator.git_utils.run_git') as mock_run:
+        with patch('octopoid.git_utils.run_git') as mock_run:
             mock_result = MagicMock()
             mock_result.stdout = ""
             mock_run.return_value = mock_result
@@ -419,9 +419,9 @@ class TestHasUncommittedChanges:
 
     def test_has_uncommitted_changes_dirty(self, temp_dir):
         """Test dirty working directory."""
-        from orchestrator.git_utils import has_uncommitted_changes
+        from octopoid.git_utils import has_uncommitted_changes
 
-        with patch('orchestrator.git_utils.run_git') as mock_run:
+        with patch('octopoid.git_utils.run_git') as mock_run:
             mock_result = MagicMock()
             mock_result.stdout = "M file.py\n"
             mock_run.return_value = mock_result
@@ -436,7 +436,7 @@ class TestGetSubmoduleStatus:
 
     def test_nonexistent_submodule(self, temp_dir):
         """Returns exists=False when submodule directory doesn't exist."""
-        from orchestrator.git_utils import get_submodule_status
+        from octopoid.git_utils import get_submodule_status
 
         result = get_submodule_status(temp_dir)
         assert result["exists"] is False
@@ -445,7 +445,7 @@ class TestGetSubmoduleStatus:
 
     def test_submodule_without_git(self, temp_dir):
         """Returns exists=False when submodule dir exists but has no .git."""
-        from orchestrator.git_utils import get_submodule_status
+        from octopoid.git_utils import get_submodule_status
 
         (temp_dir / "orchestrator").mkdir()
         result = get_submodule_status(temp_dir)
@@ -453,7 +453,7 @@ class TestGetSubmoduleStatus:
 
     def test_submodule_on_main_branch(self, temp_dir):
         """Reports branch correctly when on main."""
-        from orchestrator.git_utils import get_submodule_status
+        from octopoid.git_utils import get_submodule_status
 
         sub = temp_dir / "orchestrator"
         sub.mkdir()
@@ -478,7 +478,7 @@ class TestGetSubmoduleStatus:
                 result.stdout = ""
             return result
 
-        with patch('orchestrator.git_utils.run_git', side_effect=mock_run_git):
+        with patch('octopoid.git_utils.run_git', side_effect=mock_run_git):
             result = get_submodule_status(temp_dir)
 
         assert result["exists"] is True
@@ -489,7 +489,7 @@ class TestGetSubmoduleStatus:
 
     def test_submodule_detached_head(self, temp_dir):
         """Reports detached HEAD with warning."""
-        from orchestrator.git_utils import get_submodule_status
+        from octopoid.git_utils import get_submodule_status
 
         sub = temp_dir / "orchestrator"
         sub.mkdir()
@@ -510,7 +510,7 @@ class TestGetSubmoduleStatus:
                 result.stdout = ""
             return result
 
-        with patch('orchestrator.git_utils.run_git', side_effect=mock_run_git):
+        with patch('octopoid.git_utils.run_git', side_effect=mock_run_git):
             result = get_submodule_status(temp_dir)
 
         assert result["exists"] is True
@@ -520,7 +520,7 @@ class TestGetSubmoduleStatus:
 
     def test_submodule_wrong_branch(self, temp_dir):
         """Warns when submodule is on unexpected branch."""
-        from orchestrator.git_utils import get_submodule_status
+        from octopoid.git_utils import get_submodule_status
 
         sub = temp_dir / "orchestrator"
         sub.mkdir()
@@ -537,7 +537,7 @@ class TestGetSubmoduleStatus:
                 result.stdout = ""
             return result
 
-        with patch('orchestrator.git_utils.run_git', side_effect=mock_run_git):
+        with patch('octopoid.git_utils.run_git', side_effect=mock_run_git):
             result = get_submodule_status(temp_dir)
 
         assert result["branch"] == "some-other-branch"
@@ -545,7 +545,7 @@ class TestGetSubmoduleStatus:
 
     def test_submodule_with_unstaged_changes(self, temp_dir):
         """Reports unstaged changes in submodule."""
-        from orchestrator.git_utils import get_submodule_status
+        from octopoid.git_utils import get_submodule_status
 
         sub = temp_dir / "orchestrator"
         sub.mkdir()
@@ -568,7 +568,7 @@ class TestGetSubmoduleStatus:
                 result.stdout = ""
             return result
 
-        with patch('orchestrator.git_utils.run_git', side_effect=mock_run_git):
+        with patch('octopoid.git_utils.run_git', side_effect=mock_run_git):
             result = get_submodule_status(temp_dir)
 
         assert result["diff_shortstat"] == "2 files changed, 15 insertions(+), 3 deletions(-)"
@@ -576,7 +576,7 @@ class TestGetSubmoduleStatus:
 
     def test_submodule_custom_name(self, temp_dir):
         """Respects custom submodule name."""
-        from orchestrator.git_utils import get_submodule_status
+        from octopoid.git_utils import get_submodule_status
 
         sub = temp_dir / "custom-sub"
         sub.mkdir()
@@ -593,7 +593,7 @@ class TestGetSubmoduleStatus:
                 result.stdout = ""
             return result
 
-        with patch('orchestrator.git_utils.run_git', side_effect=mock_run_git):
+        with patch('octopoid.git_utils.run_git', side_effect=mock_run_git):
             result = get_submodule_status(temp_dir, submodule_name="custom-sub")
 
         assert result["exists"] is True
@@ -601,7 +601,7 @@ class TestGetSubmoduleStatus:
 
     def test_submodule_git_failures_graceful(self, temp_dir):
         """Handles git command failures gracefully."""
-        from orchestrator.git_utils import get_submodule_status
+        from octopoid.git_utils import get_submodule_status
 
         sub = temp_dir / "orchestrator"
         sub.mkdir()
@@ -610,7 +610,7 @@ class TestGetSubmoduleStatus:
         def mock_run_git(args, cwd=None, check=True):
             raise subprocess.SubprocessError("git not available")
 
-        with patch('orchestrator.git_utils.run_git', side_effect=mock_run_git):
+        with patch('octopoid.git_utils.run_git', side_effect=mock_run_git):
             result = get_submodule_status(temp_dir)
 
         # Should not raise, return safe defaults
@@ -629,7 +629,7 @@ class TestCreateTaskWorktree:
 
     def test_reuses_existing_worktree_on_correct_branch(self, temp_dir):
         """Existing worktree is reused when it's based on the correct branch."""
-        from orchestrator.git_utils import create_task_worktree
+        from octopoid.git_utils import create_task_worktree
 
         task = {"id": "abc12345", "branch": "main"}
         worktree_path = temp_dir / "tasks" / "abc12345" / "worktree"
@@ -641,9 +641,9 @@ class TestCreateTaskWorktree:
             result.stdout = "abc123def456\n"
             return result
 
-        with patch('orchestrator.git_utils.find_parent_project', return_value=temp_dir), \
-             patch('orchestrator.git_utils.get_task_worktree_path', return_value=worktree_path), \
-             patch('orchestrator.git_utils.run_git', side_effect=mock_run_git) as mock_git:
+        with patch('octopoid.git_utils.find_parent_project', return_value=temp_dir), \
+             patch('octopoid.git_utils.get_task_worktree_path', return_value=worktree_path), \
+             patch('octopoid.git_utils.run_git', side_effect=mock_run_git) as mock_git:
 
             result = create_task_worktree(task)
 
@@ -654,7 +654,7 @@ class TestCreateTaskWorktree:
 
     def test_recreates_worktree_on_branch_mismatch(self, temp_dir):
         """Existing worktree is deleted and recreated when based on wrong branch."""
-        from orchestrator.git_utils import create_task_worktree
+        from octopoid.git_utils import create_task_worktree
 
         task = {"id": "abc12345", "branch": "feature/new-branch"}
         worktree_path = temp_dir / "tasks" / "abc12345" / "worktree"
@@ -698,9 +698,9 @@ class TestCreateTaskWorktree:
                 result.returncode = 0
             return result
 
-        with patch('orchestrator.git_utils.find_parent_project', return_value=temp_dir), \
-             patch('orchestrator.git_utils.get_task_worktree_path', return_value=worktree_path), \
-             patch('orchestrator.git_utils.run_git', side_effect=mock_run_git):
+        with patch('octopoid.git_utils.find_parent_project', return_value=temp_dir), \
+             patch('octopoid.git_utils.get_task_worktree_path', return_value=worktree_path), \
+             patch('octopoid.git_utils.run_git', side_effect=mock_run_git):
 
             result = create_task_worktree(task)
 
@@ -714,7 +714,7 @@ class TestCreateTaskWorktree:
 
     def test_logs_mismatch_message(self, temp_dir, capsys):
         """Branch mismatch logs a clear debug message."""
-        from orchestrator.git_utils import create_task_worktree
+        from octopoid.git_utils import create_task_worktree
 
         task = {"id": "abc12345", "branch": "feature/correct-branch"}
         worktree_path = temp_dir / "tasks" / "abc12345" / "worktree"
@@ -738,9 +738,9 @@ class TestCreateTaskWorktree:
                 result.returncode = 0
             return result
 
-        with patch('orchestrator.git_utils.find_parent_project', return_value=temp_dir), \
-             patch('orchestrator.git_utils.get_task_worktree_path', return_value=worktree_path), \
-             patch('orchestrator.git_utils.run_git', side_effect=mock_run_git):
+        with patch('octopoid.git_utils.find_parent_project', return_value=temp_dir), \
+             patch('octopoid.git_utils.get_task_worktree_path', return_value=worktree_path), \
+             patch('octopoid.git_utils.run_git', side_effect=mock_run_git):
 
             create_task_worktree(task)
 
@@ -751,7 +751,7 @@ class TestCreateTaskWorktree:
 
     def test_does_not_check_branch_for_new_worktree(self, temp_dir):
         """Branch check is skipped when no worktree exists yet."""
-        from orchestrator.git_utils import create_task_worktree
+        from octopoid.git_utils import create_task_worktree
 
         task = {"id": "newtask1", "branch": "main"}
         worktree_path = temp_dir / "tasks" / "newtask1" / "worktree"
@@ -768,9 +768,9 @@ class TestCreateTaskWorktree:
                 result.stdout = "HEAD\n"
             return result
 
-        with patch('orchestrator.git_utils.find_parent_project', return_value=temp_dir), \
-             patch('orchestrator.git_utils.get_task_worktree_path', return_value=worktree_path), \
-             patch('orchestrator.git_utils.run_git', side_effect=mock_run_git) as mock_git:
+        with patch('octopoid.git_utils.find_parent_project', return_value=temp_dir), \
+             patch('octopoid.git_utils.get_task_worktree_path', return_value=worktree_path), \
+             patch('octopoid.git_utils.run_git', side_effect=mock_run_git) as mock_git:
 
             result = create_task_worktree(task)
 
@@ -784,7 +784,7 @@ class TestCreateTaskWorktree:
 
     def test_treats_missing_origin_branch_as_match(self, temp_dir):
         """If origin/<branch> doesn't exist, existing worktree is kept."""
-        from orchestrator.git_utils import create_task_worktree
+        from octopoid.git_utils import create_task_worktree
 
         task = {"id": "abc12345", "branch": "nonexistent-branch"}
         worktree_path = temp_dir / "tasks" / "abc12345" / "worktree"
@@ -800,9 +800,9 @@ class TestCreateTaskWorktree:
                 result.returncode = 0
             return result
 
-        with patch('orchestrator.git_utils.find_parent_project', return_value=temp_dir), \
-             patch('orchestrator.git_utils.get_task_worktree_path', return_value=worktree_path), \
-             patch('orchestrator.git_utils.run_git', side_effect=mock_run_git) as mock_git:
+        with patch('octopoid.git_utils.find_parent_project', return_value=temp_dir), \
+             patch('octopoid.git_utils.get_task_worktree_path', return_value=worktree_path), \
+             patch('octopoid.git_utils.run_git', side_effect=mock_run_git) as mock_git:
 
             result = create_task_worktree(task)
 

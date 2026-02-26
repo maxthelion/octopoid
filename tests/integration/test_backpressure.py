@@ -8,7 +8,7 @@ and pre-fetched queue_counts.
 import pytest
 from unittest.mock import patch
 
-from orchestrator.backpressure import can_claim_task
+from octopoid.backpressure import can_claim_task
 
 
 # Limits used for tests that need max_claimed > 1 (default is 1).
@@ -29,7 +29,7 @@ class TestBackpressureBlocksAtCapacity:
         in a different scope — so we mock count_queue to return the values
         that match the actual server state.
         """
-        with patch("orchestrator.backpressure.get_queue_limits", return_value=_TEST_LIMITS):
+        with patch("octopoid.backpressure.get_queue_limits", return_value=_TEST_LIMITS):
             # ── Setup: 3 incoming tasks ────────────────────────────────────
             for i in range(3):
                 scoped_sdk.tasks.create(
@@ -52,7 +52,7 @@ class TestBackpressureBlocksAtCapacity:
                 claimed_tasks.append(t)
 
             # ── At capacity: 2 claimed tasks ──────────────────────────────
-            with patch("orchestrator.backpressure.count_queue", return_value=2):
+            with patch("octopoid.backpressure.count_queue", return_value=2):
                 queue_counts_at_cap = {"incoming": 1, "provisional": 0}
                 result, reason = can_claim_task(queue_counts=queue_counts_at_cap)
 
@@ -65,7 +65,7 @@ class TestBackpressureBlocksAtCapacity:
             scoped_sdk.tasks.accept(task_id=first_task_id, accepted_by="test-gatekeeper")
 
             # ── Below capacity: 1 claimed task ────────────────────────────
-            with patch("orchestrator.backpressure.count_queue", return_value=1):
+            with patch("octopoid.backpressure.count_queue", return_value=1):
                 queue_counts_freed = {"incoming": 1, "provisional": 0}
                 result_after, reason_after = can_claim_task(queue_counts=queue_counts_freed)
 
@@ -87,7 +87,7 @@ class TestBackpressureWithQueueCounts:
         """When queue_counts is provided, count_queue() is only called for claimed (scope isolation)."""
         queue_counts = {"incoming": 5, "provisional": 0}
 
-        with patch("orchestrator.backpressure.count_queue", return_value=0) as mock_count:
+        with patch("octopoid.backpressure.count_queue", return_value=0) as mock_count:
             result, reason = can_claim_task(queue_counts=queue_counts)
 
         # count_queue is called once for "claimed" — scope-filtered fetch
@@ -97,8 +97,8 @@ class TestBackpressureWithQueueCounts:
     def test_blocks_when_claimed_equals_max(self):
         """Blocks when claimed count matches the configured max_claimed."""
         with (
-            patch("orchestrator.backpressure.get_queue_limits", return_value=_TEST_LIMITS),
-            patch("orchestrator.backpressure.count_queue", return_value=2),
+            patch("octopoid.backpressure.get_queue_limits", return_value=_TEST_LIMITS),
+            patch("octopoid.backpressure.count_queue", return_value=2),
         ):
             queue_counts = {"incoming": 3, "provisional": 0}
             result, reason = can_claim_task(queue_counts=queue_counts)
@@ -109,8 +109,8 @@ class TestBackpressureWithQueueCounts:
     def test_allows_when_claimed_below_max(self):
         """Allows claiming when claimed count is below max_claimed."""
         with (
-            patch("orchestrator.backpressure.get_queue_limits", return_value=_TEST_LIMITS),
-            patch("orchestrator.backpressure.count_queue", return_value=1),
+            patch("octopoid.backpressure.get_queue_limits", return_value=_TEST_LIMITS),
+            patch("octopoid.backpressure.count_queue", return_value=1),
         ):
             queue_counts = {"incoming": 3, "provisional": 0}
             result, reason = can_claim_task(queue_counts=queue_counts)
@@ -121,8 +121,8 @@ class TestBackpressureWithQueueCounts:
         """Blocks when provisional count matches the configured max_provisional."""
         limits = {"max_incoming": 20, "max_claimed": 5, "max_provisional": 2}
         with (
-            patch("orchestrator.backpressure.get_queue_limits", return_value=limits),
-            patch("orchestrator.backpressure.count_queue", return_value=0),
+            patch("octopoid.backpressure.get_queue_limits", return_value=limits),
+            patch("octopoid.backpressure.count_queue", return_value=0),
         ):
             queue_counts = {"incoming": 3, "provisional": 2}
             result, reason = can_claim_task(queue_counts=queue_counts)
@@ -134,7 +134,7 @@ class TestBackpressureWithQueueCounts:
         """Partial queue_counts dict — missing keys default to 0."""
         # Only 'incoming' provided; 'provisional' absent (defaults to 0).
         # count_queue("claimed") is always called for scope isolation.
-        with patch("orchestrator.backpressure.count_queue", return_value=0):
+        with patch("octopoid.backpressure.count_queue", return_value=0):
             queue_counts = {"incoming": 2}
             result, reason = can_claim_task(queue_counts=queue_counts)
 

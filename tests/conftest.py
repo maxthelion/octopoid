@@ -57,8 +57,8 @@ agents: []
 @pytest.fixture
 def mock_config(mock_orchestrator_dir, temp_dir):
     """Patch config functions to use the mock directory."""
-    with patch('orchestrator.config.find_parent_project', return_value=temp_dir):
-        with patch('orchestrator.config.get_orchestrator_dir', return_value=mock_orchestrator_dir):
+    with patch('octopoid.config.find_parent_project', return_value=temp_dir):
+        with patch('octopoid.config.get_orchestrator_dir', return_value=mock_orchestrator_dir):
             yield mock_orchestrator_dir
 
 
@@ -149,8 +149,8 @@ def mock_sdk_for_unit_tests(request):
         return
 
     # Reset the global SDK cache before each test
-    import orchestrator.sdk
-    orchestrator.sdk._sdk = None
+    import octopoid.sdk
+    octopoid.sdk._sdk = None
 
     # Create a mock SDK
     mock_sdk = MagicMock()
@@ -166,10 +166,10 @@ def mock_sdk_for_unit_tests(request):
 
     # Apply the mock for the duration of the test
     # Patch at multiple locations where get_sdk is imported
-    with patch('orchestrator.sdk.get_sdk', return_value=mock_sdk):
-        with patch('orchestrator.tasks.get_sdk', return_value=mock_sdk):
-            with patch('orchestrator.projects.get_sdk', return_value=mock_sdk):
+    with patch('octopoid.sdk.get_sdk', return_value=mock_sdk):
+        with patch('octopoid.tasks.get_sdk', return_value=mock_sdk):
+            with patch('octopoid.projects.get_sdk', return_value=mock_sdk):
                 yield mock_sdk
 
     # Reset the SDK cache after the test as well
-    orchestrator.sdk._sdk = None
+    octopoid.sdk._sdk = None

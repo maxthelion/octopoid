@@ -15,9 +15,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from orchestrator.backpressure import can_claim_task
-from orchestrator.jobs import load_jobs_yaml
-from orchestrator.scheduler import (
+from octopoid.backpressure import can_claim_task
+from octopoid.jobs import load_jobs_yaml
+from octopoid.scheduler import (
     AgentContext,
     _register_orchestrator,
     guard_backpressure,
@@ -26,7 +26,7 @@ from orchestrator.scheduler import (
     record_job_run,
     save_scheduler_state,
 )
-from orchestrator.state_utils import AgentState
+from octopoid.state_utils import AgentState
 
 
 def _get_job_intervals() -> dict[str, int]:
@@ -45,7 +45,7 @@ class TestCanClaimTaskWithQueueCounts:
     def test_uses_queue_counts_no_api_call(self):
         """When queue_counts is provided, only claimed count is re-fetched for scope isolation."""
         queue_counts = {"incoming": 3, "claimed": 0, "provisional": 0}
-        with patch("orchestrator.backpressure.count_queue", return_value=0) as mock_count:
+        with patch("octopoid.backpressure.count_queue", return_value=0) as mock_count:
             result, reason = can_claim_task(queue_counts=queue_counts)
         # claimed is always re-fetched via count_queue for scope filtering (GH-227)
         mock_count.assert_called_once_with("claimed")
@@ -64,7 +64,7 @@ class TestCanClaimTaskWithQueueCounts:
         count_queue("claimed") is always called even when queue_counts is provided,
         to ensure scope isolation (GH-227). The queue_counts claimed value is ignored.
         """
-        from orchestrator.config import get_queue_limits
+        from octopoid.config import get_queue_limits
         limits = get_queue_limits()
         queue_counts = {
             "incoming": 5,
@@ -72,14 +72,14 @@ class TestCanClaimTaskWithQueueCounts:
             "provisional": 0,
         }
         # ...scope-filtered count is at the limit
-        with patch("orchestrator.backpressure.count_queue", return_value=limits["max_claimed"]):
+        with patch("octopoid.backpressure.count_queue", return_value=limits["max_claimed"]):
             result, reason = can_claim_task(queue_counts=queue_counts)
         assert result is False
         assert "claimed" in reason.lower()
 
     def test_queue_counts_provisional_at_limit_blocked(self):
         """Pre-fetched provisional at limit blocks claiming."""
-        from orchestrator.config import get_queue_limits
+        from octopoid.config import get_queue_limits
         limits = get_queue_limits()
         queue_counts = {
             "incoming": 5,
@@ -92,7 +92,7 @@ class TestCanClaimTaskWithQueueCounts:
 
     def test_none_falls_back_to_api(self):
         """When queue_counts is None, falls back to individual API calls."""
-        with patch("orchestrator.backpressure.count_queue", return_value=2) as mock_count:
+        with patch("octopoid.backpressure.count_queue", return_value=2) as mock_count:
             result, reason = can_claim_task(queue_counts=None)
         # count_queue should be called multiple times (incoming, claimed, provisional)
         assert mock_count.call_count >= 1
@@ -123,7 +123,7 @@ class TestGuardBackpressureWithQueueCounts:
             tmp_path, "incoming",
             queue_counts={"incoming": 3, "claimed": 0, "provisional": 0},
         )
-        with patch("orchestrator.backpressure.count_queue", return_value=0) as mock_count:
+        with patch("octopoid.backpressure.count_queue", return_value=0) as mock_count:
             proceed, reason = guard_backpressure(ctx)
         # claimed is always re-fetched for scope filtering (GH-227); incoming uses poll data
         mock_count.assert_called_once_with("claimed")
@@ -135,7 +135,7 @@ class TestGuardBackpressureWithQueueCounts:
             tmp_path, "incoming",
             queue_counts={"incoming": 0, "claimed": 0, "provisional": 0},
         )
-        with patch("orchestrator.backpressure.count_queue") as mock_count:
+        with patch("octopoid.backpressure.count_queue") as mock_count:
             proceed, reason = guard_backpressure(ctx)
         mock_count.assert_not_called()
         assert proceed is False
@@ -147,7 +147,7 @@ class TestGuardBackpressureWithQueueCounts:
             tmp_path, "provisional",
             queue_counts={"incoming": 2, "claimed": 0, "provisional": 1},
         )
-        with patch("orchestrator.backpressure.count_queue") as mock_count:
+        with patch("octopoid.backpressure.count_queue") as mock_count:
             proceed, reason = guard_backpressure(ctx)
         mock_count.assert_not_called()
         assert proceed is True
@@ -158,7 +158,7 @@ class TestGuardBackpressureWithQueueCounts:
             tmp_path, "provisional",
             queue_counts={"incoming": 0, "claimed": 0, "provisional": 0},
         )
-        with patch("orchestrator.backpressure.count_queue") as mock_count:
+        with patch("octopoid.backpressure.count_queue") as mock_count:
             proceed, reason = guard_backpressure(ctx)
         mock_count.assert_not_called()
         assert proceed is False
@@ -167,7 +167,7 @@ class TestGuardBackpressureWithQueueCounts:
     def test_none_queue_counts_falls_back_to_api(self, tmp_path):
         """When ctx.queue_counts is None, API is called (backwards compat)."""
         ctx = self._make_ctx(tmp_path, "incoming", queue_counts=None)
-        with patch("orchestrator.backpressure.count_queue", return_value=0):
+        with patch("octopoid.backpressure.count_queue", return_value=0):
             proceed, reason = guard_backpressure(ctx)
         assert proceed is False
 
@@ -182,7 +182,7 @@ class TestJobIntervalManagement:
 
     def test_load_scheduler_state_missing_file(self, tmp_path):
         """Returns empty structure when file doesn't exist."""
-        with patch("orchestrator.scheduler.get_scheduler_state_path", return_value=tmp_path / "missing.json"):
+        with patch("octopoid.scheduler.get_scheduler_state_path", return_value=tmp_path / "missing.json"):
             state = load_scheduler_state()
         assert state == {"jobs": {}}
 
@@ -190,7 +190,7 @@ class TestJobIntervalManagement:
         """Returns stored state when file exists."""
         state_file = tmp_path / "scheduler_state.json"
         state_file.write_text(json.dumps({"jobs": {"check_and_update_finished_agents": "2026-01-01T00:00:00"}}))
-        with patch("orchestrator.scheduler.get_scheduler_state_path", return_value=state_file):
+        with patch("octopoid.scheduler.get_scheduler_state_path", return_value=state_file):
             state = load_scheduler_state()
         assert "check_and_update_finished_agents" in state["jobs"]
 
@@ -198,7 +198,7 @@ class TestJobIntervalManagement:
         """save_scheduler_state + load_scheduler_state roundtrip preserves data."""
         state_file = tmp_path / "scheduler_state.json"
         original = {"jobs": {"_register_orchestrator": "2026-02-19T12:00:00"}}
-        with patch("orchestrator.scheduler.get_scheduler_state_path", return_value=state_file):
+        with patch("octopoid.scheduler.get_scheduler_state_path", return_value=state_file):
             save_scheduler_state(original)
             loaded = load_scheduler_state()
         assert loaded == original
@@ -279,8 +279,8 @@ class TestRegisterOrchestratorSkip:
         """No POST request when orchestrator_registered=True."""
         mock_sdk = MagicMock()
         with (
-            patch("orchestrator.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
-            patch("orchestrator.scheduler.queue_utils.get_orchestrator_id", return_value="test-orch"),
+            patch("octopoid.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("octopoid.scheduler.queue_utils.get_orchestrator_id", return_value="test-orch"),
         ):
             _register_orchestrator(orchestrator_registered=True)
         mock_sdk._request.assert_not_called()
@@ -289,8 +289,8 @@ class TestRegisterOrchestratorSkip:
         """POST request sent when orchestrator_registered=False."""
         mock_sdk = MagicMock()
         with (
-            patch("orchestrator.queue_utils.get_sdk", return_value=mock_sdk),
-            patch("orchestrator.queue_utils.get_orchestrator_id", return_value="test-orch"),
+            patch("octopoid.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("octopoid.queue_utils.get_orchestrator_id", return_value="test-orch"),
         ):
             _register_orchestrator(orchestrator_registered=False)
         # _request is called at least once for registration; flow sync may add more calls
@@ -303,8 +303,8 @@ class TestRegisterOrchestratorSkip:
         """Default behaviour (no orchestrator_registered arg) sends POST."""
         mock_sdk = MagicMock()
         with (
-            patch("orchestrator.queue_utils.get_sdk", return_value=mock_sdk),
-            patch("orchestrator.queue_utils.get_orchestrator_id", return_value="test-orch"),
+            patch("octopoid.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("octopoid.queue_utils.get_orchestrator_id", return_value="test-orch"),
         ):
             _register_orchestrator()
         # _request is called at least once for registration; flow sync may add more calls

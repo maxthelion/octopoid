@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from orchestrator.scheduler import (
+from octopoid.scheduler import (
     handle_agent_result,
     handle_agent_result_via_flow,
 )
@@ -379,8 +379,8 @@ class TestRebaseInstructions:
         """
         import json
 
-        from orchestrator import queue_utils
-        from orchestrator.config import get_base_branch
+        from octopoid import queue_utils
+        from octopoid.config import get_base_branch
 
         task_id = _make_provisional(scoped_sdk, orchestrator_id)
 
