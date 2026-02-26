@@ -339,21 +339,25 @@ class TestFailTask:
         mock_logger = MagicMock()
 
         with patch('octopoid.tasks.get_task_logger', return_value=mock_logger):
-            with patch('octopoid.git_utils.cleanup_task_worktree'):
-                from octopoid.queue_utils import fail_task
+            from octopoid.queue_utils import fail_task
 
-                result = fail_task("abc12345", error="Something went wrong")
+            result = fail_task("abc12345", reason="Something went wrong", source="test-source")
 
-                # SDK should update task to failed queue
-                mock_sdk_for_unit_tests.tasks.update.assert_called_once_with("abc12345", queue="failed")
+            # SDK should update task to failed queue with execution_notes
+            mock_sdk_for_unit_tests.tasks.update.assert_called_once_with(
+                "abc12345", queue="failed", execution_notes="Something went wrong"
+            )
 
-                # Function should return SDK result dict
-                assert result is not None
-                assert result["id"] == "abc12345"
-                assert result["queue"] == "failed"
+            # Logger should have been called with failure event
+            mock_logger.log_failed.assert_called_once()
+
+            # Function should return SDK result dict
+            assert result is not None
+            assert result["id"] == "abc12345"
+            assert result["queue"] == "failed"
 
     def test_fail_task_truncates_long_error(self, mock_orchestrator_dir, sample_task_file, mock_sdk_for_unit_tests):
-        """A 10,000-char error should be truncated in the SDK call."""
+        """A 10,000-char error should be truncated in the SDK call (max 500 chars)."""
         long_error = "X" * 10_000
         mock_sdk_for_unit_tests.tasks.update.return_value = {
             "id": "abc12345",
@@ -363,18 +367,46 @@ class TestFailTask:
         mock_logger = MagicMock()
 
         with patch('octopoid.tasks.get_task_logger', return_value=mock_logger):
-            with patch('octopoid.git_utils.cleanup_task_worktree'):
-                from octopoid.queue_utils import fail_task
+            from octopoid.queue_utils import fail_task
 
-                result = fail_task("abc12345", error=long_error)
+            result = fail_task("abc12345", reason=long_error, source="test-source")
 
-                # SDK should update task to failed queue
-                mock_sdk_for_unit_tests.tasks.update.assert_called_once_with("abc12345", queue="failed")
+            # SDK should update task to failed queue
+            call_kwargs = mock_sdk_for_unit_tests.tasks.update.call_args.kwargs
+            assert call_kwargs["queue"] == "failed"
+            # execution_notes should be truncated to 500 chars + "..."
+            assert len(call_kwargs["execution_notes"]) <= 503
+            assert call_kwargs["execution_notes"].endswith("...")
 
-                # Function should return SDK result dict
-                assert result is not None
-                assert result["id"] == "abc12345"
-                assert result["queue"] == "failed"
+            # Function should return SDK result dict
+            assert result is not None
+            assert result["id"] == "abc12345"
+            assert result["queue"] == "failed"
+
+    def test_fail_task_passes_extra_kwargs_to_sdk(self, mock_orchestrator_dir, sample_task_file, mock_sdk_for_unit_tests):
+        """Extra kwargs (e.g. claimed_by, attempt_count) are forwarded to sdk.tasks.update."""
+        mock_sdk_for_unit_tests.tasks.update.return_value = {
+            "id": "abc12345",
+            "queue": "failed",
+        }
+
+        mock_logger = MagicMock()
+
+        with patch('octopoid.tasks.get_task_logger', return_value=mock_logger):
+            from octopoid.queue_utils import fail_task
+
+            fail_task(
+                "abc12345",
+                reason="Circuit breaker tripped",
+                source="lease-expiry-circuit-breaker",
+                claimed_by=None,
+                attempt_count=3,
+            )
+
+            call_kwargs = mock_sdk_for_unit_tests.tasks.update.call_args.kwargs
+            assert call_kwargs["queue"] == "failed"
+            assert call_kwargs["claimed_by"] is None
+            assert call_kwargs["attempt_count"] == 3
 
 
 class TestRejectTask:

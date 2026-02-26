@@ -15,6 +15,7 @@ from datetime import datetime
 from pathlib import Path
 
 from . import queue_utils
+from .tasks import fail_task
 
 
 def debug_log(message: str) -> None:
@@ -488,12 +489,11 @@ def handle_agent_result_via_flow(task_id: str, agent_name: str, task_dir: Path, 
         debug_log(f"Error in handle_agent_result_via_flow for {task_id}: {e}")
         debug_log(traceback.format_exc())
         try:
-            sdk = queue_utils.get_sdk()
-            # Intentionally hardcoded: this is the emergency fallback that fires when
-            # the flow system itself crashes (load_flow, execute_steps, etc.).  We
+            # Intentionally hardcoded source: this is the emergency fallback that fires
+            # when the flow system itself crashes (load_flow, execute_steps, etc.).  We
             # cannot consult the flow to find the target because the flow machinery is
             # what just failed.  "failed" is the only safe terminal state here.
-            sdk.tasks.update(task_id, queue='failed', execution_notes=f'Flow dispatch error: {e}')
+            fail_task(task_id, reason=f'Flow dispatch error: {e}', source='flow-dispatch-error')
         except Exception as inner_e:
             print(f"[{datetime.now().isoformat()}] ERROR: move-to-failed failed for {task_id}: {inner_e}")
             debug_log(f"Failed to move {task_id} to failed queue")
@@ -570,10 +570,10 @@ def handle_agent_result(task_id: str, agent_name: str, task_dir: Path) -> bool:
                 f"step failures, moving to failed"
             )
             try:
-                sdk.tasks.update(
+                fail_task(
                     task_id,
-                    queue="failed",
-                    execution_notes=f"Step failure after {failure_count} attempts: {e}",
+                    reason=f"Step failure after {failure_count} attempts: {e}",
+                    source='step-failure-circuit-breaker',
                 )
             except Exception as update_err:
                 print(f"[{datetime.now().isoformat()}] ERROR: move-to-failed failed for {task_id}: {update_err}")

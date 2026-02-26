@@ -303,15 +303,41 @@ def get_review_feedback(task_id: str) -> str | None:
 
     return "\n\n---\n\n".join(section.strip() for section in legacy_sections)
 
-def fail_task(task_id: str, error: str) -> dict:
-    """Fail a task (moves to failed queue with cleanup)."""
-    error_summary = error[:200] + ("..." if len(error) > 200 else "")
-    return _transition(
-        task_id,
-        "failed",
-        cleanup_worktree=True,
-        log_fn=lambda l: l.log_failed(error=error_summary)
-    )
+def fail_task(task_id: str, reason: str, source: str, **sdk_kwargs) -> dict:
+    """Move a task to the failed queue — single canonical failure path.
+
+    All callsites that move a task to 'failed' should use this function.
+    It sets execution_notes on the server, writes a FAILED entry to the task
+    log, and prints to stdout for launchd log capture.
+
+    Args:
+        task_id: Task identifier
+        reason: Human-readable reason for failure
+        source: Categorisation tag for the failure origin, e.g.:
+            "flow-dispatch-error", "step-failure-circuit-breaker",
+            "lease-expiry-circuit-breaker", "spawn-failure-circuit-breaker",
+            "guard-empty-description"
+        **sdk_kwargs: Additional fields passed to sdk.tasks.update
+            (e.g. claimed_by=None, lease_expires_at=None, attempt_count=N)
+
+    Returns:
+        Updated task dict from the server.
+    """
+    sdk = get_sdk()
+    reason_truncated = reason[:500] + ("..." if len(reason) > 500 else "")
+    reason_stdout = reason[:200] + ("..." if len(reason) > 200 else "")
+
+    result = sdk.tasks.update(task_id, queue="failed", execution_notes=reason_truncated, **sdk_kwargs)
+
+    try:
+        logger = get_task_logger(task_id)
+        logger.log_failed(error=reason_truncated, source=source)
+    except Exception as log_err:
+        print(f"[{datetime.now().isoformat()}] WARN: task log write failed for {task_id}: {log_err}")
+
+    print(f"[{datetime.now().isoformat()}] FAILED task={task_id} source={source} reason={reason_stdout}")
+
+    return result
 
 def reject_task(
     task_id: str,
