@@ -597,8 +597,13 @@ class TestUpdateChangelogStep:
         assert any("commit" in s for s in cmd_strings)
         assert any("push" in s for s in cmd_strings)
 
-    def test_raises_on_fetch_failure(self, tmp_path):
-        """update_changelog raises RuntimeError when git fetch fails."""
+    def test_fetch_failure_is_non_fatal(self, tmp_path):
+        """update_changelog logs a warning but does NOT raise when git fetch fails.
+
+        After merge_pr runs and the task is in done, a changelog failure must not
+        propagate — otherwise the catch-all in handle_agent_result_via_flow would
+        move the task from done to failed.
+        """
         from octopoid.steps import update_changelog
 
         task_dir = tmp_path
@@ -616,8 +621,113 @@ class TestUpdateChangelogStep:
         with patch("octopoid.config.find_parent_project", return_value=project_root), \
              patch("octopoid.config.get_base_branch", return_value="main"), \
              patch("octopoid.steps.subprocess.run", return_value=fail):
-            with pytest.raises(RuntimeError, match="git fetch failed"):
-                update_changelog({"id": "TASK-abc"}, {}, task_dir)
+            # Must NOT raise — changelog failures are non-fatal after merge
+            update_changelog({"id": "TASK-abc"}, {}, task_dir)
+
+    def test_pull_ff_only_failure_is_non_fatal(self, tmp_path):
+        """update_changelog does NOT raise when git pull --ff-only fails.
+
+        This is the exact scenario from task 2a06729d: the main branch had local
+        unpushed commits, so pull --ff-only aborted. The PR was already merged
+        and the task already in done — changelog failure must not move it to failed.
+        """
+        from octopoid.steps import update_changelog
+
+        task_dir = tmp_path
+        project_root = tmp_path / "project"
+        project_root.mkdir()
+
+        (project_root / "CHANGELOG.md").write_text("# Changelog\n\n## [Unreleased]\n\n")
+        (task_dir / "changes.md").write_text("### Fixed\n\n- Bug fix\n")
+
+        ok = MagicMock()
+        ok.returncode = 0
+        ok.stdout = ""
+        ok.stderr = ""
+
+        pull_fail = MagicMock()
+        pull_fail.returncode = 1
+        pull_fail.stdout = ""
+        pull_fail.stderr = "fatal: Not possible to fast-forward, aborting."
+
+        def mock_run(cmd, *args, **kwargs):
+            if "pull" in cmd:
+                return pull_fail
+            return ok
+
+        with patch("octopoid.config.find_parent_project", return_value=project_root), \
+             patch("octopoid.config.get_base_branch", return_value="main"), \
+             patch("octopoid.steps.subprocess.run", side_effect=mock_run):
+            # Must NOT raise — changelog failures are non-fatal after merge
+            update_changelog({"id": "TASK-abc"}, {}, task_dir)
+
+    def test_push_failure_is_non_fatal(self, tmp_path):
+        """update_changelog does NOT raise when git push fails."""
+        from octopoid.steps import update_changelog
+
+        task_dir = tmp_path
+        project_root = tmp_path / "project"
+        project_root.mkdir()
+
+        (project_root / "CHANGELOG.md").write_text(
+            "# Changelog\n\n## [Unreleased]\n\n## [1.0.0]\n- Initial\n"
+        )
+        (task_dir / "changes.md").write_text("### Fixed\n\n- Bug fix\n")
+
+        ok = MagicMock()
+        ok.returncode = 0
+        ok.stdout = ""
+        ok.stderr = ""
+
+        push_fail = MagicMock()
+        push_fail.returncode = 1
+        push_fail.stdout = ""
+        push_fail.stderr = "error: failed to push some refs"
+
+        def mock_run(cmd, *args, **kwargs):
+            if "push" in cmd:
+                return push_fail
+            return ok
+
+        with patch("octopoid.config.find_parent_project", return_value=project_root), \
+             patch("octopoid.config.get_base_branch", return_value="main"), \
+             patch("octopoid.steps.subprocess.run", side_effect=mock_run):
+            # Must NOT raise — changelog failures are non-fatal after merge
+            update_changelog({"id": "TASK-xyz", "title": "Bug fix"}, {}, task_dir)
+
+    def test_failure_warning_includes_error_message(self, tmp_path, capsys):
+        """update_changelog prints a warning with the error details when it fails."""
+        from octopoid.steps import update_changelog
+
+        task_dir = tmp_path
+        project_root = tmp_path / "project"
+        project_root.mkdir()
+
+        (project_root / "CHANGELOG.md").write_text("# Changelog\n\n## [Unreleased]\n\n")
+        (task_dir / "changes.md").write_text("### Added\n\n- Feature\n")
+
+        fail = MagicMock()
+        fail.returncode = 1
+        fail.stdout = ""
+        fail.stderr = "fatal: Not possible to fast-forward, aborting."
+
+        def mock_run(cmd, *args, **kwargs):
+            if "pull" in cmd:
+                return fail
+            ok = MagicMock()
+            ok.returncode = 0
+            ok.stdout = ""
+            ok.stderr = ""
+            return ok
+
+        with patch("octopoid.config.find_parent_project", return_value=project_root), \
+             patch("octopoid.config.get_base_branch", return_value="main"), \
+             patch("octopoid.steps.subprocess.run", side_effect=mock_run):
+            update_changelog({"id": "TASK-abc"}, {}, task_dir)
+
+        captured = capsys.readouterr()
+        assert "WARNING" in captured.out or "warning" in captured.out.lower()
+        assert "update_changelog" in captured.out
 
     def test_update_changelog_step_is_registered(self):
         """update_changelog is registered in STEP_REGISTRY."""
