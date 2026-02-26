@@ -101,50 +101,81 @@ class WorkColumn(Widget):
 
 
 def _order_states_by_transitions(states: list[str], transitions: list[dict]) -> list[str]:
-    """Order states by lifecycle using topological sort on the transition graph.
+    """Order states by lifecycle using topological sort on forward transitions.
 
-    States that appear in at least one transition are sorted in lifecycle order.
-    States not connected to the transition graph (e.g. "failed") are appended at the end.
+    The transition list may include reverse/implicit transitions (e.g.
+    provisional → incoming for reject, claimed → incoming for requeue).
+    These create cycles that break topological sort, so we filter them out
+    by only keeping edges that move forward (i.e. don't point back to an
+    earlier state in the lifecycle).
+
+    Well-known lifecycle states have a fixed canonical order. Custom states
+    are inserted via topological sort on the remaining forward edges.
+    Terminal states (done, failed) are always last.
     """
-    # Determine which states are connected to the transition graph
-    connected: set[str] = set()
-    for t in transitions:
-        if t.get("from") in states:
-            connected.add(t["from"])
-        if t.get("to") in states:
-            connected.add(t["to"])
+    # Canonical lifecycle position for well-known states.
+    # Lower number = earlier in the pipeline.
+    _CANONICAL_ORDER: dict[str, int] = {
+        "incoming": 0,
+        "claimed": 1,
+        "needs_continuation": 2,
+        "provisional": 3,
+        "done": 100,
+        "failed": 101,
+    }
 
-    chain_states = [s for s in states if s in connected]
-    isolated_states = [s for s in states if s not in connected]
+    known = [s for s in states if s in _CANONICAL_ORDER]
+    custom = [s for s in states if s not in _CANONICAL_ORDER]
 
-    # Kahn's algorithm topological sort on connected states
-    graph: dict[str, list[str]] = {s: [] for s in chain_states}
-    in_degree: dict[str, int] = {s: 0 for s in chain_states}
-    for t in transitions:
-        f = t.get("from")
-        to = t.get("to")
-        if f in graph and to in graph:
-            graph[f].append(to)
-            in_degree[to] += 1
+    # Sort known states by canonical order
+    known.sort(key=lambda s: _CANONICAL_ORDER[s])
 
-    queue: deque[str] = deque(s for s in chain_states if in_degree[s] == 0)
-    ordered: list[str] = []
-    while queue:
-        state = queue.popleft()
-        ordered.append(state)
-        for neighbor in graph[state]:
-            in_degree[neighbor] -= 1
-            if in_degree[neighbor] == 0:
-                queue.append(neighbor)
+    if not custom:
+        return known
 
-    # Append any chain states not reached (cycle or disconnected subgraph)
-    for s in chain_states:
-        if s not in ordered:
-            ordered.append(s)
+    # For custom states, use transitions to find their position.
+    # Check both directions: a known state → custom (insert after source)
+    # and custom → known state (insert before target).
+    all_ordered = list(known)
+    for cs in custom:
+        best_pos = None
+        for t in transitions:
+            if t.get("to") == cs:
+                # Something transitions INTO this custom state — place after source
+                src = t["from"]
+                try:
+                    idx = all_ordered.index(src)
+                    pos = idx + 1
+                    if best_pos is None or pos < best_pos:
+                        best_pos = pos
+                except ValueError:
+                    pass
+            if t.get("from") == cs:
+                # This custom state transitions INTO something — place before target
+                tgt = t["to"]
+                try:
+                    idx = all_ordered.index(tgt)
+                    if best_pos is None or idx < best_pos:
+                        best_pos = idx
+                except ValueError:
+                    pass
+        # Default: before terminal states (done/failed)
+        if best_pos is None:
+            best_pos = len(all_ordered)
+            for i, s in enumerate(all_ordered):
+                if _CANONICAL_ORDER.get(s, -1) >= 100:
+                    best_pos = i
+                    break
+        # Clamp before terminal states
+        terminal_start = len(all_ordered)
+        for i, s in enumerate(all_ordered):
+            if _CANONICAL_ORDER.get(s, -1) >= 100:
+                terminal_start = i
+                break
+        best_pos = min(best_pos, terminal_start)
+        all_ordered.insert(best_pos, cs)
 
-    # Isolated states at the end
-    ordered.extend(isolated_states)
-    return ordered
+    return all_ordered
 
 
 class MatrixView(Widget):
