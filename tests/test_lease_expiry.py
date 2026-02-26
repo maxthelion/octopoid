@@ -65,6 +65,8 @@ class TestCheckAndRequeueExpiredLeases:
 
         with (
             patch("octopoid.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("octopoid.tasks.get_sdk", return_value=mock_sdk),
+            patch("octopoid.tasks.get_task_logger"),
             patch("octopoid.scheduler._get_circuit_breaker_threshold", return_value=threshold),
         ):
             check_and_requeue_expired_leases()
@@ -303,6 +305,8 @@ class TestRequeuTask:
 
         with (
             patch("octopoid.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("octopoid.tasks.get_sdk", return_value=mock_sdk),
+            patch("octopoid.tasks.get_task_logger"),
             patch("octopoid.scheduler._get_circuit_breaker_threshold", return_value=threshold),
         ):
             _requeue_task(task_id, source_queue=source_queue, task=task)

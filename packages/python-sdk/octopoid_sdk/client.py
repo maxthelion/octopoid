@@ -233,6 +233,18 @@ class TasksAPI:
         """
         return self.client._request('POST', f'/api/v1/tasks/{task_id}/requeue', json={})
 
+    def fail(self, task_id: str, reason: str) -> Dict[str, Any]:
+        """Fail a task (moves to failed queue with reason stored as execution_notes).
+
+        Args:
+            task_id: Task ID
+            reason: Human-readable reason for failure
+
+        Returns:
+            Updated task dictionary
+        """
+        return self.update(task_id, queue='failed', execution_notes=reason)
+
 
 class DraftsAPI:
     """Drafts API endpoints"""

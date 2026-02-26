@@ -270,10 +270,8 @@ def guard_task_description_nonempty(ctx: AgentContext) -> tuple[bool, str]:
     debug_log(f"guard_task_description_nonempty: {reason}")
 
     try:
-        sdk = queue_utils.get_sdk()
-        fail_target = _get_fail_target_from_flow(ctx.claimed_task, "claimed")
-        sdk.tasks.update(task_id, queue=fail_target, claimed_by=None)
-        debug_log(f"Moved task {task_id} to {fail_target}: {reason}")
+        queue_utils.fail_task(task_id, reason=reason, source='guard-empty-description', claimed_by=None)
+        debug_log(f"Moved task {task_id} to failed: {reason}")
     except Exception as e:
         print(f"[{datetime.now().isoformat()}] ERROR: move-to-failed failed for {task_id}: {e}")
         debug_log(f"guard_task_description_nonempty: failed to update task {task_id}: {e}")
@@ -1710,17 +1708,13 @@ def check_and_requeue_expired_leases() -> None:
                                     f"Circuit breaker: lease expired {new_attempt_count} time(s) "
                                     f"(threshold={threshold}). Task failed to complete within the lease window."
                                 )
-                                sdk.tasks.update(
+                                queue_utils.fail_task(
                                     task_id,
-                                    queue="failed",
+                                    reason=reason,
+                                    source='lease-expiry-circuit-breaker',
                                     claimed_by=None,
                                     lease_expires_at=None,
                                     attempt_count=new_attempt_count,
-                                    execution_notes=reason,
-                                )
-                                print(
-                                    f"[{datetime.now().isoformat()}] CIRCUIT BREAKER: {task_id} moved to failed "
-                                    f"after {new_attempt_count} lease expiries (threshold={threshold})"
                                 )
                                 debug_log(f"Circuit breaker tripped for {task_id}: {reason}")
                                 continue
@@ -2011,17 +2005,13 @@ def _requeue_task(task_id: str, source_queue: str = "incoming", task: dict | Non
                     f"Circuit breaker: spawn failed {new_attempt_count} time(s) "
                     f"(threshold={threshold}). Task could not be started."
                 )
-                sdk.tasks.update(
+                queue_utils.fail_task(
                     task_id,
-                    queue="failed",
+                    reason=reason,
+                    source='spawn-failure-circuit-breaker',
                     claimed_by=None,
                     lease_expires_at=None,
                     attempt_count=new_attempt_count,
-                    execution_notes=reason,
-                )
-                print(
-                    f"[{datetime.now().isoformat()}] CIRCUIT BREAKER: {task_id} moved to failed "
-                    f"after {new_attempt_count} spawn failures (threshold={threshold})"
                 )
                 debug_log(f"Circuit breaker tripped for {task_id}: {reason}")
                 return

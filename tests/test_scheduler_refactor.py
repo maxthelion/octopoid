@@ -761,6 +761,8 @@ class TestHandleAgentResultViaFlowDecisions:
         # Make execute_steps raise to trigger the except branch
         with (
             patch("octopoid.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("octopoid.tasks.get_sdk", return_value=mock_sdk),
+            patch("octopoid.tasks.get_task_logger"),
             patch("octopoid.flow.load_flow", side_effect=RuntimeError("pnpm not in PATH")),
         ):
             handle_agent_result_via_flow("TASK-test", "implementer-1", tmp_path)
@@ -779,6 +781,8 @@ class TestHandleAgentResultViaFlowDecisions:
         mock_sdk = _make_sdk_mock()
         with (
             patch("octopoid.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("octopoid.tasks.get_sdk", return_value=mock_sdk),
+            patch("octopoid.tasks.get_task_logger"),
             patch("octopoid.flow.load_flow", side_effect=RuntimeError("boom")),
             patch("octopoid.scheduler.debug_log") as mock_log,
         ):
@@ -800,6 +804,8 @@ class TestHandleAgentResultViaFlowDecisions:
 
         with (
             patch("octopoid.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("octopoid.tasks.get_sdk", return_value=mock_sdk),
+            patch("octopoid.tasks.get_task_logger"),
             patch("octopoid.flow.load_flow", side_effect=RuntimeError("pnpm not in PATH")),
             patch("octopoid.scheduler.debug_log") as mock_log,
         ):
@@ -896,6 +902,8 @@ class TestHandleAgentResultRebaseMergeFailure:
 
         with (
             patch("octopoid.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("octopoid.tasks.get_sdk", return_value=mock_sdk),
+            patch("octopoid.tasks.get_task_logger"),
             patch("octopoid.flow.load_flow", return_value=mock_flow),
             patch("octopoid.steps.execute_steps", side_effect=other_error),
             patch("octopoid.result_handler.debug_log"),
