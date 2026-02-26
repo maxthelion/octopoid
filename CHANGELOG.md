@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `update_changelog` step errors are now non-fatal: if any git operation (fetch, pull, commit, push) fails after a PR has been merged, the error is caught, a warning is printed, and the step returns without raising. This prevents the catch-all exception handler in `handle_agent_result_via_flow` from moving the task from `done` to `failed` when the PR is already merged and the task already accepted.
 ### Added
 - `tests/test_repo_manager_integration.py`: Integration tests for `RepoManager.rebase_on_base()` using real git operations (no mocking). Covers three scenarios: UP_TO_DATE, successful rebase, and conflict with clean abort verification.
 ### Changed
