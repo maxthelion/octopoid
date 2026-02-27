@@ -764,6 +764,125 @@ def list_tasks(subdir: str) -> list[dict[str, Any]]:
         print(f"Warning: Failed to list tasks in queue {subdir}: {e}")
         return []
 
+def cancel_task(task_id: str) -> dict[str, Any]:
+    """Cancel a task with full cleanup: kill agent, remove worktree and runtime, delete server record.
+
+    Handles partial state gracefully — each step is attempted independently so
+    that a missing PID, worktree, or server record does not prevent the others
+    from being cleaned up.
+
+    Steps:
+    1. Find and kill the agent process (searches all blueprint running_pids.json)
+    2. Remove the git worktree cleanly (git worktree remove --force)
+    3. Remove the runtime directory (.octopoid/runtime/tasks/<id>/)
+    4. Delete the task on the server via SDK
+
+    Args:
+        task_id: Task identifier (short hex ID, e.g. "a7517c0d")
+
+    Returns:
+        Dict with keys: task_id, killed_pid, worktree_removed, runtime_removed, server_deleted, errors
+    """
+    import os
+    import shutil
+    import signal
+
+    from .config import find_parent_project, get_agents_runtime_dir, get_tasks_dir
+    from .git_utils import _remove_worktree
+    from .pool import load_blueprint_pids, save_blueprint_pids
+
+    result: dict[str, Any] = {
+        "task_id": task_id,
+        "killed_pid": None,
+        "worktree_removed": False,
+        "runtime_removed": False,
+        "server_deleted": False,
+        "errors": [],
+    }
+
+    # -------------------------------------------------------------------------
+    # Step 1: Kill agent process
+    # -------------------------------------------------------------------------
+    agents_dir = get_agents_runtime_dir()
+    if agents_dir.exists():
+        for agent_dir in agents_dir.iterdir():
+            if not agent_dir.is_dir():
+                continue
+            blueprint_name = agent_dir.name
+            pids = load_blueprint_pids(blueprint_name)
+            for pid, info in list(pids.items()):
+                if info.get("task_id") == task_id:
+                    # Try to kill the process group (SIGTERM first, then SIGKILL)
+                    try:
+                        os.killpg(os.getpgid(pid), signal.SIGTERM)
+                    except (ProcessLookupError, PermissionError, OSError):
+                        try:
+                            os.kill(pid, signal.SIGTERM)
+                        except (ProcessLookupError, PermissionError, OSError):
+                            pass  # Already dead
+                    result["killed_pid"] = pid
+                    # Remove from PID tracking so the scheduler doesn't try to
+                    # process a result for this cancelled task
+                    del pids[pid]
+                    try:
+                        save_blueprint_pids(blueprint_name, pids)
+                    except Exception as e:
+                        result["errors"].append(f"pid_tracking: {e}")
+                    break
+            if result["killed_pid"] is not None:
+                break
+
+    # -------------------------------------------------------------------------
+    # Step 2: Remove git worktree
+    # -------------------------------------------------------------------------
+    worktree_path = get_tasks_dir() / task_id / "worktree"
+    if worktree_path.exists():
+        try:
+            parent_repo = find_parent_project()
+            _remove_worktree(parent_repo, worktree_path)
+            result["worktree_removed"] = True
+        except Exception as e:
+            result["errors"].append(f"worktree_remove: {e}")
+            # If git worktree remove failed, try manual rmtree as fallback
+            try:
+                shutil.rmtree(worktree_path)
+                result["worktree_removed"] = True
+            except Exception as e2:
+                result["errors"].append(f"worktree_rmtree: {e2}")
+    else:
+        result["worktree_removed"] = True  # Nothing to remove
+
+    # -------------------------------------------------------------------------
+    # Step 3: Remove runtime directory
+    # -------------------------------------------------------------------------
+    task_dir = get_tasks_dir() / task_id
+    if task_dir.exists():
+        try:
+            shutil.rmtree(task_dir)
+            result["runtime_removed"] = True
+        except Exception as e:
+            result["errors"].append(f"runtime_rmtree: {e}")
+    else:
+        result["runtime_removed"] = True  # Nothing to remove
+
+    # -------------------------------------------------------------------------
+    # Step 4: Delete task on server
+    # -------------------------------------------------------------------------
+    try:
+        sdk = get_sdk()
+        sdk.tasks.delete(task_id)
+        result["server_deleted"] = True
+    except Exception as e:
+        err_str = str(e)
+        # Treat 404 as success — task already gone from server
+        if "404" in err_str or "not found" in err_str.lower():
+            result["server_deleted"] = True
+        else:
+            result["errors"].append(f"server_delete: {e}")
+
+    return result
+
+
 def approve_and_merge(
     task_id: str,
     merge_method: str = "merge",
