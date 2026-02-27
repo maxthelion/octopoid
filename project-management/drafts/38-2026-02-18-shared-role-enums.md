@@ -1,6 +1,5 @@
 # Server-Registered Roles: No Hardcoded Enums
 
-**Status:** Idea
 **Captured:** 2026-02-18
 
 ## Raw

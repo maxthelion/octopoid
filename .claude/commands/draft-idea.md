@@ -58,7 +58,6 @@ Content:
 ```markdown
 # <Title>
 
-**Status:** Idea
 **Captured:** <date>
 
 ## Raw

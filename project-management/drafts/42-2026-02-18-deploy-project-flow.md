@@ -1,6 +1,5 @@
 # Deploy Project Flow
 
-**Status:** Idea
 **Captured:** 2026-02-18
 **Related:** Draft 20 (Flows as Single Integration Path)
 

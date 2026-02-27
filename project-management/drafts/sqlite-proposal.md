@@ -1,6 +1,5 @@
 # RFC: SQLite State Management for Octopoid
 
-**Status:** Draft
 **Target:** octopoid v2.0
 
 ## Summary

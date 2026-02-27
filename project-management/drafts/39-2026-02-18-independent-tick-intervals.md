@@ -1,6 +1,5 @@
 # Independent Tick Intervals for Scheduler Concerns
 
-**Status:** Analysed
 **Captured:** 2026-02-18
 **Updated:** 2026-02-19
 

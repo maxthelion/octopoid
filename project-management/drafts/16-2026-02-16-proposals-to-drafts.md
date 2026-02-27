@@ -9,7 +9,6 @@
 
 # Replace Proposals with Drafts + Simplification Agent
 
-**Status:** Partial
 **Captured:** 2026-02-16
 
 ## Raw
@@ -101,7 +100,6 @@ A new script-based agent that periodically scans the codebase and proposes simpl
 ```markdown
 # <Title>
 
-**Status:** Proposed
 **Author:** simplifier
 **Captured:** <date>
 

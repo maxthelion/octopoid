@@ -1,6 +1,5 @@
 # queue_utils.py Refactor: Entity Modules with Common Base
 
-**Status:** Idea
 **Captured:** 2026-02-16
 
 ## Raw

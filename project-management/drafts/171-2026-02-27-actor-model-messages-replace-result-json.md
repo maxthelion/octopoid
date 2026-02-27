@@ -1,6 +1,5 @@
 # Actor model: replace result.json with messages for all agent types
 
-**Status:** Idea
 **Captured:** 2026-02-27
 
 ## Raw

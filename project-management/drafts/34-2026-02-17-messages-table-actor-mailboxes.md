@@ -1,6 +1,5 @@
 # Messages Table: Actor Mailboxes for Agent Communication
 
-**Status:** Idea
 **Captured:** 2026-02-17
 **Related:** Draft 31 (agents as pure functions / actor model), Draft 33 (roadmap), Draft 30 (why octopoid keeps breaking)
 

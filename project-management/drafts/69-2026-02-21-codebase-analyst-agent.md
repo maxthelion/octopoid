@@ -10,7 +10,6 @@
 
 # Codebase Analyst Agent
 
-**Status:** Active
 **Captured:** 2026-02-21
 
 ## Raw

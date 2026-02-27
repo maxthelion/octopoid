@@ -1,6 +1,5 @@
 # Refactor scheduler.py: extract housekeeping jobs into housekeeping.py
 
-**Status:** Idea
 **Author:** codebase-analyst
 **Captured:** 2026-02-23
 

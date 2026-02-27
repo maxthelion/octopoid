@@ -1,6 +1,5 @@
 # Message Dispatcher: Orchestrator Polls Inbox and Spawns Action Agents
 
-**Status:** Idea
 **Captured:** 2026-02-22
 **Related:** Draft 50 (lightweight actor agents), Draft 68 (actions as agent instructions), Draft 78 (human inbox tab)
 

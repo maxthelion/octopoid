@@ -9,7 +9,6 @@
 
 # Human Inbox Tab in Dashboard
 
-**Status:** Idea
 **Captured:** 2026-02-22
 **Related:** Draft 50 (lightweight actor agents), Draft 34 (messages table)
 

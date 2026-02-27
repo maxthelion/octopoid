@@ -1,6 +1,5 @@
 # Inject Gatekeeper Rejection Feedback Into Implementer Retry Prompts
 
-**Status:** Idea
 **Captured:** 2026-02-20
 
 ## Raw

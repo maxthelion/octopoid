@@ -86,11 +86,9 @@ If the draft contains architecture-level content, check whether an existing doc 
 - Still actively being referenced for ongoing work
 - Open questions remain unanswered
 
-**Update the status field in the markdown frontmatter:**
-- If complete: `**Status:** Complete` or `**Status:** Superseded`
-- If still active: `**Status:** In Progress` or `**Status:** Partial`
+**Do NOT update status in the local markdown file.** The server is the sole source of truth for draft status. Only update status via the SDK (step 6).
 
-**IMPORTANT:** Do NOT move, rename, or delete draft files. Do NOT create an archive/ directory. Drafts always stay in `project-management/drafts/` regardless of status. The server is the source of truth for draft status — the local file is just a cache.
+**IMPORTANT:** Do NOT move, rename, or delete draft files. Do NOT create an archive/ directory. Drafts always stay in `project-management/drafts/` regardless of status.
 
 ### 5. Add processing summary (whether archiving or not)
 

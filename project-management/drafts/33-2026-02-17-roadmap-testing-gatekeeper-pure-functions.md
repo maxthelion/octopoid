@@ -1,6 +1,5 @@
 # Roadmap: Converging Testing, Gatekeeper, and Pure Functions
 
-**Status:** Idea
 **Captured:** 2026-02-17
 **Related:** Draft 28 (outside-in testing), Draft 29 (fix gatekeeper), Draft 31 (pure functions), Draft 32 (scoped server for testing)
 

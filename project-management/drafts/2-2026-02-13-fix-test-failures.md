@@ -1,6 +1,5 @@
 # Fix Pre-existing Test Failures
 
-**Status:** Idea
 **Captured:** 2026-02-13
 
 ## Raw

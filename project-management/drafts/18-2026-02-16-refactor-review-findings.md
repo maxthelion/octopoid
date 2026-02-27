@@ -11,7 +11,6 @@
 
 # Scheduler Refactor: Review Findings
 
-**Status:** Complete
 **Date:** 2026-02-16
 **Reviewed by:** agent
 **Branch:** agent/TASK-f1f13eb5 (after REFACTOR-01 through REFACTOR-12 + cleanup tasks)
@@ -321,7 +320,6 @@ The spec called for 6 integration tests:
 - [ ] Fleet config resolution
 - [ ] Agent completes task end-to-end
 
-**Status:** These tests were **not implemented**. The unit tests are comprehensive, but end-to-end smoke tests would add confidence.
 
 **Recommendation:** Add these as follow-up work if needed, but the unit tests provide good coverage.
 

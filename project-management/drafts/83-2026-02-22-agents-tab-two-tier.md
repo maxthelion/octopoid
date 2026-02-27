@@ -1,6 +1,5 @@
 # Agents Tab: Two-Tier Tabs for Flow Agents and Background Agents
 
-**Status:** Idea
 **Captured:** 2026-02-22
 **Related:** Draft 79 (agents tab: flow + job agents), Draft 69 (codebase analyst agent)
 

@@ -13,7 +13,6 @@
 
 # Git robustness: proactive rebase, conflict resolution, task serialization
 
-**Status:** Complete
 **Captured:** 2026-02-25
 **Parent:** Draft #159 (Option D)
 

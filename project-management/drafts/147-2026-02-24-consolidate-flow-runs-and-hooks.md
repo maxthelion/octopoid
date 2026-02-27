@@ -1,6 +1,5 @@
 # Consolidate flow runs and task hooks into single execution path
 
-**Status:** Idea
 **Captured:** 2026-02-24
 
 ## Raw

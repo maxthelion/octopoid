@@ -2,7 +2,6 @@
 
 **Draft:** #53  
 **Author:** human  
-**Status:** idea  
 **Date:** 2026-02-20
 
 ## The Problem

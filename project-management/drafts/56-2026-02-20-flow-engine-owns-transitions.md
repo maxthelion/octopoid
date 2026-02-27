@@ -1,6 +1,5 @@
 # Flow Engine Owns Transitions — Steps Are Pre-Transition Side Effects
 
-**Status:** Idea
 **Captured:** 2026-02-20
 
 ## Raw

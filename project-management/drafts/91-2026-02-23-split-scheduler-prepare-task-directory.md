@@ -1,6 +1,5 @@
 # Split scheduler.prepare_task_directory: extract _render_prompt to isolate prompt-building (CCN 27 → ~12)
 
-**Status:** Complete
 **Author:** architecture-analyst
 **Captured:** 2026-02-23
 

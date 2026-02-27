@@ -1,6 +1,5 @@
 # Fix GitHub API Rate Limit Exhaustion
 
-**Status:** Archived — Fix 1 (the critical one) landed. Fixes 2-3 are minor and can be revisited later.
 **Captured:** 2026-02-20
 
 ## Root Cause

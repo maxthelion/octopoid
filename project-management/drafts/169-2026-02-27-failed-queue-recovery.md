@@ -1,6 +1,5 @@
 # Failed queue recovery: reduce failures and make recovery trivial
 
-**Status:** Idea
 **Captured:** 2026-02-27
 
 ## Raw

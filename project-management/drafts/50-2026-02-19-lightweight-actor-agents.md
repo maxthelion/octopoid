@@ -1,6 +1,5 @@
 # Lightweight Actor Agents with Dashboard-Triggered Actions
 
-**Status:** Idea
 **Captured:** 2026-02-19
 **Related:** Draft 34 (messages table / actor mailboxes)
 

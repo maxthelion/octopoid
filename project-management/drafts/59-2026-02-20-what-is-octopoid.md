@@ -1,6 +1,5 @@
 # What Is Octopoid — System Architecture and Design Philosophy
 
-**Status:** Active
 **Captured:** 2026-02-20
 
 ## The One-Liner

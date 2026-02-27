@@ -9,7 +9,6 @@
 
 # Outside-In Testing Strategy with Local Multi-Tenant Server
 
-**Status:** Complete
 **Captured:** 2026-02-17
 **Related:** Draft 27 (Scheduler integration tests)
 

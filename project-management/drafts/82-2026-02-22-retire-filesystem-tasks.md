@@ -1,6 +1,5 @@
 # Retire Filesystem Task Files — Store Task Content on Server
 
-**Status:** Idea
 **Captured:** 2026-02-22
 **Related:** Draft 81 (message dispatcher), Draft 68 (actions as agent instructions), Draft 31 (agents as pure functions)
 

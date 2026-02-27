@@ -1,6 +1,5 @@
 # Upgrade Local Octopoid to Latest Version
 
-**Status:** Idea
 **Captured:** 2026-02-16
 
 ## Raw

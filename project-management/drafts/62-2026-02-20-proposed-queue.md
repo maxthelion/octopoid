@@ -1,6 +1,5 @@
 # Proposed Queue: Parking Lot for Not-Yet-Ready Tasks
 
-**Status:** Idea
 **Captured:** 2026-02-20
 
 ## Raw

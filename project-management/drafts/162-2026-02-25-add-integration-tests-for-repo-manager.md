@@ -1,6 +1,5 @@
 # Add integration tests for repo_manager: rebase_on_base with real git conflict using conflicting_repo fixture
 
-**Status:** Complete
 **Author:** testing-analyst
 **Captured:** 2026-02-25
 

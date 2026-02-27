@@ -1,6 +1,5 @@
 # Inbox UX Overhaul: Human-Readable Messages, Threads, and Sent Tab
 
-**Status:** Idea
 **Captured:** 2026-02-24
 
 ## Raw

@@ -13,7 +13,6 @@
 
 # Extensible Queue Names With Runtime Validation
 
-**Status:** Complete
 **Captured:** 2026-02-20
 
 ## Raw

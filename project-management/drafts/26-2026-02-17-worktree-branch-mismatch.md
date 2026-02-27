@@ -1,6 +1,5 @@
 # Scheduler Worktree Branch Mismatch Detection
 
-**Status:** Idea
 **Captured:** 2026-02-17
 
 ## Raw

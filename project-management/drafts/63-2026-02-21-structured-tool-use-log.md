@@ -1,6 +1,5 @@
 # Replace tool_counter with structured agent activity log
 
-**Status:** Idea
 **Captured:** 2026-02-20 (original), 2026-02-24 (rewritten)
 
 ## Raw

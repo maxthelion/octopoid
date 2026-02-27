@@ -10,7 +10,6 @@
 
 # Fix Project Lifecycle: Lessons from Draft 13
 
-**Status:** Partial
 **Captured:** 2026-02-16
 **Based on:** `project-management/drafts/13-2026-02-15-project-branch-lessons.md`
 

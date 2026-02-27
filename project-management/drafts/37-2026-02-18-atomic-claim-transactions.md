@@ -1,6 +1,5 @@
 # Atomic Claim: Fix Orphaned Task State with Server-Side Transactions
 
-**Status:** Idea
 **Captured:** 2026-02-18
 
 ## Raw

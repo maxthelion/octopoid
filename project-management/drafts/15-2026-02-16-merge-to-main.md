@@ -8,7 +8,6 @@
 
 # Merge plan: refactor → feature → main
 
-**Status:** Superseded
 **Captured:** 2026-02-16
 
 ## Two-step merge

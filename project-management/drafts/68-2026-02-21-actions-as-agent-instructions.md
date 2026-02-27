@@ -11,7 +11,6 @@
 
 # Actions as Agent Instructions, Not Python Functions
 
-**Status:** Active
 **Captured:** 2026-02-21
 **Supersedes:** The handler registry approach from Draft 50
 

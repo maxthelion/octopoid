@@ -1,6 +1,5 @@
 # Worktree Sweeper Process
 
-**Status:** Idea
 **Captured:** 2026-02-14
 
 ## Raw

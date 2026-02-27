@@ -1,6 +1,5 @@
 # Scheduler Integration Tests: End-to-End Spawn Pipeline
 
-**Status:** Idea
 **Captured:** 2026-02-17
 
 ## Raw

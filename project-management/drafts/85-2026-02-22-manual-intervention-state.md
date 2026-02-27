@@ -10,7 +10,6 @@
 
 # Manual Intervention State for Tasks
 
-**Status:** Idea
 **Captured:** 2026-02-22
 
 ## Raw

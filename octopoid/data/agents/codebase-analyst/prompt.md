@@ -82,7 +82,6 @@ file_path = f"project-management/drafts/{filename}"
 
 content = f"""# {title}
 
-**Status:** Idea
 **Author:** codebase-analyst
 **Captured:** {today}
 

@@ -11,7 +11,6 @@
 
 # queue_utils.py Audit: 2,711 Lines of Everything
 
-**Status:** Complete
 **Captured:** 2026-02-16
 
 ## What is it?

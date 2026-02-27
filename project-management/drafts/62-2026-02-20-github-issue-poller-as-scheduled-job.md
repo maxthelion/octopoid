@@ -1,6 +1,5 @@
 # GitHub Issue Poller as a Scheduled Job
 
-**Status:** Draft
 **Captured:** 2026-02-20
 
 ## Summary

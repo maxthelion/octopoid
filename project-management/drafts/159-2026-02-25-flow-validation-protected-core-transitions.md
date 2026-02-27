@@ -13,7 +13,6 @@
 
 # Flow validation and protected core transitions
 
-**Status:** Complete
 **Captured:** 2026-02-25
 
 ## Raw

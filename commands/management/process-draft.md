@@ -86,9 +86,7 @@ If the draft contains architecture-level content, check whether an existing doc 
 - Still actively being referenced for ongoing work
 - Open questions remain unanswered
 
-**Update the status field:**
-- If archiving: `**Status:** Complete` or `**Status:** Superseded`
-- If keeping: `**Status:** In Progress` or `**Status:** Partial`
+**Update status on the server (step 6).** Do NOT update status in the local markdown file — the server is the sole source of truth for draft status.
 
 ### 5. Add processing summary (whether archiving or not)
 

@@ -1,6 +1,5 @@
 # Unify Result Handlers: One Handler, One Format, Flow-Driven Dispatch
 
-**Status:** Idea
 **Captured:** 2026-02-18
 **Related:** Draft 20 (Flows as Single Integration Path), Draft 34 (Messages Table), Draft 41 (Remove Hook Manager)
 

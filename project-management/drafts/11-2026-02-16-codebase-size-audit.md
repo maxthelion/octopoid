@@ -1,6 +1,5 @@
 # Codebase Size Audit and Refactoring Purge
 
-**Status:** Idea
 **Captured:** 2026-02-16
 
 ## Raw

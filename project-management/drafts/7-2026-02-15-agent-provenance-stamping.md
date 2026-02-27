@@ -1,6 +1,5 @@
 # Agent Provenance Stamping on Task Creation
 
-**Status:** Idea
 **Captured:** 2026-02-15
 
 ## Raw

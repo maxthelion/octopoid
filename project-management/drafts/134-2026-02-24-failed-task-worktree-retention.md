@@ -1,6 +1,5 @@
 # Longer Worktree Retention for Failed Tasks
 
-**Status:** Idea
 **Captured:** 2026-02-24
 
 ## Raw

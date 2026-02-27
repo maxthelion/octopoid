@@ -1,6 +1,5 @@
 # Lease recovery bug: expired leases in provisional not cleared
 
-**Status:** Idea
 **Captured:** 2026-02-24
 
 ## Raw

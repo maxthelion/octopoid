@@ -1,6 +1,5 @@
 # Declarative Scheduler Jobs — Making Housekeeping Extensible and Consistent with the Flow Model
 
-**Status:** Idea
 **Captured:** 2026-02-20
 
 ## Raw

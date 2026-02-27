@@ -1,6 +1,5 @@
 # Infer agent results from stdout instead of requiring result.json
 
-**Status:** Ready to implement
 **Captured:** 2026-02-27
 
 ## Decision

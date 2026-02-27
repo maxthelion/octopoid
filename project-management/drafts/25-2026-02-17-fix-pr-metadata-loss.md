@@ -1,6 +1,5 @@
 # Fix PR Metadata Loss: Include PR Info in Submit Payload
 
-**Status:** Idea
 **Captured:** 2026-02-17
 
 ## Raw

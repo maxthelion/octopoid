@@ -10,7 +10,6 @@
 
 # Scoped Local Server for Agent Testing
 
-**Status:** Complete
 **Captured:** 2026-02-17
 **Related:** Draft 28 (outside-in testing strategy), Draft 25 (mock at transport level)
 

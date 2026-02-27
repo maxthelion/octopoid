@@ -1,6 +1,5 @@
 # Postmortem: Task accepted despite merge_pr failure
 
-**Status:** Idea
 **Captured:** 2026-02-18
 **Severity:** P0 — tasks marked done with unmerged PRs
 **Related:** Draft 41 (Remove Hook Manager), Draft 44 (Unify Result Handlers)

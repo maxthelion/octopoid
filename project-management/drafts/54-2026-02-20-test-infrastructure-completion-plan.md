@@ -1,6 +1,5 @@
 # Test Infrastructure Completion Plan
 
-**Status:** Superseded
 **Captured:** 2026-02-20
 **Superseded by:** Project `PROJ-f58c4adc` — 18 tasks created with dependency graph. Tasks TASK-test-1-1 through TASK-test-6-2.
 

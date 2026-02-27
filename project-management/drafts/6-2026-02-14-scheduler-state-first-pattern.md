@@ -1,6 +1,5 @@
 # Simplify Scheduler Result Handling with State-First Pattern
 
-**Status:** Idea
 **Captured:** 2026-02-14
 
 ## Raw

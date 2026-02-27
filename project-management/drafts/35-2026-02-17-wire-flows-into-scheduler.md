@@ -1,6 +1,5 @@
 # Wire Flow Definitions Into Scheduler Execution
 
-**Status:** In Progress
 **Captured:** 2026-02-17
 **Related:** Draft 17 (declarative task flows), Draft 31 (agents as pure functions), Draft 33 (roadmap)
 

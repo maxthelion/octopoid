@@ -1,6 +1,5 @@
 # Postmortem: Manual Rebase of PR #103 (TASK-rich-detail)
 
-**Status:** Idea
 **Captured:** 2026-02-19
 
 ## What Happened

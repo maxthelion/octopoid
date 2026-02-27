@@ -1,6 +1,5 @@
 # Declarative Task Flows
 
-**Status:** Idea
 **Captured:** 2026-02-16
 
 ## Raw

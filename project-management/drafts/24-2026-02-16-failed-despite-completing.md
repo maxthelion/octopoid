@@ -1,6 +1,5 @@
 # Postmortem: Agent Tasks Going to Failed Despite Completing Work
 
-**Status:** Idea
 **Captured:** 2026-02-16
 
 ## The Pattern

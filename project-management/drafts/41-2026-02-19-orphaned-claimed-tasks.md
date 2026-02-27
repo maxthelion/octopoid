@@ -1,6 +1,5 @@
 # Orphaned Claimed Tasks in Pure-Function Model
 
-**Status:** Analysed
 **Captured:** 2026-02-19
 
 ## Raw

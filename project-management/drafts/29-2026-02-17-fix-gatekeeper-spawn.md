@@ -1,6 +1,5 @@
 # Fix Gatekeeper: Pure Function Model
 
-**Status:** Idea
 **Captured:** 2026-02-17
 **Related:** Draft 31 (agents as pure functions), Draft 30 (why octopoid keeps breaking), Draft 7 (original gatekeeper design)
 

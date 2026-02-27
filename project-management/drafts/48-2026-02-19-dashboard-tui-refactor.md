@@ -1,6 +1,5 @@
 # Dashboard TUI Refactor: Architecture and Best Practices
 
-**Status:** Idea
 **Captured:** 2026-02-19
 
 ## Raw

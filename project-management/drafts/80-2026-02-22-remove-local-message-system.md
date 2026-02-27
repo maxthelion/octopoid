@@ -10,7 +10,6 @@
 
 # Remove Local Message System and Audit All Callers
 
-**Status:** Complete
 **Captured:** 2026-02-22
 **Related:** Draft 78 (human inbox tab), Draft 34 (messages table)
 

@@ -1,6 +1,5 @@
 # Agent Pool Model: Blueprints Instead of Named Instances
 
-**Status:** Idea
 **Captured:** 2026-02-16
 **Related:** Draft 20 (Flows as Single Integration Path)
 

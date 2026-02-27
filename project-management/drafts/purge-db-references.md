@@ -1,6 +1,5 @@
 # Purge All Database References from Octopoid
 
-**Status:** Idea
 **Captured:** 2026-02-13
 
 ## Raw

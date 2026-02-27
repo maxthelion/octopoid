@@ -1,6 +1,5 @@
 # Dashboard Does Not Live-Update Drafts
 
-**Status:** Idea
 **Captured:** 2026-02-24
 
 ## Raw

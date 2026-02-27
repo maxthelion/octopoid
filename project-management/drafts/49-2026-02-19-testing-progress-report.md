@@ -1,6 +1,5 @@
 # Testing Progress Report: Draft 36 Revisited
 
-**Status:** Idea
 **Captured:** 2026-02-19
 
 ## Raw

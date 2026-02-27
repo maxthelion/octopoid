@@ -1,6 +1,5 @@
 # Mock SDK at Transport Level, Not Per-Module Patches
 
-**Status:** Idea
 **Captured:** 2026-02-16
 
 ## Problem

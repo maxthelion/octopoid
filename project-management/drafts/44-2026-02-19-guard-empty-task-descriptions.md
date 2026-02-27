@@ -9,7 +9,6 @@
 
 # Guard Against Spawning Agents for Empty Task Descriptions
 
-**Status:** Complete
 **Captured:** 2026-02-19
 
 ## Raw

@@ -1,6 +1,5 @@
 # Declarative Scheduler Jobs — Implementation Design
 
-**Status:** Draft (expanded from Draft #60)
 **Captured:** 2026-02-20
 
 ## Summary

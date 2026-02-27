@@ -1,6 +1,5 @@
 # Rich Task Detail View: Diff, Description, Logs, Result
 
-**Status:** Idea
 **Captured:** 2026-02-19
 
 ## Raw

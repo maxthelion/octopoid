@@ -1,6 +1,5 @@
 # Why Octopoid Keeps Breaking and How to Fix the Abstractions
 
-**Status:** Idea
 **Captured:** 2026-02-17
 
 ## Raw

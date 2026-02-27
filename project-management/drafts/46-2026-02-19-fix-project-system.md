@@ -1,6 +1,5 @@
 # Fix Project System: Deploy Flow, Wire Scheduler, Implement Steps
 
-**Status:** Idea
 **Captured:** 2026-02-19
 
 ## Raw

@@ -1,6 +1,5 @@
 # Add integration tests for SDK client.py: tasks.claim() returns None on empty queue and max_claimed
 
-**Status:** Idea
 **Author:** testing-analyst
 **Captured:** 2026-02-23
 

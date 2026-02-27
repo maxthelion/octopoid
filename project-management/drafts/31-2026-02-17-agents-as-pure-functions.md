@@ -1,6 +1,5 @@
 # Agents as Pure Functions: Success/Failure with Orchestrator-Driven Lifecycle
 
-**Status:** Idea
 **Captured:** 2026-02-17
 **Related:** Draft 30 (why octopoid keeps breaking), Draft 17 (declarative task flows), Draft 34 (messages table / actor mailboxes)
 

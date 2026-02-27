@@ -1,6 +1,5 @@
 # Project System Audit: 40% Deployed, Scheduler Integration Missing
 
-**Status:** Idea
 **Captured:** 2026-02-19
 
 ## Raw

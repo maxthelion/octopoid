@@ -1,6 +1,5 @@
 # Postmortem: Task Stuck in Claimed After Agent Completion + Duplicate Claims
 
-**Status:** Idea
 **Captured:** 2026-02-19
 
 ## Incident 1: TASK-e37bc845 stuck in `claimed` despite work being done

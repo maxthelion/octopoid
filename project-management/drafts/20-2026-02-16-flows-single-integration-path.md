@@ -10,7 +10,6 @@
 
 # Flows as the Single Integration Path
 
-**Status:** Complete
 **Captured:** 2026-02-16
 **Related:** Draft 10 (Declarative Task Flows), Draft 10 (server-side)
 

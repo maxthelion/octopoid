@@ -1,6 +1,5 @@
 # Agent Architecture Refactor: Remaining Gaps
 
-**Status:** Idea
 **Captured:** 2026-02-13
 
 ## Raw

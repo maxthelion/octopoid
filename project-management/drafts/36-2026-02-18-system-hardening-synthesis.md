@@ -1,6 +1,5 @@
 # System Hardening Synthesis: Where We Are, What Remains
 
-**Status:** Active
 **Date:** 2026-02-18
 **Sources:** Drafts 25-35 (2026-02-17), today's debugging session
 

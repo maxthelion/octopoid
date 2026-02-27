@@ -1,6 +1,5 @@
 # Agents Tab: Show Flow Agents and Job Agents
 
-**Status:** Idea
 **Captured:** 2026-02-22
 
 ## Raw

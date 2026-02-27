@@ -1,6 +1,5 @@
 # Scheduler Refactor: Acceptance Criteria
 
-**Status:** Idea
 **Captured:** 2026-02-16
 **Source drafts:** 9 (Agent Directories), 10 (Scheduler Refactor)
 

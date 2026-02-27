@@ -1,6 +1,5 @@
 # Mock Claude Agents in Integration Tests for Determinism and Cost
 
-**Status:** Idea
 **Captured:** 2026-02-18
 **Related:** Draft 28 (outside-in testing), Draft 32 (scoped local server), Draft 31 (agents as pure functions)
 

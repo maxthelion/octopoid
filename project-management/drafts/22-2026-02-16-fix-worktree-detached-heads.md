@@ -11,7 +11,6 @@
 
 # Fix Worktree Creation: Detached HEADs + Branch Lifecycle
 
-**Status:** Complete
 **Captured:** 2026-02-16
 
 ## Raw

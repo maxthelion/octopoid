@@ -1,6 +1,5 @@
 # Unified kanban board across flows
 
-**Status:** Complete
 **Captured:** 2026-02-25
 **Related:** Draft #159 (flow validation and protected core transitions)
 

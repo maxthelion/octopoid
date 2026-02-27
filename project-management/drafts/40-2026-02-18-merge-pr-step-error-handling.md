@@ -1,6 +1,5 @@
 # Merge Failures: Orchestrator as Supervisor, Not Steps as Error Handlers
 
-**Status:** Idea
 **Captured:** 2026-02-18
 **Related:** TASK-31b1fe65 (flow dispatch error recovery), Draft 29 (gatekeeper pure function), Draft 31 (agents as pure functions)
 

@@ -1,6 +1,5 @@
 # Self-healing task recovery: replace failed with requires-intervention + fixer agent
 
-**Status:** Idea
 **Captured:** 2026-02-27
 
 ## Raw
