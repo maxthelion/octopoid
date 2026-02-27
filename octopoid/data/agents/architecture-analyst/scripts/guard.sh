@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Guard: check for existing architecture-analyst drafts with status=idea.
+# Guard: check for existing architecture-analyst drafts with status=idea or in_progress.
 # If any exist, outputs SKIP so the agent exits early without doing work.
-# This prevents duplicate proposals when one is still pending user review.
+# This prevents duplicate proposals when one is still pending user review or being implemented.
 
 set -euo pipefail
 
@@ -21,9 +21,10 @@ if orchestrator_path:
 try:
     from orchestrator.queue_utils import get_sdk
     sdk = get_sdk()
-    drafts = sdk.drafts.list(status='idea', author='architecture-analyst')
-    if drafts:
-        print('SKIP')
+    for status in ('idea', 'in_progress'):
+        if sdk.drafts.list(status=status, author='architecture-analyst'):
+            print('SKIP')
+            break
 except Exception as e:
     # If we can't reach the server, don't block the agent — let it run
     import sys
