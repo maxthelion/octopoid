@@ -115,7 +115,7 @@ transitions:
     runs: [post_review_comment, merge_pr]
 ```
 
-Steps are registered in `orchestrator/steps.py` via `@register_step("name")`. Adding a new agent type means creating a flow YAML and registering steps -- no scheduler code changes needed.
+Steps are registered in `octopoid/steps.py` via `@register_step("name")`. Adding a new agent type means creating a flow YAML and registering steps -- no scheduler code changes needed.
 
 See [docs/flows.md](docs/flows.md) for full documentation.
 
@@ -204,36 +204,25 @@ git clone --recurse-submodules https://github.com/maxthelion/octopoid.git
 git submodule update --init
 ```
 
-### Client (Each Machine)
+### Orchestrator (Each Machine)
 
-**Note:** The npm package is not yet published. Install from source for now.
-
-#### Install from Source (Current Method)
+#### Install from pip (Recommended)
 
 ```bash
-# Clone repository
-git clone https://github.com/maxthelion/octopoid.git
-cd octopoid
-
-# Install dependencies (requires pnpm)
-pnpm install
-
-# Build all packages
-pnpm build
-
-# Link client globally
-cd packages/client
-sudo npm link
+pip install git+https://github.com/maxthelion/octopoid.git
 
 # Verify installation
 octopoid --version
 ```
 
-#### Install from npm (Coming Soon)
+This installs the `octopoid` Python package with all dependencies (SDK, scheduler, CLI, dashboard).
+
+#### Install from Source (Development)
 
 ```bash
-# Not yet published - use source install above
-npm install -g octopoid
+git clone --recurse-submodules https://github.com/maxthelion/octopoid.git
+cd octopoid
+pip install -e .
 ```
 
 ## Setup
@@ -485,7 +474,7 @@ The scheduler runs a single tick per invocation (evaluate agents, spawn any that
 1. Copy the template plist and fill in placeholders:
 
 ```bash
-cp orchestrator/com.octopoid.scheduler.plist ~/Library/LaunchAgents/com.octopoid.scheduler.plist
+cp octopoid/com.octopoid.scheduler.plist ~/Library/LaunchAgents/com.octopoid.scheduler.plist
 ```
 
 2. Edit `~/Library/LaunchAgents/com.octopoid.scheduler.plist` -- replace every `/path/to/your/project` with your actual project path and set your `ANTHROPIC_API_KEY`.
@@ -507,7 +496,7 @@ launchctl unload ~/Library/LaunchAgents/com.octopoid.scheduler.plist
 Add a one-liner to your crontab (`crontab -e`):
 
 ```cron
-* * * * * cd /path/to/your/project && ANTHROPIC_API_KEY="sk-ant-..." orchestrator/venv/bin/orchestrator-scheduler --debug
+* * * * * cd /path/to/your/project && ANTHROPIC_API_KEY="sk-ant-..." python3 -m octopoid.scheduler --once --debug
 ```
 
 This fires every 60 seconds. The scheduler lock ensures that if a tick takes longer than a minute, the next invocation exits immediately rather than overlapping.
@@ -601,6 +590,20 @@ octopoid project show user-dashboard-redesign
 # Update project
 octopoid project update user-dashboard-redesign --status completed
 ```
+
+### Background Agents
+
+Octopoid includes background analyst agents that run daily, scan the codebase, and propose improvements as drafts. They don't implement changes directly -- they create actionable proposals that appear in the dashboard Inbox for human review.
+
+| Agent | What it does | Output |
+|-------|-------------|--------|
+| **Codebase Analyst** | Finds large/complex files and proposes simplification | Draft with refactoring plan |
+| **Testing Analyst** | Identifies test coverage gaps and proposes specific tests | Draft with test plan following outside-in philosophy |
+| **Architecture Analyst** | Scans for high cyclomatic complexity, code duplication, and architectural issues | Draft with concrete design pattern refactoring |
+
+These are configured as jobs in `.octopoid/jobs.yaml` and run as lightweight agents (no worktree, read-only tools). Each has a guard script that prevents creating duplicate proposals -- if a pending proposal from that analyst already exists, it skips.
+
+Analyst drafts appear in the **Inbox** tab of the dashboard. From there you can review the proposal, approve it (which enqueues it as a task for an implementer), or dismiss it.
 
 ## How It Works
 

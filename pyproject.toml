@@ -16,8 +16,8 @@ dependencies = [
 
 [project.scripts]
 octopoid = "octopoid.cli:main"
-orchestrator-scheduler = "octopoid.scheduler:main"
-orchestrator-init = "octopoid.init:init_orchestrator"
+octopoid-scheduler = "octopoid.scheduler:main"
+octopoid-init = "octopoid.init:init_orchestrator"
 
 [tool.setuptools.packages.find]
 where = ["."]

@@ -570,12 +570,12 @@ def update_changelog(task: dict, result: dict, task_dir: Path) -> None:
             raise RuntimeError(f"update_changelog: git fetch failed:\n{fetch.stderr}")
 
         pull = subprocess.run(
-            ["git", "pull", "--ff-only", "origin", base_branch],
+            ["git", "pull", "--rebase", "origin", base_branch],
             cwd=project_root, capture_output=True, text=True,
         )
         if pull.returncode != 0:
             raise RuntimeError(
-                f"update_changelog: git pull --ff-only failed (local branch has diverged):\n"
+                f"update_changelog: git pull --rebase failed:\n"
                 f"{pull.stderr}"
             )
 
