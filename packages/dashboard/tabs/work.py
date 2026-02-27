@@ -192,7 +192,7 @@ class MatrixView(Widget):
     }
     """
 
-    _CHEVRON_FRAMES: list[str] = [">  ", ">> ", ">>>"]
+    _CHEVRON_FRAMES: list[str] = [">   ", ">>  ", ">>> "]
     _STATIC_STATES: frozenset[str] = frozenset({"incoming", "done", "failed"})
 
     def __init__(
@@ -237,10 +237,19 @@ class MatrixView(Widget):
             return "✕"
         return self._CHEVRON_FRAMES[frame]
 
-    def _cell_value(self, task: dict, state: str, frame: int) -> str:
+    def _cell_value(self, task: dict, state: str, frame: int) -> Text:
         if (task.get("queue") or "incoming") != state:
-            return ""
-        return self._state_icon(state, frame)
+            return Text("")
+        icon = self._state_icon(state, frame)
+        if state not in self._STATIC_STATES:
+            turns = int(task.get("turns") or 0)
+            turn_str = f"{turns}" if turns else ""
+            cell = Text(justify="right")
+            if turn_str:
+                cell.append(turn_str, style="bold #aaaaaa")
+            cell.append(icon, style="bold #4fc3f7")
+            return cell
+        return Text(icon, justify="center")
 
     def _task_recency_key(self, task: dict) -> str:
         """Return the best available timestamp for a task (for descending sort)."""
@@ -312,7 +321,7 @@ class MatrixView(Widget):
         for col in columns:
             # Abbreviate headers to keep columns narrow
             abbrev = col[:7]
-            table.add_column(abbrev, key=f"col_{col}", width=8)
+            table.add_column(abbrev, key=f"col_{col}", width=10)
         yield table
 
     def on_mount(self) -> None:
@@ -330,8 +339,7 @@ class MatrixView(Widget):
             task_label = f"{prefix}{short_id} {title}" if short_id else f"{prefix}{title}"
             cells: list[str | Text] = [task_label]
             for col in columns:
-                icon = self._cell_value(task, col, self._chevron_frame)
-                cells.append(Text(icon, justify="center"))
+                cells.append(self._cell_value(task, col, self._chevron_frame))
             row_key = tid if tid else None
             table.add_row(*cells, key=row_key)
             if tid:
@@ -350,7 +358,7 @@ class MatrixView(Widget):
             if queue in self._STATIC_STATES:
                 continue
             try:
-                table.update_cell(tid, f"col_{queue}", Text(self._CHEVRON_FRAMES[frame], justify="center"))
+                table.update_cell(tid, f"col_{queue}", self._cell_value(task, queue, frame))
             except Exception:
                 pass
 
