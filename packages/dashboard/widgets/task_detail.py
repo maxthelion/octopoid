@@ -102,15 +102,20 @@ def _fetch_tab_content(task_id: str, tab_index: int) -> str:
                 pass
         return "(task description not found)"
 
-    elif tab_index == 2:  # Result
-        result_file = runtime_dir / "result.json"
-        if not result_file.exists():
-            return "(no result yet)"
+    elif tab_index == 2:  # Result (inferred from stdout by scheduler)
+        stdout_file = runtime_dir / "stdout.log"
+        if not stdout_file.exists():
+            return "(no stdout.log yet)"
         try:
-            data = json.loads(result_file.read_text())
-            return json.dumps(data, indent=2)
+            content = stdout_file.read_text()
+            if not content.strip():
+                return "(stdout.log is empty)"
+            # Show the last 2000 chars (same tail the scheduler uses for inference)
+            tail = content[-2000:]
+            prefix = f"[last {len(tail)} chars of stdout.log]\n\n" if len(content) > 2000 else ""
+            return prefix + tail
         except Exception as e:
-            return f"(error reading result.json: {e})"
+            return f"(error reading stdout.log: {e})"
 
     elif tab_index == 3:  # Logs
         for log_name in ("stdout.log", "stderr.log"):

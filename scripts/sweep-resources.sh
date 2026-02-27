@@ -102,7 +102,7 @@ def _patched_sweep():
             try:
                 archive_dir = logs_dir / task_id
                 archive_dir.mkdir(parents=True, exist_ok=True)
-                for filename in ("stdout.log", "stderr.log", "result.json", "prompt.md"):
+                for filename in ("stdout.log", "stderr.log", "prompt.md"):
                     src = task_dir / filename
                     if src.exists():
                         shutil.copy2(src, archive_dir / filename)

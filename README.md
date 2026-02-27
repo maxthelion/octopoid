@@ -53,13 +53,13 @@ The system has four layers: **server** (state storage + API), **SDK** (Python cl
 
 #### Pure Function Agents
 
-Agents are **pure functions**. An agent receives a task, does work in a git worktree, and writes a `result.json` file. That's it. The agent never pushes branches, creates PRs, updates task state, or calls the server API. All side effects are handled by the **scheduler** after the agent exits, using flow-defined steps.
+Agents are **pure functions**. An agent receives a task, does work in a git worktree, and exits. That's it. The agent never pushes branches, creates PRs, updates task state, or calls the server API. All side effects are handled by the **scheduler** after the agent exits, using flow-defined steps.
 
 ```
-Agent writes:   { "outcome": "done" }
-                or { "outcome": "failed", "reason": "..." }
+Agent exits → stdout.log captured
 
-Scheduler runs: push_branch -> run_tests -> create_pr
+Scheduler infers:  { "outcome": "done" } (via haiku)
+Scheduler runs:    push_branch -> run_tests -> create_pr
 ```
 
 This separation means agents are stateless and testable. The scheduler controls all state transitions.
@@ -427,8 +427,7 @@ echo 'export ANTHROPIC_API_KEY="sk-ant-..."' >> ~/.zshrc
 |           +-- prompt.md    # Rendered prompt
 |           +-- env.sh       # Environment variables
 |           +-- scripts/     # Copied from agent directory
-|           +-- result.json  # Written by agent, read by scheduler
-|           +-- stdout.log   # Agent output
+|           +-- stdout.log   # Agent output (scheduler infers outcome from this)
 |           +-- stderr.log
 +-- logs/                # All logs (don't commit)
     +-- scheduler-YYYY-MM-DD.log
@@ -616,7 +615,11 @@ incoming -> claimed -> provisional -> done
            (agent works)          (gatekeeper approves)
               |                        |
               v                        |
-           result.json            merge PR
+           (agent exits)          merge PR
+              |
+              v
+     scheduler infers outcome
+     from stdout.log via haiku
               |
               v
      scheduler runs steps:
@@ -644,11 +647,11 @@ incoming -> claimed -> provisional -> done
 
 4. **Agent Spawning**: The scheduler creates a task runtime directory with a git worktree (detached HEAD from `base_branch`), renders the prompt template, copies scripts, and launches `claude` as a subprocess.
 
-5. **Agent Execution**: The agent (Claude Code) works in its isolated worktree. It reads the task description, implements changes, commits code, and writes `result.json` with `{"outcome": "done"}`. The agent has no access to the server API and cannot push branches or create PRs.
+5. **Agent Execution**: The agent (Claude Code) works in its isolated worktree. It reads the task description, implements changes, and commits code. The agent has no access to the server API and cannot push branches or create PRs.
 
-6. **Result Processing**: When the agent process exits, the scheduler reads `result.json` and executes the flow-defined steps for the `claimed -> provisional` transition: `push_branch`, `run_tests`, `create_pr`. The flow engine then performs the state transition automatically.
+6. **Result Processing**: When the agent process exits, the scheduler infers the outcome from `stdout.log` using a haiku call. The inferred result is posted as an `agent_result` message on the task thread for audit, then the scheduler executes the flow-defined steps for the `claimed -> provisional` transition: `push_branch`, `run_tests`, `create_pr`.
 
-7. **Gatekeeper Review**: A gatekeeper blueprint claims `provisional` tasks, spawns a Claude Code instance with read-only tools, reviews the diff, and writes `result.json` with `{"decision": "approve"}` or `{"decision": "reject", "comment": "..."}`.
+7. **Gatekeeper Review**: A gatekeeper blueprint claims `provisional` tasks, spawns a Claude Code instance with read-only tools, and reviews the diff. The scheduler infers the approve/reject decision from the gatekeeper's stdout using haiku.
 
 8. **Accept or Reject**: On approval, the scheduler posts a review comment, merges the PR, and moves the task to `done`. On rejection, it posts rejection feedback to the PR and moves the task back to `incoming` for the implementer to retry (up to 3 rounds).
 

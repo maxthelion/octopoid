@@ -40,7 +40,7 @@ unresolved errors, "cannot complete", very short output with only an error.
 
 Note: Agents are verbose. They describe obstacles they overcame. This does NOT \
 mean they failed. Short output that says "Done." is sufficient for "done". \
-"Written result.json with failure" or "outcome: failed" means failed, not done.
+"outcome: failed" or "could not complete the task" means failed, not done.
 
 AGENT OUTPUT:
 {tail}
@@ -321,6 +321,64 @@ def _get_circuit_breaker_threshold() -> int:
         return int(config.get("agents", {}).get("circuit_breaker_threshold", _DEFAULT_CIRCUIT_BREAKER_THRESHOLD))
     except Exception:
         return _DEFAULT_CIRCUIT_BREAKER_THRESHOLD
+
+
+# ---------------------------------------------------------------------------
+# Agent result message posting
+# ---------------------------------------------------------------------------
+
+def _post_agent_result_message(
+    sdk: object,
+    task_id: str,
+    agent_name: str,
+    agent_role: str,
+    result: dict,
+) -> None:
+    """Post inferred agent result as an agent_result message on the task thread.
+
+    Creates a durable audit trail of what haiku classified for each agent run.
+    Errors are logged as warnings but never propagate — message posting is
+    best-effort and must not interrupt the result handling flow.
+
+    Args:
+        sdk: SDK client
+        task_id: Task identifier
+        agent_name: Name of the agent instance (e.g. "implementer-1")
+        agent_role: Role string used for inference ("implement", "gatekeeper", "fixer")
+        result: Classification dict returned by infer_result_from_stdout()
+    """
+    try:
+        content_lines = [
+            f"**Agent:** {agent_name}",
+            f"**Role:** {agent_role}",
+        ]
+        if "outcome" in result:
+            content_lines.append(f"**Outcome:** {result['outcome']}")
+        if "decision" in result:
+            content_lines.append(f"**Decision:** {result['decision']}")
+        if "status" in result:
+            content_lines.append(f"**Status:** {result['status']}")
+        if "reason" in result:
+            content_lines.append(f"**Reason:** {result['reason']}")
+        if "diagnosis" in result:
+            content_lines.append(f"**Diagnosis:** {result['diagnosis']}")
+        if "message" in result:
+            content_lines.append(f"**Message:** {result['message']}")
+
+        # Include JSON summary (exclude 'comment' which is a 2000-char stdout tail)
+        summary = {k: v for k, v in result.items() if k != "comment"}
+        content_lines.extend(["", "```json", json.dumps(summary, indent=2), "```"])
+
+        sdk.messages.create(
+            task_id=task_id,
+            from_actor="agent",
+            to_actor="human",
+            type="agent_result",
+            content="\n".join(content_lines),
+        )
+        logger.debug(f"Posted agent_result message for task {task_id} agent {agent_name}")
+    except Exception as e:
+        logger.warning(f"Failed to post agent_result message for {task_id}: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -708,6 +766,7 @@ def handle_agent_result_via_flow(task_id: str, agent_name: str, task_dir: Path, 
 
     try:
         sdk = queue_utils.get_sdk()
+        _post_agent_result_message(sdk, task_id, agent_name, "gatekeeper", result)
 
         task, transition, _ = _resolve_task_and_transition(sdk, task_id, agent_name, expected_queue)
         if task is None:
@@ -779,6 +838,7 @@ def handle_agent_result(task_id: str, agent_name: str, task_dir: Path) -> bool:
     logger.debug(f"Task {task_id} result: {outcome}")
 
     sdk = queue_utils.get_sdk()
+    _post_agent_result_message(sdk, task_id, agent_name, "implement", result)
 
     task = sdk.tasks.get(task_id)
     if not task:
@@ -873,7 +933,7 @@ def _resume_flow(
         steps_completed: Steps that had already run before the failure
         step_that_failed: The step that raised the exception
         task_dir: Task directory (for step execution)
-        fixer_result: The fixer's result.json dict (passed to step functions)
+        fixer_result: The fixer's result dict (passed to step functions)
     """
     from .flow import load_flow  # noqa: PLC0415
     from .steps import execute_steps  # noqa: PLC0415
@@ -939,6 +999,8 @@ def handle_fixer_result(task_id: str, agent_name: str, task_dir: Path) -> bool:
     step_that_failed = intervention_context.get("step_that_failed") or ""
 
     sdk = queue_utils.get_sdk()
+    _post_agent_result_message(sdk, task_id, agent_name, "fixer", result)
+
     task = sdk.tasks.get(task_id)
     if not task:
         logger.debug(f"Fixer result: task {task_id} not found on server, removing stale PID")
