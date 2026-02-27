@@ -1,43 +1,77 @@
 # Infer agent results from stdout instead of requiring result.json
 
-**Status:** Idea
+**Status:** Ready to implement
 **Captured:** 2026-02-27
 
-## Raw
+## Decision
 
-> What if asking the LLM agent to write the result.json is expecting it to be too deterministic? What if we need to put the responsibility onto the scheduler to look at the stdout of agents that have completed and infer a result from them?
-
-## Idea
-
-Stop relying on agents to write `result.json` as a structured protocol step. Instead, the scheduler reads the agent's stdout after it exits and uses an LLM call to infer the outcome. The agent just does its work and talks naturally — the system figures out what happened.
-
-This should be the only path — not a fallback. We either infer from stdout or we don't.
+Replace `result.json` with stdout inference. The scheduler reads the agent's stdout after it exits and uses a role-specific haiku call to classify the outcome. Agents no longer need to write any structured output file.
 
 ## Context
 
-We just had a task (bd7c9a09) where the agent did 163 tool calls of correct implementation work, passed 731 tests, wrote a clear summary to stdout saying "All tasks are complete" — and then exited without writing `result.json`. The prompt mentions result.json 8 times. The agent had 37 turns remaining. It simply didn't follow through on the mechanical step.
+We had a task (bd7c9a09) where the agent did 163 tool calls of correct implementation work, passed 731 tests, wrote a clear summary to stdout saying "All tasks are complete" — and then exited without writing `result.json`. The prompt mentions result.json 8 times. The agent had 37 turns remaining. It simply didn't follow through on the mechanical step.
 
-This isn't a turn budget problem or a prompt clarity problem. The agent understood the task, did the work correctly, and communicated that it was done — just not through the expected file. Asking an LLM to reliably perform a specific mechanical action (write a specific file in a specific format to a specific path) after a long creative session is fighting against what LLMs are good at.
-
-The current design treats agents as programs that must follow a protocol. But they're not programs — they're language models. They communicate through natural language. The system should meet them where they are.
-
-## Current flow
-
-```
-Agent does work → Agent writes result.json → Scheduler reads file → processes result
-                         ^
-                    This step fails silently
-                    when the agent forgets
-```
+Asking an LLM to reliably perform a specific mechanical action (write a specific file in a specific format to a specific path) after a long creative session is fighting against what LLMs are good at. The system should meet agents where they are — they communicate through natural language.
 
 ## Proposed flow
 
 ```
-Agent does work → Agent exits → Scheduler reads stdout → LLM infers result → processes result
-                                                              ^
-                                                    Single path for all agents.
-                                                    No result.json required.
+Agent does work → Agent exits → Scheduler reads stdout → Haiku infers result → processes result
 ```
+
+Single path. No result.json. No fallback. The scheduler is responsible for interpreting the agent's natural language output.
+
+## Feasibility test results
+
+We tested this against all 283 task stdouts in our history, spawning haiku agents the same way the scheduler does (`claude -p <prompt> --model haiku`).
+
+### Key insight: role-specific prompts are critical
+
+Giving haiku context about what each agent type does — what "done" and "failed" look like for implementers vs gatekeepers — dramatically improves accuracy.
+
+### Final results (role-specific prompts)
+
+**Implementer agents (163 tasks):**
+
+| Metric | Value |
+|---|---|
+| With ground truth | 148 |
+| Correct | 148 |
+| Wrong | 0 |
+| Unknown | 5 (all without ground truth) |
+| **Accuracy** | **100%** |
+
+**Gatekeeper agents (120 tasks):**
+
+| Metric | Value |
+|---|---|
+| With ground truth | 120 |
+| Correct (approve/reject) | 120 |
+| Wrong | 0 |
+| Unknown | 0 |
+| **Accuracy** | **100%** |
+
+**Combined: 268/268 correct. Zero misclassifications.**
+
+The 5 unknowns are genuinely unclassifiable: empty stdout (0 bytes) or only "Error: Reached max turns" with no work summary. These would route to `requires-intervention`.
+
+### What made the difference
+
+Early runs with a generic prompt scored 82.7%. The improvements:
+
+1. **Role-specific prompting.** Telling haiku "this is an implementer agent that writes code and creates PRs" vs "this is a gatekeeper that reviews PRs and approves/rejects" lets it interpret stdout correctly.
+
+2. **Explicit classification rules.** Short stdout that says "Done." or "task is complete" is sufficient — not every task produces a long summary. "Written result.json with failure" means failed, not done.
+
+3. **Agent behaviour context.** "Agents are verbose — they describe obstacles they overcame. This does not mean they failed."
+
+### Test progression
+
+| Run | Approach | Accuracy |
+|---|---|---|
+| 1 | Generic prompt, conservative | 99.1% (but 102 unknowns) |
+| 2 | Generic prompt, assertive | 82.7% (39 false negatives) |
+| 3 | Role-specific prompts | **100%** (0 wrong, 5 unknowns) |
 
 ## How it would work
 
@@ -47,133 +81,58 @@ The agent process exits. The scheduler detects the exit via PID tracking, same a
 
 ### 2. Scheduler infers result from stdout
 
-The scheduler reads the agent's `stdout.log` (last 2000 chars) and makes a haiku call to classify the outcome:
+The scheduler reads `stdout.log` (last 2000 chars) and makes a role-specific haiku call:
 
 ```python
 def infer_result_from_stdout(stdout_path: Path, agent_role: str) -> dict:
     """Use haiku to classify agent outcome from stdout."""
     stdout = stdout_path.read_text()
+    if not stdout.strip():
+        return {"outcome": "unknown", "reason": "empty stdout"}
+
     tail = stdout[-2000:]
 
-    if agent_role == "gatekeeper":
-        schema = '{"outcome": "done", "decision": "approve|reject", "comment": "..."}'
+    if agent_role in ("gatekeeper", "sanity-check-gatekeeper"):
+        result = _infer_gatekeeper(tail)
     else:
-        schema = '{"outcome": "done|failed", "reason": "..."}'
+        result = _infer_implementer(tail)
 
-    response = llm_call(
-        model="haiku",
-        system=(
-            "You classify the outcome of an AI agent's work session. "
-            "Read the agent's output and return a JSON object.\n\n"
-            f"Return format: {schema}\n\n"
-            "Rules:\n"
-            "- If the agent describes completed work, passing tests, and a summary, "
-            "the outcome is 'done' even if it also describes problems it encountered.\n"
-            "- If the agent says it wrote result.json with a FAILURE reason, "
-            "the outcome is 'failed'.\n"
-            "- Agents are verbose — they describe obstacles they overcame. "
-            "This does not mean they failed.\n"
-            "- If you genuinely cannot determine the outcome, return "
-            '{"outcome": "unknown"}.'
-        ),
-        prompt=f"Agent stdout (last 2000 chars):\n{tail}\n\nClassify the outcome.",
-    )
-    return json.loads(response)
+    return result
 ```
+
+Implementer prompt classifies as `done` or `failed`. Gatekeeper prompt classifies as `approve` or `reject`.
 
 ### 3. Handle uncertain outcomes
 
-If the inference returns `{"outcome": "unknown"}`, route to `requires-intervention` (draft #170). The fixer agent or a human can investigate.
+If the inference returns `{"outcome": "unknown"}`, route to `requires-intervention` (draft #170).
 
-## Feasibility test results
+## What changes
 
-We tested this approach against 283 real task stdouts from our history, using haiku as the classifier.
+1. **Remove result.json from agent prompts.** No more "IMPORTANT: write result.json" repeated 8 times. Agents just do their work and describe what happened.
 
-### Run 1: Conservative (haiku chose "unknown" when unsure)
+2. **Add `infer_result_from_stdout()` to the scheduler.** Called in `check_and_update_finished_agents()` after detecting a dead PID.
 
-| Metric | Value |
-|---|---|
-| Tasks classified | 169 |
-| Committed to a classification | 108 |
-| Correct | 107 |
-| Wrong | 1 |
-| Said "unknown" | 102 |
-| **Accuracy on committed classifications** | **99.1%** |
+3. **Add `anthropic` to scheduler dependencies.** The scheduler needs to make haiku API calls. This is the biggest architectural change — the scheduler currently has no LLM dependency.
 
-When haiku was confident enough to commit, it was almost always right. The one error: a gatekeeper approval misread as failed because the stdout mentioned "Exception" in context.
+4. **Remove result.json parsing from `read_result_json()`.** Replace with the inference call.
 
-### Run 2: Assertive (pushed haiku to always commit)
-
-| Metric | Value |
-|---|---|
-| Tasks classified | 283 |
-| Correct outcome | 196 |
-| Wrong outcome | 41 |
-| Unknown | 9 |
-| **Outcome accuracy** | **82.7%** |
-
-Error breakdown:
-
-| Error type | Count | Risk |
-|---|---|---|
-| False done (said done, actually failed) | 2 | **Dangerous** — would wrongly close a failed task |
-| False failed (said failed, actually done) | 39 | **Safe** — routes to intervention, no data loss |
-| Decision mismatch (outcome correct) | 24 | **Minor** — gatekeeper approve/reject confused |
-| Unknown | 9 | **Safe** — routes to intervention |
-
-### Key findings
-
-1. **When haiku is confident, it's 99.1% accurate.** The conservative mode is extremely reliable.
-
-2. **The error profile is safe.** Of 41 wrong outcomes, 39 are false negatives (said "failed" when actually done). These would route to `requires-intervention`, not cause data loss. Only 2 false positives across 283 tasks.
-
-3. **The 2 false positives are fixable.** Both cases: agent described why it failed in detail, then said "I've written result.json with failure reason." Haiku read the detailed description as success. Prompt tuning ("if the agent says it wrote a failure result, classify as failed") would catch these.
-
-4. **False negatives are haiku being pessimistic.** Agents describe problems they overcame before summarising success. Haiku read the problem descriptions as failure. Prompt tuning ("agents are verbose about obstacles — this doesn't mean they failed") would reduce these.
-
-5. **All outcomes are clearly present in stdout.** Every task we examined — implementer done, implementer failed, gatekeeper approve, gatekeeper reject — had clear natural language indicators in the stdout. The signal is there; the question is just prompt quality.
-
-### Recommended approach
-
-Use haiku with a **confidence threshold**:
-- If haiku is confident → use the classification
-- If haiku is uncertain → route to `requires-intervention`
-
-This gives the 99.1% accuracy of the conservative mode while still classifying the majority of tasks. The `requires-intervention` queue (draft #170) provides the safety net.
+5. **Update agent scripts.** Remove `scripts/finish` and `scripts/fail` that write result.json. Remove `RESULT_FILE` from env.sh.
 
 ## Benefits
 
-- **Removes a fragile protocol step.** Agents no longer need to write a specific file in a specific format. They just do their work.
-- **Meets LLMs where they are.** Agents communicate through natural language. The system interprets that text.
-- **Safe failure mode.** Uncertain classifications go to `requires-intervention`, not to `done` or `failed`.
-- **Cheap.** One haiku call per agent completion. ~2000 input tokens, ~50 output tokens.
-- **Removes prompt complexity.** No more "IMPORTANT: write result.json" repeated 8 times in the prompt.
+- **Removes a fragile protocol step.** Agents no longer need to write a specific file in a specific format.
+- **Meets LLMs where they are.** They communicate through natural language. The system interprets that.
+- **Simplifies prompts.** Remove ~20 lines of result.json instructions from each prompt template.
+- **Safe failure mode.** Uncertain classifications go to `requires-intervention`.
+- **Cheap.** One haiku call per agent completion. ~2000 input tokens, ~50 output tokens. ~$0.001 per task.
 
 ## Risks
 
-- **Adds an LLM dependency to the scheduler.** Currently the scheduler is pure Python with no LLM calls. This is an architectural change.
-- **Stdout might be empty or unhelpful.** If the agent crashed early or Claude Code itself errored, stdout may have no useful signal. Mitigation: route to `requires-intervention`.
-- **Cost per agent.** One haiku call per completion adds ~$0.001 per task. Negligible.
-
-## Additional signals beyond stdout
-
-The inference could also incorporate:
-- **Worktree state** — are there uncommitted changes? New commits? Do tests pass?
-- **Tool counter** — how many tool calls were made?
-- **stderr** — any error messages? "Reached max turns"?
-- **Git diff** — does the diff match the acceptance criteria?
-
-These heuristics could supplement the LLM call for edge cases.
+- **Adds an LLM dependency to the scheduler.** Currently pure Python. Mitigation: the call is small, fast, and only happens once per agent completion.
+- **Stdout might be empty.** If the agent crashed early. Mitigation: route to `requires-intervention`.
+- **Haiku API could be down.** Mitigation: retry with backoff, or fall back to `requires-intervention`.
 
 ## Relationship to other drafts
 
-- **Draft #170** (requires-intervention): The "uncertain" inference outcome maps perfectly to requires-intervention — if the system can't tell whether the agent succeeded, send it to the fixer.
-- **Draft #171** (actor model / messages): Both drafts are about improving how agents communicate results. This draft solves the immediate reliability problem; draft #171 is the longer-term architectural shift.
-- **Draft #172 supersedes the need for prompt improvements** — rather than making the prompt louder about result.json, accept that agents won't always follow mechanical instructions and build resilience into the scheduler.
-
-## Open Questions
-
-- Should the inference LLM call run synchronously in the scheduler tick, or be queued as a lightweight job?
-- Should we also infer results for agents that DID write result.json but wrote something malformed?
-- What confidence signal should haiku use? (e.g. return a confidence score, or just use "unknown" as the low-confidence indicator)
-- Should the prompt be agent-role-specific (implementer vs gatekeeper vs fixer)?
+- **Draft #170** (requires-intervention): Unknown inference outcomes route to requires-intervention.
+- **Draft #171** (actor model / messages): Longer-term architectural shift. This draft solves the immediate reliability problem.
