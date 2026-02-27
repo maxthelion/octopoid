@@ -192,7 +192,7 @@ class MatrixView(Widget):
     }
     """
 
-    _CHEVRON_FRAMES: list[str] = [">   ", ">>  ", ">>> "]
+    _CHEVRON_FRAMES: list[str] = [">  ", ">> ", ">>>"]
     _STATIC_STATES: frozenset[str] = frozenset({"incoming", "done", "failed"})
 
     def __init__(
@@ -243,10 +243,11 @@ class MatrixView(Widget):
         icon = self._state_icon(state, frame)
         if state not in self._STATIC_STATES:
             turns = int(task.get("turns") or 0)
-            turn_str = f"{turns}" if turns else ""
-            cell = Text(justify="right")
-            if turn_str:
-                cell.append(turn_str, style="bold #aaaaaa")
+            cell = Text(justify="left")
+            if turns:
+                cell.append(f"{turns:>3}", style="bold #aaaaaa")
+            else:
+                cell.append("   ")
             cell.append(icon, style="bold #4fc3f7")
             return cell
         return Text(icon, justify="center")
