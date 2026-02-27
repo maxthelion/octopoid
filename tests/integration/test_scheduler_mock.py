@@ -16,7 +16,7 @@ Implementation notes:
 - For implementer tests the worktree must be left in detached HEAD after the
   mock agent commits, so that push_branch can create the task-specific branch.
 - Gatekeeper tests use a separate git repo for TASK_WORKTREE (where the mock
-  agent commits) and a plain directory for task_dir (where result.json lands).
+  agent commits) and a plain directory for task_dir (where stdout.log lands).
   The gatekeeper step functions (post_review_comment, merge_pr) never touch
   task_dir/worktree, so no git setup is needed there.
 """
@@ -135,7 +135,7 @@ def _run_mock_agent(
     Args:
         worktree: Git repo the agent will cd into and commit from.
                   MUST be an initialised git repository.
-        task_dir: Directory where result.json will be written.
+        task_dir: Directory where stdout.log will be written.
         commits:  Number of mock git commits.  Note: on macOS, BSD ``seq``
                   counts down, so ``seq 1 N`` for N≤0 still iterates.
                   Always pass commits≥1 when you want predictable commits.
@@ -143,7 +143,7 @@ def _run_mock_agent(
         decision: approve | reject (gatekeeper mode; overrides outcome).
         comment:  Review comment for gatekeeper mode.
         reason:   Failure reason for implementer failure mode.
-        crash:    If True, exits without writing result.json.
+        crash:    If True, exits without writing stdout.log.
     """
     task_dir.mkdir(parents=True, exist_ok=True)
 
@@ -369,7 +369,7 @@ class TestFailureScenarios:
         tmp_path: Path,
         clean_tasks,
     ) -> None:
-        """Mock agent crashes (no result.json) → task moves to failed (not stuck in claimed)."""
+        """Mock agent crashes (no stdout.log) → task moves to failed (not stuck in claimed)."""
         task_id = _make_task_id()
         scoped_sdk.tasks.create(
             id=task_id,
@@ -392,9 +392,9 @@ class TestFailureScenarios:
 
         result = _run_mock_agent(worktree, task_dir, crash=True)
         assert result.returncode != 0, "Mock agent should exit non-zero in crash mode"
-        assert not (task_dir / "result.json").exists()
+        assert not (task_dir / "stdout.log").exists()
 
-        # No result.json → outcome=error → task moves to failed
+        # No stdout.log → outcome=unknown → task moves to failed
         handle_agent_result(task_id, "mock-implementer", task_dir)
 
         task = scoped_sdk.tasks.get(task_id)
@@ -599,7 +599,7 @@ class TestEdgeCases:
 class TestIdempotentResultHandling:
     """Tests that handle_agent_result() is safe to call multiple times.
 
-    If the scheduler processes the same result.json twice (e.g. race between
+    If the scheduler processes the same stdout.log twice (e.g. race between
     PID cleanup and result handling), it must not cause duplicate transitions,
     errors, or data corruption.
     """
@@ -710,7 +710,7 @@ class TestIdempotentResultHandling:
         # Simulate a late/duplicate implementer result arriving after task is done
         late_task_dir = tmp_path / "late-task"
         late_task_dir.mkdir(parents=True)
-        (late_task_dir / "result.json").write_text('{"outcome": "done"}')
+        (late_task_dir / "stdout.log").write_text("Mock agent successfully completed all implementation work.")
 
         # Must not raise, must not corrupt task state
         handle_agent_result(task_id, "mock-implementer", late_task_dir)

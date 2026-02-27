@@ -9,7 +9,6 @@ The fix: only check_and_update_finished_agents should remove dead PIDs.
 guard_pool_capacity and _gather_agents must NOT call cleanup_dead_pids.
 """
 
-import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -50,7 +49,7 @@ def _fake_kill_dead_only(pid, sig):
 
 def _setup_finished_agent(agents_dir, tasks_dir, task_id="TASK-test-1",
                           blueprint="implementer", pid=DEAD_PID):
-    """Set up a finished agent: running_pids entry + result.json in task dir."""
+    """Set up a finished agent: running_pids entry + stdout.log in task dir."""
     save_blueprint_pids(blueprint, {
         pid: {
             "task_id": task_id,
@@ -61,8 +60,7 @@ def _setup_finished_agent(agents_dir, tasks_dir, task_id="TASK-test-1",
 
     task_dir = tasks_dir / task_id
     task_dir.mkdir(parents=True, exist_ok=True)
-    result = {"outcome": "done"}
-    (task_dir / "result.json").write_text(json.dumps(result))
+    (task_dir / "stdout.log").write_text("Mock agent successfully completed all implementation work.")
 
     return task_dir
 

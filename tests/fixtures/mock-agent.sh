@@ -8,12 +8,12 @@
 #   MOCK_COMMENT         comment text for gatekeeper approve/reject
 #   MOCK_REASON          failure reason text for implementer failure
 #   MOCK_COMMITS         number of git commits to make (default: 1)
-#   MOCK_CRASH           if "true", exit non-zero without writing result.json
+#   MOCK_CRASH           if "true", exit non-zero without writing stdout.log
 #   MOCK_SLEEP           seconds to sleep before acting (default: 0)
 #
 # Required env vars (set by scheduler):
 #   TASK_WORKTREE        path to the task's git worktree
-#   TASK_DIR             path to the task directory (result.json written here)
+#   TASK_DIR             path to the task directory (stdout.log written here)
 
 set -euo pipefail
 
@@ -25,7 +25,7 @@ MOCK_COMMITS="${MOCK_COMMITS:-1}"
 MOCK_CRASH="${MOCK_CRASH:-false}"
 MOCK_SLEEP="${MOCK_SLEEP:-0}"
 
-# Crash mode: exit immediately without writing result.json
+# Crash mode: exit immediately without writing stdout.log
 if [ "$MOCK_CRASH" = "true" ]; then
     echo "mock-agent: crash mode, exiting non-zero" >&2
     exit 1
@@ -46,9 +46,9 @@ for i in $(seq 1 "$MOCK_COMMITS"); do
     git commit -m "mock commit $i"
 done
 
-# Build result.json using Python for safe JSON encoding
+# Write stdout.log with a natural language summary the scheduler can infer from
 python3 - <<PYEOF
-import json, os
+import os
 
 mock_outcome = os.environ.get('MOCK_OUTCOME', 'success')
 mock_decision = os.environ.get('MOCK_DECISION', '')
@@ -57,23 +57,48 @@ mock_reason = os.environ.get('MOCK_REASON', '')
 task_dir = os.environ.get('TASK_DIR', '.')
 
 if mock_decision:
-    # Gatekeeper mode
+    # Gatekeeper mode — write a review summary
     if mock_decision == 'approve':
-        result = {'status': 'success', 'decision': 'approve', 'comment': mock_comment}
+        summary = f"""## Gatekeeper Review
+
+### Automated Checks
+- [x] Tests pass
+- [x] No blocking issues found
+
+### Review Summary
+{mock_comment or 'All acceptance criteria are met. The implementation looks correct.'}
+
+### Decision
+**DECISION: APPROVED**
+"""
     else:
-        result = {'status': 'failure', 'decision': 'reject', 'comment': mock_comment}
+        summary = f"""## Gatekeeper Review
+
+### Automated Checks
+- [ ] Tests fail
+
+### Review Summary
+{mock_comment or 'The implementation does not meet the acceptance criteria.'}
+
+### Decision
+**DECISION: REJECTED**
+
+**Reason:** {mock_comment or 'Tests are failing and acceptance criteria not met.'}
+"""
 else:
-    # Implementer mode
+    # Implementer mode — write an implementation summary
     if mock_outcome == 'failure':
-        result = {'outcome': 'failed', 'reason': mock_reason}
+        summary = f"Mock agent could not complete the task. Reason: {mock_reason or 'Simulated failure.'}\n\nThe task has failed and cannot be completed."
     elif mock_outcome == 'needs_continuation':
-        result = {'outcome': 'needs_continuation'}
+        summary = "Mock agent made partial progress. Continuation needed to finish the remaining work."
     else:
-        result = {'outcome': 'done'}
+        summary = "Mock agent successfully completed all implementation work. All commits made, all acceptance criteria are met. Implementation is done."
 
-result_path = os.path.join(task_dir, 'result.json')
-with open(result_path, 'w') as f:
-    json.dump(result, f)
+import os
+stdout_path = os.path.join(task_dir, 'stdout.log')
+with open(stdout_path, 'w') as f:
+    f.write(summary)
 
-print(f"mock-agent: wrote {result_path}: {result}")
+print(f"mock-agent: wrote {stdout_path}")
+print(summary)
 PYEOF

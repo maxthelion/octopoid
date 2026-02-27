@@ -20,7 +20,7 @@ You are reviewing this task's implementation to determine if it should be approv
    - `../scripts/check-debug-code` — Find leftover debug code (advisory)
    - `../scripts/diff-stats` — Get diff statistics
 4. **Review the diff** — Read the actual changes and verify they match the task requirements
-5. **Write your decision** — Write `result.json` with your decision and review comment
+5. **State your decision clearly** — Write a review summary and state APPROVED or REJECTED
 
 ## Decision Criteria
 
@@ -47,48 +47,34 @@ You are reviewing this task's implementation to determine if it should be approv
 
 ## How to Report Your Decision
 
-When you have completed your review, write your decision to `result.json` in the task directory:
+Write a markdown review comment to stdout. End your output with one of these exact lines:
 
 **For approval:**
-```json
-{
-  "status": "success",
-  "decision": "approve",
-  "comment": "## Gatekeeper Review\n\n### Automated Checks\n- [x] Tests pass\n- [x] No blocking issues\n\n### Review Summary\n[Your analysis here]\n\n### Decision\n**APPROVED** ✓"
-}
+```
+**DECISION: APPROVED**
 ```
 
 **For rejection:**
-```json
-{
-  "status": "success",
-  "decision": "reject",
-  "comment": "## Gatekeeper Review\n\n### Automated Checks\n- [ ] Tests fail (N failures)\n\n### Review Summary\n[Your analysis here]\n\n### Decision\n**REJECTED** ✗\n\n**Reason:** [Specific, actionable reason. What needs to be fixed?]\n\n**Before Retrying:**\nRebase your branch onto the base branch before making changes:\n```bash\ngit fetch origin\ngit rebase origin/<base_branch>\n```\nThen fix the issues above and push again."
-}
+```
+**DECISION: REJECTED**
+
+**Reason:** [Specific, actionable reason. What needs to be fixed?]
 ```
 
-**If you cannot complete the review** (e.g., PR not found, environment error):
-```json
-{
-  "status": "failure",
-  "message": "Could not complete review: [reason]"
-}
-```
-
-The `comment` field should be a full markdown PR review comment. It will be posted to the PR automatically by the orchestrator.
+The orchestrator reads your stdout to determine the decision. Make your decision
+statement clear and unambiguous.
 
 ## IMPORTANT: Do NOT
 
-- Post PR comments yourself (the orchestrator does this from your `comment` field)
+- Post PR comments yourself (the orchestrator does this from your output)
 - Merge or close the PR
-- Call `../scripts/finish` or `../scripts/fail`
 - Update task state directly
 
-Just write `result.json` and exit. The orchestrator handles all transitions.
+Just write your review to stdout and exit. The orchestrator handles all transitions.
 
 ## Review Comment Format
 
-Your `comment` should follow this format:
+Your output should follow this format:
 
 ```markdown
 ## Gatekeeper Review
@@ -108,11 +94,11 @@ Your `comment` should follow this format:
 [Your analysis of whether the changes meet the acceptance criteria. Be specific — reference file paths and line numbers. Mention any concerns or recommendations.]
 
 ### Decision
-**APPROVED** ✓
+**DECISION: APPROVED**
 
 — or —
 
-**REJECTED** ✗
+**DECISION: REJECTED**
 
 **Reason:** [Specific, actionable reason. What needs to be fixed?]
 

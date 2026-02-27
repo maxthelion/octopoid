@@ -1,7 +1,7 @@
 """Tests for scheduler guard bug fixes.
 
 Covers:
-- check_and_update_finished_agents: reads result.json for pure-function agents
+- check_and_update_finished_agents: infers result from stdout.log for pure-function agents
 - guard_claim_task dedup: prevents two pool instances from working the same task
 """
 
@@ -20,7 +20,7 @@ from octopoid.state_utils import AgentState
 
 
 # =============================================================================
-# check_and_update_finished_agents reads result.json for pure-function agents
+# check_and_update_finished_agents infers result from stdout.log for pure-function agents
 # =============================================================================
 
 

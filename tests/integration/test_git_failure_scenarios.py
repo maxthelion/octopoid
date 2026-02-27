@@ -384,17 +384,13 @@ class TestRebaseInstructions:
 
         task_id = _make_provisional(scoped_sdk, orchestrator_id)
 
-        # Write result.json directly with status="success" so the flow takes the
-        # decision=="reject" branch, which calls reject_with_feedback.
+        # Write stdout.log so infer_result_from_stdout returns a reject decision.
+        # The comment does NOT include "git rebase" — reject_with_feedback must add it.
         gk_task_dir = tmp_path / "gk-task"
         gk_task_dir.mkdir(parents=True, exist_ok=True)
-        gk_result = {
-            "status": "success",
-            "decision": "reject",
-            # Comment does NOT include "git rebase" — reject_with_feedback must add it
-            "comment": "Needs more tests",
-        }
-        (gk_task_dir / "result.json").write_text(json.dumps(gk_result))
+        (gk_task_dir / "stdout.log").write_text(
+            "**DECISION: REJECTED**\n\nNeeds more tests"
+        )
 
         # Capture the reason passed to sdk.tasks.reject so we can inspect it
         captured_reasons: list[str] = []

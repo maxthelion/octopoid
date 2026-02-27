@@ -5,13 +5,14 @@ driving task state-machine transitions. It was extracted from scheduler.py to
 give this well-scoped concern its own home.
 
 Public API (also re-exported from octopoid.scheduler for backwards compat):
-    read_result_json            – Parse result.json from a task directory
+    infer_result_from_stdout     – Infer agent outcome from stdout.log using haiku
     handle_agent_result_via_flow – Handle gatekeeper/review agent results via flow
     handle_agent_result          – Handle implementer agent results via outcome dispatch
 """
 
 import json
 import logging
+from datetime import datetime
 from pathlib import Path
 
 from . import queue_utils
@@ -21,55 +22,171 @@ logger = logging.getLogger("octopoid.result_handler")
 
 
 # ---------------------------------------------------------------------------
-# Result reading helpers
+# Stdout inference helpers
 # ---------------------------------------------------------------------------
 
-def read_result_json(task_dir: Path) -> dict:
-    """Read and parse result.json from a task directory.
+_IMPLEMENTER_PROMPT = """\
+You are classifying the outcome of an AI software implementer agent. The agent \
+wrote code, made git commits, ran tests, and submitted a PR.
+
+The agent output below is the last 2000 characters of the agent's session. \
+Classify it as one of:
+- "done": The agent successfully completed their implementation. Look for: \
+"All tasks complete", "implementation done", "task is complete", \
+"outcome: done", work summary, tests passing.
+- "failed": The agent could not complete the task. Look for: explicit failure, \
+unresolved errors, "cannot complete", very short output with only an error.
+
+Note: Agents are verbose. They describe obstacles they overcame. This does NOT \
+mean they failed. Short output that says "Done." is sufficient for "done". \
+"Written result.json with failure" or "outcome: failed" means failed, not done.
+
+AGENT OUTPUT:
+{tail}
+
+Respond with exactly one word: done or failed"""
+
+_GATEKEEPER_PROMPT = """\
+You are classifying the decision of an AI code review agent (gatekeeper). \
+The agent reviewed a pull request and decided whether to approve or reject it.
+
+The agent output below is the last 2000 characters of the agent's session. \
+Classify it as:
+- "approve": The agent approved the PR. Look for: "APPROVED", "Approved", \
+"approve", decision to accept, tests passing, all criteria met.
+- "reject": The agent rejected the PR. Look for: "REJECTED", "Rejected", \
+"reject", decision to reject, failing tests, criteria not met.
+
+AGENT OUTPUT:
+{tail}
+
+Respond with exactly one word: approve or reject"""
+
+_FIXER_PROMPT = """\
+You are classifying the outcome of an AI fixer agent. The agent was given a \
+task that entered the requires-intervention queue and asked to diagnose and \
+fix the issue.
+
+The agent output below is the last 2000 characters of the agent's session. \
+Classify it as:
+- "fixed": The agent successfully diagnosed and applied a fix.
+- "failed": The agent could not fix the issue or needs human intervention.
+
+AGENT OUTPUT:
+{tail}
+
+Respond with exactly one word: fixed or failed"""
+
+
+def _call_haiku(prompt: str) -> str:
+    """Call haiku with the given prompt and return the text response."""
+    import anthropic  # noqa: PLC0415
+    client = anthropic.Anthropic()
+    message = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=10,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return message.content[0].text.strip().lower()
+
+
+def _infer_implementer(tail: str) -> dict:
+    """Infer implementer outcome from stdout tail using haiku."""
+    try:
+        word = _call_haiku(_IMPLEMENTER_PROMPT.format(tail=tail))
+        if "done" in word:
+            return {"outcome": "done"}
+        elif "fail" in word:
+            return {"outcome": "failed", "reason": "Inferred from stdout: agent did not complete task"}
+        else:
+            return {"outcome": "unknown", "reason": f"Haiku returned unexpected word: {word!r}"}
+    except Exception as e:
+        logger.warning(f"Haiku inference failed for implementer: {e}")
+        return {"outcome": "unknown", "reason": f"Inference error: {e}"}
+
+
+def _infer_gatekeeper(tail: str) -> dict:
+    """Infer gatekeeper decision from stdout tail using haiku."""
+    try:
+        word = _call_haiku(_GATEKEEPER_PROMPT.format(tail=tail))
+        if "approve" in word:
+            return {"status": "success", "decision": "approve", "comment": tail}
+        elif "reject" in word:
+            return {"status": "success", "decision": "reject", "comment": tail}
+        else:
+            return {"status": "failure", "message": f"Could not infer gatekeeper decision (haiku: {word!r})"}
+    except Exception as e:
+        logger.warning(f"Haiku inference failed for gatekeeper: {e}")
+        return {"status": "failure", "message": f"Inference error: {e}"}
+
+
+def _infer_fixer(tail: str) -> dict:
+    """Infer fixer outcome from stdout tail using haiku."""
+    try:
+        word = _call_haiku(_FIXER_PROMPT.format(tail=tail))
+        if "fix" in word:
+            return {"outcome": "fixed", "diagnosis": "Inferred from stdout", "fix_applied": tail[:500]}
+        elif "fail" in word:
+            return {"outcome": "failed", "diagnosis": "Inferred from stdout: could not fix"}
+        else:
+            return {"outcome": "unknown", "reason": f"Haiku returned unexpected word: {word!r}"}
+    except Exception as e:
+        logger.warning(f"Haiku inference failed for fixer: {e}")
+        return {"outcome": "unknown", "reason": f"Inference error: {e}"}
+
+
+def infer_result_from_stdout(stdout_path: Path, agent_role: str) -> dict:
+    """Infer agent outcome from stdout.log using a role-specific haiku call.
+
+    Reads the last 2000 characters of stdout.log and uses a role-specific
+    prompt to classify the agent's outcome. This replaces result.json as the
+    mechanism for agents to communicate their outcome to the scheduler.
 
     Args:
-        task_dir: Path to the task directory
+        stdout_path: Path to the stdout.log file
+        agent_role: Role of the agent ("implement", "gatekeeper",
+                    "sanity-check-gatekeeper", or "fixer")
 
     Returns:
-        Parsed result dict, or an error dict if missing/invalid
+        Result dict in the format expected by the relevant handler:
+        - Implementer: {"outcome": "done"} or {"outcome": "failed", ...}
+        - Gatekeeper: {"status": "success", "decision": "approve"/"reject", ...}
+                   or {"status": "failure", "message": ...}
+        - Fixer: {"outcome": "fixed", ...} or {"outcome": "failed", ...}
+        - Unknown: {"outcome": "unknown"} or gatekeeper-style failure
     """
-    result_path = task_dir / "result.json"
-    if not result_path.exists():
-        return {"status": "failure", "message": "No result.json produced"}
+    if not stdout_path.exists():
+        logger.warning(f"stdout.log not found at {stdout_path}")
+        if agent_role in ("gatekeeper", "sanity-check-gatekeeper"):
+            return {"status": "failure", "message": "No stdout.log produced"}
+        return {"outcome": "unknown", "reason": "No stdout.log produced"}
 
     try:
-        return json.loads(result_path.read_text())
-    except json.JSONDecodeError:
-        return {"status": "failure", "message": "Invalid result.json"}
+        stdout = stdout_path.read_text(errors="replace")
+    except OSError as e:
+        logger.warning(f"Could not read stdout.log at {stdout_path}: {e}")
+        if agent_role in ("gatekeeper", "sanity-check-gatekeeper"):
+            return {"status": "failure", "message": f"Could not read stdout.log: {e}"}
+        return {"outcome": "unknown", "reason": f"Could not read stdout.log: {e}"}
 
+    if not stdout.strip():
+        logger.warning(f"stdout.log is empty at {stdout_path}")
+        if agent_role in ("gatekeeper", "sanity-check-gatekeeper"):
+            return {"status": "failure", "message": "Empty stdout — agent may have crashed"}
+        return {"outcome": "unknown", "reason": "Empty stdout — agent may have crashed"}
 
-def _read_or_infer_result(task_dir: Path) -> dict:
-    """Read result.json from a task directory, with fallback heuristics.
+    tail = stdout[-2000:]
 
-    If result.json exists, parses and returns it. If it's missing or invalid,
-    falls back to checking notes.md for a continuation signal, or returns an
-    error result.
+    if agent_role in ("gatekeeper", "sanity-check-gatekeeper"):
+        result = _infer_gatekeeper(tail)
+    elif agent_role == "fixer":
+        result = _infer_fixer(tail)
+    else:
+        # implementer and any other role
+        result = _infer_implementer(tail)
 
-    Args:
-        task_dir: Path to the task directory
-
-    Returns:
-        Result dict with at least an "outcome" key.
-    """
-    result_path = task_dir / "result.json"
-
-    if result_path.exists():
-        try:
-            return json.loads(result_path.read_text())
-        except json.JSONDecodeError:
-            return {"outcome": "error", "reason": "Invalid result.json"}
-
-    # No result.json — check for progress notes as a continuation signal
-    notes_path = task_dir / "notes.md"
-    if notes_path.exists() and notes_path.read_text().strip():
-        return {"outcome": "needs_continuation"}
-
-    return {"outcome": "error", "reason": "No result.json produced"}
+    logger.debug(f"infer_result_from_stdout: role={agent_role} result={result}")
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -552,8 +669,8 @@ def handle_agent_result_via_flow(task_id: str, agent_name: str, task_dir: Path, 
     Replaces the hardcoded if/else dispatch for agent roles. Reads the flow,
     finds the current transition, and executes steps accordingly.
 
-    The gatekeeper result format:
-      {"status": "success", "decision": "approve"/"reject", "comment": "<markdown>"}
+    The gatekeeper result format (inferred from stdout):
+      {"status": "success", "decision": "approve"/"reject", "comment": "<stdout tail>"}
     or on failure:
       {"status": "failure", "message": "<reason>"}
 
@@ -564,14 +681,14 @@ def handle_agent_result_via_flow(task_id: str, agent_name: str, task_dir: Path, 
     Args:
         task_id: Task identifier
         agent_name: Name of the agent
-        task_dir: Path to the task directory containing result.json
+        task_dir: Path to the task directory containing stdout.log
         expected_queue: Queue the agent was working from (e.g. 'provisional').
             If set and the task has moved to a different queue, the result is
             discarded as stale to prevent running wrong transition steps.
     """
     from .steps import RetryableStepError  # noqa: PLC0415
 
-    result = read_result_json(task_dir)
+    result = infer_result_from_stdout(task_dir / "stdout.log", "gatekeeper")
 
     logger.debug(f"handle_agent_result_via_flow: task={task_id} agent={agent_name} status={result.get('status')} decision={result.get('decision')}")
 
@@ -617,12 +734,13 @@ def handle_agent_result_via_flow(task_id: str, agent_name: str, task_dir: Path, 
 def handle_agent_result(task_id: str, agent_name: str, task_dir: Path) -> bool:
     """Handle the result of a script-based agent run.
 
-    Reads result.json and transitions the task using flow steps:
-    1. Read result.json to determine outcome
+    Infers the outcome from stdout.log and transitions the task using flow steps:
+    1. Infer outcome from stdout.log using haiku
     2. Fetch current task state from server
     3. For "done" outcomes in "claimed" queue: execute the flow's steps, then the engine
        performs the transition to the target queue (submit, accept, or update)
-    4. For "failed"/"error": move to failed queue
+    4. For "failed"/"error"/"unknown": move to failed queue (unknown routes to
+       requires-intervention via fail_task if available)
     5. For "needs_continuation": move to needs_continuation queue
 
     Raises on step failure so the caller (check_and_update_finished_agents) knows
@@ -642,7 +760,7 @@ def handle_agent_result(task_id: str, agent_name: str, task_dir: Path) -> bool:
     """
     from .steps import RetryableStepError  # noqa: PLC0415
 
-    result = _read_or_infer_result(task_dir)
+    result = infer_result_from_stdout(task_dir / "stdout.log", "implement")
     outcome = result.get("outcome", "error")
     logger.debug(f"Task {task_id} result: {outcome}")
 
@@ -745,7 +863,7 @@ def _resume_flow(
     flow = load_flow(flow_name)
     transitions = flow.get_transitions_from(previous_queue)
     if not transitions:
-        debug_log(f"Fixer resume: no transitions from '{previous_queue}' in flow '{flow_name}' for {task_id}")
+        logger.debug(f"Fixer resume: no transitions from '{previous_queue}' in flow '{flow_name}' for {task_id}")
         return
 
     transition = transitions[0]
@@ -757,7 +875,7 @@ def _resume_flow(
         idx = transition.runs.index(step_that_failed)
         remaining_steps = transition.runs[idx:]
 
-    debug_log(
+    logger.debug(
         f"Fixer resume: task {task_id} running steps {remaining_steps} "
         f"(from '{previous_queue}' to '{transition.to_state}')"
     )
@@ -775,14 +893,12 @@ def _resume_flow(
 def handle_fixer_result(task_id: str, agent_name: str, task_dir: Path) -> bool:
     """Handle the result of a fixer agent run.
 
-    Reads result.json written by the fixer agent and takes the appropriate
-    action:
+    Infers the fixer outcome from stdout.log and takes the appropriate action:
     - outcome=fixed  → resume the interrupted flow from where it left off,
                         skip already-completed steps, post a success message.
     - anything else  → move to TRUE failed (terminal), post a failure message.
 
-    The fixer communicates only through result.json — it never calls the
-    server API directly (pure function agent).
+    The fixer communicates through stdout — the scheduler infers the outcome.
 
     Returns:
         True if the task was transitioned (PID safe to remove).
@@ -791,11 +907,11 @@ def handle_fixer_result(task_id: str, agent_name: str, task_dir: Path) -> bool:
     Args:
         task_id: Task identifier
         agent_name: Name of the fixer agent instance
-        task_dir: Path to the task directory containing result.json
+        task_dir: Path to the task directory containing stdout.log
     """
-    result = _read_or_infer_result(task_dir)
+    result = infer_result_from_stdout(task_dir / "stdout.log", "fixer")
     outcome = result.get("outcome", "error")
-    debug_log(f"Fixer result for task {task_id}: outcome={outcome}")
+    logger.debug(f"Fixer result for task {task_id}: outcome={outcome}")
 
     # Load intervention context recorded when the task entered requires-intervention
     intervention_context = _load_intervention_context(task_dir)
@@ -806,7 +922,7 @@ def handle_fixer_result(task_id: str, agent_name: str, task_dir: Path) -> bool:
     sdk = queue_utils.get_sdk()
     task = sdk.tasks.get(task_id)
     if not task:
-        debug_log(f"Fixer result: task {task_id} not found on server, removing stale PID")
+        logger.debug(f"Fixer result: task {task_id} not found on server, removing stale PID")
         return True
 
     if outcome == "fixed":
@@ -842,7 +958,7 @@ def handle_fixer_result(task_id: str, agent_name: str, task_dir: Path) -> bool:
         except Exception as resume_err:
             # Flow resume failed — move to true terminal failed
             print(f"[{datetime.now().isoformat()}] ERROR: Flow resume failed for {task_id} after fix: {resume_err}")
-            debug_log(f"Fixer: flow resume error for {task_id}: {resume_err}")
+            logger.debug(f"Fixer: flow resume error for {task_id}: {resume_err}")
             try:
                 from .tasks import get_task_logger  # noqa: PLC0415
                 sdk.tasks.update(task_id, queue="failed", execution_notes=str(resume_err)[:500], claimed_by=None)

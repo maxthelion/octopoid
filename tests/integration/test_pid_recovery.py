@@ -80,7 +80,7 @@ class TestDeadPIDRecovery:
         blueprint_name = "implementer"
 
         # task_dir must exist — check_and_update_finished_agents checks task_dir.exists()
-        # before processing result. No result.json → inferred as {"outcome": "error"}.
+        # before processing result. No stdout.log → inferred as {"outcome": "unknown"}.
         task_dir = tasks_dir / task_id
         task_dir.mkdir(parents=True)
 

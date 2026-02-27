@@ -220,14 +220,10 @@ class TestExecuteStepsProgress:
 
 
 class TestHandleFixerResultFixed:
-    """handle_fixer_result resumes the flow when fixer writes outcome=fixed."""
+    """handle_fixer_result resumes the flow when fixer reports outcome=fixed."""
 
     def _make_task(self, queue: str = "requires-intervention") -> dict:
         return {"id": "TASK-fix", "queue": queue, "flow": "default"}
-
-    def _write_result(self, task_dir: Path, outcome: str = "fixed", **kwargs) -> None:
-        data = {"outcome": outcome, **kwargs}
-        (task_dir / "result.json").write_text(json.dumps(data))
 
     def _write_intervention_context(
         self, task_dir: Path, previous_queue: str, steps_completed: list, step_that_failed: str
@@ -247,7 +243,6 @@ class TestHandleFixerResultFixed:
 
         task_dir = tmp_path / "TASK-fix"
         task_dir.mkdir()
-        self._write_result(task_dir, "fixed", diagnosis="bad rebase", fix_applied="rebased")
         self._write_intervention_context(
             task_dir,
             previous_queue="claimed",
@@ -269,9 +264,11 @@ class TestHandleFixerResultFixed:
         mock_flow = Flow(name="default", description="", transitions=[mock_transition])
 
         steps_run = []
+        fixed_result = {"outcome": "fixed", "diagnosis": "bad rebase", "fix_applied": "rebased"}
 
         with (
             patch("octopoid.result_handler.queue_utils.get_sdk", return_value=sdk),
+            patch("octopoid.result_handler.infer_result_from_stdout", return_value=fixed_result),
             patch("octopoid.task_thread.post_message"),
             patch("octopoid.flow.load_flow", return_value=mock_flow),
             patch("octopoid.steps.execute_steps",
@@ -290,14 +287,15 @@ class TestHandleFixerResultFixed:
         """handle_fixer_result returns True (PID safe to remove) on fixed outcome."""
         task_dir = tmp_path / "TASK-fix"
         task_dir.mkdir()
-        self._write_result(task_dir, "fixed")
         self._write_intervention_context(task_dir, "claimed", [], "")
 
         sdk = MagicMock()
         sdk.tasks.get.return_value = self._make_task()
+        fixed_result = {"outcome": "fixed", "diagnosis": "fixed it", "fix_applied": "applied"}
 
         with (
             patch("octopoid.result_handler.queue_utils.get_sdk", return_value=sdk),
+            patch("octopoid.result_handler.infer_result_from_stdout", return_value=fixed_result),
             patch("octopoid.task_thread.post_message"),
             patch("octopoid.steps.execute_steps"),
             patch("octopoid.result_handler._perform_transition"),
@@ -316,9 +314,6 @@ class TestHandleFixerResultFixed:
 class TestHandleFixerResultFailed:
     """handle_fixer_result moves to true terminal failed on non-fixed outcomes."""
 
-    def _write_result(self, task_dir: Path, outcome: str, **kwargs) -> None:
-        (task_dir / "result.json").write_text(json.dumps({"outcome": outcome, **kwargs}))
-
     def _write_intervention_context(self, task_dir: Path) -> None:
         ctx = {
             "previous_queue": "claimed",
@@ -333,15 +328,16 @@ class TestHandleFixerResultFailed:
         """outcome=failed calls sdk.tasks.update(queue='failed')."""
         task_dir = tmp_path / "TASK-cant-fix"
         task_dir.mkdir()
-        self._write_result(task_dir, "failed", reason="cannot fix this")
         self._write_intervention_context(task_dir)
 
         sdk = MagicMock()
         sdk.tasks.get.return_value = {"id": "TASK-cant-fix", "queue": "requires-intervention", "flow": "default"}
         sdk.tasks.update.return_value = {}
+        failed_result = {"outcome": "failed", "diagnosis": "cannot fix this"}
 
         with (
             patch("octopoid.result_handler.queue_utils.get_sdk", return_value=sdk),
+            patch("octopoid.result_handler.infer_result_from_stdout", return_value=failed_result),
             patch("octopoid.task_thread.post_message"),
             patch("octopoid.tasks.get_task_logger"),
         ):
@@ -358,15 +354,16 @@ class TestHandleFixerResultFailed:
         """outcome=failed never tries to resume flow steps."""
         task_dir = tmp_path / "TASK-cant-fix"
         task_dir.mkdir()
-        self._write_result(task_dir, "failed", reason="cannot fix this")
         self._write_intervention_context(task_dir)
 
         sdk = MagicMock()
         sdk.tasks.get.return_value = {"id": "TASK-cant-fix", "queue": "requires-intervention", "flow": "default"}
         sdk.tasks.update.return_value = {}
+        failed_result = {"outcome": "failed", "diagnosis": "cannot fix this"}
 
         with (
             patch("octopoid.result_handler.queue_utils.get_sdk", return_value=sdk),
+            patch("octopoid.result_handler.infer_result_from_stdout", return_value=failed_result),
             patch("octopoid.task_thread.post_message"),
             patch("octopoid.tasks.get_task_logger"),
             patch("octopoid.steps.execute_steps") as mock_steps,
@@ -380,14 +377,15 @@ class TestHandleFixerResultFailed:
         """When task is not found on server, returns True (stale PID removal)."""
         task_dir = tmp_path / "TASK-gone"
         task_dir.mkdir()
-        self._write_result(task_dir, "failed")
         self._write_intervention_context(task_dir)
 
         sdk = MagicMock()
         sdk.tasks.get.return_value = None
+        failed_result = {"outcome": "failed", "diagnosis": "could not complete"}
 
         with (
             patch("octopoid.result_handler.queue_utils.get_sdk", return_value=sdk),
+            patch("octopoid.result_handler.infer_result_from_stdout", return_value=failed_result),
         ):
             from octopoid.result_handler import handle_fixer_result
             result = handle_fixer_result("TASK-gone", "fixer-1", task_dir)
