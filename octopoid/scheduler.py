@@ -51,6 +51,7 @@ from .result_handler import (
     _get_fail_target_from_flow,
     handle_agent_result,
     handle_agent_result_via_flow,
+    handle_fixer_result,
     read_result_json,
 )
 
@@ -823,6 +824,22 @@ def _load_review_section(task_id: str) -> str:
         return ""
 
 
+def _load_intervention_context_for_prompt(task_id: str) -> str:
+    """Load intervention_context.json for a task as a formatted JSON string.
+
+    Returns empty JSON object string if not found or task_id is empty.
+    """
+    if not task_id:
+        return "{}"
+    ctx_path = get_tasks_dir() / task_id / "intervention_context.json"
+    if ctx_path.exists():
+        try:
+            return ctx_path.read_text()
+        except OSError:
+            pass
+    return "{}"
+
+
 def _render_prompt(task: dict, agent_config: dict) -> str:
     """Build the rendered prompt string from template, instructions, hooks, and thread.
 
@@ -850,6 +867,11 @@ def _render_prompt(task: dict, agent_config: dict) -> str:
     required_steps = _build_required_steps(task)
     review_section = _load_review_section(task.get("id", ""))
 
+    # Load intervention context for fixer agents (if available in the task dir)
+    intervention_context = _load_intervention_context_for_prompt(task.get("id", ""))
+
+    task_dir = get_tasks_dir() / task.get("id", "")
+
     return Template(prompt_template).safe_substitute(
         task_id=task.get("id", "unknown"),
         task_title=task.get("title", "Untitled"),
@@ -862,6 +884,9 @@ def _render_prompt(task: dict, agent_config: dict) -> str:
         required_steps=required_steps,
         review_section=review_section,
         continuation_section="",
+        intervention_context=intervention_context,
+        task_dir=str(task_dir),
+        worktree=str(task_dir / "worktree"),
     )
 
 
@@ -1295,7 +1320,10 @@ def check_and_update_finished_agents() -> None:
                 task_dir = get_tasks_dir() / task_id
                 if task_dir.exists():
                     try:
-                        if claim_from != "incoming":
+                        if claim_from == "requires-intervention":
+                            # Fixer agents use dedicated result handler
+                            transitioned = handle_fixer_result(task_id, instance_name, task_dir)
+                        elif claim_from != "incoming":
                             # Review agents (claim from provisional, etc.) use flow dispatch
                             transitioned = handle_agent_result_via_flow(task_id, instance_name, task_dir, expected_queue=claim_from)
                         else:

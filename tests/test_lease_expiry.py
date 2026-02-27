@@ -68,6 +68,9 @@ class TestCheckAndRequeueExpiredLeases:
             patch("octopoid.tasks.get_sdk", return_value=mock_sdk),
             patch("octopoid.tasks.get_task_logger"),
             patch("octopoid.scheduler._get_circuit_breaker_threshold", return_value=threshold),
+            # Prevent request_intervention from creating real dirs / posting messages
+            patch("octopoid.config.get_tasks_dir"),
+            patch("octopoid.task_thread.post_message"),
         ):
             check_and_requeue_expired_leases()
 
@@ -231,15 +234,16 @@ class TestCheckAndRequeueExpiredLeases:
     # ------------------------------------------------------------------
 
     def test_circuit_breaker_trips_on_threshold_reached(self) -> None:
-        """When attempt_count + 1 >= threshold, move task to failed instead of incoming."""
+        """When attempt_count + 1 >= threshold, route task to requires-intervention."""
         # attempt_count=2, threshold=3 → new_attempt_count=3 >= 3 → trip
+        # First failure routes to requires-intervention (fixer agent gets a chance)
         task = _make_task("TASK-cb", _expired(), attempt_count=2)
         sdk = self._run([task], threshold=3)
 
         sdk.tasks.update.assert_called_once()
         call_kwargs = sdk.tasks.update.call_args
         assert call_kwargs.args[0] == "TASK-cb"
-        assert call_kwargs.kwargs["queue"] == "failed"
+        assert call_kwargs.kwargs["queue"] == "requires-intervention"
         assert call_kwargs.kwargs["attempt_count"] == 3
 
     def test_circuit_breaker_does_not_trip_below_threshold(self) -> None:
@@ -277,11 +281,12 @@ class TestCheckAndRequeueExpiredLeases:
     def test_circuit_breaker_threshold_configurable(self) -> None:
         """Circuit breaker threshold is respected when set to a custom value."""
         # With threshold=1, the very first expiry should trip the breaker
+        # First failure routes to requires-intervention (not directly to failed)
         task = _make_task("TASK-custom-threshold", _expired(), attempt_count=0)
         sdk = self._run([task], threshold=1)
 
         sdk.tasks.update.assert_called_once()
-        assert sdk.tasks.update.call_args.kwargs["queue"] == "failed"
+        assert sdk.tasks.update.call_args.kwargs["queue"] == "requires-intervention"
 
 
 # ===========================================================================
@@ -308,6 +313,9 @@ class TestRequeuTask:
             patch("octopoid.tasks.get_sdk", return_value=mock_sdk),
             patch("octopoid.tasks.get_task_logger"),
             patch("octopoid.scheduler._get_circuit_breaker_threshold", return_value=threshold),
+            # Prevent request_intervention from creating real dirs / posting messages
+            patch("octopoid.config.get_tasks_dir"),
+            patch("octopoid.task_thread.post_message"),
         ):
             _requeue_task(task_id, source_queue=source_queue, task=task)
 
@@ -372,8 +380,9 @@ class TestRequeuTask:
     # ------------------------------------------------------------------
 
     def test_circuit_breaker_trips_on_spawn_failure(self) -> None:
-        """When attempt_count reaches threshold, move to failed instead of incoming."""
+        """When attempt_count reaches threshold, route to requires-intervention."""
         # attempt_count=2, threshold=3 → new=3 >= 3 → trip
+        # First failure routes to requires-intervention (fixer agent gets a chance)
         sdk = self._run_requeue(
             "TASK-spawn-cb",
             source_queue="incoming",
@@ -383,7 +392,7 @@ class TestRequeuTask:
 
         sdk.tasks.update.assert_called_once()
         call_kwargs = sdk.tasks.update.call_args.kwargs
-        assert call_kwargs["queue"] == "failed"
+        assert call_kwargs["queue"] == "requires-intervention"
         assert call_kwargs["attempt_count"] == 3
 
     def test_circuit_breaker_does_not_trip_below_threshold(self) -> None:

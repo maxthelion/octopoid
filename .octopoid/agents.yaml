@@ -23,3 +23,13 @@ agents:
     agent_dir: .octopoid/agents/gatekeeper
     max_instances: 1
 
+  fixer:
+    role: fixer
+    spawn_mode: scripts
+    claim_from: requires-intervention
+    interval_seconds: 60
+    max_turns: 50
+    model: sonnet
+    agent_dir: .octopoid/agents/fixer
+    max_instances: 1
+

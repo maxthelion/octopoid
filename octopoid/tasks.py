@@ -303,12 +303,123 @@ def get_review_feedback(task_id: str) -> str | None:
 
     return "\n\n---\n\n".join(section.strip() for section in legacy_sections)
 
-def fail_task(task_id: str, reason: str, source: str, **sdk_kwargs) -> dict:
-    """Move a task to the failed queue — single canonical failure path.
+def request_intervention(
+    task_id: str,
+    reason: str,
+    source: str,
+    previous_queue: str,
+    **sdk_kwargs,
+) -> dict:
+    """Move a task to requires-intervention and store intervention context.
 
-    All callsites that move a task to 'failed' should use this function.
-    It sets execution_notes on the server, writes a FAILED entry to the task
-    log, and prints to stdout for launchd log capture.
+    Called by fail_task() when a task first encounters an error. Records the
+    intervention context (previous queue, error info, step progress) locally so
+    the fixer agent can read it and the scheduler can resume the flow on fix.
+
+    Args:
+        task_id: Task identifier
+        reason: Human-readable reason for intervention
+        source: Categorisation tag for the error origin
+        previous_queue: Queue the task was in when the error occurred (used to
+            resume the correct flow transition after a fix)
+        **sdk_kwargs: Additional fields passed to sdk.tasks.update
+
+    Returns:
+        Updated task dict from the server.
+    """
+    import json as _json
+
+    sdk = get_sdk()
+    reason_truncated = reason[:500] + ("..." if len(reason) > 500 else "")
+
+    # Read step progress if execute_steps wrote it
+    from .config import get_tasks_dir
+    task_dir = get_tasks_dir() / task_id
+    task_dir.mkdir(parents=True, exist_ok=True)
+
+    steps_completed: list[str] = []
+    step_that_failed = ""
+    progress_file = task_dir / "step_progress.json"
+    if progress_file.exists():
+        try:
+            progress = _json.loads(progress_file.read_text())
+            steps_completed = progress.get("completed") or []
+            step_that_failed = progress.get("failed") or ""
+        except Exception:
+            pass
+
+    intervention_context = {
+        "previous_queue": previous_queue,
+        "error_source": source,
+        "error_message": reason_truncated,
+        "steps_completed": steps_completed,
+        "step_that_failed": step_that_failed,
+        "entered_at": datetime.now().isoformat(),
+    }
+
+    # Persist intervention context in task dir (read by fixer prompt renderer)
+    try:
+        (task_dir / "intervention_context.json").write_text(
+            _json.dumps(intervention_context, indent=2)
+        )
+    except OSError as write_err:
+        print(f"[{datetime.now().isoformat()}] WARN: Failed to write intervention_context for {task_id}: {write_err}")
+
+    # Move to requires-intervention on server
+    result = sdk.tasks.update(
+        task_id,
+        queue="requires-intervention",
+        execution_notes=f"requires-intervention: {reason_truncated}",
+        **sdk_kwargs,
+    )
+
+    try:
+        logger = get_task_logger(task_id)
+        logger.log_requeued(
+            from_queue=previous_queue,
+            to_queue="requires-intervention",
+            reason=reason_truncated,
+        )
+    except Exception as log_err:
+        print(f"[{datetime.now().isoformat()}] WARN: task log write failed for {task_id}: {log_err}")
+
+    # Post message to task thread for audit trail
+    try:
+        from .task_thread import post_message
+        steps_str = ", ".join(steps_completed) if steps_completed else "none"
+        post_message(
+            task_id,
+            role="scheduler",
+            content=(
+                f"## Task moved to requires-intervention\n\n"
+                f"**Error source:** {source}\n"
+                f"**Error:** {reason_truncated}\n"
+                f"**Previous queue:** {previous_queue}\n"
+                f"**Steps completed:** {steps_str}\n"
+                f"**Step that failed:** {step_that_failed or 'unknown'}\n\n"
+                f"A fixer agent will attempt to resolve this automatically."
+            ),
+            author="scheduler",
+        )
+    except Exception as msg_err:
+        print(f"[{datetime.now().isoformat()}] WARN: Failed to post intervention message for {task_id}: {msg_err}")
+
+    print(
+        f"[{datetime.now().isoformat()}] INTERVENTION task={task_id} "
+        f"source={source} previous_queue={previous_queue} reason={reason_truncated[:200]}"
+    )
+    return result
+
+
+def fail_task(task_id: str, reason: str, source: str, **sdk_kwargs) -> dict:
+    """Route a failing task — to requires-intervention (first failure) or failed (terminal).
+
+    On first failure (task not already in requires-intervention): moves to
+    requires-intervention and records an intervention_context so the fixer
+    agent can diagnose and resume.
+
+    On second failure (task already in requires-intervention, meaning the fixer
+    itself failed): moves to the true 'failed' terminal state.
 
     Raises ValueError if the task is already in the 'done' queue — done is a
     terminal success state and must not be overwritten by a failure.
@@ -339,17 +450,29 @@ def fail_task(task_id: str, reason: str, source: str, **sdk_kwargs) -> dict:
             f"(source={source}, reason={reason_stdout})"
         )
 
-    result = sdk.tasks.update(task_id, queue="failed", execution_notes=reason_truncated, **sdk_kwargs)
+    # If already in requires-intervention, the fixer also failed → true terminal failure.
+    if current_queue == "requires-intervention":
+        result = sdk.tasks.update(
+            task_id, queue="failed", execution_notes=reason_truncated, **sdk_kwargs
+        )
+        try:
+            logger = get_task_logger(task_id)
+            logger.log_failed(error=reason_truncated, source=source)
+        except Exception as log_err:
+            print(f"[{datetime.now().isoformat()}] WARN: task log write failed for {task_id}: {log_err}")
+        print(f"[{datetime.now().isoformat()}] FAILED task={task_id} source={source} reason={reason_stdout}")
+        return result
 
-    try:
-        logger = get_task_logger(task_id)
-        logger.log_failed(error=reason_truncated, source=source)
-    except Exception as log_err:
-        print(f"[{datetime.now().isoformat()}] WARN: task log write failed for {task_id}: {log_err}")
-
-    print(f"[{datetime.now().isoformat()}] FAILED task={task_id} source={source} reason={reason_stdout}")
-
-    return result
+    # First failure: route to requires-intervention.
+    # Ensure previous_queue is a plain string (current_queue may be None).
+    previous_queue = current_queue if isinstance(current_queue, str) else "unknown"
+    return request_intervention(
+        task_id,
+        reason=reason,
+        source=source,
+        previous_queue=previous_queue,
+        **sdk_kwargs,
+    )
 
 def reject_task(
     task_id: str,

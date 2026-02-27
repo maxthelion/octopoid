@@ -15,7 +15,7 @@ from datetime import datetime
 from pathlib import Path
 
 from . import queue_utils
-from .tasks import fail_task
+from .tasks import fail_task, request_intervention
 
 
 def debug_log(message: str) -> None:
@@ -715,3 +715,203 @@ def handle_agent_result(task_id: str, agent_name: str, task_dir: Path) -> bool:
             return True  # Task moved to terminal state — PID safe to remove
 
         raise  # Re-raise so caller leaves PID in tracking for retry
+
+
+# ---------------------------------------------------------------------------
+# Fixer agent result handler
+# ---------------------------------------------------------------------------
+
+def _load_intervention_context(task_dir: Path) -> dict:
+    """Load intervention_context.json from a task directory.
+
+    Returns an empty dict if the file is missing or unreadable.
+    """
+    ctx_path = task_dir / "intervention_context.json"
+    if ctx_path.exists():
+        try:
+            return json.loads(ctx_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {}
+
+
+def _resume_flow(
+    sdk: object,
+    task_id: str,
+    task: dict,
+    previous_queue: str,
+    steps_completed: list[str],
+    step_that_failed: str,
+    task_dir: Path,
+    fixer_result: dict,
+) -> None:
+    """Resume the flow transition that was interrupted before the fixer intervened.
+
+    Finds the transition from previous_queue in the task's flow, computes the
+    remaining steps (starting from step_that_failed), executes them, and
+    performs the final transition to the target state.
+
+    Args:
+        sdk: SDK client
+        task_id: Task identifier
+        task: Task dict (freshly fetched from server)
+        previous_queue: Queue the task was in when the error occurred
+        steps_completed: Steps that had already run before the failure
+        step_that_failed: The step that raised the exception
+        task_dir: Task directory (for step execution)
+        fixer_result: The fixer's result.json dict (passed to step functions)
+    """
+    from .flow import load_flow  # noqa: PLC0415
+    from .steps import execute_steps  # noqa: PLC0415
+
+    flow_name = task.get("flow", "default")
+    flow = load_flow(flow_name)
+    transitions = flow.get_transitions_from(previous_queue)
+    if not transitions:
+        debug_log(f"Fixer resume: no transitions from '{previous_queue}' in flow '{flow_name}' for {task_id}")
+        return
+
+    transition = transitions[0]
+
+    # Determine remaining steps: from step_that_failed onwards (inclusive).
+    # If step_that_failed isn't found in runs, run all steps to be safe.
+    remaining_steps = transition.runs
+    if step_that_failed and step_that_failed in transition.runs:
+        idx = transition.runs.index(step_that_failed)
+        remaining_steps = transition.runs[idx:]
+
+    debug_log(
+        f"Fixer resume: task {task_id} running steps {remaining_steps} "
+        f"(from '{previous_queue}' to '{transition.to_state}')"
+    )
+
+    if remaining_steps:
+        execute_steps(remaining_steps, task, fixer_result, task_dir)
+
+    _perform_transition(sdk, task_id, transition.to_state)
+    print(
+        f"[{datetime.now().isoformat()}] Task {task_id} resumed by fixer: "
+        f"{previous_queue} -> {transition.to_state} (steps: {remaining_steps})"
+    )
+
+
+def handle_fixer_result(task_id: str, agent_name: str, task_dir: Path) -> bool:
+    """Handle the result of a fixer agent run.
+
+    Reads result.json written by the fixer agent and takes the appropriate
+    action:
+    - outcome=fixed  → resume the interrupted flow from where it left off,
+                        skip already-completed steps, post a success message.
+    - anything else  → move to TRUE failed (terminal), post a failure message.
+
+    The fixer communicates only through result.json — it never calls the
+    server API directly (pure function agent).
+
+    Returns:
+        True if the task was transitioned (PID safe to remove).
+        False if the task was not transitioned and the PID should be kept for retry.
+
+    Args:
+        task_id: Task identifier
+        agent_name: Name of the fixer agent instance
+        task_dir: Path to the task directory containing result.json
+    """
+    result = _read_or_infer_result(task_dir)
+    outcome = result.get("outcome", "error")
+    debug_log(f"Fixer result for task {task_id}: outcome={outcome}")
+
+    # Load intervention context recorded when the task entered requires-intervention
+    intervention_context = _load_intervention_context(task_dir)
+    previous_queue = intervention_context.get("previous_queue", "incoming")
+    steps_completed = intervention_context.get("steps_completed") or []
+    step_that_failed = intervention_context.get("step_that_failed") or ""
+
+    sdk = queue_utils.get_sdk()
+    task = sdk.tasks.get(task_id)
+    if not task:
+        debug_log(f"Fixer result: task {task_id} not found on server, removing stale PID")
+        return True
+
+    if outcome == "fixed":
+        diagnosis = result.get("diagnosis", "")
+        fix_applied = result.get("fix_applied", "")
+
+        # Post success audit message
+        try:
+            from .task_thread import post_message  # noqa: PLC0415
+            content_parts = ["## Fixer resolved the issue"]
+            if diagnosis:
+                content_parts.append(f"\n**Diagnosis:** {diagnosis}")
+            if fix_applied:
+                content_parts.append(f"\n**Fix applied:** {fix_applied}")
+            if step_that_failed:
+                content_parts.append(f"\nResuming flow from step: `{step_that_failed}`")
+            content_parts.append(f"\nTask restored to `{previous_queue}` → resuming transition.")
+            post_message(
+                task_id,
+                role="scheduler",
+                content="\n".join(content_parts),
+                author="scheduler-fixer",
+            )
+        except Exception as msg_e:
+            print(f"[{datetime.now().isoformat()}] WARN: Failed to post fixer success message for {task_id}: {msg_e}")
+
+        # Resume the interrupted flow transition
+        try:
+            _resume_flow(
+                sdk, task_id, task, previous_queue, steps_completed, step_that_failed,
+                task_dir, result,
+            )
+        except Exception as resume_err:
+            # Flow resume failed — move to true terminal failed
+            print(f"[{datetime.now().isoformat()}] ERROR: Flow resume failed for {task_id} after fix: {resume_err}")
+            debug_log(f"Fixer: flow resume error for {task_id}: {resume_err}")
+            try:
+                from .tasks import get_task_logger  # noqa: PLC0415
+                sdk.tasks.update(task_id, queue="failed", execution_notes=str(resume_err)[:500], claimed_by=None)
+                get_task_logger(task_id).log_failed(
+                    error=str(resume_err)[:500], source="fixer-resume-error"
+                )
+            except Exception as terminal_e:
+                print(f"[{datetime.now().isoformat()}] ERROR: Failed to move {task_id} to failed: {terminal_e}")
+
+        return True
+
+    else:
+        # Fixer could not fix the issue — true terminal failure
+        reason = (
+            result.get("reason")
+            or result.get("diagnosis")
+            or "Fixer could not resolve the issue"
+        )
+        reason_truncated = str(reason)[:500]
+
+        # Post failure audit message
+        try:
+            from .task_thread import post_message  # noqa: PLC0415
+            content = f"## Fixer could not resolve the issue. Moving to failed.\n\n"
+            diagnosis = result.get("diagnosis", "")
+            if diagnosis:
+                content += f"**Diagnosis:** {diagnosis}\n"
+            content += "\nThis task requires human attention."
+            post_message(
+                task_id,
+                role="scheduler",
+                content=content,
+                author="scheduler-fixer",
+            )
+        except Exception as msg_e:
+            print(f"[{datetime.now().isoformat()}] WARN: Failed to post fixer failure message for {task_id}: {msg_e}")
+
+        # True terminal failure — do NOT go through fail_task() (would re-enter requires-intervention)
+        try:
+            sdk.tasks.update(task_id, queue="failed", execution_notes=reason_truncated, claimed_by=None)
+            from .tasks import get_task_logger  # noqa: PLC0415
+            get_task_logger(task_id).log_failed(error=reason_truncated, source="fixer-failed")
+        except Exception as terminal_e:
+            print(f"[{datetime.now().isoformat()}] ERROR: Failed to move {task_id} to failed: {terminal_e}")
+
+        print(
+            f"[{datetime.now().isoformat()}] FAILED task={task_id} (fixer-failed): {reason_truncated[:200]}"
+        )
+        return True

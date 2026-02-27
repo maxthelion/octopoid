@@ -1,0 +1,13 @@
+role: fixer
+model: sonnet
+max_turns: 50
+interval_seconds: 60
+spawn_mode: scripts
+lightweight: false
+allowed_tools:
+  - Read
+  - Write
+  - Edit
+  - Glob
+  - Grep
+  - Bash
