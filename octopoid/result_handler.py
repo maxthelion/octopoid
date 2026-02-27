@@ -328,6 +328,235 @@ def _handle_continuation_outcome(sdk: object, task_id: str, task: dict, agent_na
 # Main result-handling entry points
 # ---------------------------------------------------------------------------
 
+def _resolve_task_and_transition(
+    sdk: object,
+    task_id: str,
+    agent_name: str,
+    expected_queue: str | None,
+) -> tuple[dict, object, str] | tuple[None, None, None]:
+    """Fetch task, check staleness, load flow, and resolve the first transition.
+
+    Returns ``(task, transition, lookup_queue)`` when a transition was found
+    and processing should continue.  Returns ``(None, None, None)`` when the
+    caller should immediately return ``True`` (task not found, stale result,
+    or no transition defined for the current queue).
+
+    Args:
+        sdk: SDK client
+        task_id: Task identifier
+        agent_name: Name of the calling agent (used in staleness log message)
+        expected_queue: Queue the agent was working from, if known
+    """
+    from .flow import load_flow  # noqa: PLC0415
+
+    task = sdk.tasks.get(task_id)
+    if not task:
+        debug_log(f"Flow dispatch: task {task_id} not found on server, skipping")
+        return None, None, None
+
+    current_queue = task.get("queue", "unknown")
+
+    # When expected_queue is set, the agent claimed from that queue (e.g.
+    # "provisional") and the server moved the task to "claimed".  Use the
+    # pre-claim queue for transition lookup so we find the right flow
+    # transition (e.g. "provisional -> done", not "claimed -> provisional").
+    # Only discard as stale if the task moved to something other than the
+    # expected queue or "claimed" (normal claiming behaviour).
+    if expected_queue and current_queue not in (expected_queue, "claimed"):
+        debug_log(
+            f"Flow dispatch: task {task_id} moved from expected '{expected_queue}' "
+            f"to '{current_queue}', discarding stale result from {agent_name}"
+        )
+        return None, None, None
+
+    lookup_queue = expected_queue if expected_queue else current_queue
+    flow_name = task.get("flow", "default")
+    flow = load_flow(flow_name)
+
+    # Use child_flow transitions if this is a child task in a project
+    if task.get("project_id") and flow.child_flow:
+        transitions = flow.child_flow.get_transitions_from(lookup_queue)
+    else:
+        transitions = flow.get_transitions_from(lookup_queue)
+
+    if not transitions:
+        debug_log(f"Flow dispatch: no transition from '{current_queue}' in flow '{flow_name}' for task {task_id}")
+        return None, None, None
+
+    return task, transitions[0], lookup_queue
+
+
+def _handle_agent_failure(
+    sdk: object,
+    task_id: str,
+    agent_name: str,
+    transition: object,
+    result: dict,
+) -> bool:
+    """Handle a result with status=failure.
+
+    Finds the on_fail target from the transition's agent condition and rejects
+    the task back to that queue (defaulting to 'incoming').
+
+    Returns:
+        True — task was transitioned, PID safe to remove.
+    """
+    message = result.get("message", "Agent could not complete review")
+    debug_log(f"Flow dispatch: agent failure for {task_id}: {message}")
+    for condition in transition.conditions:
+        if condition.type == "agent" and condition.on_fail:
+            debug_log(f"Flow dispatch: rejecting {task_id} back to {condition.on_fail}")
+            sdk.tasks.reject(task_id, reason=message, rejected_by=agent_name)
+            return True
+    # Default: reject back to incoming
+    sdk.tasks.reject(task_id, reason=message, rejected_by=agent_name)
+    return True
+
+
+def _handle_gatekeeper_reject(
+    task: dict,
+    result: dict,
+    task_dir: Path,
+    task_id: str,
+    agent_name: str,
+) -> bool:
+    """Handle a gatekeeper result with decision=reject.
+
+    Posts rejection feedback and transitions the task back.
+
+    Returns:
+        True — task was transitioned, PID safe to remove.
+    """
+    from .steps import reject_with_feedback  # noqa: PLC0415
+
+    debug_log(f"Flow dispatch: agent rejected task {task_id}")
+    reject_with_feedback(task, result, task_dir)
+    print(f"[{datetime.now().isoformat()}] Agent {agent_name} rejected task {task_id}")
+    return True
+
+
+def _handle_approve_and_run_steps(
+    sdk: object,
+    task_id: str,
+    agent_name: str,
+    task: dict,
+    transition: object,
+    result: dict,
+    task_dir: Path,
+    current_queue: str,
+) -> bool:
+    """Execute the transition steps for an approved result.
+
+    Runs the steps defined in ``transition.runs``.  Rebase and merge failures
+    are recoverable — the task is rejected back to incoming so the implementer
+    can re-implement on a fresh base.  All other RuntimeErrors are re-raised to
+    the caller's catch-all handler.
+
+    Returns:
+        True — steps executed (or no steps needed), PID safe to remove.
+    Raises:
+        RuntimeError: For non-rebase/merge step failures (propagates to caller).
+        RetryableStepError: Propagated from execute_steps for CI polling.
+    """
+    from .steps import execute_steps  # noqa: PLC0415
+
+    if not transition.runs:
+        # No runs defined — just log
+        debug_log(f"Flow dispatch: no runs defined for transition from '{current_queue}', task {task_id}")
+        return True
+
+    debug_log(f"Flow dispatch: executing steps {transition.runs} for task {task_id}")
+    try:
+        execute_steps(transition.runs, task, result, task_dir)
+    except RuntimeError as step_err:
+        err_msg = str(step_err)
+        # Rebase and merge failures are recoverable: reject back to incoming
+        # so the implementer can re-implement on a fresh base.
+        is_merge_fail = any(
+            kw in err_msg for kw in ("rebase_on_base", "merge_pr", "git rebase failed")
+        )
+        if not is_merge_fail:
+            raise  # Non-recoverable — let the outer except Exception handle it
+
+        print(f"[{datetime.now().isoformat()}] Rebase/merge failed for {task_id}: {step_err}")
+        debug_log(f"Rebase/merge failure in handle_agent_result_via_flow for {task_id}: {step_err}")
+
+        try:
+            from .task_thread import post_message  # noqa: PLC0415
+            post_message(
+                task_id,
+                role="rejection",
+                content=(
+                    f"## Rebase/merge failed — resolve conflicts in existing worktree\n\n"
+                    f"{err_msg}\n\n"
+                    f"The task will be requeued to incoming. Your previous work "
+                    f"is preserved in the existing worktree. Rebase onto the "
+                    f"latest base branch, resolve any conflicts, and continue — "
+                    f"do NOT re-implement from scratch."
+                ),
+                author="scheduler-merge",
+            )
+        except Exception as post_e:
+            print(f"[{datetime.now().isoformat()}] WARNING: failed to post rejection message for {task_id}: {post_e}")
+
+        # Find on_fail target from transition conditions (default: incoming)
+        on_fail = "incoming"
+        for condition in transition.conditions:
+            if hasattr(condition, "on_fail") and condition.on_fail:
+                on_fail = condition.on_fail
+                break
+
+        sdk.tasks.reject(task_id, reason=err_msg, rejected_by="scheduler-merge")
+        print(f"[{datetime.now().isoformat()}] Task {task_id} rejected back to {on_fail} after rebase/merge failure")
+        return True
+
+    print(f"[{datetime.now().isoformat()}] Agent {agent_name} completed task {task_id} (steps: {transition.runs})")
+    return True
+
+
+def _dispatch_result(
+    sdk: object,
+    task_id: str,
+    agent_name: str,
+    task: dict,
+    transition: object,
+    result: dict,
+    task_dir: Path,
+    current_queue: str,
+) -> bool:
+    """Route the agent result to the appropriate handler.
+
+    Dispatches based on result status and decision:
+    - status=failure  → _handle_agent_failure
+    - decision=reject → _handle_gatekeeper_reject
+    - decision=approve → _handle_approve_and_run_steps
+    - anything else   → log warning and return True (human review needed)
+
+    Returns:
+        True if the task was transitioned or no action was needed.
+        False if the task was not transitioned and the PID should be kept for retry.
+    """
+    status = result.get("status")
+    decision = result.get("decision")
+
+    if status == "failure":
+        return _handle_agent_failure(sdk, task_id, agent_name, transition, result)
+
+    if decision == "reject":
+        return _handle_gatekeeper_reject(task, result, task_dir, task_id, agent_name)
+
+    if decision != "approve":
+        debug_log(
+            f"Flow dispatch: unknown decision '{decision}' for {task_id}, "
+            f"leaving in {current_queue} for human review"
+        )
+        return True  # Cannot act — human review needed, retrying won't help
+
+    return _handle_approve_and_run_steps(
+        sdk, task_id, agent_name, task, transition, result, task_dir, current_queue
+    )
+
+
 def handle_agent_result_via_flow(task_id: str, agent_name: str, task_dir: Path, expected_queue: str | None = None) -> bool:
     """Handle agent result using the task's flow definition.
 
@@ -351,8 +580,7 @@ def handle_agent_result_via_flow(task_id: str, agent_name: str, task_dir: Path, 
             If set and the task has moved to a different queue, the result is
             discarded as stale to prevent running wrong transition steps.
     """
-    from .flow import load_flow  # noqa: PLC0415
-    from .steps import execute_steps, reject_with_feedback, RetryableStepError  # noqa: PLC0415
+    from .steps import RetryableStepError  # noqa: PLC0415
 
     result = read_result_json(task_dir)
 
@@ -361,123 +589,12 @@ def handle_agent_result_via_flow(task_id: str, agent_name: str, task_dir: Path, 
     try:
         sdk = queue_utils.get_sdk()
 
-        # Fetch current task state
-        task = sdk.tasks.get(task_id)
-        if not task:
-            debug_log(f"Flow dispatch: task {task_id} not found on server, skipping")
-            return True  # Nothing to track — PID safe to remove
+        task, transition, _ = _resolve_task_and_transition(sdk, task_id, agent_name, expected_queue)
+        if task is None:
+            return True  # Task not found, stale, or no transition — PID safe to remove
 
         current_queue = task.get("queue", "unknown")
-
-        # When expected_queue is set, the agent claimed from that queue (e.g.
-        # "provisional") and the server moved the task to "claimed".  Use the
-        # pre-claim queue for transition lookup so we find the right flow
-        # transition (e.g. "provisional -> done", not "claimed -> provisional").
-        # Only discard as stale if the task moved to something other than the
-        # expected queue or "claimed" (normal claiming behaviour).
-        if expected_queue and current_queue not in (expected_queue, "claimed"):
-            debug_log(
-                f"Flow dispatch: task {task_id} moved from expected '{expected_queue}' "
-                f"to '{current_queue}', discarding stale result from {agent_name}"
-            )
-            return True  # Task already moved on — PID safe to remove
-
-        lookup_queue = expected_queue if expected_queue else current_queue
-        flow_name = task.get("flow", "default")
-
-        flow = load_flow(flow_name)
-        # Use child_flow transitions if this is a child task in a project
-        if task.get("project_id") and flow.child_flow:
-            transitions = flow.child_flow.get_transitions_from(lookup_queue)
-        else:
-            transitions = flow.get_transitions_from(lookup_queue)
-
-        if not transitions:
-            debug_log(f"Flow dispatch: no transition from '{current_queue}' in flow '{flow_name}' for task {task_id}")
-            return True  # No transition defined — nothing to retry, PID safe to remove
-
-        transition = transitions[0]  # Take first matching transition
-
-        status = result.get("status")
-        decision = result.get("decision")
-
-        if status == "failure":
-            # Agent couldn't complete — find on_fail state from agent condition
-            message = result.get("message", "Agent could not complete review")
-            debug_log(f"Flow dispatch: agent failure for {task_id}: {message}")
-            for condition in transition.conditions:
-                if condition.type == "agent" and condition.on_fail:
-                    debug_log(f"Flow dispatch: rejecting {task_id} back to {condition.on_fail}")
-                    sdk.tasks.reject(task_id, reason=message, rejected_by=agent_name)
-                    return True  # Task transitioned — PID safe to remove
-            # Default: reject back to incoming
-            sdk.tasks.reject(task_id, reason=message, rejected_by=agent_name)
-            return True  # Task transitioned — PID safe to remove
-
-        # Agent-specific decision handling (approve/reject for gatekeeper)
-        if decision == "reject":
-            debug_log(f"Flow dispatch: agent rejected task {task_id}")
-            reject_with_feedback(task, result, task_dir)
-            print(f"[{datetime.now().isoformat()}] Agent {agent_name} rejected task {task_id}")
-            return True  # Task transitioned — PID safe to remove
-
-        if decision != "approve":
-            debug_log(f"Flow dispatch: unknown decision '{decision}' for {task_id}, leaving in {current_queue} for human review")
-            return True  # Cannot act — human review needed, retrying won't help
-
-        # Execute the transition's runs (approve path — only reached on explicit "approve")
-        if transition.runs:
-            debug_log(f"Flow dispatch: executing steps {transition.runs} for task {task_id}")
-            try:
-                execute_steps(transition.runs, task, result, task_dir)
-            except RuntimeError as step_err:
-                err_msg = str(step_err)
-                # Rebase and merge failures are recoverable: reject back to incoming
-                # so the implementer can re-implement on a fresh base.
-                is_merge_fail = any(
-                    kw in err_msg for kw in ("rebase_on_base", "merge_pr", "git rebase failed")
-                )
-                if not is_merge_fail:
-                    raise  # Non-recoverable — let the outer except Exception handle it
-
-                print(f"[{datetime.now().isoformat()}] Rebase/merge failed for {task_id}: {step_err}")
-                debug_log(f"Rebase/merge failure in handle_agent_result_via_flow for {task_id}: {step_err}")
-
-                try:
-                    from .task_thread import post_message  # noqa: PLC0415
-                    post_message(
-                        task_id,
-                        role="rejection",
-                        content=(
-                            f"## Rebase/merge failed — resolve conflicts in existing worktree\n\n"
-                            f"{err_msg}\n\n"
-                            f"The task will be requeued to incoming. Your previous work "
-                            f"is preserved in the existing worktree. Rebase onto the "
-                            f"latest base branch, resolve any conflicts, and continue — "
-                            f"do NOT re-implement from scratch."
-                        ),
-                        author="scheduler-merge",
-                    )
-                except Exception as post_e:
-                    print(f"[{datetime.now().isoformat()}] WARNING: failed to post rejection message for {task_id}: {post_e}")
-
-                # Find on_fail target from transition conditions (default: incoming)
-                on_fail = "incoming"
-                for condition in transition.conditions:
-                    if hasattr(condition, "on_fail") and condition.on_fail:
-                        on_fail = condition.on_fail
-                        break
-
-                sdk.tasks.reject(task_id, reason=err_msg, rejected_by="scheduler-merge")
-                print(f"[{datetime.now().isoformat()}] Task {task_id} rejected back to {on_fail} after rebase/merge failure")
-                return True  # Task requeued — PID safe to remove
-
-            print(f"[{datetime.now().isoformat()}] Agent {agent_name} completed task {task_id} (steps: {transition.runs})")
-        else:
-            # No runs defined — just log
-            debug_log(f"Flow dispatch: no runs defined for transition from '{current_queue}', task {task_id}")
-
-        return True  # Steps executed (or no steps needed) — PID safe to remove
+        return _dispatch_result(sdk, task_id, agent_name, task, transition, result, task_dir, current_queue)
 
     except RetryableStepError as e:
         print(f"[{datetime.now().isoformat()}] check_ci pending for {task_id}: {e}, leaving in {current_queue}")
