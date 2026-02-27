@@ -606,6 +606,22 @@ def handle_agent_result_via_flow(task_id: str, agent_name: str, task_dir: Path, 
         debug_log(f"Error in handle_agent_result_via_flow for {task_id}: {e}")
         debug_log(traceback.format_exc())
         try:
+            # Before moving to failed, check if the task is already done.
+            # Post-merge flow steps (e.g. update_changelog) can raise after the PR
+            # is merged and the task accepted — we must not overwrite done with failed.
+            _sdk = queue_utils.get_sdk()
+            _current_task = _sdk.tasks.get(task_id)
+            _current_q = (_current_task or {}).get("queue")
+            if _current_q == "done":
+                debug_log(
+                    f"Task {task_id}: catch-all exception after task reached done — "
+                    f"not moving to failed (error: {e})"
+                )
+                print(
+                    f"[{datetime.now().isoformat()}] WARNING: task {task_id} is already done; "
+                    f"ignoring post-done exception: {e}"
+                )
+                return True  # Task is done — PID safe to remove
             # Intentionally hardcoded source: this is the emergency fallback that fires
             # when the flow system itself crashes (load_flow, execute_steps, etc.).  We
             # cannot consult the flow to find the target because the flow machinery is
