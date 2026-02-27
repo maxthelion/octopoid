@@ -12,12 +12,15 @@ support per-message status updates.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
 from . import queue_utils
+
+logger = logging.getLogger("octopoid.message_dispatcher")
 from .config import find_parent_project, get_global_instructions_path, get_orchestrator_dir
 
 
@@ -171,17 +174,15 @@ def dispatch_action_messages() -> None:
     Local state (message_dispatch_state.json) tracks processed messages because
     the server messages API does not support per-message status updates.
     """
-    from .scheduler import debug_log
-
     try:
         sdk = queue_utils.get_sdk()
         messages = sdk.messages.list(to_actor="agent", type="action_command")
     except Exception as e:
-        debug_log(f"dispatch_action_messages: failed to list messages: {e}")
+        logger.debug(f"dispatch_action_messages: failed to list messages: {e}")
         return
 
     if not messages:
-        debug_log("dispatch_action_messages: no action_command messages")
+        logger.debug("dispatch_action_messages: no action_command messages")
         return
 
     state = _load_state()
@@ -202,7 +203,7 @@ def dispatch_action_messages() -> None:
             elapsed = STUCK_THRESHOLD_SECONDS + 1  # treat unparseable as stuck
 
         if elapsed > STUCK_THRESHOLD_SECONDS:
-            debug_log(
+            logger.debug(
                 f"dispatch_action_messages: message {msg_id} stuck for "
                 f"{elapsed:.0f}s (threshold={STUCK_THRESHOLD_SECONDS}s), marking failed"
             )
@@ -227,7 +228,7 @@ def dispatch_action_messages() -> None:
                         ),
                     )
                 except Exception as e:
-                    debug_log(f"dispatch_action_messages: failed to post stuck error: {e}")
+                    logger.debug(f"dispatch_action_messages: failed to post stuck error: {e}")
 
     _save_state(state)
 
@@ -251,7 +252,7 @@ def dispatch_action_messages() -> None:
             f"[{datetime.now().isoformat()}] Dispatching action agent for "
             f"message {msg_id}: {content[:80]}"
         )
-        debug_log(f"dispatch_action_messages: processing message {msg_id}: {content[:80]}")
+        logger.debug(f"dispatch_action_messages: processing message {msg_id}: {content[:80]}")
 
         # Mark as processing before spawning (crash recovery)
         state.setdefault("processing", {})[msg_id] = {
@@ -270,7 +271,7 @@ def dispatch_action_messages() -> None:
         if success:
             state.setdefault("done", []).append(msg_id)
             print(f"[{datetime.now().isoformat()}] Action message {msg_id} completed")
-            debug_log(f"dispatch_action_messages: message {msg_id} done")
+            logger.debug(f"dispatch_action_messages: message {msg_id} done")
 
             # Post worker_result to human inbox
             try:
@@ -282,7 +283,7 @@ def dispatch_action_messages() -> None:
                     content=result_text or f"Action completed: {content[:100]}",
                 )
             except Exception as e:
-                debug_log(f"dispatch_action_messages: failed to post worker_result: {e}")
+                logger.debug(f"dispatch_action_messages: failed to post worker_result: {e}")
 
         else:
             state.setdefault("failed", []).append(msg_id)
@@ -290,7 +291,7 @@ def dispatch_action_messages() -> None:
                 f"[{datetime.now().isoformat()}] Action message {msg_id} failed: "
                 f"{result_text[:100]}"
             )
-            debug_log(f"dispatch_action_messages: message {msg_id} failed: {result_text}")
+            logger.debug(f"dispatch_action_messages: message {msg_id} failed: {result_text}")
 
             # Post error notification to human inbox
             try:
@@ -302,7 +303,7 @@ def dispatch_action_messages() -> None:
                     content=f"Action failed: {result_text[:500]}",
                 )
             except Exception as e:
-                debug_log(f"dispatch_action_messages: failed to post error message: {e}")
+                logger.debug(f"dispatch_action_messages: failed to post error message: {e}")
 
         _save_state(state)
         break  # Serial: one message per tick

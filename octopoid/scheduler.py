@@ -3,6 +3,7 @@
 
 import argparse
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -54,9 +55,7 @@ from .result_handler import (
     read_result_json,
 )
 
-# Global debug flag
-DEBUG = False
-_log_file: Path | None = None
+logger = logging.getLogger("octopoid.scheduler")
 
 
 @dataclass
@@ -229,7 +228,7 @@ def guard_claim_task(ctx: AgentContext) -> tuple[bool, str]:
     blueprint_name = ctx.agent_config.get("blueprint_name", ctx.agent_name)
     active_task_ids = get_active_task_ids(blueprint_name)
     if task["id"] in active_task_ids:
-        debug_log(
+        logger.debug(
             f"guard_claim_task: task {task['id']} already being processed by "
             f"another {blueprint_name} instance, skipping (not requeuing)"
         )
@@ -267,14 +266,14 @@ def guard_task_description_nonempty(ctx: AgentContext) -> tuple[bool, str]:
     task_id = ctx.claimed_task.get("id", "unknown")
     reason = f"Task description is empty — TASK-{task_id}.md has no content on server"
 
-    debug_log(f"guard_task_description_nonempty: {reason}")
+    logger.debug(f"guard_task_description_nonempty: {reason}")
 
     try:
         queue_utils.fail_task(task_id, reason=reason, source='guard-empty-description', claimed_by=None)
-        debug_log(f"Moved task {task_id} to failed: {reason}")
+        logger.debug(f"Moved task {task_id} to failed: {reason}")
     except Exception as e:
-        print(f"[{datetime.now().isoformat()}] ERROR: move-to-failed failed for {task_id}: {e}")
-        debug_log(f"guard_task_description_nonempty: failed to update task {task_id}: {e}")
+        logger.error(f"move-to-failed failed for {task_id}: {e}")
+        logger.debug(f"guard_task_description_nonempty: failed to update task {task_id}: {e}")
 
     return (False, f"empty_description: {reason}")
 
@@ -303,35 +302,11 @@ def evaluate_agent(ctx: AgentContext) -> bool:
     for guard in AGENT_GUARDS:
         proceed, reason = guard(ctx)
         if not proceed:
-            debug_log(f"Agent {ctx.agent_name}: BLOCKED by {guard.__name__}: {reason}")
+            logger.debug(f"Agent {ctx.agent_name}: BLOCKED by {guard.__name__}: {reason}")
             return False
-        debug_log(f"Agent {ctx.agent_name}: {guard.__name__} passed")
-    debug_log(f"Agent {ctx.agent_name}: all guards passed, spawning")
+        logger.debug(f"Agent {ctx.agent_name}: {guard.__name__} passed")
+    logger.debug(f"Agent {ctx.agent_name}: all guards passed, spawning")
     return True
-
-
-def setup_scheduler_debug() -> None:
-    """Set up debug logging for the scheduler."""
-    global _log_file
-    logs_dir = get_logs_dir()
-    logs_dir.mkdir(parents=True, exist_ok=True)
-    date_str = datetime.now().strftime("%Y-%m-%d")
-    _log_file = logs_dir / f"scheduler-{date_str}.log"
-
-
-def debug_log(message: str) -> None:
-    """Write a debug message to the scheduler log."""
-    if not DEBUG or not _log_file:
-        return
-
-    timestamp = datetime.now().isoformat()
-    log_line = f"[{timestamp}] [SCHEDULER] {message}\n"
-
-    try:
-        with open(_log_file, "a") as f:
-            f.write(log_line)
-    except OSError:
-        pass
 
 
 
@@ -352,7 +327,7 @@ def run_pre_check(agent_name: str, agent_config: dict) -> bool:
         return True
 
     trigger = agent_config.get("pre_check_trigger", "non_empty")
-    debug_log(f"Running pre-check for {agent_name}: {pre_check_cmd}")
+    logger.debug(f"Running pre-check for {agent_name}: {pre_check_cmd}")
 
     try:
         # Run from the parent project directory
@@ -372,17 +347,17 @@ def run_pre_check(agent_name: str, agent_config: dict) -> bool:
         elif trigger == "exit_nonzero":
             has_work = result.returncode != 0
         else:
-            debug_log(f"Unknown pre_check_trigger: {trigger}, defaulting to spawn")
+            logger.debug(f"Unknown pre_check_trigger: {trigger}, defaulting to spawn")
             has_work = True
 
-        debug_log(f"Pre-check for {agent_name}: has_work={has_work} (stdout={result.stdout.strip()!r})")
+        logger.debug(f"Pre-check for {agent_name}: has_work={has_work} (stdout={result.stdout.strip()!r})")
         return has_work
 
     except subprocess.TimeoutExpired:
-        debug_log(f"Pre-check for {agent_name} timed out, spawning anyway")
+        logger.debug(f"Pre-check for {agent_name} timed out, spawning anyway")
         return True
     except Exception as e:
-        debug_log(f"Pre-check for {agent_name} failed: {e}, spawning anyway")
+        logger.debug(f"Pre-check for {agent_name} failed: {e}, spawning anyway")
         return True
 
 
@@ -404,14 +379,14 @@ def _verify_submodule_isolation(sub_path: Path, agent_name: str) -> None:
     """
     git_pointer = sub_path / ".git"
     if not git_pointer.exists():
-        debug_log(f"WARNING: {agent_name} submodule has no .git at {git_pointer}")
+        logger.warning(f"Agent {agent_name} submodule has no .git at {git_pointer}")
         return
 
     content = git_pointer.read_text().strip()
 
     # A submodule .git is a file containing "gitdir: <path>"
     if not content.startswith("gitdir:"):
-        debug_log(f"WARNING: {agent_name} submodule .git is not a gitdir pointer: {content[:80]}")
+        logger.warning(f"Agent {agent_name} submodule .git is not a gitdir pointer: {content[:80]}")
         return
 
     gitdir = content.split("gitdir:", 1)[1].strip()
@@ -422,16 +397,11 @@ def _verify_submodule_isolation(sub_path: Path, agent_name: str) -> None:
     # A BROKEN one would point to: ../../.git/modules/orchestrator
     # (which is the main checkout's object store).
     if "worktrees" in gitdir or "worktree" in gitdir:
-        debug_log(f"{agent_name} submodule .git correctly points to worktree store: {gitdir}")
+        logger.debug(f"Agent {agent_name} submodule .git correctly points to worktree store: {gitdir}")
     else:
         # This is the dangerous case — submodule shares the main checkout's store
-        debug_log(
-            f"WARNING: {agent_name} submodule .git points to MAIN checkout store: {gitdir}. "
-            f"Commits may go to the wrong location! "
-            f"Expected a path containing 'worktrees/' for isolated worktree storage."
-        )
-        print(
-            f"WARNING: Agent {agent_name} submodule may share git store with main checkout. "
+        logger.warning(
+            f"Agent {agent_name} submodule may share git store with main checkout. "
             f"gitdir={gitdir}"
         )
 
@@ -700,8 +670,8 @@ def write_agent_env(agent_name: str, agent_id: int, role: str, agent_config: dic
     if agent_config and "focus" in agent_config:
         lines.append(f"export AGENT_FOCUS='{agent_config['focus']}'")
 
-    # Pass debug mode
-    if DEBUG:
+    # Pass debug mode — propagate if octopoid logger is at DEBUG level
+    if logging.getLogger("octopoid").isEnabledFor(logging.DEBUG):
         lines.append("export ORCHESTRATOR_DEBUG='1'")
 
     for key, value in port_vars.items():
@@ -746,7 +716,7 @@ def _load_global_instructions(agent_dir: str) -> str:
     if instructions_md_path.exists():
         instructions_content = instructions_md_path.read_text()
         global_instructions = global_instructions + "\n\n" + instructions_content
-        debug_log(f"Included instructions.md from agent directory: {instructions_md_path}")
+        logger.debug(f"Included instructions.md from agent directory: {instructions_md_path}")
 
     return global_instructions
 
@@ -819,7 +789,7 @@ def _load_review_section(task_id: str) -> str:
         thread_messages = get_thread(task_id)
         return format_thread_for_prompt(thread_messages)
     except Exception as e:
-        debug_log(f"Failed to load task thread for {task_id}: {e}")
+        logger.debug(f"Failed to load task thread for {task_id}: {e}")
         return ""
 
 
@@ -844,7 +814,7 @@ def _render_prompt(task: dict, agent_config: dict) -> str:
 
     prompt_template_path = Path(agent_dir) / "prompt.md"
     prompt_template = prompt_template_path.read_text()
-    debug_log(f"Using prompt template from agent directory: {prompt_template_path}")
+    logger.debug(f"Using prompt template from agent directory: {prompt_template_path}")
 
     global_instructions = _load_global_instructions(agent_dir)
     required_steps = _build_required_steps(task)
@@ -892,7 +862,7 @@ def prepare_task_directory(
         stale_path = task_dir / stale_file
         if stale_path.exists():
             stale_path.unlink()
-            debug_log(f"Cleaned stale {stale_file} from {task_dir}")
+            logger.debug(f"Cleaned stale {stale_file} from {task_dir}")
 
     # Create worktree in detached HEAD state (worktrees must never checkout a named branch).
     # The agent creates a task-specific branch via create_task_branch when ready to push.
@@ -912,7 +882,7 @@ def prepare_task_directory(
         raise ValueError(f"Agent directory or scripts not found: {agent_dir}")
 
     scripts_src = Path(agent_dir) / "scripts"
-    debug_log(f"Using scripts from agent directory: {scripts_src}")
+    logger.debug(f"Using scripts from agent directory: {scripts_src}")
 
     scripts_dest = task_dir / "scripts"
     scripts_dest.mkdir(exist_ok=True)
@@ -950,7 +920,7 @@ def prepare_task_directory(
     # Render and write prompt
     (task_dir / "prompt.md").write_text(_render_prompt(task, agent_config))
 
-    debug_log(f"Prepared task directory: {task_dir}")
+    logger.debug(f"Prepared task directory: {task_dir}")
     return task_dir
 
 
@@ -1056,7 +1026,7 @@ def invoke_claude(task_dir: Path, agent_config: dict) -> int:
         start_new_session=True,
     )
 
-    debug_log(f"Invoked claude for task dir {task_dir} with PID {process.pid}")
+    logger.debug(f"Invoked claude for task dir {task_dir} with PID {process.pid}")
     return process.pid
 
 
@@ -1152,7 +1122,7 @@ def prepare_job_directory(job_name: str, agent_config: dict) -> Path:
     prompt = template.safe_substitute(global_instructions=global_instructions)
     (job_dir / "prompt.md").write_text(prompt)
 
-    debug_log(f"Prepared job directory: {job_dir}")
+    logger.debug(f"Prepared job directory: {job_dir}")
     return job_dir
 
 
@@ -1289,7 +1259,7 @@ def check_and_update_finished_agents() -> None:
         for pid, info in dead_pids.items():
             instance_name = info.get("instance_name", blueprint_name)
             task_id = info.get("task_id", "")
-            debug_log(f"Instance {instance_name} (PID {pid}) has finished")
+            logger.debug(f"Instance {instance_name} (PID {pid}) has finished")
 
             if task_id:
                 task_dir = get_tasks_dir() / task_id
@@ -1306,26 +1276,26 @@ def check_and_update_finished_agents() -> None:
                         # moved — keep the PID so the next tick retries.
                         if transitioned:
                             del pids[pid]
-                            print(f"[{datetime.now().isoformat()}] Instance {instance_name} (PID {pid}) finished")
+                            logger.info(f"Instance {instance_name} (PID {pid}) finished")
                         else:
-                            debug_log(
+                            logger.debug(
                                 f"Instance {instance_name} (PID {pid}): handler returned False "
                                 f"(task not transitioned), keeping PID for retry"
                             )
                     except Exception as e:
-                        print(
-                            f"[{datetime.now().isoformat()}] Instance {instance_name} (PID {pid}) "
+                        logger.error(
+                            f"Instance {instance_name} (PID {pid}) "
                             f"result handling failed, will retry next tick: {e}"
                         )
                         # PID intentionally left in tracking for retry
                 else:
                     # Task dir missing — clean up the PID
                     del pids[pid]
-                    print(f"[{datetime.now().isoformat()}] Instance {instance_name} (PID {pid}) finished (no task dir)")
+                    logger.info(f"Instance {instance_name} (PID {pid}) finished (no task dir)")
             else:
                 # No task ID — clean up the PID
                 del pids[pid]
-                print(f"[{datetime.now().isoformat()}] Instance {instance_name} (PID {pid}) finished (no task id)")
+                logger.info(f"Instance {instance_name} (PID {pid}) finished (no task id)")
 
         save_blueprint_pids(blueprint_name, pids)
 
@@ -1369,7 +1339,7 @@ def check_queue_health() -> None:
     script_path = parent_project / ".octopoid" / "scripts" / "diagnose_queue_health.py"
 
     if not script_path.exists():
-        debug_log("Queue health diagnostic script not found, skipping")
+        logger.debug("Queue health diagnostic script not found, skipping")
         return
 
     # Run diagnostic script with JSON output
@@ -1384,7 +1354,7 @@ def check_queue_health() -> None:
 
         if result.returncode == 0:
             # No issues found
-            debug_log("Queue health check: no issues found")
+            logger.debug("Queue health check: no issues found")
             return
 
         # Parse diagnostic output
@@ -1392,7 +1362,7 @@ def check_queue_health() -> None:
         try:
             diagnostic_data = json.loads(result.stdout)
         except json.JSONDecodeError:
-            debug_log(f"Failed to parse diagnostic output: {result.stdout[:200]}")
+            logger.debug(f"Failed to parse diagnostic output: {result.stdout[:200]}")
             return
 
         # Count issues
@@ -1403,34 +1373,31 @@ def check_queue_health() -> None:
         total_issues = mismatches + orphans + zombies
 
         if total_issues == 0:
-            debug_log("Queue health check: no issues found")
+            logger.debug("Queue health check: no issues found")
             return
 
         # Issues found - log summary
-        print(f"[{datetime.now().isoformat()}] Queue health issues detected:")
-        print(f"  File-DB mismatches: {mismatches}")
-        print(f"  Orphan files: {orphans}")
-        print(f"  Zombie claims: {zombies}")
-        debug_log(f"Queue health issues: {mismatches} mismatches, {orphans} orphans, {zombies} zombies")
+        logger.warning(
+            f"Queue health issues detected: {mismatches} mismatches, "
+            f"{orphans} orphans, {zombies} zombies"
+        )
 
         # Check if queue-manager agent is configured and ready to run
         agents = get_agents()
         queue_manager = next((a for a in agents if a.get("role") == "queue_manager"), None)
 
         if not queue_manager:
-            debug_log("No queue-manager agent configured")
+            logger.debug("No queue-manager agent configured")
             return
 
         if queue_manager.get("paused", False):
-            debug_log("Queue-manager agent is paused, not invoking")
-            print(f"  (queue-manager agent is paused - issues not auto-reported)")
+            logger.warning("Queue-manager agent is paused, issues not auto-reported")
             return
 
         # Trigger queue-manager agent by setting environment variable
         # The agent's prompt will check this variable to know why it was triggered
         agent_name = queue_manager.get("name", "queue-manager")
-        print(f"  Triggering {agent_name} to diagnose and report issues")
-        debug_log(f"Triggering {agent_name} with {total_issues} issues")
+        logger.info(f"Triggering {agent_name} to diagnose {total_issues} queue health issues")
 
         # Write diagnostic data to a temp file for the agent to read
         from .config import get_notes_dir as _get_notes_dir
@@ -1439,16 +1406,16 @@ def check_queue_health() -> None:
         diagnostic_file = notes_dir / f"queue-health-diagnostic-{datetime.now().strftime('%Y%m%d-%H%M%S')}.json"
         diagnostic_file.write_text(json.dumps(diagnostic_data, indent=2))
 
-        debug_log(f"Wrote diagnostic data to {diagnostic_file}")
+        logger.debug(f"Wrote diagnostic data to {diagnostic_file}")
 
         # The queue-manager agent will read this file and generate a report
         # For now, we just log that issues were found. In a future phase, we
         # could automatically spawn the agent here.
 
     except subprocess.TimeoutExpired:
-        debug_log("Queue health diagnostic timed out")
+        logger.debug("Queue health diagnostic timed out")
     except Exception as e:
-        debug_log(f"Queue health check failed: {e}")
+        logger.debug(f"Queue health check failed: {e}")
 
 
 def _evaluate_project_script_condition(condition: object, project_dir: Path, project_id: str) -> bool:
@@ -1462,7 +1429,7 @@ def _evaluate_project_script_condition(condition: object, project_dir: Path, pro
     """
     script_name = getattr(condition, "script", None)
     if not script_name:
-        debug_log(f"Project {project_id}: condition '{condition.name}' has no script, passing by default")
+        logger.debug(f"Project {project_id}: condition '{condition.name}' has no script, passing by default")
         return True
 
     if script_name == "run-tests":
@@ -1476,7 +1443,7 @@ def _evaluate_project_script_condition(condition: object, project_dir: Path, pro
             test_cmd = ["make", "test"]
 
         if test_cmd is None:
-            debug_log(f"Project {project_id}: no test runner detected, condition '{condition.name}' passes")
+            logger.debug(f"Project {project_id}: no test runner detected, condition '{condition.name}' passes")
             return True
         cmd = test_cmd
     else:
@@ -1491,25 +1458,24 @@ def _evaluate_project_script_condition(condition: object, project_dir: Path, pro
             timeout=300,
         )
         if proc.returncode == 0:
-            debug_log(f"Project {project_id}: condition '{condition.name}' passed")
+            logger.debug(f"Project {project_id}: condition '{condition.name}' passed")
             return True
         else:
             output = (proc.stdout + "\n" + proc.stderr)[-1000:]
-            debug_log(
+            logger.debug(
                 f"Project {project_id}: condition '{condition.name}' failed "
                 f"(exit {proc.returncode}):\n{output}"
             )
-            print(
-                f"[{datetime.now().isoformat()}] Project {project_id}: "
-                f"condition '{condition.name}' failed (exit {proc.returncode})"
+            logger.warning(
+                f"Project {project_id}: condition '{condition.name}' failed "
+                f"(exit {proc.returncode})"
             )
             return False
     except subprocess.TimeoutExpired:
-        debug_log(f"Project {project_id}: condition '{condition.name}' timed out")
-        print(f"[{datetime.now().isoformat()}] Project {project_id}: condition '{condition.name}' timed out")
+        logger.warning(f"Project {project_id}: condition '{condition.name}' timed out")
         return False
     except Exception as e:
-        debug_log(f"Project {project_id}: condition '{condition.name}' error: {e}")
+        logger.debug(f"Project {project_id}: condition '{condition.name}' error: {e}")
         return False
 
 
@@ -1533,21 +1499,21 @@ def _execute_project_flow_transition(sdk: object, project: dict, from_state: str
         flow = load_flow(flow_name)
     except FileNotFoundError:
         if flow_name != "project":
-            debug_log(
+            logger.debug(
                 f"Project {project_id}: flow '{flow_name}' not found, falling back to 'project'"
             )
             try:
                 flow = load_flow("project")
             except FileNotFoundError:
-                debug_log(f"Project {project_id}: 'project' flow not found, skipping")
+                logger.debug(f"Project {project_id}: 'project' flow not found, skipping")
                 return False
         else:
-            debug_log(f"Project {project_id}: 'project' flow not found, skipping")
+            logger.debug(f"Project {project_id}: 'project' flow not found, skipping")
             return False
 
     transitions = flow.get_transitions_from(from_state)
     if not transitions:
-        debug_log(
+        logger.debug(
             f"Project {project_id}: no transition from '{from_state}' in flow '{flow_name}'"
         )
         return False
@@ -1560,7 +1526,7 @@ def _execute_project_flow_transition(sdk: object, project: dict, from_state: str
     for condition in transition.conditions:
         if condition.type == "script":
             if not _evaluate_project_script_condition(condition, parent_project_dir, project_id):
-                debug_log(
+                logger.debug(
                     f"Project {project_id}: condition '{condition.name}' failed, "
                     f"not transitioning to '{transition.to_state}'"
                 )
@@ -1568,7 +1534,7 @@ def _execute_project_flow_transition(sdk: object, project: dict, from_state: str
         elif condition.type == "manual":
             # Manual conditions block automatic transitions — they require an explicit
             # human approval call (approve_project_via_flow). Skip silently here.
-            debug_log(
+            logger.debug(
                 f"Project {project_id}: transition '{from_state} -> {transition.to_state}' "
                 f"requires manual condition '{condition.name}' — skipping automatic transition"
             )
@@ -1577,7 +1543,7 @@ def _execute_project_flow_transition(sdk: object, project: dict, from_state: str
 
     # Execute pre-transition steps
     if transition.runs:
-        debug_log(f"Project {project_id}: executing steps {transition.runs}")
+        logger.debug(f"Project {project_id}: executing steps {transition.runs}")
         execute_steps(transition.runs, project, {}, parent_project_dir)
 
     # Re-fetch project to pick up PR metadata stored by steps (e.g. create_project_pr)
@@ -1586,11 +1552,9 @@ def _execute_project_flow_transition(sdk: object, project: dict, from_state: str
 
     # Perform the transition
     sdk.projects.update(project_id, status=transition.to_state)
-    print(
-        f"[{datetime.now().isoformat()}] Project {project_id} moved to '{transition.to_state}' "
-        f"via flow (PR: {pr_url})"
+    logger.info(
+        f"Project {project_id} moved to '{transition.to_state}' via flow (PR: {pr_url})"
     )
-    debug_log(f"Project {project_id}: transitioned '{from_state}' -> '{transition.to_state}'")
     return True
 
 
@@ -1620,7 +1584,7 @@ def check_project_completion() -> None:
 
             # Extra safety check — skip non-active projects if list returns stale data
             if project_status in ("review", "provisional", "completed", "done"):
-                debug_log(f"check_project_completion: skipping {project_id} (status={project_status})")
+                logger.debug(f"check_project_completion: skipping {project_id} (status={project_status})")
                 continue
 
             tasks = sdk.projects.get_tasks(project_id)
@@ -1634,7 +1598,7 @@ def check_project_completion() -> None:
 
             # All children done — project has no branch check kept for safety
             if not project.get("branch"):
-                debug_log(f"check_project_completion: project {project_id} has no branch, posting warning")
+                logger.debug(f"check_project_completion: project {project_id} has no branch, posting warning")
                 try:
                     sdk.messages.create(
                         task_id=f"project-{project_id}",
@@ -1647,14 +1611,14 @@ def check_project_completion() -> None:
                         ),
                     )
                 except Exception as warn_e:
-                    debug_log(f"check_project_completion: failed to post warning for {project_id}: {warn_e}")
+                    logger.debug(f"check_project_completion: failed to post warning for {project_id}: {warn_e}")
                 continue
 
-            debug_log(f"check_project_completion: all children done for {project_id}, running flow transition")
+            logger.debug(f"check_project_completion: all children done for {project_id}, running flow transition")
             _execute_project_flow_transition(sdk, project, "children_complete")
 
     except Exception as e:
-        debug_log(f"check_project_completion failed: {e}")
+        logger.debug(f"check_project_completion failed: {e}")
 
 
 def check_and_requeue_expired_leases() -> None:
@@ -1716,7 +1680,7 @@ def check_and_requeue_expired_leases() -> None:
                                     lease_expires_at=None,
                                     attempt_count=new_attempt_count,
                                 )
-                                debug_log(f"Circuit breaker tripped for {task_id}: {reason}")
+                                logger.debug(f"Circuit breaker tripped for {task_id}: {reason}")
                                 continue
 
                             sdk.tasks.update(
@@ -1730,12 +1694,11 @@ def check_and_requeue_expired_leases() -> None:
                             # Provisional: just clear the claim, no attempt_count increment
                             sdk.tasks.update(task_id, queue=target_queue, claimed_by=None, lease_expires_at=None)
 
-                        debug_log(f"Requeued expired lease: {task_id} → {target_queue} (expired {lease_expires})")
-                        print(f"[{datetime.now().isoformat()}] Requeued expired lease: {task_id} → {target_queue}")
+                        logger.info(f"Requeued expired lease: {task_id} → {target_queue} (expired {lease_expires})")
                 except (ValueError, TypeError):
                     pass
     except Exception as e:
-        debug_log(f"Lease expiry check failed: {e}")
+        logger.debug(f"Lease expiry check failed: {e}")
 
 
 def _register_orchestrator(orchestrator_registered: bool = False) -> None:
@@ -1750,7 +1713,7 @@ def _register_orchestrator(orchestrator_registered: bool = False) -> None:
             orchestrator as already registered. If True, skip the POST.
     """
     if orchestrator_registered:
-        debug_log("Orchestrator already registered (poll confirmed), skipping registration POST")
+        logger.debug("Orchestrator already registered (poll confirmed), skipping registration POST")
         return
     try:
         from .queue_utils import get_sdk, get_orchestrator_id
@@ -1773,15 +1736,15 @@ def _register_orchestrator(orchestrator_registered: bool = False) -> None:
         if repo_url:
             payload["repo_url"] = repo_url
         response = sdk._request("POST", "/api/v1/orchestrators/register", json=payload)
-        debug_log(f"Registered orchestrator: {orch_id}")
+        logger.debug(f"Registered orchestrator: {orch_id}")
         # If the server issued a new API key (first registration for this scope),
         # persist it and reset the SDK so subsequent calls use it.
         if isinstance(response, dict) and response.get("api_key"):
             save_api_key(response["api_key"])
             reset_sdk()
-            debug_log("Stored new API key from registration response")
+            logger.debug("Stored new API key from registration response")
     except Exception as e:
-        debug_log(f"Orchestrator registration failed (non-fatal): {e}")
+        logger.debug(f"Orchestrator registration failed (non-fatal): {e}")
 
     # Sync flow definitions to server so it can validate queue names at runtime.
     # Reads directly from local YAML files (source of truth for sync).
@@ -1806,11 +1769,11 @@ def _register_orchestrator(orchestrator_registered: bool = False) -> None:
                         "states": states,
                         "transitions": transitions,
                     })
-                    debug_log(f"Synced flow '{flow_name}' to server")
+                    logger.debug(f"Synced flow '{flow_name}' to server")
                 except Exception as flow_err:
-                    debug_log(f"Flow sync failed for '{flow_name}' (non-fatal): {flow_err}")
+                    logger.debug(f"Flow sync failed for '{flow_name}' (non-fatal): {flow_err}")
     except Exception as e:
-        debug_log(f"Flow sync failed (non-fatal): {e}")
+        logger.debug(f"Flow sync failed (non-fatal): {e}")
 
 
 def send_heartbeat() -> None:
@@ -1824,9 +1787,9 @@ def send_heartbeat() -> None:
         sdk = get_sdk()
         orch_id = get_orchestrator_id()
         sdk._request("POST", f"/api/v1/orchestrators/{orch_id}/heartbeat")
-        debug_log(f"Heartbeat sent for orchestrator: {orch_id}")
+        logger.debug(f"Heartbeat sent for orchestrator: {orch_id}")
     except Exception as e:
-        debug_log(f"Heartbeat failed (non-fatal): {e}")
+        logger.debug(f"Heartbeat failed (non-fatal): {e}")
 
 
 def sweep_stale_resources() -> None:
@@ -1853,13 +1816,13 @@ def sweep_stale_resources() -> None:
         done_tasks = sdk.tasks.list(queue="done") or []
         failed_tasks = sdk.tasks.list(queue="failed") or []
     except Exception as e:
-        debug_log(f"sweep_stale_resources: failed to fetch tasks: {e}")
+        logger.debug(f"sweep_stale_resources: failed to fetch tasks: {e}")
         return
 
     try:
         parent_repo = find_parent_project()
     except Exception as e:
-        debug_log(f"sweep_stale_resources: could not find parent repo: {e}")
+        logger.debug(f"sweep_stale_resources: could not find parent repo: {e}")
         return
 
     tasks_dir = get_tasks_dir()
@@ -1883,7 +1846,7 @@ def sweep_stale_resources() -> None:
                 ts = ts.replace(tzinfo=timezone.utc)
             elapsed = (now - ts).total_seconds()
         except (ValueError, TypeError) as e:
-            debug_log(f"sweep_stale_resources: could not parse timestamp {ts_str!r} for task {task_id}: {e}")
+            logger.debug(f"sweep_stale_resources: could not parse timestamp {ts_str!r} for task {task_id}: {e}")
             continue
 
         grace = FAILED_GRACE_SECONDS if queue == "failed" else DONE_GRACE_SECONDS
@@ -1904,7 +1867,7 @@ def sweep_stale_resources() -> None:
                     if src.exists():
                         shutil.copy2(src, archive_dir / filename)
             except Exception as e:
-                debug_log(f"sweep_stale_resources: failed to archive logs for {task_id}: {e}")
+                logger.debug(f"sweep_stale_resources: failed to archive logs for {task_id}: {e}")
 
             # Remove worktree from git tracking and filesystem
             try:
@@ -1916,10 +1879,9 @@ def sweep_stale_resources() -> None:
                 if worktree_path.exists():
                     shutil.rmtree(worktree_path)
                 pruned_any = True
-                debug_log(f"sweep_stale_resources: deleted worktree for {task_id} ({queue})")
-                print(f"[{datetime.now().isoformat()}] Swept worktree for task {task_id} ({queue})")
+                logger.info(f"Swept worktree for task {task_id} ({queue})")
             except Exception as e:
-                debug_log(f"sweep_stale_resources: failed to delete worktree for {task_id}: {e}")
+                logger.debug(f"sweep_stale_resources: failed to delete worktree for {task_id}: {e}")
 
         # Delete remote branch for done (merged) tasks only — not failed
         if queue == "done":
@@ -1931,24 +1893,23 @@ def sweep_stale_resources() -> None:
                     check=False,
                 )
                 if result.returncode == 0:
-                    debug_log(f"sweep_stale_resources: deleted remote branch {branch}")
-                    print(f"[{datetime.now().isoformat()}] Deleted remote branch {branch}")
+                    logger.info(f"Deleted remote branch {branch}")
                 else:
                     # Already gone or no permissions — non-fatal
-                    debug_log(
+                    logger.debug(
                         f"sweep_stale_resources: remote branch {branch} deletion skipped: "
                         f"{result.stderr.strip()}"
                     )
             except Exception as e:
-                debug_log(f"sweep_stale_resources: failed to delete remote branch {branch}: {e}")
+                logger.debug(f"sweep_stale_resources: failed to delete remote branch {branch}: {e}")
 
     # Run git worktree prune once after all deletions
     if pruned_any:
         try:
             run_git(["worktree", "prune"], cwd=parent_repo, check=False)
-            debug_log("sweep_stale_resources: ran git worktree prune")
+            logger.debug("sweep_stale_resources: ran git worktree prune")
         except Exception as e:
-            debug_log(f"sweep_stale_resources: git worktree prune failed: {e}")
+            logger.debug(f"sweep_stale_resources: git worktree prune failed: {e}")
 
 
 HOUSEKEEPING_JOBS = [
@@ -1967,7 +1928,7 @@ def run_housekeeping() -> None:
         try:
             job()
         except Exception as e:
-            debug_log(f"Housekeeping job {job.__name__} failed: {e}")
+            logger.debug(f"Housekeeping job {job.__name__} failed: {e}")
 
 
 # =============================================================================
@@ -2013,7 +1974,7 @@ def _requeue_task(task_id: str, source_queue: str = "incoming", task: dict | Non
                     lease_expires_at=None,
                     attempt_count=new_attempt_count,
                 )
-                debug_log(f"Circuit breaker tripped for {task_id}: {reason}")
+                logger.debug(f"Circuit breaker tripped for {task_id}: {reason}")
                 return
 
             sdk.tasks.update(
@@ -2027,10 +1988,9 @@ def _requeue_task(task_id: str, source_queue: str = "incoming", task: dict | Non
             # Provisional: just clear the claim, no attempt_count increment
             sdk.tasks.update(task_id, queue=source_queue, claimed_by=None, lease_expires_at=None)
 
-        debug_log(f"Requeued task {task_id} back to {source_queue}")
+        logger.debug(f"Requeued task {task_id} back to {source_queue}")
     except Exception as e:
-        print(f"[{datetime.now().isoformat()}] ERROR: requeue failed for {task_id}: {e}")
-        debug_log(f"Failed to requeue task {task_id}: {e}")
+        logger.error(f"Requeue failed for {task_id}: {e}")
 
 
 def _init_submodule(agent_name: str) -> None:
@@ -2047,9 +2007,9 @@ def _init_submodule(agent_name: str) -> None:
         subprocess.run(["git", "fetch", "origin", "main"], cwd=sub_path, capture_output=True, text=True, timeout=60)
         subprocess.run(["git", "reset", "--hard", "origin/main"], cwd=sub_path, capture_output=True, text=True, timeout=30)
         _verify_submodule_isolation(sub_path, agent_name)
-        debug_log(f"Submodule initialized for {agent_name}")
+        logger.debug(f"Submodule initialized for {agent_name}")
     except Exception as e:
-        debug_log(f"Submodule init failed for {agent_name}: {e}")
+        logger.debug(f"Submodule init failed for {agent_name}: {e}")
 
 
 def _next_instance_name(blueprint_name: str) -> str:
@@ -2112,12 +2072,12 @@ def _fetch_poll_data() -> dict | None:
         orch_id = queue_utils.get_orchestrator_id()
         sdk = queue_utils.get_sdk()
         poll_data = sdk.poll(orch_id)
-        debug_log(f"Poll response: queue_counts={poll_data.get('queue_counts')}, "
+        logger.debug(f"Poll response: queue_counts={poll_data.get('queue_counts')}, "
                   f"provisional_tasks={len(poll_data.get('provisional_tasks') or [])}, "
                   f"orchestrator_registered={poll_data.get('orchestrator_registered')}")
         return poll_data
     except Exception as e:
-        debug_log(f"Poll endpoint unavailable, falling back to individual API calls: {e}")
+        logger.debug(f"Poll endpoint unavailable, falling back to individual API calls: {e}")
         return None
 
 
@@ -2129,14 +2089,13 @@ def _run_agent_evaluation_loop(queue_counts: dict | None) -> None:
     """
     try:
         agents = get_agents()
-        debug_log(f"Loaded {len(agents)} agents from config")
+        logger.debug(f"Loaded {len(agents)} agents from config")
     except FileNotFoundError as e:
-        print(f"Error: {e}")
-        debug_log(f"Failed to load agents config: {e}")
+        logger.error(f"Failed to load agents config: {e}")
         return
 
     if not agents:
-        debug_log("No agents configured")
+        logger.debug("No agents configured")
         return
 
     for agent_config in agents:
@@ -2148,18 +2107,16 @@ def _run_agent_evaluation_loop(queue_counts: dict | None) -> None:
                 missing.append("name")
             if not role:
                 missing.append("role")
-            print(f"Skipping agent config (missing {', '.join(missing)}): {agent_config}")
-            debug_log(f"Invalid agent config (missing {', '.join(missing)}): {agent_config}")
+            logger.warning(f"Skipping agent config (missing {', '.join(missing)}): {agent_config}")
             continue
 
-        debug_log(f"Evaluating agent {agent_name}: role={role}")
+        logger.debug(f"Evaluating agent {agent_name}: role={role}")
 
         # Acquire agent lock
         agent_lock_path = get_agent_lock_path(agent_name)
         with locked_or_skip(agent_lock_path) as acquired:
             if not acquired:
-                print(f"Agent {agent_name} is locked (another instance running?)")
-                debug_log(f"Agent {agent_name} lock not acquired")
+                logger.warning(f"Agent {agent_name} is locked (another instance running?)")
                 continue
 
             # Build context — pass poll-fetched queue_counts so guards skip per-agent API calls
@@ -2179,16 +2136,14 @@ def _run_agent_evaluation_loop(queue_counts: dict | None) -> None:
                 continue
 
             # Spawn
-            print(f"[{datetime.now().isoformat()}] Starting agent {agent_name} (role: {role})")
-            debug_log(f"Starting agent {agent_name} (role: {role})")
+            logger.info(f"Starting agent {agent_name} (role: {role})")
 
             strategy = get_spawn_strategy(ctx)
             try:
                 pid = strategy(ctx)
-                print(f"Agent {agent_name} started with PID {pid}")
+                logger.info(f"Agent {agent_name} started with PID {pid}")
             except Exception as e:
-                print(f"[{datetime.now().isoformat()}] Spawn failed for {agent_name}: {e}")
-                debug_log(f"Spawn failed for {agent_name}: {e}")
+                logger.error(f"Spawn failed for {agent_name}: {e}")
                 if ctx.claimed_task:
                     source_queue = ctx.agent_config.get("claim_from", "incoming")
                     _requeue_task(ctx.claimed_task["id"], source_queue=source_queue, task=ctx.claimed_task)
@@ -2203,24 +2158,21 @@ def run_scheduler() -> None:
     """
     from .jobs import run_due_jobs
 
-    print(f"[{datetime.now().isoformat()}] Scheduler starting")
-    debug_log("Scheduler tick starting")
+    logger.info("Scheduler starting")
 
     # Fail loudly if scope is not configured — prevents cross-project task claiming
     scope = get_scope()
     if not scope:
-        print(
+        logger.error(
             "FATAL: 'scope' is not set in .octopoid/config.yaml. "
-            "Add 'scope: <project-name>' to prevent cross-project task claiming.",
-            file=sys.stderr,
+            "Add 'scope: <project-name>' to prevent cross-project task claiming."
         )
         sys.exit(1)
-    debug_log(f"Scope: {scope}")
+    logger.debug(f"Scope: {scope}")
 
     # Check global pause flag
     if is_system_paused():
-        print("System is paused (rm .octopoid/PAUSE or set 'paused: false' in agents.yaml)")
-        debug_log("System is paused globally")
+        logger.info("System is paused (rm .octopoid/PAUSE or set 'paused: false' in agents.yaml)")
         return
 
     # Load per-job scheduler state (persists last_run across launchd invocations)
@@ -2237,10 +2189,9 @@ def run_scheduler() -> None:
         counts_str = ", ".join(
             f"{k}: {v}" for k, v in sorted(queue_counts.items())
         )
-        print(f"[{datetime.now().isoformat()}] Scheduler tick complete ({counts_str})")
+        logger.info(f"Scheduler tick complete ({counts_str})")
     else:
-        print(f"[{datetime.now().isoformat()}] Scheduler tick complete")
-    debug_log("Scheduler tick complete")
+        logger.info("Scheduler tick complete")
 
 
 def _check_venv_integrity() -> None:
@@ -2254,10 +2205,9 @@ def _check_venv_integrity() -> None:
     # Also check a submodule to catch editable installs that set __file__ on the package
     scheduler_file = str(Path(__file__).resolve())
     if "agents/" in scheduler_file and "worktree" in scheduler_file:
-        print(
-            f"FATAL: octopoid module loaded from agent worktree: {scheduler_file}\n"
-            f"Fix: pip install -e . from the repo root",
-            file=sys.stderr,
+        logger.error(
+            f"FATAL: octopoid module loaded from agent worktree: {scheduler_file}. "
+            f"Fix: pip install -e . from the repo root"
         )
         sys.exit(1)
 
@@ -2276,8 +2226,6 @@ def _clear_pycache() -> None:
 
 def main() -> None:
     """Entry point for scheduler."""
-    global DEBUG
-
     _clear_pycache()
     _check_venv_integrity()
 
@@ -2285,7 +2233,7 @@ def main() -> None:
     parser.add_argument(
         "--debug",
         action="store_true",
-        help="Enable debug logging to .octopoid/runtime/logs/",
+        help="Set log level to DEBUG (default: INFO)",
     )
     parser.add_argument(
         "--once",
@@ -2294,30 +2242,18 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    # Fix __main__ double-import: when run via `python -m orchestrator.scheduler`,
-    # this module is loaded as __main__. Other modules (jobs.py) import it as
-    # orchestrator.scheduler — which would create a separate module object with
-    # its own DEBUG=False. Pre-register __main__ as the canonical name so all
-    # imports share the same module (and the same DEBUG/_log_file globals).
-    import sys
-    if "octopoid.scheduler" not in sys.modules:
-        sys.modules["octopoid.scheduler"] = sys.modules["__main__"]
-
-    DEBUG = args.debug
-    if DEBUG:
-        setup_scheduler_debug()
-        debug_log("Scheduler starting with debug mode enabled")
-        print("Debug mode enabled - logs in .octopoid/runtime/logs/")
+    if args.debug:
+        logging.getLogger("octopoid").setLevel(logging.DEBUG)
+        logger.debug("Scheduler starting with debug mode enabled")
 
     scheduler_lock_path = get_scheduler_lock_path()
 
     with locked_or_skip(scheduler_lock_path) as acquired:
         if not acquired:
-            print("Another scheduler instance is running, exiting")
-            debug_log("Scheduler lock not acquired - another instance running")
+            logger.warning("Another scheduler instance is running, exiting")
             sys.exit(0)
 
-        debug_log("Scheduler lock acquired")
+        logger.debug("Scheduler lock acquired")
         run_scheduler()
 
 

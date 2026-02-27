@@ -218,7 +218,7 @@ class TestGuardClaimTaskDedup:
         with (
             patch("octopoid.scheduler.claim_and_prepare_task", return_value=task),
             patch("octopoid.scheduler.get_active_task_ids", return_value={"TASK-projfix-2"}),
-            patch("octopoid.scheduler.debug_log"),
+            patch("octopoid.scheduler.logger"),
         ):
             proceed, reason = guard_claim_task(ctx)
 
@@ -235,7 +235,7 @@ class TestGuardClaimTaskDedup:
         with (
             patch("octopoid.scheduler.claim_and_prepare_task", return_value=task),
             patch("octopoid.scheduler.get_active_task_ids", return_value=set()),
-            patch("octopoid.scheduler.debug_log"),
+            patch("octopoid.scheduler.logger"),
             patch("octopoid.scheduler._requeue_task") as mock_requeue,
         ):
             proceed, reason = guard_claim_task(ctx)
@@ -253,7 +253,7 @@ class TestGuardClaimTaskDedup:
         with (
             patch("octopoid.scheduler.claim_and_prepare_task", return_value=task),
             patch("octopoid.scheduler.get_active_task_ids", return_value={"TASK-a"}),
-            patch("octopoid.scheduler.debug_log"),
+            patch("octopoid.scheduler.logger"),
             patch("octopoid.scheduler._requeue_task") as mock_requeue,
         ):
             proceed, reason = guard_claim_task(ctx)
@@ -269,7 +269,7 @@ class TestGuardClaimTaskDedup:
         with (
             patch("octopoid.scheduler.claim_and_prepare_task", return_value=None),
             patch("octopoid.scheduler.get_active_task_ids") as mock_active,
-            patch("octopoid.scheduler.debug_log"),
+            patch("octopoid.scheduler.logger"),
         ):
             proceed, reason = guard_claim_task(ctx)
 

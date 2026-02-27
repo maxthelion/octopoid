@@ -40,16 +40,17 @@ class TestVerifyInstallPath:
             from octopoid.scheduler import _check_venv_integrity
             _check_venv_integrity()
 
-    def test_error_message_includes_path(self, capsys):
+    def test_error_message_includes_path(self, caplog):
         """Exit message includes the offending path for debugging."""
+        import logging
         hijacked_path = (
             "/Users/dev/myproject/.octopoid/runtime/agents/impl-1/worktree"
             "/orchestrator/orchestrator/scheduler.py"
         )
-        with patch("octopoid.scheduler.__file__",hijacked_path):
+        with caplog.at_level(logging.ERROR, logger="octopoid.scheduler"), \
+             patch("octopoid.scheduler.__file__", hijacked_path):
             from octopoid.scheduler import _check_venv_integrity
             with pytest.raises(SystemExit):
                 _check_venv_integrity()
-        captured = capsys.readouterr()
-        assert "FATAL" in captured.err
-        assert "agent worktree" in captured.err
+        assert "FATAL" in caplog.text
+        assert "agent worktree" in caplog.text

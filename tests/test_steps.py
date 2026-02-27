@@ -695,8 +695,9 @@ class TestUpdateChangelogStep:
             # Must NOT raise — changelog failures are non-fatal after merge
             update_changelog({"id": "TASK-xyz", "title": "Bug fix"}, {}, task_dir)
 
-    def test_failure_warning_includes_error_message(self, tmp_path, capsys):
-        """update_changelog prints a warning with the error details when it fails."""
+    def test_failure_warning_includes_error_message(self, tmp_path, caplog):
+        """update_changelog logs a warning with the error details when it fails."""
+        import logging
         from octopoid.steps import update_changelog
 
         task_dir = tmp_path
@@ -720,14 +721,14 @@ class TestUpdateChangelogStep:
             ok.stderr = ""
             return ok
 
-        with patch("octopoid.config.find_parent_project", return_value=project_root), \
+        with caplog.at_level(logging.WARNING, logger="octopoid.steps"), \
+             patch("octopoid.config.find_parent_project", return_value=project_root), \
              patch("octopoid.config.get_base_branch", return_value="main"), \
              patch("octopoid.steps.subprocess.run", side_effect=mock_run):
             update_changelog({"id": "TASK-abc"}, {}, task_dir)
 
-        captured = capsys.readouterr()
-        assert "WARNING" in captured.out or "warning" in captured.out.lower()
-        assert "update_changelog" in captured.out
+        assert "update_changelog" in caplog.text
+        assert any(r.levelno == logging.WARNING for r in caplog.records)
 
     def test_update_changelog_step_is_registered(self):
         """update_changelog is registered in STEP_REGISTRY."""

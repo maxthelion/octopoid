@@ -11,23 +11,13 @@ Public API (also re-exported from octopoid.scheduler for backwards compat):
 """
 
 import json
-from datetime import datetime
+import logging
 from pathlib import Path
 
 from . import queue_utils
 from .tasks import fail_task
 
-
-def debug_log(message: str) -> None:
-    """Forward to scheduler.debug_log.
-
-    Uses a function-level import to avoid a circular dependency at module
-    initialisation time (scheduler imports result_handler; result_handler
-    references scheduler's debug_log only when the function is called, by
-    which point both modules are fully loaded).
-    """
-    from .scheduler import debug_log as _fn  # noqa: PLC0415
-    _fn(message)
+logger = logging.getLogger("octopoid.result_handler")
 
 
 # ---------------------------------------------------------------------------
@@ -100,7 +90,7 @@ def _perform_transition(sdk: object, task_id: str, to_state: str) -> None:
         sdk.tasks.accept(task_id=task_id, accepted_by="flow-engine")
     else:
         sdk.tasks.update(task_id, queue=to_state)
-    debug_log(f"Task {task_id}: engine performed transition to {to_state}")
+    logger.debug(f"Task {task_id}: engine performed transition to {to_state}")
 
 
 def _get_fail_target_from_flow(task: dict, current_queue: str) -> str:
@@ -233,11 +223,11 @@ def _handle_done_outcome(sdk: object, task_id: str, task: dict, result: dict, ta
             # Task already reached a terminal state (e.g. lease expiry, manual
             # intervention, or a 409 race). The process is dead and the task
             # will never return to "claimed". Return True so the PID is removed.
-            debug_log(f"Task {task_id}: outcome=done but queue={current_queue} (terminal), removing stale PID")
+            logger.debug(f"Task {task_id}: outcome=done but queue={current_queue} (terminal), removing stale PID")
             return True
         # Non-terminal, non-claimed (e.g. "incoming", "provisional") — the task
         # may be mid-transition. Keep the PID and retry next tick.
-        debug_log(f"Task {task_id}: outcome=done but queue={current_queue}, skipping")
+        logger.debug(f"Task {task_id}: outcome=done but queue={current_queue}, skipping")
         return False
 
     flow_name = task.get("flow", "default")
@@ -251,19 +241,19 @@ def _handle_done_outcome(sdk: object, task_id: str, task: dict, result: dict, ta
     if not transitions:
         # Fallback: direct submit if no transition defined in flow
         sdk.tasks.submit(task_id=task_id, commits_count=0, turns_used=0)
-        debug_log(f"Task {task_id}: no flow transition from claimed, used direct submit")
+        logger.debug(f"Task {task_id}: no flow transition from claimed, used direct submit")
         return True
 
     transition = transitions[0]
 
     # Execute pre-transition steps (side effects before state change)
     if transition.runs:
-        debug_log(f"Task {task_id}: executing flow steps {transition.runs}")
+        logger.debug(f"Task {task_id}: executing flow steps {transition.runs}")
         execute_steps(transition.runs, task, result, task_dir)
 
     # Engine performs the transition — the step list no longer needs a "move" step
     _perform_transition(sdk, task_id, transition.to_state)
-    print(f"[{datetime.now().isoformat()}] Task {task_id} transitioned to {transition.to_state} via flow")
+    logger.info(f"Task {task_id} transitioned to {transition.to_state} via flow")
     return True
 
 
@@ -281,17 +271,17 @@ def _handle_fail_outcome(sdk: object, task_id: str, task: dict, reason: str, cur
     if current_queue == "claimed":
         fail_target = _get_fail_target_from_flow(task, current_queue)
         sdk.tasks.update(task_id, queue=fail_target)
-        debug_log(f"Task {task_id}: failed (claimed → {fail_target}): {reason}")
+        logger.debug(f"Task {task_id}: failed (claimed → {fail_target}): {reason}")
         return True
     else:
         _TERMINAL_QUEUES = {"done", "failed"}
         if current_queue in _TERMINAL_QUEUES:
             # Task already in a terminal state — process is dead, nothing to retry.
             # Return True so the stale PID is removed from the pool.
-            debug_log(f"Task {task_id}: outcome=failed but queue={current_queue} (terminal), removing stale PID")
+            logger.debug(f"Task {task_id}: outcome=failed but queue={current_queue} (terminal), removing stale PID")
             return True
         # Non-terminal, non-claimed (e.g. "incoming", "provisional") — keep PID for retry.
-        debug_log(f"Task {task_id}: outcome=failed but queue={current_queue}, skipping")
+        logger.debug(f"Task {task_id}: outcome=failed but queue={current_queue}, skipping")
         return False
 
 
@@ -310,17 +300,17 @@ def _handle_continuation_outcome(sdk: object, task_id: str, task: dict, agent_na
     if current_queue == "claimed":
         continuation_target = _get_continuation_target_from_flow(task, current_queue)
         sdk.tasks.update(task_id, queue=continuation_target)
-        debug_log(f"Task {task_id}: needs continuation by {agent_name} (→ {continuation_target})")
+        logger.debug(f"Task {task_id}: needs continuation by {agent_name} (→ {continuation_target})")
         return True
     else:
         _TERMINAL_QUEUES = {"done", "failed"}
         if current_queue in _TERMINAL_QUEUES:
             # Task already in a terminal state — process is dead, nothing to retry.
             # Return True so the stale PID is removed from the pool.
-            debug_log(f"Task {task_id}: outcome=needs_continuation but queue={current_queue} (terminal), removing stale PID")
+            logger.debug(f"Task {task_id}: outcome=needs_continuation but queue={current_queue} (terminal), removing stale PID")
             return True
         # Non-terminal, non-claimed (e.g. "incoming", "provisional") — keep PID for retry.
-        debug_log(f"Task {task_id}: outcome=needs_continuation but queue={current_queue}, skipping")
+        logger.debug(f"Task {task_id}: outcome=needs_continuation but queue={current_queue}, skipping")
         return False
 
 
@@ -351,7 +341,7 @@ def _resolve_task_and_transition(
 
     task = sdk.tasks.get(task_id)
     if not task:
-        debug_log(f"Flow dispatch: task {task_id} not found on server, skipping")
+        logger.debug(f"Flow dispatch: task {task_id} not found on server, skipping")
         return None, None, None
 
     current_queue = task.get("queue", "unknown")
@@ -363,7 +353,7 @@ def _resolve_task_and_transition(
     # Only discard as stale if the task moved to something other than the
     # expected queue or "claimed" (normal claiming behaviour).
     if expected_queue and current_queue not in (expected_queue, "claimed"):
-        debug_log(
+        logger.debug(
             f"Flow dispatch: task {task_id} moved from expected '{expected_queue}' "
             f"to '{current_queue}', discarding stale result from {agent_name}"
         )
@@ -380,7 +370,7 @@ def _resolve_task_and_transition(
         transitions = flow.get_transitions_from(lookup_queue)
 
     if not transitions:
-        debug_log(f"Flow dispatch: no transition from '{current_queue}' in flow '{flow_name}' for task {task_id}")
+        logger.debug(f"Flow dispatch: no transition from '{current_queue}' in flow '{flow_name}' for task {task_id}")
         return None, None, None
 
     return task, transitions[0], lookup_queue
@@ -402,10 +392,10 @@ def _handle_agent_failure(
         True — task was transitioned, PID safe to remove.
     """
     message = result.get("message", "Agent could not complete review")
-    debug_log(f"Flow dispatch: agent failure for {task_id}: {message}")
+    logger.debug(f"Flow dispatch: agent failure for {task_id}: {message}")
     for condition in transition.conditions:
         if condition.type == "agent" and condition.on_fail:
-            debug_log(f"Flow dispatch: rejecting {task_id} back to {condition.on_fail}")
+            logger.debug(f"Flow dispatch: rejecting {task_id} back to {condition.on_fail}")
             sdk.tasks.reject(task_id, reason=message, rejected_by=agent_name)
             return True
     # Default: reject back to incoming
@@ -429,9 +419,9 @@ def _handle_gatekeeper_reject(
     """
     from .steps import reject_with_feedback  # noqa: PLC0415
 
-    debug_log(f"Flow dispatch: agent rejected task {task_id}")
+    logger.debug(f"Flow dispatch: agent rejected task {task_id}")
     reject_with_feedback(task, result, task_dir)
-    print(f"[{datetime.now().isoformat()}] Agent {agent_name} rejected task {task_id}")
+    logger.info(f"Agent {agent_name} rejected task {task_id}")
     return True
 
 
@@ -462,10 +452,10 @@ def _handle_approve_and_run_steps(
 
     if not transition.runs:
         # No runs defined — just log
-        debug_log(f"Flow dispatch: no runs defined for transition from '{current_queue}', task {task_id}")
+        logger.debug(f"Flow dispatch: no runs defined for transition from '{current_queue}', task {task_id}")
         return True
 
-    debug_log(f"Flow dispatch: executing steps {transition.runs} for task {task_id}")
+    logger.debug(f"Flow dispatch: executing steps {transition.runs} for task {task_id}")
     try:
         execute_steps(transition.runs, task, result, task_dir)
     except RuntimeError as step_err:
@@ -478,8 +468,7 @@ def _handle_approve_and_run_steps(
         if not is_merge_fail:
             raise  # Non-recoverable — let the outer except Exception handle it
 
-        print(f"[{datetime.now().isoformat()}] Rebase/merge failed for {task_id}: {step_err}")
-        debug_log(f"Rebase/merge failure in handle_agent_result_via_flow for {task_id}: {step_err}")
+        logger.warning(f"Rebase/merge failed for {task_id}: {step_err}")
 
         try:
             from .task_thread import post_message  # noqa: PLC0415
@@ -497,7 +486,7 @@ def _handle_approve_and_run_steps(
                 author="scheduler-merge",
             )
         except Exception as post_e:
-            print(f"[{datetime.now().isoformat()}] WARNING: failed to post rejection message for {task_id}: {post_e}")
+            logger.warning(f"Failed to post rejection message for {task_id}: {post_e}")
 
         # Find on_fail target from transition conditions (default: incoming)
         on_fail = "incoming"
@@ -507,10 +496,10 @@ def _handle_approve_and_run_steps(
                 break
 
         sdk.tasks.reject(task_id, reason=err_msg, rejected_by="scheduler-merge")
-        print(f"[{datetime.now().isoformat()}] Task {task_id} rejected back to {on_fail} after rebase/merge failure")
+        logger.info(f"Task {task_id} rejected back to {on_fail} after rebase/merge failure")
         return True
 
-    print(f"[{datetime.now().isoformat()}] Agent {agent_name} completed task {task_id} (steps: {transition.runs})")
+    logger.info(f"Agent {agent_name} completed task {task_id} (steps: {transition.runs})")
     return True
 
 
@@ -546,7 +535,7 @@ def _dispatch_result(
         return _handle_gatekeeper_reject(task, result, task_dir, task_id, agent_name)
 
     if decision != "approve":
-        debug_log(
+        logger.debug(
             f"Flow dispatch: unknown decision '{decision}' for {task_id}, "
             f"leaving in {current_queue} for human review"
         )
@@ -584,7 +573,7 @@ def handle_agent_result_via_flow(task_id: str, agent_name: str, task_dir: Path, 
 
     result = read_result_json(task_dir)
 
-    debug_log(f"handle_agent_result_via_flow: task={task_id} agent={agent_name} status={result.get('status')} decision={result.get('decision')}")
+    logger.debug(f"handle_agent_result_via_flow: task={task_id} agent={agent_name} status={result.get('status')} decision={result.get('decision')}")
 
     try:
         sdk = queue_utils.get_sdk()
@@ -597,14 +586,11 @@ def handle_agent_result_via_flow(task_id: str, agent_name: str, task_dir: Path, 
         return _dispatch_result(sdk, task_id, agent_name, task, transition, result, task_dir, current_queue)
 
     except RetryableStepError as e:
-        print(f"[{datetime.now().isoformat()}] check_ci pending for {task_id}: {e}, leaving in {current_queue}")
+        logger.info(f"check_ci pending for {task_id}: {e}, leaving in {current_queue}")
         return False  # Don't remove PID — scheduler will retry on next tick
 
     except Exception as e:
-        import traceback  # noqa: PLC0415
-        print(f"[{datetime.now().isoformat()}] ERROR: handle_agent_result_via_flow failed for {task_id}: {e}")
-        debug_log(f"Error in handle_agent_result_via_flow for {task_id}: {e}")
-        debug_log(traceback.format_exc())
+        logger.error(f"handle_agent_result_via_flow failed for {task_id}: {e}", exc_info=True)
         try:
             # Before moving to failed, check if the task is already done.
             # Post-merge flow steps (e.g. update_changelog) can raise after the PR
@@ -613,13 +599,9 @@ def handle_agent_result_via_flow(task_id: str, agent_name: str, task_dir: Path, 
             _current_task = _sdk.tasks.get(task_id)
             _current_q = (_current_task or {}).get("queue")
             if _current_q == "done":
-                debug_log(
+                logger.warning(
                     f"Task {task_id}: catch-all exception after task reached done — "
                     f"not moving to failed (error: {e})"
-                )
-                print(
-                    f"[{datetime.now().isoformat()}] WARNING: task {task_id} is already done; "
-                    f"ignoring post-done exception: {e}"
                 )
                 return True  # Task is done — PID safe to remove
             # Intentionally hardcoded source: this is the emergency fallback that fires
@@ -628,8 +610,7 @@ def handle_agent_result_via_flow(task_id: str, agent_name: str, task_dir: Path, 
             # what just failed.  "failed" is the only safe terminal state here.
             fail_task(task_id, reason=f'Flow dispatch error: {e}', source='flow-dispatch-error')
         except Exception as inner_e:
-            print(f"[{datetime.now().isoformat()}] ERROR: move-to-failed failed for {task_id}: {inner_e}")
-            debug_log(f"Failed to move {task_id} to failed queue")
+            logger.error(f"move-to-failed failed for {task_id}: {inner_e}")
         return True  # Task moved to terminal state (or already gone) — PID safe to remove
 
 
@@ -663,17 +644,17 @@ def handle_agent_result(task_id: str, agent_name: str, task_dir: Path) -> bool:
 
     result = _read_or_infer_result(task_dir)
     outcome = result.get("outcome", "error")
-    debug_log(f"Task {task_id} result: {outcome}")
+    logger.debug(f"Task {task_id} result: {outcome}")
 
     sdk = queue_utils.get_sdk()
 
     task = sdk.tasks.get(task_id)
     if not task:
-        debug_log(f"Task {task_id}: not found on server, skipping result handling")
+        logger.debug(f"Task {task_id}: not found on server, skipping result handling")
         return True  # Nothing to track — PID safe to remove
 
     current_queue = task.get("queue", "unknown")
-    debug_log(f"Task {task_id}: current queue = {current_queue}, outcome = {outcome}")
+    logger.debug(f"Task {task_id}: current queue = {current_queue}, outcome = {outcome}")
 
     try:
         if outcome in ("done", "submitted"):
@@ -685,22 +666,19 @@ def handle_agent_result(task_id: str, agent_name: str, task_dir: Path) -> bool:
         else:
             return _handle_fail_outcome(sdk, task_id, task, f"Unknown outcome: {outcome}", current_queue)
     except RetryableStepError as e:
-        print(f"[{datetime.now().isoformat()}] Retryable step error for task {task_id}: {e}, will retry")
+        logger.info(f"Retryable step error for task {task_id}: {e}, will retry")
         return False  # Don't remove PID — scheduler will retry on next tick
     except Exception as e:
-        import traceback  # noqa: PLC0415
         failure_count = _increment_step_failure_count(task_dir)
-        print(
-            f"[{datetime.now().isoformat()}] ERROR: step failure for task {task_id} "
-            f"(attempt {failure_count}/3): {e}"
+        logger.error(
+            f"Step failure for task {task_id} (attempt {failure_count}/3): {e}",
+            exc_info=True,
         )
-        debug_log(f"handle_agent_result: step failure #{failure_count} for {task_id}:\n{traceback.format_exc()}")
 
         if failure_count >= 3:
             # Too many consecutive failures — give up and move to failed
-            print(
-                f"[{datetime.now().isoformat()}] Task {task_id}: {failure_count} consecutive "
-                f"step failures, moving to failed"
+            logger.error(
+                f"Task {task_id}: {failure_count} consecutive step failures, moving to failed"
             )
             try:
                 fail_task(
@@ -709,8 +687,7 @@ def handle_agent_result(task_id: str, agent_name: str, task_dir: Path) -> bool:
                     source='step-failure-circuit-breaker',
                 )
             except Exception as update_err:
-                print(f"[{datetime.now().isoformat()}] ERROR: move-to-failed failed for {task_id}: {update_err}")
-                debug_log(f"handle_agent_result: failed to update {task_id} to failed: {update_err}")
+                logger.error(f"move-to-failed failed for {task_id}: {update_err}")
             _reset_step_failure_count(task_dir)
             return True  # Task moved to terminal state — PID safe to remove
 
