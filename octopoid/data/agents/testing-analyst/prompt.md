@@ -209,7 +209,7 @@ print("Posted inbox message")
 
 ## Done
 
-After completing all steps, you are finished. Do not write a result.json — this agent runs outside the standard task lifecycle.
+After completing all steps, you are finished. Output a brief summary of what you did and exit.
 
 ## Global Instructions
 

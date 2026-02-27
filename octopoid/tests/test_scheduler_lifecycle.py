@@ -5,15 +5,13 @@ Tests that:
 2. handle_agent_result executes flow steps when outcome is "done" and task is claimed
 3. After steps succeed, the engine calls the right API method based on to_state
 4. handle_agent_result moves task to failed when outcome is "failed"
-5. handle_agent_result handles missing result.json gracefully
+5. handle_agent_result routes unknown outcomes (no stdout.log) to requires-intervention
 6. PID is only removed on success; kept for retry on failure
 7. After 3 consecutive step failures, task is moved to failed
 """
 
-import json
-import subprocess
 from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -34,9 +32,10 @@ def tmp_task_dir(tmp_path):
 
 @pytest.fixture
 def mock_sdk():
-    """Create a mock SDK with tasks namespace."""
+    """Create a mock SDK with tasks and messages namespaces."""
     sdk = MagicMock()
     sdk.tasks = MagicMock()
+    sdk.messages = MagicMock()
     return sdk
 
 
@@ -57,23 +56,23 @@ def sample_task():
 # ---------------------------------------------------------------------------
 
 class TestPrepareTaskDirectoryCreatesBranch:
-    """Verify that after prepare_task_directory, the worktree is on a named branch."""
+    """Verify that prepare_task_directory creates the task directory structure correctly."""
 
     @patch("octopoid.scheduler.get_tasks_dir")
     @patch("octopoid.scheduler.find_parent_project")
-    @patch("octopoid.scheduler.get_main_branch", return_value="main")
+    @patch("octopoid.scheduler.get_base_branch", return_value="main")
     @patch("octopoid.scheduler.get_global_instructions_path")
     @patch("octopoid.scheduler.get_orchestrator_dir")
-    def test_prepare_calls_ensure_on_branch(
+    def test_prepare_creates_task_files_on_detached_head(
         self,
         mock_orch_dir,
         mock_gi_path,
-        mock_main_branch,
+        mock_base_branch,
         mock_find_parent,
         mock_get_tasks_dir,
         tmp_path,
     ):
-        """After prepare_task_directory, ensure_on_branch is called with the task branch."""
+        """prepare_task_directory creates task.json, env.sh, and scripts — worktree stays on detached HEAD."""
         from octopoid.scheduler import prepare_task_directory
 
         # Set up paths
@@ -105,17 +104,17 @@ class TestPrepareTaskDirectoryCreatesBranch:
         }
         agent_config = {"agent_dir": str(agent_dir)}
 
-        with patch("octopoid.git_utils.create_task_worktree", return_value=worktree_path), \
-             patch("octopoid.scheduler.RepoManager") as MockRepoManager:
-            mock_repo = MagicMock()
-            MockRepoManager.return_value = mock_repo
-
+        with patch("octopoid.git_utils.create_task_worktree", return_value=worktree_path):
             prepare_task_directory(task, "agent-1", agent_config)
 
-            # Verify RepoManager was created with the worktree path
-            MockRepoManager.assert_called_once_with(worktree_path)
-            # Verify ensure_on_branch was called with the task branch
-            mock_repo.ensure_on_branch.assert_called_once_with("agent/abc123")
+        # Verify task.json was written
+        assert (task_dir / "task.json").exists()
+        # Verify env.sh was written with TASK_ID and TASK_BRANCH (no branch checkout — detached HEAD)
+        env_sh = (task_dir / "env.sh").read_text()
+        assert "TASK_ID='abc123'" in env_sh
+        assert "TASK_BRANCH='agent/abc123'" in env_sh
+        # Verify scripts were copied
+        assert (task_dir / "scripts" / "run-tests").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -127,14 +126,10 @@ class TestHandleAgentResultFlowSteps:
 
     def test_done_outcome_executes_flow_steps_then_transitions(self, tmp_task_dir, mock_sdk, sample_task):
         """When outcome is 'done' and task is claimed, flow steps should execute then engine transitions."""
-        # Write result.json with done outcome
-        result_path = tmp_task_dir / "result.json"
-        result_path.write_text(json.dumps({"outcome": "done"}))
-
-        # Mock the SDK to return a claimed task
         mock_sdk.tasks.get.return_value = sample_task
 
         with patch("octopoid.result_handler.queue_utils") as mock_qu, \
+             patch("octopoid.result_handler.infer_result_from_stdout", return_value={"outcome": "done"}), \
              patch("octopoid.steps.execute_steps") as mock_execute, \
              patch("octopoid.flow.load_flow") as mock_load_flow:
 
@@ -167,12 +162,10 @@ class TestHandleAgentResultFlowSteps:
 
     def test_done_outcome_no_runs_still_transitions(self, tmp_task_dir, mock_sdk, sample_task):
         """When outcome is 'done' and transition has no runs, engine still performs transition."""
-        result_path = tmp_task_dir / "result.json"
-        result_path.write_text(json.dumps({"outcome": "done"}))
-
         mock_sdk.tasks.get.return_value = sample_task
 
         with patch("octopoid.result_handler.queue_utils") as mock_qu, \
+             patch("octopoid.result_handler.infer_result_from_stdout", return_value={"outcome": "done"}), \
              patch("octopoid.steps.execute_steps") as mock_execute, \
              patch("octopoid.flow.load_flow") as mock_load_flow:
 
@@ -198,12 +191,10 @@ class TestHandleAgentResultFlowSteps:
 
     def test_done_outcome_fallback_direct_submit_when_no_transitions(self, tmp_task_dir, mock_sdk, sample_task):
         """When flow has no transition from claimed at all, fall back to direct submit."""
-        result_path = tmp_task_dir / "result.json"
-        result_path.write_text(json.dumps({"outcome": "done"}))
-
         mock_sdk.tasks.get.return_value = sample_task
 
         with patch("octopoid.result_handler.queue_utils") as mock_qu, \
+             patch("octopoid.result_handler.infer_result_from_stdout", return_value={"outcome": "done"}), \
              patch("octopoid.steps.execute_steps") as mock_execute, \
              patch("octopoid.flow.load_flow") as mock_load_flow:
 
@@ -226,9 +217,6 @@ class TestHandleAgentResultFlowSteps:
 
     def test_child_flow_done_outcome_accepts_task(self, tmp_task_dir, mock_sdk):
         """Child flow 'claimed -> done' transition causes engine to call sdk.tasks.accept()."""
-        result_path = tmp_task_dir / "result.json"
-        result_path.write_text(json.dumps({"outcome": "done"}))
-
         project_task = {
             "id": "test123",
             "title": "Child task",
@@ -239,6 +227,7 @@ class TestHandleAgentResultFlowSteps:
         mock_sdk.tasks.get.return_value = project_task
 
         with patch("octopoid.result_handler.queue_utils") as mock_qu, \
+             patch("octopoid.result_handler.infer_result_from_stdout", return_value={"outcome": "done"}), \
              patch("octopoid.steps.execute_steps") as mock_execute, \
              patch("octopoid.flow.load_flow") as mock_load_flow:
 
@@ -282,15 +271,13 @@ class TestHandleAgentResultFailed:
 
     def test_failed_outcome_moves_to_failed(self, tmp_task_dir, mock_sdk, sample_task):
         """When outcome is 'failed', task should move to failed queue."""
-        result_path = tmp_task_dir / "result.json"
-        result_path.write_text(json.dumps({
-            "outcome": "failed",
-            "reason": "Tests don't pass",
-        }))
-
         mock_sdk.tasks.get.return_value = sample_task
 
-        with patch("octopoid.result_handler.queue_utils") as mock_qu:
+        with patch("octopoid.result_handler.queue_utils") as mock_qu, \
+             patch("octopoid.result_handler.infer_result_from_stdout", return_value={
+                 "outcome": "failed",
+                 "reason": "Tests don't pass",
+             }):
             mock_qu.get_sdk.return_value = mock_sdk
 
             from octopoid.scheduler import handle_agent_result
@@ -298,62 +285,52 @@ class TestHandleAgentResultFailed:
 
             mock_sdk.tasks.update.assert_called_once_with("test123", queue="failed")
 
-    def test_error_outcome_moves_to_failed(self, tmp_task_dir, mock_sdk, sample_task):
-        """When result.json is invalid, task should move to failed queue."""
-        result_path = tmp_task_dir / "result.json"
-        result_path.write_text("not valid json{{{")
-
+    def test_unknown_outcome_routes_to_requires_intervention(self, tmp_task_dir, mock_sdk, sample_task):
+        """When outcome is 'unknown' (e.g. haiku unavailable), task routes to requires-intervention."""
         mock_sdk.tasks.get.return_value = sample_task
 
-        with patch("octopoid.result_handler.queue_utils") as mock_qu:
+        with patch("octopoid.result_handler.queue_utils") as mock_qu, \
+             patch("octopoid.result_handler.infer_result_from_stdout", return_value={
+                 "outcome": "unknown",
+                 "reason": "Could not infer outcome",
+             }), \
+             patch("octopoid.result_handler.request_intervention") as mock_intervention:
             mock_qu.get_sdk.return_value = mock_sdk
 
             from octopoid.scheduler import handle_agent_result
             handle_agent_result("test123", "agent-1", tmp_task_dir)
 
-            mock_sdk.tasks.update.assert_called_once_with("test123", queue="failed")
+            mock_intervention.assert_called_once()
+            assert mock_intervention.call_args[0][0] == "test123"
 
 
 # ---------------------------------------------------------------------------
-# Test: handle_agent_result with no result.json
+# Test: handle_agent_result with no stdout.log
 # ---------------------------------------------------------------------------
 
-class TestHandleAgentResultNoResult:
-    """Verify graceful handling when agent produces no result.json."""
+class TestHandleAgentResultNoStdout:
+    """Verify graceful handling when agent produces no stdout.log."""
 
-    def test_no_result_json_no_notes_fails(self, tmp_task_dir, mock_sdk, sample_task):
-        """No result.json and no notes = failure."""
+    def test_no_stdout_log_routes_to_requires_intervention(self, tmp_task_dir, mock_sdk, sample_task):
+        """No stdout.log returns unknown outcome, which routes to requires-intervention."""
         mock_sdk.tasks.get.return_value = sample_task
 
-        with patch("octopoid.result_handler.queue_utils") as mock_qu:
+        # Don't mock infer_result_from_stdout — let it run for real (no stdout.log present)
+        with patch("octopoid.result_handler.queue_utils") as mock_qu, \
+             patch("octopoid.result_handler._call_haiku") as mock_haiku, \
+             patch("octopoid.result_handler.request_intervention") as mock_intervention:
             mock_qu.get_sdk.return_value = mock_sdk
+            mock_haiku.return_value = "done"  # should not be called for missing file
 
             from octopoid.scheduler import handle_agent_result
             handle_agent_result("test123", "agent-1", tmp_task_dir)
 
-            mock_sdk.tasks.update.assert_called_once_with("test123", queue="failed")
-
-    def test_no_result_json_with_notes_continues(self, tmp_task_dir, mock_sdk, sample_task):
-        """No result.json but has notes = needs_continuation."""
-        (tmp_task_dir / "notes.md").write_text("- [12:00:00] Made progress\n")
-
-        mock_sdk.tasks.get.return_value = sample_task
-
-        with patch("octopoid.result_handler.queue_utils") as mock_qu:
-            mock_qu.get_sdk.return_value = mock_sdk
-
-            from octopoid.scheduler import handle_agent_result
-            handle_agent_result("test123", "agent-1", tmp_task_dir)
-
-            mock_sdk.tasks.update.assert_called_once_with(
-                "test123", queue="needs_continuation"
-            )
+            # No stdout.log → outcome=unknown → requires-intervention
+            mock_intervention.assert_called_once()
+            mock_haiku.assert_not_called()  # haiku not called for missing file
 
     def test_done_outcome_non_claimed_queue_skips(self, tmp_task_dir, mock_sdk):
         """Done outcome when task is already provisional should not re-execute steps."""
-        result_path = tmp_task_dir / "result.json"
-        result_path.write_text(json.dumps({"outcome": "done"}))
-
         task = {
             "id": "test123",
             "title": "Test task",
@@ -363,6 +340,7 @@ class TestHandleAgentResultNoResult:
         mock_sdk.tasks.get.return_value = task
 
         with patch("octopoid.result_handler.queue_utils") as mock_qu, \
+             patch("octopoid.result_handler.infer_result_from_stdout", return_value={"outcome": "done"}), \
              patch("octopoid.steps.execute_steps") as mock_execute, \
              patch("octopoid.flow.load_flow") as mock_load_flow:
 
@@ -385,9 +363,6 @@ class TestChildFlowDispatch:
 
     def test_project_task_uses_child_flow_in_handle_done(self, tmp_task_dir, mock_sdk):
         """When a task has project_id and the flow has child_flow, use child_flow transitions."""
-        result_path = tmp_task_dir / "result.json"
-        result_path.write_text(json.dumps({"outcome": "done"}))
-
         # Task is a child of a project
         project_task = {
             "id": "test123",
@@ -400,6 +375,7 @@ class TestChildFlowDispatch:
         mock_sdk.tasks.get.return_value = project_task
 
         with patch("octopoid.result_handler.queue_utils") as mock_qu, \
+             patch("octopoid.result_handler.infer_result_from_stdout", return_value={"outcome": "done"}), \
              patch("octopoid.steps.execute_steps") as mock_execute, \
              patch("octopoid.flow.load_flow") as mock_load_flow:
 
@@ -438,12 +414,10 @@ class TestChildFlowDispatch:
 
     def test_non_project_task_uses_normal_flow_in_handle_done(self, tmp_task_dir, mock_sdk, sample_task):
         """When a task has no project_id, use normal top-level flow transitions."""
-        result_path = tmp_task_dir / "result.json"
-        result_path.write_text(json.dumps({"outcome": "done"}))
-
         mock_sdk.tasks.get.return_value = sample_task
 
         with patch("octopoid.result_handler.queue_utils") as mock_qu, \
+             patch("octopoid.result_handler.infer_result_from_stdout", return_value={"outcome": "done"}), \
              patch("octopoid.steps.execute_steps") as mock_execute, \
              patch("octopoid.flow.load_flow") as mock_load_flow:
 
@@ -479,10 +453,6 @@ class TestChildFlowDispatch:
 
     def test_project_task_uses_child_flow_in_flow_dispatch(self, tmp_task_dir, mock_sdk):
         """handle_agent_result_via_flow uses child_flow transitions for project tasks."""
-        # Write a "approve" result (gatekeeper-style)
-        result_path = tmp_task_dir / "result.json"
-        result_path.write_text(json.dumps({"status": "success", "decision": "approve"}))
-
         project_task = {
             "id": "test123",
             "title": "Child task",
@@ -494,6 +464,9 @@ class TestChildFlowDispatch:
         mock_sdk.tasks.get.return_value = project_task
 
         with patch("octopoid.result_handler.queue_utils") as mock_qu, \
+             patch("octopoid.result_handler.infer_result_from_stdout", return_value={
+                 "status": "success", "decision": "approve", "comment": "LGTM",
+             }), \
              patch("octopoid.steps.execute_steps") as mock_execute, \
              patch("octopoid.flow.load_flow") as mock_load_flow:
 
@@ -520,12 +493,12 @@ class TestChildFlowDispatch:
 
     def test_non_project_task_uses_normal_flow_in_flow_dispatch(self, tmp_task_dir, mock_sdk, sample_task):
         """handle_agent_result_via_flow uses top-level flow for tasks without project_id."""
-        result_path = tmp_task_dir / "result.json"
-        result_path.write_text(json.dumps({"status": "success", "decision": "approve"}))
-
         mock_sdk.tasks.get.return_value = sample_task
 
         with patch("octopoid.result_handler.queue_utils") as mock_qu, \
+             patch("octopoid.result_handler.infer_result_from_stdout", return_value={
+                 "status": "success", "decision": "approve", "comment": "LGTM",
+             }), \
              patch("octopoid.steps.execute_steps") as mock_execute, \
              patch("octopoid.flow.load_flow") as mock_load_flow:
 
@@ -560,12 +533,10 @@ class TestStepFailureRetry:
 
     def test_step_failure_raises_so_pid_is_retained(self, tmp_task_dir, mock_sdk, sample_task):
         """When a step raises, handle_agent_result re-raises so caller keeps the PID."""
-        result_path = tmp_task_dir / "result.json"
-        result_path.write_text(json.dumps({"outcome": "done"}))
-
         mock_sdk.tasks.get.return_value = sample_task
 
         with patch("octopoid.result_handler.queue_utils") as mock_qu, \
+             patch("octopoid.result_handler.infer_result_from_stdout", return_value={"outcome": "done"}), \
              patch("octopoid.flow.load_flow") as mock_load_flow:
 
             mock_qu.get_sdk.return_value = mock_sdk
@@ -588,17 +559,16 @@ class TestStepFailureRetry:
         assert counter_file.exists()
         assert counter_file.read_text().strip() == "1"
 
-    def test_after_3_failures_moves_to_failed_and_returns_cleanly(self, tmp_task_dir, mock_sdk, sample_task):
-        """After 3 consecutive step failures, handle_agent_result moves to failed and returns (no raise)."""
-        result_path = tmp_task_dir / "result.json"
-        result_path.write_text(json.dumps({"outcome": "done"}))
-
+    def test_after_3_failures_calls_fail_task_and_returns_cleanly(self, tmp_task_dir, mock_sdk, sample_task):
+        """After 3 consecutive step failures, handle_agent_result calls fail_task and returns (no raise)."""
         # Pre-seed the counter to 2 (this will be the 3rd failure)
         (tmp_task_dir / "step_failure_count").write_text("2")
 
         mock_sdk.tasks.get.return_value = sample_task
 
         with patch("octopoid.result_handler.queue_utils") as mock_qu, \
+             patch("octopoid.result_handler.infer_result_from_stdout", return_value={"outcome": "done"}), \
+             patch("octopoid.result_handler.fail_task") as mock_fail_task, \
              patch("octopoid.flow.load_flow") as mock_load_flow:
 
             mock_qu.get_sdk.return_value = mock_sdk
@@ -613,13 +583,16 @@ class TestStepFailureRetry:
             with patch("octopoid.steps.execute_steps", side_effect=RuntimeError("Step failed again")):
                 from octopoid.scheduler import handle_agent_result
                 # Should NOT raise — returns cleanly so PID gets removed
-                handle_agent_result("test123", "agent-1", tmp_task_dir)
+                result = handle_agent_result("test123", "agent-1", tmp_task_dir)
 
-        # Task moved to failed
-        mock_sdk.tasks.update.assert_called_once()
-        call_args = mock_sdk.tasks.update.call_args
-        assert call_args[0][0] == "test123"
-        assert call_args[1]["queue"] == "failed"
+        # Circuit breaker called fail_task with the right args
+        mock_fail_task.assert_called_once()
+        call_kwargs = mock_fail_task.call_args
+        assert call_kwargs[0][0] == "test123"
+        assert call_kwargs[1]["source"] == "step-failure-circuit-breaker"
+
+        # Returns True so PID gets removed
+        assert result is True
 
         # Counter reset
         counter_file = tmp_task_dir / "step_failure_count"
@@ -627,12 +600,10 @@ class TestStepFailureRetry:
 
     def test_success_resets_failure_counter(self, tmp_task_dir, mock_sdk, sample_task):
         """After a successful run, the failure counter file is no longer consulted (implicit reset)."""
-        result_path = tmp_task_dir / "result.json"
-        result_path.write_text(json.dumps({"outcome": "done"}))
-
         mock_sdk.tasks.get.return_value = sample_task
 
         with patch("octopoid.result_handler.queue_utils") as mock_qu, \
+             patch("octopoid.result_handler.infer_result_from_stdout", return_value={"outcome": "done"}), \
              patch("octopoid.flow.load_flow") as mock_load_flow:
 
             mock_qu.get_sdk.return_value = mock_sdk
@@ -715,7 +686,9 @@ class TestGuardTaskDescriptionNonempty:
 
         assert proceed is False
         assert "empty_description" in reason
-        mock_sdk.tasks.update.assert_called_once_with("abc123", queue="failed", claimed_by=None)
+        mock_qu.fail_task.assert_called_once()
+        assert mock_qu.fail_task.call_args[0][0] == "abc123"
+        assert mock_qu.fail_task.call_args[1]["source"] == "guard-empty-description"
 
     def test_task_with_no_content_field_fails(self):
         """Guard blocks spawn when task has no content field at all."""
@@ -731,7 +704,9 @@ class TestGuardTaskDescriptionNonempty:
         assert proceed is False
         assert "empty_description" in reason
         assert "abc123" in reason
-        mock_sdk.tasks.update.assert_called_once_with("abc123", queue="failed", claimed_by=None)
+        mock_qu.fail_task.assert_called_once()
+        assert mock_qu.fail_task.call_args[0][0] == "abc123"
+        assert mock_qu.fail_task.call_args[1]["source"] == "guard-empty-description"
 
     def test_empty_content_reason_mentions_task_id(self):
         """Error reason mentions expected task ID when content is missing."""
@@ -760,7 +735,9 @@ class TestGuardTaskDescriptionNonempty:
 
         assert proceed is False
         assert "empty_description" in reason
-        mock_sdk.tasks.update.assert_called_once_with("abc123", queue="failed", claimed_by=None)
+        mock_qu.fail_task.assert_called_once()
+        assert mock_qu.fail_task.call_args[0][0] == "abc123"
+        assert mock_qu.fail_task.call_args[1]["source"] == "guard-empty-description"
 
     def test_sdk_failure_still_blocks_spawn(self):
         """Guard still blocks spawn even if the SDK call to fail the task throws."""

@@ -85,40 +85,29 @@ for t in data["queues"].get("claimed", []):
                     data["problems"].append({
                         "type": "stuck_task",
                         "detail": f"Task {tid} claimed {hours}h ago by {t.get('claimed_by','?')} but agent process is not running.",
-                        "suggestion": f"Agent likely crashed or ran out of turns. Check .octopoid/runtime/tasks/{tid}/result.json and stderr.log. Consider requeuing with `/retry-failed` or manually investigate."
+                        "suggestion": f"Agent likely crashed or ran out of turns. Check .octopoid/runtime/tasks/{tid}/stdout.log and stderr.log. Consider requeuing with `/retry-failed` or manually investigate."
                     })
         except (ValueError, TypeError):
             pass
 
-# Diagnose failed tasks — check for result.json and common patterns
+# Diagnose failed tasks — check stdout.log and common patterns
 failed_tasks = data["queues"].get("failed", [])
 if failed_tasks:
-    no_result = []
-    rejected = []
+    no_stdout = []
     errored = []
     for t in failed_tasks:
         tid = t.get("id", "?")
-        result_path = Path(f".octopoid/runtime/tasks/{tid}/result.json")
-        if result_path.exists():
-            try:
-                result = json.loads(result_path.read_text())
-                if result.get("outcome") == "done":
-                    rejected.append(t)
-                elif result.get("outcome") == "failed":
-                    t["_failure_reason"] = result.get("reason", "unknown")
-                    errored.append(t)
-                else:
-                    errored.append(t)
-            except (json.JSONDecodeError, IOError):
-                no_result.append(t)
+        stdout_path = Path(f".octopoid/runtime/tasks/{tid}/stdout.log")
+        if not stdout_path.exists() or not stdout_path.read_text().strip():
+            no_stdout.append(t)
         else:
-            no_result.append(t)
+            errored.append(t)
 
-    if no_result:
+    if no_stdout:
         data["problems"].append({
             "type": "ran_out_of_turns",
-            "detail": f"{len(no_result)} failed task(s) have no result.json — agent likely ran out of turns.",
-            "task_ids": [t.get("id") for t in no_result],
+            "detail": f"{len(no_stdout)} failed task(s) have no stdout.log — agent likely crashed or ran out of turns.",
+            "task_ids": [t.get("id") for t in no_stdout],
             "suggestion": "These tasks were never completed. Review what the agent did in .octopoid/runtime/tasks/<id>/worktree, then requeue or rewrite the task."
         })
     if rejected:
@@ -131,10 +120,9 @@ if failed_tasks:
     if errored:
         data["problems"].append({
             "type": "agent_reported_failure",
-            "detail": f"{len(errored)} task(s) where the agent explicitly reported failure.",
+            "detail": f"{len(errored)} task(s) failed. Check stdout.log for agent output and agent_result messages for the inferred classification.",
             "task_ids": [t.get("id") for t in errored],
-            "reasons": {t.get("id"): t.get("_failure_reason", "unknown") for t in errored},
-            "suggestion": "Read the failure reasons and either fix the underlying issue or rewrite the task."
+            "suggestion": "Check .octopoid/runtime/tasks/<id>/stdout.log and task messages for failure details, then requeue or rewrite the task."
         })
 
 # Print queue summary

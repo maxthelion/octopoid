@@ -56,7 +56,7 @@ transitions:
 
 1. **Claiming tasks** (`evaluate_agent` → `guard_task_available`): The scheduler reads the agent's `claim_from` config (default: `incoming`, gatekeeper uses `provisional`) and claims the next matching task.
 
-2. **Agent finishes** (`check_and_update_finished_agents`): When an agent's process exits, the scheduler reads its `result.json`.
+2. **Agent finishes** (`check_and_update_finished_agents`): When an agent's process exits, the scheduler infers the outcome from `stdout.log` using haiku.
 
 3. **Flow dispatch** (`handle_agent_result_via_flow`):
    - Loads the flow for the task
@@ -80,9 +80,9 @@ transitions:
 Agents don't call the SDK or manage task state. They:
 1. Get spawned by the scheduler with a worktree and task context
 2. Do their work (implement code, review a diff, etc.)
-3. Write `result.json` with `{status, decision, comment}` and exit
+3. Exit naturally — the scheduler infers the outcome from stdout via haiku
 
-The scheduler reads the result and drives the flow. This means:
+The scheduler reads the inferred result and drives the flow. This means:
 - Agents can't create circular dependencies
 - All state transitions are visible in the flow YAML
 - The scheduler is the single supervisor

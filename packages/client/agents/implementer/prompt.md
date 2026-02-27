@@ -31,7 +31,6 @@ $required_steps
 2. Explore the codebase to understand the relevant code
 3. Implement the changes with clear, atomic commits
 4. Run tests to verify your changes work
-5. Write result.json when done (see below)
 
 - Follow existing code patterns and conventions
 - Write tests for new functionality
@@ -40,18 +39,8 @@ $required_steps
 
 ## Completing Your Work
 
-When you have finished your implementation, write `result.json` in the task directory
-(one level up from your working directory, i.e. `../result.json`):
-
-**On success:**
-```json
-{"outcome": "done"}
-```
-
-**If you cannot complete the task:**
-```json
-{"outcome": "failed", "reason": "<specific reason why you could not complete it>"}
-```
+When you have finished your implementation, output a clear summary of what you did and exit.
+The orchestrator infers your result from your stdout — no result file needed.
 
 Do NOT create PRs, push branches, or call any scripts to submit your work.
-The orchestrator handles all of that automatically after you write result.json.
+The orchestrator handles all of that automatically after you exit.
