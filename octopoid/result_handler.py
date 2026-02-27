@@ -12,6 +12,7 @@ Public API (also re-exported from octopoid.scheduler for backwards compat):
 
 import json
 import logging
+import subprocess
 from datetime import datetime
 from pathlib import Path
 
@@ -79,15 +80,21 @@ Respond with exactly one word: fixed or failed"""
 
 
 def _call_haiku(prompt: str) -> str:
-    """Call haiku with the given prompt and return the text response."""
-    import anthropic  # noqa: PLC0415
-    client = anthropic.Anthropic()
-    message = client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=10,
-        messages=[{"role": "user", "content": prompt}],
+    """Call haiku with the given prompt and return the text response.
+
+    Uses ``claude -p`` subprocess to match how agents are spawned, so it
+    works with OAuth credentials stored in ~/.claude/ rather than requiring
+    ANTHROPIC_API_KEY (which is not available in the launchd scheduler env).
+    """
+    result = subprocess.run(
+        ["claude", "-p", prompt, "--model", "claude-haiku-4-5-20251001"],
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
-    return message.content[0].text.strip().lower()
+    if result.returncode != 0:
+        raise RuntimeError(f"claude -p exited with {result.returncode}: {result.stderr.strip()}")
+    return result.stdout.strip().lower()
 
 
 def _infer_implementer(tail: str) -> dict:
@@ -99,6 +106,7 @@ def _infer_implementer(tail: str) -> dict:
         elif "fail" in word:
             return {"outcome": "failed", "reason": "Inferred from stdout: agent did not complete task"}
         else:
+            logger.warning(f"Haiku returned unexpected word for implementer: {word!r}")
             return {"outcome": "unknown", "reason": f"Haiku returned unexpected word: {word!r}"}
     except Exception as e:
         logger.warning(f"Haiku inference failed for implementer: {e}")
@@ -114,6 +122,7 @@ def _infer_gatekeeper(tail: str) -> dict:
         elif "reject" in word:
             return {"status": "success", "decision": "reject", "comment": tail}
         else:
+            logger.warning(f"Haiku returned unexpected word for gatekeeper: {word!r}")
             return {"status": "failure", "message": f"Could not infer gatekeeper decision (haiku: {word!r})"}
     except Exception as e:
         logger.warning(f"Haiku inference failed for gatekeeper: {e}")
@@ -129,6 +138,7 @@ def _infer_fixer(tail: str) -> dict:
         elif "fail" in word:
             return {"outcome": "failed", "diagnosis": "Inferred from stdout: could not fix"}
         else:
+            logger.warning(f"Haiku returned unexpected word for fixer: {word!r}")
             return {"outcome": "unknown", "reason": f"Haiku returned unexpected word: {word!r}"}
     except Exception as e:
         logger.warning(f"Haiku inference failed for fixer: {e}")
@@ -652,11 +662,15 @@ def _dispatch_result(
         return _handle_gatekeeper_reject(task, result, task_dir, task_id, agent_name)
 
     if decision != "approve":
-        logger.debug(
+        # Unknown decision (e.g. haiku auth failure) — escalate to human review
+        # rather than leaving the task stuck in its current queue.
+        reason = result.get("message", f"Could not infer agent decision: {decision!r}")
+        logger.warning(
             f"Flow dispatch: unknown decision '{decision}' for {task_id}, "
-            f"leaving in {current_queue} for human review"
+            f"routing to requires-intervention: {reason}"
         )
-        return True  # Cannot act — human review needed, retrying won't help
+        request_intervention(task_id, reason=reason, source="unknown-decision", previous_queue=current_queue)
+        return True  # Cannot act — moved to requires-intervention for human review
 
     return _handle_approve_and_run_steps(
         sdk, task_id, agent_name, task, transition, result, task_dir, current_queue
@@ -782,7 +796,12 @@ def handle_agent_result(task_id: str, agent_name: str, task_dir: Path) -> bool:
         elif outcome == "needs_continuation":
             return _handle_continuation_outcome(sdk, task_id, task, agent_name, current_queue)
         else:
-            return _handle_fail_outcome(sdk, task_id, task, f"Unknown outcome: {outcome}", current_queue)
+            # Unknown outcome (e.g. haiku auth failure) — we cannot determine what
+            # happened, so escalate to human review rather than failing outright.
+            reason = result.get("reason", f"Unknown outcome: {outcome!r}")
+            logger.warning(f"Task {task_id}: unknown outcome '{outcome}', routing to requires-intervention: {reason}")
+            request_intervention(task_id, reason=reason, source="unknown-outcome", previous_queue=current_queue)
+            return True
     except RetryableStepError as e:
         logger.info(f"Retryable step error for task {task_id}: {e}, will retry")
         return False  # Don't remove PID — scheduler will retry on next tick

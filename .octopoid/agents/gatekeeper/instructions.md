@@ -136,7 +136,7 @@ When rejecting, provide **actionable feedback** with:
 - **Explicit rebase instructions** — always include a "Before Retrying" section
 
 ### Rewrite the Task File on Rejection (MANDATORY)
-The PR comment is for humans. The implementing agent reads only the task file. You MUST rewrite `.octopoid/tasks/$task_id.md` before writing `result.json`. See the prompt for detailed guidelines. Key principles:
+The PR comment is for humans. The implementing agent reads only the task file. You MUST rewrite `.octopoid/tasks/$task_id.md` before writing your decision to stdout. See the prompt for detailed guidelines. Key principles:
 - Show the target code, not prose descriptions
 - Never name forbidden patterns — show only the correct approach
 - Make code examples copy-correct (the agent will copy them literally)

@@ -374,7 +374,7 @@ class TestRebaseInstructions:
 
         Note: handle_agent_result_via_flow only calls reject_with_feedback when
         status=="success" and decision=="reject".  When status=="failure" it takes
-        a different (shorter) path.  We write result.json directly to produce the
+        a different (shorter) path.  We write stdout.log directly to produce the
         correct {"status": "success", "decision": "reject"} payload.
         """
         import json

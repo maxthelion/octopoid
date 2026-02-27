@@ -461,9 +461,9 @@ GATEKEEPER_PROMPT_STUB = """# Gatekeeper Review
 Review the task's implementation against its acceptance criteria.
 Run the scripts in `../scripts/` for automated checks, then review the diff.
 
-Write your decision to `result.json`:
-- `{"status": "success", "decision": "approve", "comment": "..."}` to approve
-- `{"status": "success", "decision": "reject", "comment": "..."}` to reject
+Write your decision clearly to stdout:
+- To approve: end your output with "APPROVED" or "DECISION: APPROVED"
+- To reject: end your output with "REJECTED" or "DECISION: REJECTED" and explain why
 
 When rejecting, you MUST also rewrite the task file with concrete code examples
 showing the correct implementation. The implementing agent reads only the task file,

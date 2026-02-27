@@ -1065,7 +1065,7 @@ def prepare_job_directory(job_name: str, agent_config: dict) -> Path:
         {job_dir}/env.sh       - environment for scripts (no TASK_ID/TASK_BRANCH)
         {job_dir}/scripts/     - executable agent scripts
         {job_dir}/prompt.md    - rendered prompt
-        {job_dir}/result.json  - (written by agent if needed, not required)
+        {job_dir}/stdout.log   - agent stdout (scheduler infers result from this)
         {job_dir}/notes.md     - progress notes
 
     The worktree/ directory sits inside .octopoid/runtime/jobs/ which is
@@ -1822,7 +1822,7 @@ def sweep_stale_resources() -> None:
 
     For each task in the 'done' queue (1 hour grace) or 'failed' queue
     (24 hour grace — longer to allow investigation):
-    - Archives stdout.log, stderr.log, result.json, prompt.md to
+    - Archives stdout.log, stderr.log, prompt.md to
       .octopoid/runtime/logs/<task-id>/
     - Deletes the worktree at .octopoid/runtime/tasks/<task-id>/worktree
     - Deletes the remote branch agent/<task-id> for done tasks only
@@ -1887,7 +1887,7 @@ def sweep_stale_resources() -> None:
             try:
                 archive_dir = logs_dir / task_id
                 archive_dir.mkdir(parents=True, exist_ok=True)
-                for filename in ("stdout.log", "stderr.log", "result.json", "prompt.md"):
+                for filename in ("stdout.log", "stderr.log", "prompt.md"):
                     src = task_dir / filename
                     if src.exists():
                         shutil.copy2(src, archive_dir / filename)
