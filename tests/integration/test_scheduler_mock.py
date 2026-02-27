@@ -279,7 +279,7 @@ class TestHappyPath:
             f"Expected provisional after implementer success, got {task['queue']}"
         )
 
-        # Gatekeeper: separate git repo for mock agent commits, plain dir for result.json
+        # Gatekeeper: separate git repo for mock agent commits, plain dir for stdout.log
         gk_worktree = tmp_path / "gk-worktree"
         _init_git_repo_basic(gk_worktree)
         gk_task_dir = tmp_path / "gk-task"

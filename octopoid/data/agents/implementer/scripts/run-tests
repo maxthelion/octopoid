@@ -9,7 +9,6 @@ from pathlib import Path
 
 TASK_ID = os.environ.get("TASK_ID", "")
 SERVER_URL = os.environ.get("OCTOPOID_SERVER_URL", "")
-RESULT_FILE = os.environ.get("RESULT_FILE", "../result.json")
 
 
 def main() -> int:

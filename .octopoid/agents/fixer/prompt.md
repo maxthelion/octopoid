@@ -50,7 +50,7 @@ The task directory (parent of the worktree) is `$task_dir`. It contains:
 5. Diagnose the root cause
 6. Apply a fix
 7. Record the issue in `project-management/issues-log.md`
-8. Write `result.json`
+8. Write your outcome to stdout
 
 ## Global Instructions
 
