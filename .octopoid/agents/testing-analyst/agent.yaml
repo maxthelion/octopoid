@@ -1,7 +1,7 @@
 role: analyse
 model: sonnet
 max_turns: 30
-interval_seconds: 86400
+interval_seconds: 600
 spawn_mode: scripts
 lightweight: true
 allowed_tools:
