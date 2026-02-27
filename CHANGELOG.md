@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Unified logging via Python's standard `logging` module configured in `octopoid/__init__.py`
+- RotatingFileHandler writing to `.octopoid/runtime/logs/octopoid.log` (5MB max, 3 backups = 20MB total)
+- StreamHandler to stderr at WARNING level so critical errors still appear in `launchd-stderr.log`
+- Log format: `%(asctime)s [%(levelname)-5s] %(name)s: %(message)s`
+- Named loggers for each module: `octopoid.scheduler`, `octopoid.result_handler`, `octopoid.steps`, `octopoid.message_dispatcher`, `octopoid.jobs`
+
+### Changed
+
+- `--debug` flag now calls `logging.getLogger("octopoid").setLevel(logging.DEBUG)` instead of setting a module-level global
+- All `print()` calls in `scheduler.py`, `result_handler.py`, `steps.py`, `message_dispatcher.py` replaced with appropriate `logger.info/warning/error/critical()` calls
+- All `debug_log()` calls replaced with `logger.debug()` across all modules
+- Tests updated to use `caplog` fixture instead of patching the removed `debug_log` function
+
+### Removed
+
+- Custom `debug_log()` function from `scheduler.py`
+- Custom `debug_log()` proxy function from `result_handler.py`
+- `setup_scheduler_debug()` function from `scheduler.py`
+- Global `DEBUG` and `_log_file` module-level variables from `scheduler.py`
+- The `sys.modules` hack in `main()` that was only needed to share the `DEBUG` global
 ### Changed
 - Refactored `handle_agent_result_via_flow` in `octopoid/result_handler.py` to extract five single-responsibility helpers: `_resolve_task_and_transition`, `_handle_agent_failure`, `_handle_gatekeeper_reject`, `_handle_approve_and_run_steps`, and `_dispatch_result`. The top-level function is now a ~10-line coordinator. No functional change — all 713 unit tests pass.
 ### Changed
