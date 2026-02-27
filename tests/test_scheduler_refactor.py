@@ -684,17 +684,17 @@ class TestHandleAgentResultViaFlowDecisions:
         status: str = "success",
         runs: list | None = None,
     ) -> tuple[MagicMock, MagicMock]:
-        """Helper: write result.json and invoke the function with mocked dependencies."""
+        """Helper: mock infer_result_from_stdout and invoke the function with mocked dependencies."""
         result = {"status": status}
         if decision is not None:
             result["decision"] = decision
-        (task_dir / "result.json").write_text(json.dumps(result))
 
         mock_sdk = _make_sdk_mock()
         mock_flow = _make_flow_mock(runs=runs)
 
         with (
             patch("octopoid.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("octopoid.result_handler.infer_result_from_stdout", return_value=result),
             patch("octopoid.flow.load_flow", return_value=mock_flow),
             patch("octopoid.steps.execute_steps") as mock_execute,
             patch("octopoid.steps.reject_with_feedback") as mock_reject,
@@ -733,13 +733,13 @@ class TestHandleAgentResultViaFlowDecisions:
     def test_unknown_decision_logs_warning(self, tmp_path: Path) -> None:
         """Unknown 'decision' value should log a warning mentioning the value."""
         result = {"status": "success", "decision": "banana"}
-        (tmp_path / "result.json").write_text(json.dumps(result))
 
         mock_sdk = _make_sdk_mock()
         mock_flow = _make_flow_mock()
 
         with (
             patch("octopoid.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("octopoid.result_handler.infer_result_from_stdout", return_value=result),
             patch("octopoid.flow.load_flow", return_value=mock_flow),
             patch("octopoid.steps.execute_steps"),
             patch("octopoid.steps.reject_with_feedback"),
@@ -756,12 +756,12 @@ class TestHandleAgentResultViaFlowDecisions:
         """When flow dispatch raises, task must be routed to requires-intervention (first failure)."""
         # First failure goes to requires-intervention; true failed only after fixer also fails.
         result = {"status": "success", "decision": "approve"}
-        (tmp_path / "result.json").write_text(json.dumps(result))
 
         mock_sdk = _make_sdk_mock()
         # Make execute_steps raise to trigger the except branch
         with (
             patch("octopoid.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("octopoid.result_handler.infer_result_from_stdout", return_value=result),
             patch("octopoid.tasks.get_sdk", return_value=mock_sdk),
             patch("octopoid.tasks.get_task_logger"),
             patch("octopoid.config.get_tasks_dir", return_value=tmp_path),
@@ -778,11 +778,11 @@ class TestHandleAgentResultViaFlowDecisions:
     def test_exception_logs_full_traceback(self, tmp_path: Path) -> None:
         """When flow dispatch raises, full traceback must be logged."""
         result = {"status": "success", "decision": "approve"}
-        (tmp_path / "result.json").write_text(json.dumps(result))
 
         mock_sdk = _make_sdk_mock()
         with (
             patch("octopoid.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("octopoid.result_handler.infer_result_from_stdout", return_value=result),
             patch("octopoid.tasks.get_sdk", return_value=mock_sdk),
             patch("octopoid.tasks.get_task_logger"),
             patch("octopoid.flow.load_flow", side_effect=RuntimeError("boom")),
@@ -800,13 +800,13 @@ class TestHandleAgentResultViaFlowDecisions:
     def test_exception_recovery_failure_is_handled(self, tmp_path: Path) -> None:
         """If moving to failed queue also fails, it should be caught and logged."""
         result = {"status": "success", "decision": "approve"}
-        (tmp_path / "result.json").write_text(json.dumps(result))
 
         mock_sdk = _make_sdk_mock()
         mock_sdk.tasks.update.side_effect = RuntimeError("SDK unavailable")
 
         with (
             patch("octopoid.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("octopoid.result_handler.infer_result_from_stdout", return_value=result),
             patch("octopoid.tasks.get_sdk", return_value=mock_sdk),
             patch("octopoid.tasks.get_task_logger"),
             patch("octopoid.flow.load_flow", side_effect=RuntimeError("pnpm not in PATH")),
@@ -846,8 +846,7 @@ class TestHandleAgentResultRebaseMergeFailure:
 
     def test_rebase_failure_rejects_to_incoming(self, tmp_path: Path) -> None:
         """A rebase_on_base RuntimeError must reject to incoming, not move to failed."""
-        result = {"status": "success", "decision": "approve"}
-        (tmp_path / "result.json").write_text(json.dumps(result))
+        inferred_result = {"status": "success", "decision": "approve"}
 
         mock_sdk = _make_sdk_mock(queue="provisional")
         mock_flow = self._make_flow_with_conditions()
@@ -856,6 +855,7 @@ class TestHandleAgentResultRebaseMergeFailure:
 
         with (
             patch("octopoid.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("octopoid.result_handler.infer_result_from_stdout", return_value=inferred_result),
             patch("octopoid.flow.load_flow", return_value=mock_flow),
             patch("octopoid.steps.execute_steps", side_effect=rebase_error),
             patch("octopoid.result_handler.logger"),
@@ -872,8 +872,7 @@ class TestHandleAgentResultRebaseMergeFailure:
 
     def test_merge_failure_rejects_to_incoming(self, tmp_path: Path) -> None:
         """A merge_pr RuntimeError must reject to incoming, not move to failed."""
-        result = {"status": "success", "decision": "approve"}
-        (tmp_path / "result.json").write_text(json.dumps(result))
+        inferred_result = {"status": "success", "decision": "approve"}
 
         mock_sdk = _make_sdk_mock(queue="provisional")
         mock_flow = self._make_flow_with_conditions()
@@ -882,6 +881,7 @@ class TestHandleAgentResultRebaseMergeFailure:
 
         with (
             patch("octopoid.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("octopoid.result_handler.infer_result_from_stdout", return_value=inferred_result),
             patch("octopoid.flow.load_flow", return_value=mock_flow),
             patch("octopoid.steps.execute_steps", side_effect=merge_error),
             patch("octopoid.result_handler.logger"),
@@ -895,8 +895,7 @@ class TestHandleAgentResultRebaseMergeFailure:
 
     def test_non_merge_runtime_error_still_fails(self, tmp_path: Path) -> None:
         """A RuntimeError unrelated to rebase/merge must route to requires-intervention."""
-        result = {"status": "success", "decision": "approve"}
-        (tmp_path / "result.json").write_text(json.dumps(result))
+        inferred_result = {"status": "success", "decision": "approve"}
 
         mock_sdk = _make_sdk_mock(queue="provisional")
         mock_flow = self._make_flow_with_conditions()
@@ -905,6 +904,7 @@ class TestHandleAgentResultRebaseMergeFailure:
 
         with (
             patch("octopoid.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("octopoid.result_handler.infer_result_from_stdout", return_value=inferred_result),
             patch("octopoid.tasks.get_sdk", return_value=mock_sdk),
             patch("octopoid.tasks.get_task_logger"),
             patch("octopoid.config.get_tasks_dir", return_value=tmp_path),
@@ -932,14 +932,14 @@ class TestCatchAllDoneQueueGuard:
 
     def test_exception_after_task_done_does_not_move_to_failed(self, tmp_path: Path) -> None:
         """When exception fires but task is already done, task must stay in done."""
-        result = {"status": "success", "decision": "approve"}
-        (tmp_path / "result.json").write_text(json.dumps(result))
+        inferred_result = {"status": "success", "decision": "approve"}
 
         # SDK returns queue=done (task already accepted post-merge)
         mock_sdk = _make_sdk_mock(queue="done")
 
         with (
             patch("octopoid.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("octopoid.result_handler.infer_result_from_stdout", return_value=inferred_result),
             patch("octopoid.tasks.get_sdk", return_value=mock_sdk),
             patch("octopoid.tasks.get_task_logger"),
             patch("octopoid.flow.load_flow", side_effect=RuntimeError("post-done-step-exploded")),
@@ -954,13 +954,13 @@ class TestCatchAllDoneQueueGuard:
 
     def test_exception_after_task_done_logs_warning(self, tmp_path: Path) -> None:
         """When exception fires but task is already done, a warning must be logged."""
-        result = {"status": "success", "decision": "approve"}
-        (tmp_path / "result.json").write_text(json.dumps(result))
+        inferred_result = {"status": "success", "decision": "approve"}
 
         mock_sdk = _make_sdk_mock(queue="done")
 
         with (
             patch("octopoid.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("octopoid.result_handler.infer_result_from_stdout", return_value=inferred_result),
             patch("octopoid.tasks.get_sdk", return_value=mock_sdk),
             patch("octopoid.tasks.get_task_logger"),
             patch("octopoid.flow.load_flow", side_effect=RuntimeError("post-done-step-exploded")),
@@ -975,13 +975,13 @@ class TestCatchAllDoneQueueGuard:
 
     def test_exception_when_task_not_done_still_moves_to_failed(self, tmp_path: Path) -> None:
         """When exception fires and task is not done, must route to requires-intervention."""
-        result = {"status": "success", "decision": "approve"}
-        (tmp_path / "result.json").write_text(json.dumps(result))
+        inferred_result = {"status": "success", "decision": "approve"}
 
         mock_sdk = _make_sdk_mock(queue="claimed")
 
         with (
             patch("octopoid.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("octopoid.result_handler.infer_result_from_stdout", return_value=inferred_result),
             patch("octopoid.tasks.get_sdk", return_value=mock_sdk),
             patch("octopoid.tasks.get_task_logger"),
             patch("octopoid.config.get_tasks_dir", return_value=tmp_path),

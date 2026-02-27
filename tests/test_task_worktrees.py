@@ -70,8 +70,8 @@ class TestGetTaskBranch:
 class TestPrepareTaskDirectoryCleansStaleFiles:
     """Tests for stale file cleanup in prepare_task_directory()."""
 
-    def test_cleans_stale_result_json(self, tmp_path, monkeypatch):
-        """Stale result.json from a previous run is deleted."""
+    def test_cleans_stale_stdout_log(self, tmp_path, monkeypatch):
+        """Stale stdout.log from a previous run is deleted."""
         monkeypatch.setattr('octopoid.scheduler.get_tasks_dir', lambda: tmp_path)
 
         # Create fake agent directory with scripts and prompt
@@ -83,7 +83,7 @@ class TestPrepareTaskDirectoryCleansStaleFiles:
         task_id = "test-task-123"
         task_dir = tmp_path / task_id
         task_dir.mkdir()
-        (task_dir / "result.json").write_text('{"outcome": "submitted"}')
+        (task_dir / "stdout.log").write_text("previous agent output")
 
         from unittest.mock import patch
         from octopoid.scheduler import prepare_task_directory
@@ -95,7 +95,7 @@ class TestPrepareTaskDirectoryCleansStaleFiles:
                 {"role": "implementer", "agent_dir": str(agent_dir)},
             )
 
-        assert not (task_dir / "result.json").exists()
+        assert not (task_dir / "stdout.log").exists()
 
     def test_cleans_stale_notes_md(self, tmp_path, monkeypatch):
         """Stale notes.md from a previous run is deleted."""

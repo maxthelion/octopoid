@@ -48,47 +48,49 @@ def _run_agent(tmp_path: Path, env_overrides: dict) -> subprocess.CompletedProce
 
 
 def test_mock_agent_success(tmp_path):
-    """mock-agent.sh writes {"outcome": "done"} for success outcome."""
+    """mock-agent.sh writes stdout.log with success text for success outcome."""
     result = _run_agent(tmp_path, {"MOCK_OUTCOME": "success"})
     assert result.returncode == 0, result.stderr
-    data = json.loads((tmp_path / "result.json").read_text())
-    assert data == {"outcome": "done"}
+    stdout_log = (tmp_path / "stdout.log").read_text()
+    assert "successfully completed" in stdout_log.lower() or "done" in stdout_log.lower()
 
 
 def test_mock_agent_failure(tmp_path):
-    """mock-agent.sh writes {"outcome": "failed"} with reason for failure outcome."""
+    """mock-agent.sh writes stdout.log with failure text for failure outcome."""
     result = _run_agent(tmp_path, {"MOCK_OUTCOME": "failure", "MOCK_REASON": "something broke"})
     assert result.returncode == 0, result.stderr
-    data = json.loads((tmp_path / "result.json").read_text())
-    assert data == {"outcome": "failed", "reason": "something broke"}
+    stdout_log = (tmp_path / "stdout.log").read_text()
+    assert "something broke" in stdout_log
 
 
 def test_mock_agent_needs_continuation(tmp_path):
-    """mock-agent.sh writes {"outcome": "needs_continuation"} for continuation."""
+    """mock-agent.sh writes stdout.log with continuation text."""
     result = _run_agent(tmp_path, {"MOCK_OUTCOME": "needs_continuation"})
     assert result.returncode == 0, result.stderr
-    data = json.loads((tmp_path / "result.json").read_text())
-    assert data == {"outcome": "needs_continuation"}
+    stdout_log = (tmp_path / "stdout.log").read_text()
+    assert "continuation" in stdout_log.lower() or "partial" in stdout_log.lower()
 
 
 def test_mock_agent_gatekeeper_approve(tmp_path):
-    """mock-agent.sh writes gatekeeper approve result when MOCK_DECISION=approve."""
+    """mock-agent.sh writes DECISION: APPROVED to stdout.log when MOCK_DECISION=approve."""
     result = _run_agent(tmp_path, {"MOCK_DECISION": "approve", "MOCK_COMMENT": "LGTM"})
     assert result.returncode == 0, result.stderr
-    data = json.loads((tmp_path / "result.json").read_text())
-    assert data == {"status": "success", "decision": "approve", "comment": "LGTM"}
+    stdout_log = (tmp_path / "stdout.log").read_text()
+    assert "DECISION: APPROVED" in stdout_log
+    assert "LGTM" in stdout_log
 
 
 def test_mock_agent_gatekeeper_reject(tmp_path):
-    """mock-agent.sh writes gatekeeper reject result when MOCK_DECISION=reject."""
+    """mock-agent.sh writes DECISION: REJECTED to stdout.log when MOCK_DECISION=reject."""
     result = _run_agent(tmp_path, {"MOCK_DECISION": "reject", "MOCK_COMMENT": "needs work"})
     assert result.returncode == 0, result.stderr
-    data = json.loads((tmp_path / "result.json").read_text())
-    assert data == {"status": "failure", "decision": "reject", "comment": "needs work"}
+    stdout_log = (tmp_path / "stdout.log").read_text()
+    assert "DECISION: REJECTED" in stdout_log
+    assert "needs work" in stdout_log
 
 
 def test_mock_agent_crash(tmp_path):
-    """mock-agent.sh exits non-zero without writing result.json when MOCK_CRASH=true."""
+    """mock-agent.sh exits non-zero without writing stdout.log when MOCK_CRASH=true."""
     worktree = tmp_path / "worktree"
     worktree.mkdir()
     result = subprocess.run(
@@ -98,7 +100,7 @@ def test_mock_agent_crash(tmp_path):
         text=True,
     )
     assert result.returncode != 0
-    assert not (tmp_path / "result.json").exists()
+    assert not (tmp_path / "stdout.log").exists()
 
 
 def test_mock_agent_commits(tmp_path):
@@ -471,12 +473,12 @@ def test_conflicting_repo_branches_diverge(conflicting_repo):
 
 
 def test_task_dir_fixture_creates_proper_structure(task_dir):
-    """task_dir fixture creates worktree/ clone and env.sh; result.json absent."""
+    """task_dir fixture creates worktree/ clone and env.sh; stdout.log absent initially."""
     assert task_dir.is_dir()
     assert (task_dir / "worktree").is_dir()
     assert (task_dir / "env.sh").exists()
-    # result.json must not exist — the agent creates it
-    assert not (task_dir / "result.json").exists()
+    # stdout.log must not exist before agent runs
+    assert not (task_dir / "stdout.log").exists()
 
     # worktree is a valid git repo
     result = subprocess.run(
@@ -489,18 +491,18 @@ def test_task_dir_fixture_creates_proper_structure(task_dir):
     assert result.returncode == 0
 
 
-def test_run_mock_agent_success_writes_result_json(task_dir):
-    """run_mock_agent with success outcome writes {"outcome": "done"} to result.json."""
+def test_run_mock_agent_success_writes_stdout_log(task_dir):
+    """run_mock_agent with success outcome writes stdout.log with completion text."""
     result = run_mock_agent(task_dir, agent_env={"MOCK_OUTCOME": "success", "MOCK_COMMITS": "1"})
     assert result.returncode == 0, result.stderr
-    result_json = task_dir / "result.json"
-    assert result_json.exists()
-    data = json.loads(result_json.read_text())
-    assert data == {"outcome": "done"}
+    stdout_log = task_dir / "stdout.log"
+    assert stdout_log.exists()
+    text = stdout_log.read_text()
+    assert "successfully completed" in text.lower() or "done" in text.lower()
 
 
-def test_run_mock_agent_crash_leaves_no_result_json(task_dir):
-    """run_mock_agent with MOCK_CRASH=true exits non-zero and leaves no result.json."""
+def test_run_mock_agent_crash_leaves_no_stdout_log(task_dir):
+    """run_mock_agent with MOCK_CRASH=true exits non-zero and leaves no stdout.log."""
     result = run_mock_agent(task_dir, agent_env={"MOCK_CRASH": "true"})
     assert result.returncode != 0
-    assert not (task_dir / "result.json").exists()
+    assert not (task_dir / "stdout.log").exists()

@@ -210,7 +210,7 @@ class TestLeaseExpiry:
             role_filter="implement",
         )
 
-        # Run mock agent with failure outcome — writes result.json without
+        # Run mock agent with failure outcome — writes stdout.log without
         # requiring a git remote (failure path skips push_branch).
         worktree = tmp_path / "worktree"
         _init_git_repo_basic(worktree)

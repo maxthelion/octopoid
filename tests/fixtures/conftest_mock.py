@@ -135,5 +135,5 @@ def task_dir(test_repo: dict, tmp_path: Path) -> Path:
     # Minimal env file
     (task / "env.sh").write_text("export TASK_ID=TASK-test\n")
 
-    # result.json does not exist yet — the agent creates it
+    # stdout.log does not exist yet — the agent creates it
     return task

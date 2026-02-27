@@ -58,24 +58,10 @@ $global_instructions
 
 ## Completing Your Work
 
-When done, write `result.json` in the task directory (`../result.json`):
+When done, write a summary to stdout and exit.
 
-**On success (you fixed the issue):**
-```json
-{
-  "outcome": "fixed",
-  "diagnosis": "brief description of what caused the failure",
-  "fix_applied": "brief description of what you did to fix it"
-}
-```
+**On success (you fixed the issue):** Clearly state what caused the failure and what you did to fix it. Use language like "Fixed: ..." or "Issue resolved: ...".
 
-**If you cannot fix the issue:**
-```json
-{
-  "outcome": "failed",
-  "diagnosis": "why you couldn't fix it and what human action is needed"
-}
-```
+**If you cannot fix the issue:** Clearly explain why you couldn't fix it and what human action is needed. Use language like "Cannot fix: ..." or "Requires human intervention: ...".
 
-**Important:** Do NOT use `outcome: "done"` — use `outcome: "fixed"` or `outcome: "failed"`.
-Do NOT push branches, create PRs, or call the Octopoid API. The scheduler handles everything after you write result.json.
+**Important:** Do NOT use `outcome: "done"`. Do NOT push branches, create PRs, or call the Octopoid API. The scheduler handles everything after reading your stdout.

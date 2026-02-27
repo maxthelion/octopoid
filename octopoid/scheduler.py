@@ -53,7 +53,6 @@ from .result_handler import (
     handle_agent_result,
     handle_agent_result_via_flow,
     handle_fixer_result,
-    read_result_json,
 )
 
 logger = logging.getLogger("octopoid.scheduler")
@@ -760,8 +759,8 @@ def _build_required_steps(task: dict) -> str:
     if not agent_hooks:
         return ""
 
-    lines = ["## Required Steps Before Writing result.json", ""]
-    lines.append("You must complete these steps before writing result.json:")
+    lines = ["## Required Steps Before Completing Work", ""]
+    lines.append("You must complete these steps before finishing:")
     for i, hook in enumerate(agent_hooks, 1):
         name = hook["name"]
         if name == "create_pr":
@@ -873,7 +872,7 @@ def prepare_task_directory(
         {task_dir}/prompt.md     - rendered prompt
         {task_dir}/env.sh        - environment for scripts
         {task_dir}/scripts/      - executable agent scripts
-        {task_dir}/result.json   - (written by scripts, read by scheduler)
+        {task_dir}/stdout.log    - agent stdout (read by scheduler for result inference)
         {task_dir}/notes.md      - progress notes
     """
     from .git_utils import create_task_worktree
@@ -883,7 +882,7 @@ def prepare_task_directory(
     task_dir.mkdir(parents=True, exist_ok=True)
 
     # Clean stale artifacts from previous runs
-    for stale_file in ['result.json', 'notes.md']:
+    for stale_file in ['stdout.log', 'notes.md']:
         stale_path = task_dir / stale_file
         if stale_path.exists():
             stale_path.unlink()
@@ -937,7 +936,6 @@ def prepare_task_directory(
         f"export AGENT_NAME='{agent_name}'",
         f"export WORKTREE='{worktree_path}'",
         f"export ORCHESTRATOR_PYTHONPATH='{orchestrator_submodule}'",
-        f"export RESULT_FILE='{task_dir / 'result.json'}'",
         f"export NOTES_FILE='{task_dir / 'notes.md'}'",
     ]
     (task_dir / "env.sh").write_text("\n".join(env_lines) + "\n")
@@ -1121,7 +1119,6 @@ def prepare_job_directory(job_name: str, agent_config: dict) -> Path:
         f"export AGENT_NAME='{job_name}'",
         f"export OCTOPOID_SERVER_URL='{os.environ.get('OCTOPOID_SERVER_URL') or _get_server_url_from_config()}'",
         f"export ORCHESTRATOR_PYTHONPATH='{orchestrator_submodule}'",
-        f"export RESULT_FILE='{job_dir / 'result.json'}'",
         f"export NOTES_FILE='{job_dir / 'notes.md'}'",
     ]
     (job_dir / "env.sh").write_text("\n".join(env_lines) + "\n")
@@ -1182,8 +1179,8 @@ def spawn_job_agent(ctx: AgentContext) -> int:
 
 # ---------------------------------------------------------------------------
 # Result-handling and flow-transition functions live in result_handler.py.
-# read_result_json, handle_agent_result_via_flow, and handle_agent_result are
-# imported at the top of this module and re-exported for backwards compat.
+# handle_agent_result_via_flow and handle_agent_result are imported at the
+# top of this module and re-exported for backwards compat.
 # ---------------------------------------------------------------------------
 
 

@@ -138,7 +138,7 @@ class TestBuildRequiredSteps:
         task = {"hooks": [{"type": "agent", "name": "run_tests"}]}
         result = _build_required_steps(task)
         assert "Run tests: `../scripts/run-tests`" in result
-        assert "Required Steps Before Writing result.json" in result
+        assert "Required Steps Before Completing Work" in result
 
     def test_custom_hook_name_used_directly(self):
         task = {"hooks": [{"type": "agent", "name": "deploy"}]}

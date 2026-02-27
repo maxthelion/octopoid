@@ -192,6 +192,52 @@ def _cleanup_all_tasks(sdk):
         print(f"Warning: cleanup failed: {e}")
 
 
+@pytest.fixture(autouse=True)
+def mock_infer_result_from_stdout(monkeypatch):
+    """Replace infer_result_from_stdout() with a keyword-matching implementation.
+
+    Integration tests use mock-agent.sh which writes stdout.log with predictable
+    text. This fixture avoids real Anthropic API calls by classifying based on
+    keywords in the stdout content.
+    """
+    from pathlib import Path as _Path
+
+    def _keyword_infer(stdout_path: _Path, agent_role: str) -> dict:
+        if not stdout_path.exists():
+            if agent_role in ("gatekeeper", "sanity-check-gatekeeper"):
+                return {"status": "failure", "message": "No stdout.log produced"}
+            return {"outcome": "unknown", "reason": "No stdout.log produced"}
+
+        text = stdout_path.read_text(errors="replace").lower()
+
+        if agent_role in ("gatekeeper", "sanity-check-gatekeeper"):
+            # Look for DECISION: APPROVED / DECISION: REJECTED keywords
+            if "decision: approved" in text or "**approved**" in text or "approved" in text and "rejected" not in text:
+                return {"status": "success", "decision": "approve", "comment": stdout_path.read_text(errors="replace")}
+            elif "decision: rejected" in text or "rejected" in text:
+                return {"status": "success", "decision": "reject", "comment": stdout_path.read_text(errors="replace")}
+            else:
+                return {"status": "failure", "message": "Could not infer gatekeeper decision"}
+        elif agent_role == "fixer":
+            if "fixed" in text or "resolved" in text or "fix applied" in text:
+                return {"outcome": "fixed", "diagnosis": "Inferred", "fix_applied": ""}
+            else:
+                return {"outcome": "failed", "diagnosis": "Inferred: could not fix"}
+        else:
+            # implementer
+            if "done" in text or "complete" in text or "successfully" in text or "all acceptance criteria" in text:
+                return {"outcome": "done"}
+            elif "failed" in text or "cannot complete" in text or "could not complete" in text:
+                return {"outcome": "failed", "reason": "Inferred from stdout"}
+            else:
+                return {"outcome": "unknown", "reason": "Could not infer outcome"}
+
+    monkeypatch.setattr(
+        "octopoid.result_handler.infer_result_from_stdout",
+        _keyword_infer,
+    )
+
+
 @pytest.fixture
 def scoped_sdk(test_server_url):
     """SDK client scoped to this test — complete isolation, no cleanup needed.
