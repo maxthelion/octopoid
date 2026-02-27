@@ -29,8 +29,9 @@ Known symptoms and their root causes. **Consult this first when diagnosing a pro
 
 | Symptom | Likely cause | See |
 |---|---|---|
-| Scheduler runs old code after editing `.py` files | Stale `__pycache__`; run `find orchestrator -name '__pycache__' -type d -exec rm -rf {} +` | [CLAUDE.md](../CLAUDE.md#scheduler-and-python-caching) |
+| Scheduler runs old code after editing `.py` files | Stale `__pycache__`; run `find octopoid -name '__pycache__' -type d -exec rm -rf {} +` | [CLAUDE.md](../CLAUDE.md#scheduler-and-python-caching) |
 | Agent marked as failed despite completing work | Stale `result.json` from previous run | [2026-02-15 postmortem](postmortems/2026-02-15-TASK-stale-result-60f52b91.md) |
+| Scheduler crashing with `No module named orchestrator.scheduler` | Package renamed from `orchestrator` to `octopoid` but launchd plist not updated. Fix: update `~/Library/LaunchAgents/com.octopoid.scheduler.plist` to use `octopoid.scheduler`, then `launchctl unload && launchctl load`. | 2026-02-26 session |
 
 ## Projects
 
@@ -39,6 +40,14 @@ Known symptoms and their root causes. **Consult this first when diagnosing a pro
 | Project tasks all done but no PR created | Project has `branch=null` — `create_project()` was called without `branch` param. `check_project_completion` silently skips branchless projects. | [2026-02-23 postmortem](postmortems/2026-02-23-project-branch-null-silent-failure.md) |
 | Project tasks not visible on dashboard Work tab | Tasks have `flow=project` but no "project" flow registered on server. Fixed by pooling unregistered flows into default tab. | commit `b1b0982` |
 | Dashboard 401 errors after auth migration | Stale `OCTOPOID_API_KEY` env var in shell. Remove from `.zshrc`, kill dashboard processes, provision new key via orchestrator registration. | — |
+
+## Task incorrectly moved to failed
+
+| Symptom | Likely cause | See |
+|---|---|---|
+| Task in `failed` but PR is merged and work landed | `update_changelog` step failed after `merge_pr` already ran and `sdk.tasks.accept()` moved task to `done`. Catch-all exception handler then overwrote `done` with `failed`. | Task 2a06729d, draft #164 |
+| Task stuck in `failed` with no `execution_notes` | The `sdk.tasks.update(queue='failed')` call may have failed to save `execution_notes`, or the callsite didn't set it. 5 different callsites move tasks to failed with inconsistent logging. | Draft #164 (unified failure handling) |
+| Can't recover task from `failed` to `done` | Server blocks `queue='done'` via PATCH (must use `/accept` endpoint) and `/accept` requires a valid flow transition from current queue. No `failed → done` transition exists. | Server `validate-queue.ts` |
 
 ## Merge / Rebase failures
 
@@ -54,3 +63,5 @@ Known symptoms and their root causes. **Consult this first when diagnosing a pro
 |---|---|---|
 | Cloudflare rate limiting | Too many agents polling simultaneously; consider request batching | — |
 | `_gather_prs` burning API calls | Function not disabled when expected; verify before trusting plan claims | [CLAUDE.md](../CLAUDE.md#plan-verification-rule) |
+| 409 on submit after lease expires | Agent finished and wrote `result.json` but scheduler didn't process the result before the lease expired. Server rejects `submit` because lease is invalid. Fix: requeue task, re-claim, then submit. Root cause: scheduler was down (see stale state section). | Task 543cd9d7 |
+| 409 on reject/requeue/accept | Server's `canTransition()` checks registered flow transitions. Reverse transitions (reject back to incoming, requeue) must be explicitly registered. Fixed by `_implicit_reverse_transitions()` in `flow.py`. | Commit e210766 |
