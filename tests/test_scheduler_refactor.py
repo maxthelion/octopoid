@@ -753,7 +753,8 @@ class TestHandleAgentResultViaFlowDecisions:
         )
 
     def test_exception_moves_task_to_failed(self, tmp_path: Path) -> None:
-        """When flow dispatch raises, task must be moved to 'failed' queue."""
+        """When flow dispatch raises, task must be routed to requires-intervention (first failure)."""
+        # First failure goes to requires-intervention; true failed only after fixer also fails.
         result = {"status": "success", "decision": "approve"}
         (tmp_path / "result.json").write_text(json.dumps(result))
 
@@ -763,6 +764,8 @@ class TestHandleAgentResultViaFlowDecisions:
             patch("octopoid.queue_utils.get_sdk", return_value=mock_sdk),
             patch("octopoid.tasks.get_sdk", return_value=mock_sdk),
             patch("octopoid.tasks.get_task_logger"),
+            patch("octopoid.config.get_tasks_dir", return_value=tmp_path),
+            patch("octopoid.task_thread.post_message"),
             patch("octopoid.flow.load_flow", side_effect=RuntimeError("pnpm not in PATH")),
         ):
             handle_agent_result_via_flow("TASK-test", "implementer-1", tmp_path)
@@ -770,8 +773,7 @@ class TestHandleAgentResultViaFlowDecisions:
         mock_sdk.tasks.update.assert_called_once()
         call_kwargs = mock_sdk.tasks.update.call_args
         assert call_kwargs.args[0] == "TASK-test"
-        assert call_kwargs.kwargs.get("queue") == "failed"
-        assert "pnpm not in PATH" in call_kwargs.kwargs.get("execution_notes", "")
+        assert call_kwargs.kwargs.get("queue") == "requires-intervention"
 
     def test_exception_logs_full_traceback(self, tmp_path: Path) -> None:
         """When flow dispatch raises, full traceback must be logged."""
@@ -892,7 +894,7 @@ class TestHandleAgentResultRebaseMergeFailure:
         mock_sdk.tasks.update.assert_not_called()
 
     def test_non_merge_runtime_error_still_fails(self, tmp_path: Path) -> None:
-        """A RuntimeError unrelated to rebase/merge must still move task to failed."""
+        """A RuntimeError unrelated to rebase/merge must route to requires-intervention."""
         result = {"status": "success", "decision": "approve"}
         (tmp_path / "result.json").write_text(json.dumps(result))
 
@@ -905,17 +907,19 @@ class TestHandleAgentResultRebaseMergeFailure:
             patch("octopoid.queue_utils.get_sdk", return_value=mock_sdk),
             patch("octopoid.tasks.get_sdk", return_value=mock_sdk),
             patch("octopoid.tasks.get_task_logger"),
+            patch("octopoid.config.get_tasks_dir", return_value=tmp_path),
+            patch("octopoid.task_thread.post_message"),
             patch("octopoid.flow.load_flow", return_value=mock_flow),
             patch("octopoid.steps.execute_steps", side_effect=other_error),
             patch("octopoid.result_handler.logger"),
         ):
             handle_agent_result_via_flow("TASK-test", "gatekeeper-1", tmp_path)
 
-        # Must NOT call reject — should fall through to failed
+        # Must NOT call reject — should route to requires-intervention
         mock_sdk.tasks.reject.assert_not_called()
         mock_sdk.tasks.update.assert_called_once()
         call_kwargs = mock_sdk.tasks.update.call_args
-        assert call_kwargs.kwargs.get("queue") == "failed"
+        assert call_kwargs.kwargs.get("queue") == "requires-intervention"
 
 
 # =============================================================================
@@ -970,7 +974,7 @@ class TestCatchAllDoneQueueGuard:
         )
 
     def test_exception_when_task_not_done_still_moves_to_failed(self, tmp_path: Path) -> None:
-        """When exception fires and task is in claimed (not done), must move to failed."""
+        """When exception fires and task is not done, must route to requires-intervention."""
         result = {"status": "success", "decision": "approve"}
         (tmp_path / "result.json").write_text(json.dumps(result))
 
@@ -980,15 +984,17 @@ class TestCatchAllDoneQueueGuard:
             patch("octopoid.queue_utils.get_sdk", return_value=mock_sdk),
             patch("octopoid.tasks.get_sdk", return_value=mock_sdk),
             patch("octopoid.tasks.get_task_logger"),
+            patch("octopoid.config.get_tasks_dir", return_value=tmp_path),
+            patch("octopoid.task_thread.post_message"),
             patch("octopoid.flow.load_flow", side_effect=RuntimeError("flow-exploded")),
             patch("octopoid.result_handler.logger"),
         ):
             handle_agent_result_via_flow("TASK-test", "implementer-1", tmp_path)
 
-        # Must call update to failed when task is not done
+        # Must call update to requires-intervention (first failure path)
         mock_sdk.tasks.update.assert_called_once()
         call_kwargs = mock_sdk.tasks.update.call_args
-        assert call_kwargs.kwargs.get("queue") == "failed"
+        assert call_kwargs.kwargs.get("queue") == "requires-intervention"
 
 
 # =============================================================================

@@ -35,13 +35,34 @@ def register_step(name: str) -> Callable:
     return decorator
 
 
+def _write_step_progress(task_dir: Path, completed: list[str], failed: str | None) -> None:
+    """Write step progress to task_dir/step_progress.json for intervention context."""
+    try:
+        progress_path = task_dir / "step_progress.json"
+        progress_path.write_text(json.dumps({"completed": completed, "failed": failed}, indent=2))
+    except OSError:
+        pass
+
+
 def execute_steps(step_names: list[str], task: dict, result: dict, task_dir: Path) -> None:
-    """Execute a list of named steps in order."""
+    """Execute a list of named steps in order.
+
+    Writes step_progress.json to task_dir after each step so that
+    intervention_context can record which steps completed before a failure.
+    """
+    completed: list[str] = []
     for name in step_names:
         fn = STEP_REGISTRY.get(name)
         if fn is None:
+            _write_step_progress(task_dir, completed, failed=name)
             raise ValueError(f"Unknown step: {name}")
-        fn(task, result, task_dir)
+        try:
+            fn(task, result, task_dir)
+            completed.append(name)
+            _write_step_progress(task_dir, completed, failed=None)
+        except Exception:
+            _write_step_progress(task_dir, completed, failed=name)
+            raise
 
 
 # =============================================================================

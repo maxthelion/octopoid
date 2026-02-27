@@ -330,7 +330,12 @@ class TestFailTask:
     """Tests for fail_task function."""
 
     def test_fail_task_via_sdk(self, mock_orchestrator_dir, sample_task_file, mock_sdk_for_unit_tests):
-        """Test failing a task via SDK."""
+        """fail_task moves task to true-failed when already in requires-intervention."""
+        # Simulate second failure (task already in requires-intervention → true terminal failed)
+        mock_sdk_for_unit_tests.tasks.get.return_value = {
+            "id": "abc12345",
+            "queue": "requires-intervention",
+        }
         mock_sdk_for_unit_tests.tasks.update.return_value = {
             "id": "abc12345",
             "queue": "failed",
@@ -359,6 +364,11 @@ class TestFailTask:
     def test_fail_task_truncates_long_error(self, mock_orchestrator_dir, sample_task_file, mock_sdk_for_unit_tests):
         """A 10,000-char error should be truncated in the SDK call (max 500 chars)."""
         long_error = "X" * 10_000
+        # Simulate second failure (task already in requires-intervention)
+        mock_sdk_for_unit_tests.tasks.get.return_value = {
+            "id": "abc12345",
+            "queue": "requires-intervention",
+        }
         mock_sdk_for_unit_tests.tasks.update.return_value = {
             "id": "abc12345",
             "queue": "failed",
@@ -385,6 +395,11 @@ class TestFailTask:
 
     def test_fail_task_passes_extra_kwargs_to_sdk(self, mock_orchestrator_dir, sample_task_file, mock_sdk_for_unit_tests):
         """Extra kwargs (e.g. claimed_by, attempt_count) are forwarded to sdk.tasks.update."""
+        # Simulate second failure (task already in requires-intervention)
+        mock_sdk_for_unit_tests.tasks.get.return_value = {
+            "id": "abc12345",
+            "queue": "requires-intervention",
+        }
         mock_sdk_for_unit_tests.tasks.update.return_value = {
             "id": "abc12345",
             "queue": "failed",

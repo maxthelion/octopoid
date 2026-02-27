@@ -367,10 +367,11 @@ class Flow:
     def get_all_states(self) -> set[str]:
         """Get all states referenced in this flow.
 
-        Always includes built-in states (failed) that the server requires
-        even if no flow transition references them directly.
+        Always includes built-in states (failed, needs_continuation,
+        requires-intervention) that the server requires even if no flow
+        transition references them directly.
         """
-        states = {"failed", "needs_continuation"}
+        states = {"failed", "needs_continuation", "requires-intervention"}
         for trans in self.transitions:
             states.add(trans.from_state)
             states.add(trans.to_state)
@@ -412,7 +413,7 @@ class Flow:
         unreachable = valid_states - reachable
         # Filter out terminal/built-in states that may not be explicitly targeted
         # by transitions but are valid implicit destinations
-        builtin_states = {"done", "failed", "rejected", "needs_continuation"}
+        builtin_states = {"done", "failed", "rejected", "needs_continuation", "requires-intervention"}
         unreachable = unreachable - builtin_states
 
         if unreachable:
@@ -647,6 +648,22 @@ def _implicit_reverse_transitions(transitions: list[Transition]) -> list[dict]:
     if ("claimed", "needs_continuation") not in seen:
         implicit.append({"from": "claimed", "to": "needs_continuation"})
         seen.add(("claimed", "needs_continuation"))
+
+    # Implicit intervention: any claimed task can enter requires-intervention
+    if ("claimed", "requires-intervention") not in seen:
+        implicit.append({"from": "claimed", "to": "requires-intervention"})
+        seen.add(("claimed", "requires-intervention"))
+
+    # Implicit fixer failure: requires-intervention can move to true failed
+    if ("requires-intervention", "failed") not in seen:
+        implicit.append({"from": "requires-intervention", "to": "failed"})
+        seen.add(("requires-intervention", "failed"))
+
+    # Implicit fixer success: requires-intervention can restore to common queues
+    for _target in ("incoming", "claimed", "provisional"):
+        if ("requires-intervention", _target) not in seen:
+            implicit.append({"from": "requires-intervention", "to": _target})
+            seen.add(("requires-intervention", _target))
 
     return implicit
 
