@@ -198,50 +198,115 @@ def get_task_branch(task: dict) -> str:
 def _worktree_branch_matches(parent_repo: Path, worktree_path: Path, branch: str) -> bool:
     """Check if an existing worktree is based on the expected branch.
 
-    Returns True if origin/<branch> is an ancestor of (or equal to) the
-    worktree's HEAD, meaning the worktree was created from the correct branch.
-    Returns False on any error (treated as mismatch to be safe).
+    Reads the 'base_branch' file written by create_task_worktree at creation
+    time and compares branch names directly. This avoids the flaky git ancestry
+    check that failed whenever main had advanced past the worktree's base
+    (which happens constantly as other agents land work).
+
+    Falls back to True (keep the worktree) if no stored branch file exists,
+    to avoid destroying in-progress work in worktrees created before this
+    fix was applied.
 
     Args:
-        parent_repo: Path to the parent repository
+        parent_repo: Path to the parent repository (unused, kept for signature compat)
         worktree_path: Path to the existing worktree
         branch: Expected base branch name (without 'origin/' prefix)
 
     Returns:
-        True if the worktree appears to be based on origin/<branch>
+        True if the worktree should be reused for this branch
     """
-    target_ref = f"origin/{branch}"
+    task_dir = worktree_path.parent
+    base_branch_file = task_dir / "base_branch"
 
-    # Verify the target ref exists at all
-    verify = run_git(
-        ["rev-parse", "--verify", target_ref],
-        cwd=parent_repo,
-        check=False,
-    )
-    if verify.returncode != 0:
-        # Target branch doesn't exist on origin — can't check, treat as match
-        # to avoid deleting the worktree spuriously
+    if not base_branch_file.exists():
+        # No stored branch info — keep the worktree rather than destroying work.
+        # This handles worktrees created before this fix was applied.
         return True
 
-    # Get worktree HEAD commit
-    head_result = run_git(
-        ["rev-parse", "HEAD"],
+    stored_branch = base_branch_file.read_text().strip()
+    return stored_branch == branch
+
+
+def _reuse_existing_worktree(
+    parent_repo: Path,
+    worktree_path: Path,
+    task_dir: Path,
+    base_branch: str,
+    task_id: str,
+) -> None:
+    """Prepare an existing worktree for reuse by a new agent run.
+
+    Resets log files so the new run gets clean logs, fetches latest from
+    origin, and rebases the worktree commits onto the current
+    origin/<base_branch> if possible.
+
+    For detached HEAD worktrees with no agent commits, updates HEAD to the
+    current origin/<base_branch>. For named branches, attempts a rebase and
+    leaves the worktree as-is on conflict (for the agent to resolve).
+
+    Args:
+        parent_repo: Path to the parent repository
+        worktree_path: Path to the existing worktree
+        task_dir: Path to the task runtime directory (parent of worktree_path)
+        base_branch: The base branch to rebase onto
+        task_id: Task ID (for log messages)
+    """
+    # Reset log files so the new run gets clean state
+    for log_file in ("stdout.log", "stderr.log", "tool_counter"):
+        log_path = task_dir / log_file
+        if log_path.exists():
+            log_path.unlink()
+
+    # Fetch latest from origin
+    run_git(["fetch", "origin"], cwd=parent_repo, check=False)
+
+    target_ref = f"origin/{base_branch}"
+
+    # Check if worktree is on a named branch or detached HEAD
+    branch_result = run_git(
+        ["rev-parse", "--abbrev-ref", "HEAD"],
         cwd=worktree_path,
         check=False,
     )
-    if head_result.returncode != 0:
-        return False
+    if branch_result.returncode != 0:
+        return
 
-    worktree_head = head_result.stdout.strip()
+    current_ref = branch_result.stdout.strip()
 
-    # Check if origin/<branch> is an ancestor of the worktree HEAD
-    # (i.e., the worktree was created from that branch and may have commits on top)
-    ancestor_check = run_git(
-        ["merge-base", "--is-ancestor", target_ref, worktree_head],
-        cwd=parent_repo,
-        check=False,
-    )
-    return ancestor_check.returncode == 0
+    if current_ref == "HEAD":
+        # Detached HEAD — only update to latest origin/<base_branch> if the
+        # agent made no commits on top (count commits not reachable from origin).
+        # If the agent has commits, leave them; the agent or branch creation will rebase.
+        ahead_result = run_git(
+            ["rev-list", "--count", f"{target_ref}..HEAD"],
+            cwd=worktree_path,
+            check=False,
+        )
+        commits_ahead = 0
+        if ahead_result.returncode == 0:
+            try:
+                commits_ahead = int(ahead_result.stdout.strip())
+            except ValueError:
+                pass
+
+        if commits_ahead == 0:
+            # No agent commits on detached HEAD — update to current origin/<base_branch>
+            run_git(["checkout", "--detach", target_ref], cwd=worktree_path, check=False)
+        # else: agent has uncommitted/unpushed commits on detached HEAD — leave as-is
+    else:
+        # Named branch — try to rebase onto current origin/<base_branch>
+        rebase_result = run_git(
+            ["rebase", target_ref],
+            cwd=worktree_path,
+            check=False,
+        )
+        if rebase_result.returncode != 0:
+            # Rebase conflicts — abort and leave as-is for the agent to resolve
+            run_git(["rebase", "--abort"], cwd=worktree_path, check=False)
+            print(
+                f"[git_utils] Rebase onto {target_ref} had conflicts for task {task_id}: "
+                f"leaving worktree as-is for agent to resolve"
+            )
 
 
 def create_task_worktree(task: dict) -> Path:
@@ -267,11 +332,14 @@ def create_task_worktree(task: dict) -> Path:
     parent_repo = find_parent_project()
     task_id = task["id"]
     worktree_path = get_task_worktree_path(task_id)
+    task_dir = worktree_path.parent
 
     # Reuse existing valid worktree — but only if it's based on the right branch
     if worktree_path.exists() and (worktree_path / ".git").exists():
         base_branch = task.get("branch") or get_base_branch()
         if _worktree_branch_matches(parent_repo, worktree_path, base_branch):
+            # Reuse: rebase onto current origin/<base_branch> and reset logs
+            _reuse_existing_worktree(parent_repo, worktree_path, task_dir, base_branch, task_id)
             return worktree_path
         # Branch mismatch — delete and recreate from the correct branch
         print(
@@ -330,6 +398,11 @@ def create_task_worktree(task: dict) -> Path:
         f"but is on branch '{actual_ref}'. "
         "Worktrees must never checkout a named branch."
     )
+
+    # Record the base branch so _worktree_branch_matches can detect genuine
+    # mismatches on subsequent runs (e.g. task retargeted to a different branch)
+    # without relying on flaky git ancestry checks.
+    (worktree_path.parent / "base_branch").write_text(base_branch)
 
     return worktree_path
 
