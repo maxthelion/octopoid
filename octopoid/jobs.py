@@ -11,12 +11,15 @@ Execution types:
 from __future__ import annotations
 
 import json
+import logging
 import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
+
+logger = logging.getLogger("octopoid.jobs")
 
 import yaml
 
@@ -115,7 +118,7 @@ def run_due_jobs(scheduler_state: dict) -> dict | None:
     from .scheduler import is_job_due, record_job_run, _fetch_poll_data
 
     jobs = load_jobs_yaml()
-    _debug_log(f"Loaded {len(jobs)} job definitions from YAML")
+    logger.debug(f"Loaded {len(jobs)} job definitions from YAML")
 
     # Classify which jobs are due by group
     due_local: list[dict] = []
@@ -134,7 +137,7 @@ def run_due_jobs(scheduler_state: dict) -> dict | None:
         else:
             skipped.append(name)
 
-    _debug_log(
+    logger.debug(
         f"Due: {len(due_local)} local, {len(due_remote)} remote. "
         f"Skipped (not due): {', '.join(skipped) if skipped else 'none'}"
     )
@@ -166,23 +169,23 @@ def _run_job(job_def: dict, ctx: JobContext) -> None:
     name = job_def.get("name", "unknown")
     job_type = job_def.get("type", "script")
 
-    _debug_log(f"Running job: {name} (type={job_type})")
+    logger.debug(f"Running job: {name} (type={job_type})")
 
     try:
         if job_type == "script":
             func = JOB_REGISTRY.get(name)
             if func is None:
-                _debug_log(f"No job function registered for: {name}")
+                logger.debug(f"No job function registered for: {name}")
                 return
             func(ctx)
-            _debug_log(f"Job {name} completed OK")
+            logger.debug(f"Job {name} completed OK")
         elif job_type == "agent":
             _run_agent_job(job_def, ctx)
-            _debug_log(f"Agent job {name} completed OK")
+            logger.debug(f"Agent job {name} completed OK")
         else:
-            _debug_log(f"Unknown job type '{job_type}' for job '{name}'")
+            logger.debug(f"Unknown job type '{job_type}' for job '{name}'")
     except Exception as e:
-        _debug_log(f"{name} FAILED: {e}")
+        logger.debug(f"{name} FAILED: {e}")
 
 
 def _run_agent_job(job_def: dict, ctx: JobContext) -> None:
@@ -208,10 +211,10 @@ def _run_agent_job(job_def: dict, ctx: JobContext) -> None:
     # Check pool capacity before spawning
     running = count_running_instances(blueprint)
     if running >= max_instances:
-        _debug_log(f"Agent job '{name}' at capacity ({running}/{max_instances}), skipping")
+        logger.debug(f"Agent job '{name}' at capacity ({running}/{max_instances}), skipping")
         return
 
-    _debug_log(f"Spawning agent job '{name}'")
+    logger.debug(f"Spawning agent job '{name}'")
 
     agent_config.setdefault("name", name)
     agent_config.setdefault("blueprint_name", blueprint)
@@ -233,16 +236,12 @@ def _run_agent_job(job_def: dict, ctx: JobContext) -> None:
     strategy = get_spawn_strategy(agent_ctx)
     try:
         pid = strategy(agent_ctx)
-        _debug_log(f"Agent job '{name}' started with PID {pid}")
+        logger.debug(f"Agent job '{name}' started with PID {pid}")
     except Exception as e:
-        _debug_log(f"Agent job '{name}' spawn failed: {e}")
+        logger.debug(f"Agent job '{name}' spawn failed: {e}")
         raise  # Propagate so _run_job() logs failure instead of "completed OK"
 
 
-def _debug_log(msg: str) -> None:
-    """Proxy to scheduler.debug_log, using lazy import to avoid circular imports."""
-    from . import scheduler
-    scheduler.debug_log(msg)
 
 
 # ---------------------------------------------------------------------------
@@ -351,7 +350,7 @@ def _load_github_issues_state(state_file: Path) -> dict:
         with open(state_file) as f:
             return json.load(f)
     except (json.JSONDecodeError, OSError) as e:
-        _debug_log(f"poll_github_issues: could not load state ({e}), starting fresh")
+        logger.debug(f"poll_github_issues: could not load state ({e}), starting fresh")
         return {"processed_issues": []}
 
 
@@ -362,7 +361,7 @@ def _save_github_issues_state(state_file: Path, state: dict) -> None:
         with open(state_file, "w") as f:
             json.dump(state, f, indent=2)
     except OSError as e:
-        _debug_log(f"poll_github_issues: could not save state: {e}")
+        logger.debug(f"poll_github_issues: could not save state: {e}")
 
 
 def _fetch_github_issues(cwd: Path) -> list[dict]:
@@ -381,14 +380,14 @@ def _fetch_github_issues(cwd: Path) -> list[dict]:
             timeout=30,
         )
         if result.returncode != 0:
-            _debug_log(f"poll_github_issues: gh issue list failed: {result.stderr.strip()}")
+            logger.debug(f"poll_github_issues: gh issue list failed: {result.stderr.strip()}")
             return []
         return json.loads(result.stdout)
     except subprocess.TimeoutExpired:
-        _debug_log("poll_github_issues: gh issue list timed out")
+        logger.debug("poll_github_issues: gh issue list timed out")
         return []
     except (json.JSONDecodeError, FileNotFoundError, Exception) as e:
-        _debug_log(f"poll_github_issues: error fetching issues: {e}")
+        logger.debug(f"poll_github_issues: error fetching issues: {e}")
         return []
 
 
@@ -440,10 +439,10 @@ def _create_task_from_github_issue(issue: dict) -> str | None:
             priority=priority,
             created_by="poll_github_issues",
         )
-        _debug_log(f"poll_github_issues: created task {task_id} for issue #{issue_number}")
+        logger.debug(f"poll_github_issues: created task {task_id} for issue #{issue_number}")
         return task_id
     except Exception as e:
-        _debug_log(f"poll_github_issues: failed to create task for issue #{issue_number}: {e}")
+        logger.debug(f"poll_github_issues: failed to create task for issue #{issue_number}: {e}")
         return None
 
 
@@ -461,7 +460,7 @@ def _comment_on_github_issue(issue_number: int, task_id: str, cwd: Path) -> None
             timeout=15,
         )
     except Exception as e:
-        _debug_log(f"poll_github_issues: could not comment on issue #{issue_number}: {e}")
+        logger.debug(f"poll_github_issues: could not comment on issue #{issue_number}: {e}")
 
 
 def _forward_github_issue_to_server(issue: dict, cwd: Path) -> bool:
@@ -491,14 +490,14 @@ def _forward_github_issue_to_server(issue: dict, cwd: Path) -> bool:
             timeout=30,
         )
         if result.returncode != 0:
-            _debug_log(
+            logger.debug(
                 f"poll_github_issues: failed to forward issue #{issue_number}: "
                 f"{result.stderr.strip()}"
             )
             return False
 
         server_issue_url = result.stdout.strip()
-        _debug_log(
+        logger.debug(
             f"poll_github_issues: forwarded issue #{issue_number} → {server_issue_url}"
         )
 
@@ -513,7 +512,7 @@ def _forward_github_issue_to_server(issue: dict, cwd: Path) -> bool:
         return True
 
     except Exception as e:
-        _debug_log(f"poll_github_issues: error forwarding issue #{issue_number}: {e}")
+        logger.debug(f"poll_github_issues: error forwarding issue #{issue_number}: {e}")
         return False
 
 
@@ -537,7 +536,7 @@ def poll_github_issues(ctx: JobContext) -> None:
     if not issues:
         return
 
-    _debug_log(f"poll_github_issues: {len(issues)} open issue(s) fetched")
+    logger.debug(f"poll_github_issues: {len(issues)} open issue(s) fetched")
 
     new_count = 0
     forwarded_count = 0
@@ -550,7 +549,7 @@ def poll_github_issues(ctx: JobContext) -> None:
         labels = [label["name"] for label in issue.get("labels", [])]
 
         if "server" in labels:
-            _debug_log(
+            logger.debug(
                 f"poll_github_issues: issue #{issue_number} has 'server' label, forwarding"
             )
             if _forward_github_issue_to_server(issue, parent_project):
@@ -567,7 +566,7 @@ def poll_github_issues(ctx: JobContext) -> None:
     _save_github_issues_state(state_file, state)
 
     if new_count or forwarded_count:
-        _debug_log(
+        logger.debug(
             f"poll_github_issues: created {new_count} task(s), "
             f"forwarded {forwarded_count} issue(s)"
         )

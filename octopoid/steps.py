@@ -5,10 +5,13 @@ Steps are referenced by name in flow YAML `runs:` lists.
 """
 
 import json
+import logging
 import os
 import subprocess
 from pathlib import Path
 from typing import Callable
+
+logger = logging.getLogger("octopoid.steps")
 
 StepFn = Callable[[dict, dict, Path], None]
 
@@ -69,7 +72,7 @@ def check_ci(task: dict, result: dict, task_dir: Path) -> None:
     """
     pr_number = task.get("pr_number")
     if not pr_number:
-        print("check_ci step: no pr_number on task, skipping")
+        logger.debug("check_ci step: no pr_number on task, skipping")
         return
 
     try:
@@ -80,25 +83,25 @@ def check_ci(task: dict, result: dict, task_dir: Path) -> None:
     except subprocess.TimeoutExpired:
         raise RetryableStepError("check_ci: gh pr checks timed out after 60s, will retry")
     except FileNotFoundError:
-        print("check_ci step: gh CLI not found, skipping CI check")
+        logger.debug("check_ci step: gh CLI not found, skipping CI check")
         return
 
     if proc.returncode != 0:
         stderr = proc.stderr.strip()
         # If stdout is empty, the PR likely has no CI configured — treat as pass
         if not proc.stdout.strip():
-            print(f"check_ci step: no CI checks found (gh exit {proc.returncode}), proceeding")
+            logger.debug(f"check_ci step: no CI checks found (gh exit {proc.returncode}), proceeding")
             return
         raise RetryableStepError(f"check_ci: failed to query CI checks: {stderr}")
 
     try:
         checks = json.loads(proc.stdout)
     except json.JSONDecodeError:
-        print("check_ci step: could not parse gh output, skipping")
+        logger.warning("check_ci step: could not parse gh output, skipping")
         return
 
     if not checks:
-        print("check_ci step: no CI checks configured, proceeding")
+        logger.debug("check_ci step: no CI checks configured, proceeding")
         return
 
     _PENDING_STATES = {"QUEUED", "IN_PROGRESS", "PENDING", "WAITING", "REQUESTED"}
@@ -134,7 +137,7 @@ def check_ci(task: dict, result: dict, task_dir: Path) -> None:
             f"Waiting for checks to complete."
         )
 
-    print(f"check_ci step: all {len(checks)} CI check(s) passed")
+    logger.info(f"check_ci step: all {len(checks)} CI check(s) passed")
 
 
 @register_step("merge_pr")
@@ -172,7 +175,7 @@ def reject_with_feedback(task: dict, result: dict, task_dir: Path) -> None:
         try:
             add_pr_comment(int(pr_number), comment)
         except Exception as e:
-            print(f"reject_with_feedback: failed to post PR comment: {e}")
+            logger.warning(f"reject_with_feedback: failed to post PR comment: {e}")
 
     # Append explicit rebase instructions if not already present in the comment
     base_branch = get_base_branch()
@@ -195,7 +198,7 @@ def reject_with_feedback(task: dict, result: dict, task_dir: Path) -> None:
     try:
         post_message(task_id, role="rejection", content=reason, author="gatekeeper")
     except Exception as e:
-        print(f"reject_with_feedback: failed to post thread message: {e}")
+        logger.warning(f"reject_with_feedback: failed to post thread message: {e}")
 
     sdk.tasks.reject(task_id, reason=reason, rejected_by="gatekeeper")
 
@@ -264,7 +267,7 @@ def run_tests(task: dict, result: dict, task_dir: Path) -> None:
         test_commands.append(["make", "test"])
 
     if not test_commands:
-        print("run_tests step: no test runner detected, skipping")
+        logger.debug("run_tests step: no test runner detected, skipping")
         return
 
     # Build an environment with augmented PATH so npm/pnpm are findable even
@@ -273,7 +276,7 @@ def run_tests(task: dict, result: dict, task_dir: Path) -> None:
     env["PATH"] = _build_node_path()
 
     cmd = test_commands[0]
-    print(f"run_tests step: running {' '.join(cmd)}")
+    logger.info(f"run_tests step: running {' '.join(cmd)}")
     try:
         proc = subprocess.run(
             cmd, cwd=worktree, capture_output=True, text=True, timeout=300, env=env,
@@ -281,14 +284,14 @@ def run_tests(task: dict, result: dict, task_dir: Path) -> None:
     except subprocess.TimeoutExpired:
         raise RuntimeError("Tests timed out after 300s")
     except FileNotFoundError:
-        print(f"run_tests step: test runner not found ({cmd[0]}), skipping")
+        logger.debug(f"run_tests step: test runner not found ({cmd[0]}), skipping")
         return
 
     if proc.returncode != 0:
         output = (proc.stdout + "\n" + proc.stderr)[-2000:]
         raise RuntimeError(f"Tests failed (exit code {proc.returncode}):\n{output}")
 
-    print("run_tests step: tests passed")
+    logger.info("run_tests step: tests passed")
 
 
 @register_step("create_pr")
@@ -319,7 +322,7 @@ def create_pr(task: dict, result: dict, task_dir: Path) -> None:
 
     repo = RepoManager(worktree, base_branch=task.get("branch", "main"))
     pr = repo.create_pr(title=f"[{task_id}] {task_title}", body=pr_body)
-    print(f"create_pr step: PR {pr.url} (new={pr.created})")
+    logger.info(f"create_pr step: PR {pr.url} (new={pr.created})")
 
     # Store PR metadata on the task
     sdk = get_sdk()
@@ -364,7 +367,7 @@ def rebase_on_base(task: dict, result: dict, task_dir: Path) -> None:
             f"{rebase.stdout}\n{rebase.stderr}"
         )
 
-    print(f"rebase_on_base: rebased onto origin/{base_branch}")
+    logger.info(f"rebase_on_base: rebased onto origin/{base_branch}")
 
 
 @register_step("rebase_on_project_branch")
@@ -378,7 +381,7 @@ def rebase_on_project_branch(task: dict, result: dict, task_dir: Path) -> None:
 
     project_id = task.get("project_id")
     if not project_id:
-        print("rebase_on_project_branch: no project_id on task, skipping")
+        logger.debug("rebase_on_project_branch: no project_id on task, skipping")
         return
 
     sdk = get_sdk()
@@ -408,7 +411,7 @@ def rebase_on_project_branch(task: dict, result: dict, task_dir: Path) -> None:
             f"rebase_on_project_branch: git rebase failed:\n{rebase.stdout}\n{rebase.stderr}"
         )
 
-    print(f"rebase_on_project_branch: rebased onto origin/{project_branch}")
+    logger.info(f"rebase_on_project_branch: rebased onto origin/{project_branch}")
 
 
 @register_step("create_project_pr")
@@ -461,7 +464,7 @@ def create_project_pr(project: dict, result: dict, project_dir: Path) -> None:
             pr_number = int(parts[1]) if len(parts) > 1 else None
         except ValueError:
             pass
-        print(f"create_project_pr: PR already exists for {project_id}: {pr_url}")
+        logger.info(f"create_project_pr: PR already exists for {project_id}: {pr_url}")
     else:
         pr_create = subprocess.run(
             [
@@ -514,7 +517,7 @@ def create_project_pr(project: dict, result: dict, project_dir: Path) -> None:
                     pr_number = int(pr_url.rstrip("/").rsplit("/", 1)[-1])
                 except (ValueError, IndexError):
                     pass
-            print(f"create_project_pr: created PR {pr_url} for {project_id}")
+            logger.info(f"create_project_pr: created PR {pr_url} for {project_id}")
 
     # Store PR metadata on the project (without changing status — the flow engine does that)
     if pr_url or pr_number is not None:
@@ -541,19 +544,19 @@ def update_changelog(task: dict, result: dict, task_dir: Path) -> None:
 
     changes_file = task_dir / "changes.md"
     if not changes_file.exists():
-        print(f"update_changelog: no changes.md at {changes_file}, skipping")
+        logger.debug(f"update_changelog: no changes.md at {changes_file}, skipping")
         return
 
     changes_content = changes_file.read_text().strip()
     if not changes_content:
-        print("update_changelog: changes.md is empty, skipping")
+        logger.debug("update_changelog: changes.md is empty, skipping")
         return
 
     project_root = find_parent_project()
     changelog_path = project_root / "CHANGELOG.md"
 
     if not changelog_path.exists():
-        print(f"update_changelog: CHANGELOG.md not found at {changelog_path}, skipping")
+        logger.warning(f"update_changelog: CHANGELOG.md not found at {changelog_path}, skipping")
         return
 
     base_branch = get_base_branch()
@@ -585,7 +588,7 @@ def update_changelog(task: dict, result: dict, task_dir: Path) -> None:
         unreleased_marker = "## [Unreleased]"
         idx = changelog.find(unreleased_marker)
         if idx == -1:
-            print("update_changelog: no '## [Unreleased]' section in CHANGELOG.md, skipping")
+            logger.warning("update_changelog: no '## [Unreleased]' section in CHANGELOG.md, skipping")
             return
 
         insert_at = idx + len(unreleased_marker)
@@ -609,7 +612,7 @@ def update_changelog(task: dict, result: dict, task_dir: Path) -> None:
         )
         if commit.returncode != 0:
             if "nothing to commit" in commit.stdout or "nothing to commit" in commit.stderr:
-                print("update_changelog: no changes to commit, skipping")
+                logger.debug("update_changelog: no changes to commit, skipping")
                 return
             raise RuntimeError(f"update_changelog: git commit failed:\n{commit.stderr}")
 
@@ -620,12 +623,10 @@ def update_changelog(task: dict, result: dict, task_dir: Path) -> None:
         if push.returncode != 0:
             raise RuntimeError(f"update_changelog: git push failed:\n{push.stderr}")
 
-        print(f"update_changelog: CHANGELOG.md updated for task {task_id}")
+        logger.info(f"update_changelog: CHANGELOG.md updated for task {task_id}")
 
     except Exception as e:
-        print(
-            f"WARNING: update_changelog failed for task {task_id} (non-fatal after merge): {e}"
-        )
+        logger.warning(f"update_changelog failed for task {task_id} (non-fatal after merge): {e}")
 
 
 @register_step("aggregate_child_changes")
@@ -643,18 +644,18 @@ def aggregate_child_changes(task: dict, result: dict, task_dir: Path) -> None:
 
     project_id = task.get("id")
     if not project_id:
-        print("aggregate_child_changes: no id on task, skipping")
+        logger.debug("aggregate_child_changes: no id on task, skipping")
         return
 
     sdk = get_sdk()
     try:
         child_tasks = sdk.projects.get_tasks(project_id)
     except Exception as e:
-        print(f"aggregate_child_changes: failed to get child tasks for {project_id}: {e}")
+        logger.warning(f"aggregate_child_changes: failed to get child tasks for {project_id}: {e}")
         return
 
     if not child_tasks:
-        print(f"aggregate_child_changes: no child tasks for project {project_id}, skipping")
+        logger.debug(f"aggregate_child_changes: no child tasks for project {project_id}, skipping")
         return
 
     tasks_dir = get_tasks_dir()
@@ -672,12 +673,12 @@ def aggregate_child_changes(task: dict, result: dict, task_dir: Path) -> None:
             aggregated_parts.append(content)
 
     if not aggregated_parts:
-        print(f"aggregate_child_changes: no child changes.md files found for {project_id}, skipping")
+        logger.debug(f"aggregate_child_changes: no child changes.md files found for {project_id}, skipping")
         return
 
     output_file = task_dir / "changes.md"
     output_file.write_text("\n\n".join(aggregated_parts) + "\n")
-    print(
+    logger.info(
         f"aggregate_child_changes: aggregated {len(aggregated_parts)} child "
         f"changes.md file(s) for {project_id}"
     )
@@ -717,6 +718,6 @@ def merge_project_pr(project: dict, result: dict, project_dir: Path) -> None:
             f"{merge_result.stderr.strip()}"
         )
 
-    print(f"merge_project_pr: merged PR #{pr_number} for {project_id}")
+    logger.info(f"merge_project_pr: merged PR #{pr_number} for {project_id}")
 
 
