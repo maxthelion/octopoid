@@ -38,43 +38,96 @@ Not a replacement for `failed` — a **predecessor** to it. The flow becomes:
 
 ### Fixer agent
 
-A new agent role: `fixer`. The scheduler spawns it when a task enters `requires-intervention`.
+A new agent role: `fixer`. The scheduler spawns it when a task enters `requires-intervention`. Like all agents, the fixer is a **pure function** — it receives a task, does work in the worktree, and writes a `result.json`. It never calls the server API, moves tasks between queues, or performs side effects. The scheduler handles all state transitions after the fixer exits.
 
-**Input:** The fixer receives:
-- The task (full metadata, current queue position, flow, which transition was being processed)
-- The error/reason that caused the intervention (from `fail_task()` or equivalent)
-- The task's runtime directory (worktree, result.json, logs, stderr)
-- The task's message thread (PR comments, rejection feedback, etc.)
+**Input:** The fixer receives (via its rendered prompt):
+- The task description and metadata
+- The intervention context (error, which step failed, which steps completed, previous queue)
+- Access to the task's existing worktree (git state, local changes, logs, previous result.json)
 
-**Responsibilities:**
-1. **Diagnose** — Read the error, check logs, inspect the worktree, check git state, check PR status
-2. **Fix the immediate issue** — Rebase, retry a step, clean up stale state, fix a merge conflict, etc.
-3. **Resume the flow** — Move the task back to whatever queue it was in before the error, so normal flow processing continues
-4. **Record the issue** — Write to the issues log (`project-management/issues-log.md`) with symptoms, root cause, and fix applied
-5. **Propose systemic fixes** — If the issue is a recurring pattern (e.g. "update_changelog keeps failing because of ff-only"), create a draft via the SDK proposing a permanent fix
+**What the fixer does (in the worktree):**
+1. **Diagnose** — Read the error context, check logs, inspect git state, check for known patterns in the issues log
+2. **Fix the immediate issue** — Rebase, resolve conflicts, clean up stale state, fix whatever broke
+3. **Record the issue** — Write to `project-management/issues-log.md` with symptoms, root cause, and fix applied
+4. **Propose systemic fixes** — If this is a recurring pattern, write a draft file to `project-management/drafts/` proposing a permanent fix
+5. **Write result.json** — Report what was fixed and that the task is ready to resume
+
+**What the fixer writes:**
+
+```json
+{
+  "outcome": "fixed",
+  "diagnosis": "local main had unpushed commits, git pull --rebase failed",
+  "fix_applied": "ran git pull --rebase to sync local main"
+}
+```
+
+Or if it can't fix the issue:
+
+```json
+{
+  "outcome": "failed",
+  "diagnosis": "merge conflict in src/foo.py requires human judgement"
+}
+```
+
+**What the scheduler does with the result:**
+- `outcome: "fixed"` → move task back to `previous_queue`, post a message summarising the fix, resume the flow from where it left off (skip completed steps)
+- `outcome: "failed"` → move task to `failed` (true terminal), post a message with the diagnosis so a human knows what's wrong
 
 ### Flow integration
 
-The `requires-intervention` state needs to remember where the task was in its flow so it can resume:
+The process that moves a task to `requires-intervention` records an **intervention context** on the server describing where it was and how to resume:
 
 ```yaml
-# Stored on the task when entering requires-intervention
+# Stored on the task (server-side) when entering requires-intervention
 intervention_context:
   previous_queue: provisional    # where the task was
   error_source: flow-dispatch-error
-  error_message: "update_changelog: git pull --ff-only failed..."
+  error_message: "update_changelog: git pull --rebase failed..."
   transition_in_progress: "provisional -> done"
   step_that_failed: update_changelog
   steps_completed: [merge_pr]   # steps that already ran successfully
+  resume_instruction: "retry update_changelog, then complete transition to done"
 ```
 
-When the fixer resolves the issue, it moves the task back to `previous_queue` and the flow resumes. If steps already completed (like `merge_pr`), the flow should skip them and continue from where it left off.
+### Communication via messages
+
+All messages are posted by the **scheduler**, not the agent. The fixer communicates entirely through `result.json`.
+
+**On entry to requires-intervention** (scheduler posts):
+
+```
+[scheduler] Task moved to requires-intervention.
+Error: update_changelog: git pull --rebase failed (local branch has diverged)
+Steps completed: merge_pr
+Steps remaining: update_changelog
+```
+
+**After fixer exits** (scheduler reads `result.json` and posts):
+
+```
+[scheduler] Fixer resolved the issue.
+Diagnosis: local main had unpushed commits, git pull --rebase failed
+Fix applied: ran git pull --rebase to sync local main
+Resuming flow from update_changelog step.
+```
+
+Or if the fixer couldn't fix it:
+
+```
+[scheduler] Fixer could not resolve the issue. Moving to failed.
+Diagnosis: merge conflict in src/foo.py requires human judgement
+```
+
+This keeps the entire intervention lifecycle auditable in the task's message thread, and the fixer stays a pure function.
 
 ### What the fixer should NOT do
 
-- Re-implement the task from scratch (that's what requeue to incoming is for)
-- Merge PRs or accept tasks (it fixes the blocker, the flow does the rest)
-- Ignore issues — if it can't fix something, it should explain why and move to `failed`
+- **Call the server API** — it's a pure function. No `sdk.tasks.*`, no `post_message()`. It writes `result.json` and the scheduler does the rest.
+- **Re-implement the task from scratch** — that's what requeue to incoming is for
+- **Merge PRs or accept tasks** — it fixes the blocker, the flow does the rest
+- **Ignore issues** — if it can't fix something, it writes `outcome: "stuck"` with a clear diagnosis
 
 ## Examples
 
@@ -83,15 +136,18 @@ When the fixer resolves the issue, it moves the task back to `previous_queue` an
 ```
 Task 2a06729d in provisional
 → merge_pr runs, accepts task to done
-→ update_changelog throws (git pull --ff-only fails)
-→ Catch-all moves to requires-intervention (not failed)
-→ Fixer agent spawns:
-  - Reads error: "git pull --ff-only failed"
-  - Diagnosis: local main has unpushed commits from another changelog update
-  - Fix: runs git pull --rebase, retries update_changelog
-  - Records issue in issues-log.md
-  - Notices this is the 3rd time this has happened → creates draft proposing --rebase fix
-  - Moves task back to done (merge_pr already accepted it)
+→ update_changelog throws (git pull --rebase fails)
+→ Scheduler moves to requires-intervention, records intervention_context
+→ Scheduler posts message: "update_changelog failed, steps_completed: [merge_pr]"
+→ Fixer agent spawns in task's worktree:
+  - Reads intervention context from prompt
+  - Checks issues-log.md — sees this is a known pattern
+  - Runs git pull --rebase to sync local main
+  - Adds entry to issues-log.md
+  - Writes result.json: { outcome: "fixed" }
+→ Scheduler reads result, moves task back to previous queue
+→ Scheduler resumes flow: skips merge_pr (completed), retries update_changelog
+→ update_changelog succeeds, transition to done completes
 ```
 
 ### Example 2: Lease expired because scheduler was down
@@ -102,10 +158,12 @@ Task 543cd9d7 in claimed
 → Scheduler is down (launchd plist wrong module name)
 → Lease expires, server moves to requires-intervention
 → Fixer agent spawns (once scheduler is back):
-  - Reads context: lease expired, result.json exists with outcome=done
+  - Reads intervention context: lease expired, original result.json exists
   - Diagnosis: scheduler was down, result never processed
-  - Fix: re-claims task, submits result, processes normally
-  - Records issue: "scheduler was down for 5h due to module rename in plist"
+  - Verifies result.json shows outcome=done, work is intact in worktree
+  - Writes NEW result.json: { outcome: "fixed" }
+→ Scheduler reads result, moves task back to claimed
+→ Scheduler processes the original agent result normally
 ```
 
 ### Example 3: Rebase conflict on merge
@@ -113,21 +171,25 @@ Task 543cd9d7 in claimed
 ```
 Task in provisional, gatekeeper approved
 → merge_pr step: rebase fails with conflicts
-→ Task moves to requires-intervention
+→ Scheduler moves to requires-intervention
 → Fixer agent spawns:
   - Reads error: "git rebase failed: CONFLICT in src/foo.py"
-  - Inspects the conflict — it's a trivial import ordering change
-  - Resolves conflict, continues rebase, pushes
-  - Moves task back to provisional, flow retries merge_pr
+  - Inspects the conflict — trivial import ordering change
+  - Resolves conflict, continues rebase, commits
+  - Writes result.json: { outcome: "fixed" }
+→ Scheduler reads result, moves task back to provisional
+→ Scheduler resumes flow: retries merge_pr (rebase now clean), succeeds
 ```
 
-## Open Questions
+## Decisions
 
-- Should the fixer agent have a turn limit? What happens if it uses all its turns without fixing the issue?
-- Should there be a retry limit (e.g. max 2 fixer attempts before moving to truly-failed)?
-- Does the fixer need its own worktree, or does it work in the task's existing worktree?
-- How does "resume flow from where it left off" work mechanically? Do we need a `steps_completed` field on the task, or does each step need to be idempotent?
-- Should the fixer be able to see other tasks in requires-intervention to spot patterns across multiple failures?
+1. **Turn limit and retry cap:** 50 turns, 1 attempt. One generous shot. If the fixer can't resolve it in 50 turns, it's genuinely stuck — move to `failed` for human review.
+
+2. **Worktree:** The fixer works in the task's existing worktree. That's where all the state is — partial commits, branches, local changes. No separate worktree.
+
+3. **Resume mechanism:** The process that moves a task to `requires-intervention` must record an **intervention context** on the task (stored on the server) describing where it was in the flow and what the scheduler should do when it resumes. This is not just `steps_completed` — it's a full resumption instruction. The **messages system** is used for audit: the scheduler posts messages on entry and after the fixer exits (based on `result.json`). The fixer itself is a pure function — it communicates only through `result.json`, like every other agent.
+
+4. **Visibility:** One task at a time. The fixer focuses on the single task it's assigned. But it can (and should) read the issues log (`project-management/issues-log.md`) to check if this is a known pattern and apply the documented fix. Pattern detection across multiple failures is a separate concern — the existing analyst agents or a dedicated job can handle that.
 
 ## Relationship to other drafts
 
