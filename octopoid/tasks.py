@@ -310,6 +310,9 @@ def fail_task(task_id: str, reason: str, source: str, **sdk_kwargs) -> dict:
     It sets execution_notes on the server, writes a FAILED entry to the task
     log, and prints to stdout for launchd log capture.
 
+    Raises ValueError if the task is already in the 'done' queue — done is a
+    terminal success state and must not be overwritten by a failure.
+
     Args:
         task_id: Task identifier
         reason: Human-readable reason for failure
@@ -326,6 +329,15 @@ def fail_task(task_id: str, reason: str, source: str, **sdk_kwargs) -> dict:
     sdk = get_sdk()
     reason_truncated = reason[:500] + ("..." if len(reason) > 500 else "")
     reason_stdout = reason[:200] + ("..." if len(reason) > 200 else "")
+
+    # Guard: never overwrite the done queue with failed.
+    current_task = sdk.tasks.get(task_id)
+    current_queue = (current_task or {}).get("queue")
+    if current_queue == "done":
+        raise ValueError(
+            f"fail_task: refusing to move task {task_id} from 'done' to 'failed' "
+            f"(source={source}, reason={reason_stdout})"
+        )
 
     result = sdk.tasks.update(task_id, queue="failed", execution_notes=reason_truncated, **sdk_kwargs)
 

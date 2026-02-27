@@ -918,6 +918,79 @@ class TestHandleAgentResultRebaseMergeFailure:
 
 
 # =============================================================================
+# Catch-all done-queue guard tests
+# =============================================================================
+
+
+class TestCatchAllDoneQueueGuard:
+    """Catch-all in handle_agent_result_via_flow must not overwrite done with failed."""
+
+    def test_exception_after_task_done_does_not_move_to_failed(self, tmp_path: Path) -> None:
+        """When exception fires but task is already done, task must stay in done."""
+        result = {"status": "success", "decision": "approve"}
+        (tmp_path / "result.json").write_text(json.dumps(result))
+
+        # SDK returns queue=done (task already accepted post-merge)
+        mock_sdk = _make_sdk_mock(queue="done")
+
+        with (
+            patch("octopoid.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("octopoid.tasks.get_sdk", return_value=mock_sdk),
+            patch("octopoid.tasks.get_task_logger"),
+            patch("octopoid.flow.load_flow", side_effect=RuntimeError("post-done-step-exploded")),
+            patch("octopoid.result_handler.debug_log"),
+        ):
+            result_val = handle_agent_result_via_flow("TASK-test", "implementer-1", tmp_path)
+
+        # Must return True (PID safe to remove)
+        assert result_val is True
+        # Must NOT move task to failed
+        mock_sdk.tasks.update.assert_not_called()
+
+    def test_exception_after_task_done_logs_warning(self, tmp_path: Path) -> None:
+        """When exception fires but task is already done, a warning must be logged."""
+        result = {"status": "success", "decision": "approve"}
+        (tmp_path / "result.json").write_text(json.dumps(result))
+
+        mock_sdk = _make_sdk_mock(queue="done")
+
+        with (
+            patch("octopoid.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("octopoid.tasks.get_sdk", return_value=mock_sdk),
+            patch("octopoid.tasks.get_task_logger"),
+            patch("octopoid.flow.load_flow", side_effect=RuntimeError("post-done-step-exploded")),
+            patch("octopoid.result_handler.debug_log") as mock_log,
+        ):
+            handle_agent_result_via_flow("TASK-test", "implementer-1", tmp_path)
+
+        log_messages = [c.args[0] for c in mock_log.call_args_list]
+        assert any("done" in m for m in log_messages), (
+            f"Expected 'done' in debug log messages, got: {log_messages}"
+        )
+
+    def test_exception_when_task_not_done_still_moves_to_failed(self, tmp_path: Path) -> None:
+        """When exception fires and task is in claimed (not done), must move to failed."""
+        result = {"status": "success", "decision": "approve"}
+        (tmp_path / "result.json").write_text(json.dumps(result))
+
+        mock_sdk = _make_sdk_mock(queue="claimed")
+
+        with (
+            patch("octopoid.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("octopoid.tasks.get_sdk", return_value=mock_sdk),
+            patch("octopoid.tasks.get_task_logger"),
+            patch("octopoid.flow.load_flow", side_effect=RuntimeError("flow-exploded")),
+            patch("octopoid.result_handler.debug_log"),
+        ):
+            handle_agent_result_via_flow("TASK-test", "implementer-1", tmp_path)
+
+        # Must call update to failed when task is not done
+        mock_sdk.tasks.update.assert_called_once()
+        call_kwargs = mock_sdk.tasks.update.call_args
+        assert call_kwargs.kwargs.get("queue") == "failed"
+
+
+# =============================================================================
 # Detached HEAD enforcement tests
 # =============================================================================
 
