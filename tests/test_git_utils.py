@@ -634,6 +634,8 @@ class TestCreateTaskWorktree:
         task = {"id": "abc12345", "branch": "main"}
         worktree_path = temp_dir / "tasks" / "abc12345" / "worktree"
         self._make_worktree(worktree_path)
+        # Write matching base_branch file — worktree was created for "main"
+        (worktree_path.parent / "base_branch").write_text("main")
 
         def mock_run_git(args, cwd=None, check=True):
             result = MagicMock()
@@ -659,6 +661,8 @@ class TestCreateTaskWorktree:
         task = {"id": "abc12345", "branch": "feature/new-branch"}
         worktree_path = temp_dir / "tasks" / "abc12345" / "worktree"
         self._make_worktree(worktree_path)
+        # Write old base_branch — worktree was created from "main", task now wants "feature/new-branch"
+        (worktree_path.parent / "base_branch").write_text("main")
 
         call_log = []
 
@@ -667,19 +671,10 @@ class TestCreateTaskWorktree:
             result = MagicMock()
             result.stdout = "abc123def456\n"
 
-            if args[0] == "rev-parse" and "--verify" in args:
-                # Both verify calls succeed
-                result.returncode = 0
-            elif args == ["rev-parse", "HEAD"]:
-                result.returncode = 0
-                result.stdout = "oldcommit111\n"
-            elif args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+            if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
                 # Detached HEAD check — return "HEAD" to pass the assertion
                 result.returncode = 0
                 result.stdout = "HEAD\n"
-            elif args[0] == "merge-base" and "--is-ancestor" in args:
-                # origin/feature/new-branch is NOT ancestor of old worktree HEAD
-                result.returncode = 1
             elif args[0] == "worktree" and args[1] == "remove":
                 # Remove the worktree directory to simulate actual removal
                 import shutil
@@ -719,13 +714,13 @@ class TestCreateTaskWorktree:
         task = {"id": "abc12345", "branch": "feature/correct-branch"}
         worktree_path = temp_dir / "tasks" / "abc12345" / "worktree"
         self._make_worktree(worktree_path)
+        # Write old base_branch — worktree was from "main", task now wants "feature/correct-branch"
+        (worktree_path.parent / "base_branch").write_text("main")
 
         def mock_run_git(args, cwd=None, check=True):
             result = MagicMock()
             result.stdout = "somecommit\n"
-            if args[0] == "merge-base" and "--is-ancestor" in args:
-                result.returncode = 1  # mismatch
-            elif args[0] == "worktree" and args[1] == "remove":
+            if args[0] == "worktree" and args[1] == "remove":
                 import shutil
                 if worktree_path.exists():
                     shutil.rmtree(worktree_path)
@@ -783,21 +778,18 @@ class TestCreateTaskWorktree:
             assert len(merge_base_calls) == 0
 
     def test_treats_missing_origin_branch_as_match(self, temp_dir):
-        """If origin/<branch> doesn't exist, existing worktree is kept."""
+        """If no base_branch file exists, existing worktree is kept (safe fallback)."""
         from octopoid.git_utils import create_task_worktree
 
         task = {"id": "abc12345", "branch": "nonexistent-branch"}
         worktree_path = temp_dir / "tasks" / "abc12345" / "worktree"
         self._make_worktree(worktree_path)
+        # No base_branch file — fallback to True (keep worktree)
 
         def mock_run_git(args, cwd=None, check=True):
             result = MagicMock()
             result.stdout = "abc123\n"
-            if args[:2] == ["rev-parse", "--verify"]:
-                # origin/nonexistent-branch doesn't exist
-                result.returncode = 1
-            else:
-                result.returncode = 0
+            result.returncode = 0
             return result
 
         with patch('octopoid.git_utils.find_parent_project', return_value=temp_dir), \
@@ -810,3 +802,405 @@ class TestCreateTaskWorktree:
             # Should not recreate the worktree
             add_calls = [c for c in mock_git.call_args_list if c[0][0][:2] == ["worktree", "add"]]
             assert len(add_calls) == 0
+
+    def test_base_branch_file_written_on_create(self, temp_dir):
+        """base_branch file is written when a new worktree is created."""
+        from octopoid.git_utils import create_task_worktree
+
+        task = {"id": "newtask9", "branch": "feature/cool"}
+        worktree_path = temp_dir / "tasks" / "newtask9" / "worktree"
+
+        def mock_run_git(args, cwd=None, check=True):
+            result = MagicMock()
+            result.returncode = 0
+            result.stdout = "HEAD\n" if args == ["rev-parse", "--abbrev-ref", "HEAD"] else "abc\n"
+            if args[:2] == ["worktree", "add"]:
+                worktree_path.mkdir(parents=True, exist_ok=True)
+            return result
+
+        with patch('octopoid.git_utils.find_parent_project', return_value=temp_dir), \
+             patch('octopoid.git_utils.get_task_worktree_path', return_value=worktree_path), \
+             patch('octopoid.git_utils.run_git', side_effect=mock_run_git):
+
+            create_task_worktree(task)
+
+        base_branch_file = worktree_path.parent / "base_branch"
+        assert base_branch_file.exists(), "base_branch file should be written after creation"
+        assert base_branch_file.read_text().strip() == "feature/cool"
+
+    def test_main_advancing_does_not_destroy_worktree(self, temp_dir):
+        """When main advances past the worktree base, the worktree is preserved.
+
+        This is the key regression test: the old code used git ancestry to check
+        branch match, which failed whenever main advanced (adding new commits on
+        main makes origin/main no longer an ancestor of the worktree HEAD).
+        The new code uses the stored base_branch file, so advancing main has no
+        effect on the branch-match check.
+        """
+        from octopoid.git_utils import create_task_worktree
+
+        task = {"id": "abc12345", "branch": "main"}
+        worktree_path = temp_dir / "tasks" / "abc12345" / "worktree"
+        self._make_worktree(worktree_path)
+        # Write matching base_branch — worktree was created from "main"
+        (worktree_path.parent / "base_branch").write_text("main")
+
+        # Simulate: old origin/main was A, agent made commits B+C (worktree HEAD=C),
+        # now origin/main has advanced to D+E. origin/main is no longer an ancestor
+        # of worktree HEAD C. The old git ancestry check would return False here.
+        # The new file-based check should return True (main == main).
+        git_call_log = []
+
+        def mock_run_git(args, cwd=None, check=True):
+            git_call_log.append(args[:])
+            result = MagicMock()
+            result.returncode = 0
+            result.stdout = "abc123\n"
+            return result
+
+        with patch('octopoid.git_utils.find_parent_project', return_value=temp_dir), \
+             patch('octopoid.git_utils.get_task_worktree_path', return_value=worktree_path), \
+             patch('octopoid.git_utils.run_git', side_effect=mock_run_git) as mock_git:
+
+            result = create_task_worktree(task)
+
+        # Worktree should be reused, not recreated
+        assert result == worktree_path
+        add_calls = [c for c in git_call_log if c[:2] == ["worktree", "add"]]
+        assert len(add_calls) == 0, "Worktree should not have been recreated"
+        remove_calls = [c for c in git_call_log if c[:2] == ["worktree", "remove"]]
+        assert len(remove_calls) == 0, "Worktree should not have been removed"
+
+    def test_previous_commits_preserved_when_reusing(self, temp_dir):
+        """Reused worktree still has its prior commits (git history preserved)."""
+        from octopoid.git_utils import create_task_worktree
+
+        task = {"id": "abc12345", "branch": "main"}
+        worktree_path = temp_dir / "tasks" / "abc12345" / "worktree"
+        self._make_worktree(worktree_path)
+        (worktree_path.parent / "base_branch").write_text("main")
+
+        # Simulate a file that the "previous agent" created
+        prior_work_file = worktree_path / "prior_work.py"
+        prior_work_file.write_text("# Previous agent's work")
+
+        def mock_run_git(args, cwd=None, check=True):
+            result = MagicMock()
+            result.returncode = 0
+            result.stdout = "abc123\n"
+            return result
+
+        with patch('octopoid.git_utils.find_parent_project', return_value=temp_dir), \
+             patch('octopoid.git_utils.get_task_worktree_path', return_value=worktree_path), \
+             patch('octopoid.git_utils.run_git', side_effect=mock_run_git):
+
+            result = create_task_worktree(task)
+
+        # The prior work file should still exist
+        assert prior_work_file.exists(), "Previous agent's work files should be preserved"
+        assert prior_work_file.read_text() == "# Previous agent's work"
+
+    def test_legitimate_branch_mismatch_destroys_worktree(self, temp_dir):
+        """Worktree is recreated when task targets a genuinely different branch.
+
+        Example: worktree was created from feature/foo, task now targets main.
+        """
+        from octopoid.git_utils import create_task_worktree
+
+        # Task was originally on feature/foo branch, now retargeted to main
+        task = {"id": "abc12345", "branch": "main"}
+        worktree_path = temp_dir / "tasks" / "abc12345" / "worktree"
+        self._make_worktree(worktree_path)
+        # base_branch file shows the old branch
+        (worktree_path.parent / "base_branch").write_text("feature/foo")
+
+        call_log = []
+
+        def mock_run_git(args, cwd=None, check=True):
+            call_log.append(args[:])
+            result = MagicMock()
+            result.returncode = 0
+            result.stdout = "HEAD\n" if args == ["rev-parse", "--abbrev-ref", "HEAD"] else "abc\n"
+            if args[:2] == ["worktree", "remove"]:
+                import shutil
+                if worktree_path.exists():
+                    shutil.rmtree(worktree_path)
+            elif args[:2] == ["worktree", "add"]:
+                worktree_path.mkdir(parents=True, exist_ok=True)
+            return result
+
+        with patch('octopoid.git_utils.find_parent_project', return_value=temp_dir), \
+             patch('octopoid.git_utils.get_task_worktree_path', return_value=worktree_path), \
+             patch('octopoid.git_utils.run_git', side_effect=mock_run_git):
+
+            result = create_task_worktree(task)
+
+        assert result == worktree_path
+        # Worktree should have been removed and recreated
+        remove_calls = [c for c in call_log if c[:2] == ["worktree", "remove"]]
+        assert len(remove_calls) >= 1, "Old mismatched worktree should have been removed"
+        add_calls = [c for c in call_log if c[:2] == ["worktree", "add"]]
+        assert len(add_calls) == 1, "New worktree should have been created"
+        # New base_branch file should reflect the new branch
+        assert (worktree_path.parent / "base_branch").read_text().strip() == "main"
+
+
+class TestWorktreeBranchMatches:
+    """Tests for the _worktree_branch_matches branch detection logic."""
+
+    def test_matches_when_stored_branch_equals_requested(self, temp_dir):
+        """Returns True when stored base_branch matches the requested branch."""
+        from octopoid.git_utils import _worktree_branch_matches
+
+        worktree_path = temp_dir / "worktree"
+        worktree_path.mkdir(parents=True)
+        (worktree_path.parent / "base_branch").write_text("main")
+
+        result = _worktree_branch_matches(temp_dir, worktree_path, "main")
+        assert result is True
+
+    def test_mismatch_when_stored_branch_differs(self, temp_dir):
+        """Returns False when stored base_branch does not match the requested branch."""
+        from octopoid.git_utils import _worktree_branch_matches
+
+        worktree_path = temp_dir / "worktree"
+        worktree_path.mkdir(parents=True)
+        (worktree_path.parent / "base_branch").write_text("feature/foo")
+
+        result = _worktree_branch_matches(temp_dir, worktree_path, "main")
+        assert result is False
+
+    def test_fallback_true_when_no_base_branch_file(self, temp_dir):
+        """Returns True (keep worktree) when no base_branch file exists."""
+        from octopoid.git_utils import _worktree_branch_matches
+
+        worktree_path = temp_dir / "worktree"
+        worktree_path.mkdir(parents=True)
+        # No base_branch file written
+
+        result = _worktree_branch_matches(temp_dir, worktree_path, "main")
+        assert result is True
+
+    def test_matches_custom_branch(self, temp_dir):
+        """Works correctly for non-main branch names."""
+        from octopoid.git_utils import _worktree_branch_matches
+
+        worktree_path = temp_dir / "worktree"
+        worktree_path.mkdir(parents=True)
+        (worktree_path.parent / "base_branch").write_text("feature/my-feature")
+
+        assert _worktree_branch_matches(temp_dir, worktree_path, "feature/my-feature") is True
+        assert _worktree_branch_matches(temp_dir, worktree_path, "main") is False
+
+    def test_handles_whitespace_in_stored_branch(self, temp_dir):
+        """Strips trailing whitespace/newlines from stored branch name."""
+        from octopoid.git_utils import _worktree_branch_matches
+
+        worktree_path = temp_dir / "worktree"
+        worktree_path.mkdir(parents=True)
+        (worktree_path.parent / "base_branch").write_text("main\n")
+
+        result = _worktree_branch_matches(temp_dir, worktree_path, "main")
+        assert result is True
+
+
+class TestReuseExistingWorktree:
+    """Tests for the _reuse_existing_worktree helper."""
+
+    def test_resets_stdout_log(self, temp_dir):
+        """stdout.log is deleted when reusing a worktree."""
+        from octopoid.git_utils import _reuse_existing_worktree
+
+        worktree_path = temp_dir / "worktree"
+        worktree_path.mkdir(parents=True)
+        task_dir = worktree_path.parent
+
+        stdout_log = task_dir / "stdout.log"
+        stdout_log.write_text("previous run output")
+
+        def mock_run_git(args, cwd=None, check=True):
+            result = MagicMock()
+            result.returncode = 0
+            result.stdout = "HEAD\n"
+            return result
+
+        with patch('octopoid.git_utils.run_git', side_effect=mock_run_git):
+            _reuse_existing_worktree(temp_dir, worktree_path, task_dir, "main", "task123")
+
+        assert not stdout_log.exists(), "stdout.log should be deleted on reuse"
+
+    def test_resets_stderr_log(self, temp_dir):
+        """stderr.log is deleted when reusing a worktree."""
+        from octopoid.git_utils import _reuse_existing_worktree
+
+        worktree_path = temp_dir / "worktree"
+        worktree_path.mkdir(parents=True)
+        task_dir = worktree_path.parent
+
+        stderr_log = task_dir / "stderr.log"
+        stderr_log.write_text("previous errors")
+
+        def mock_run_git(args, cwd=None, check=True):
+            result = MagicMock()
+            result.returncode = 0
+            result.stdout = "HEAD\n"
+            return result
+
+        with patch('octopoid.git_utils.run_git', side_effect=mock_run_git):
+            _reuse_existing_worktree(temp_dir, worktree_path, task_dir, "main", "task123")
+
+        assert not stderr_log.exists(), "stderr.log should be deleted on reuse"
+
+    def test_resets_tool_counter(self, temp_dir):
+        """tool_counter is deleted when reusing a worktree."""
+        from octopoid.git_utils import _reuse_existing_worktree
+
+        worktree_path = temp_dir / "worktree"
+        worktree_path.mkdir(parents=True)
+        task_dir = worktree_path.parent
+
+        tool_counter = task_dir / "tool_counter"
+        tool_counter.write_text("x" * 42)  # 42 tool calls in previous run
+
+        def mock_run_git(args, cwd=None, check=True):
+            result = MagicMock()
+            result.returncode = 0
+            result.stdout = "HEAD\n"
+            return result
+
+        with patch('octopoid.git_utils.run_git', side_effect=mock_run_git):
+            _reuse_existing_worktree(temp_dir, worktree_path, task_dir, "main", "task123")
+
+        assert not tool_counter.exists(), "tool_counter should be deleted on reuse"
+
+    def test_tolerates_missing_log_files(self, temp_dir):
+        """No error when log files don't exist yet (first reuse of fresh worktree)."""
+        from octopoid.git_utils import _reuse_existing_worktree
+
+        worktree_path = temp_dir / "worktree"
+        worktree_path.mkdir(parents=True)
+        task_dir = worktree_path.parent
+        # No log files
+
+        def mock_run_git(args, cwd=None, check=True):
+            result = MagicMock()
+            result.returncode = 0
+            result.stdout = "HEAD\n"
+            return result
+
+        # Should not raise
+        with patch('octopoid.git_utils.run_git', side_effect=mock_run_git):
+            _reuse_existing_worktree(temp_dir, worktree_path, task_dir, "main", "task123")
+
+    def test_rebases_named_branch_onto_origin(self, temp_dir):
+        """When worktree is on a named branch, rebase is attempted."""
+        from octopoid.git_utils import _reuse_existing_worktree
+
+        worktree_path = temp_dir / "worktree"
+        worktree_path.mkdir(parents=True)
+        task_dir = worktree_path.parent
+        git_calls = []
+
+        def mock_run_git(args, cwd=None, check=True):
+            git_calls.append(args[:])
+            result = MagicMock()
+            result.returncode = 0
+            # Return a named branch (not detached HEAD)
+            result.stdout = "agent/task123-20260101-120000\n"
+            return result
+
+        with patch('octopoid.git_utils.run_git', side_effect=mock_run_git):
+            _reuse_existing_worktree(temp_dir, worktree_path, task_dir, "main", "task123")
+
+        rebase_calls = [c for c in git_calls if c[0] == "rebase"]
+        assert len(rebase_calls) == 1, "Should attempt rebase for named branch"
+        assert "origin/main" in rebase_calls[0], "Should rebase onto origin/main"
+
+    def test_aborts_rebase_on_conflict(self, temp_dir, capsys):
+        """When rebase has conflicts, aborts and leaves worktree as-is."""
+        from octopoid.git_utils import _reuse_existing_worktree
+
+        worktree_path = temp_dir / "worktree"
+        worktree_path.mkdir(parents=True)
+        task_dir = worktree_path.parent
+        git_calls = []
+
+        def mock_run_git(args, cwd=None, check=True):
+            git_calls.append(args[:])
+            result = MagicMock()
+            if args[0] == "rev-parse" and "--abbrev-ref" in args:
+                result.returncode = 0
+                result.stdout = "agent/task123-20260101-120000\n"
+            elif args[0] == "rebase" and args[0] != "rebase --abort":
+                result.returncode = 1  # Conflict!
+                result.stdout = ""
+            elif args == ["rebase", "--abort"]:
+                result.returncode = 0
+                result.stdout = ""
+            else:
+                result.returncode = 0
+                result.stdout = ""
+            return result
+
+        with patch('octopoid.git_utils.run_git', side_effect=mock_run_git):
+            _reuse_existing_worktree(temp_dir, worktree_path, task_dir, "main", "task123")
+
+        abort_calls = [c for c in git_calls if c == ["rebase", "--abort"]]
+        assert len(abort_calls) == 1, "Should abort the conflicting rebase"
+        captured = capsys.readouterr()
+        assert "conflict" in captured.out.lower() or "leaving" in captured.out.lower()
+
+    def test_updates_detached_head_when_no_commits_ahead(self, temp_dir):
+        """When detached HEAD has no agent commits, updates to current origin/main."""
+        from octopoid.git_utils import _reuse_existing_worktree
+
+        worktree_path = temp_dir / "worktree"
+        worktree_path.mkdir(parents=True)
+        task_dir = worktree_path.parent
+        git_calls = []
+
+        def mock_run_git(args, cwd=None, check=True):
+            git_calls.append(args[:])
+            result = MagicMock()
+            result.returncode = 0
+            if args[:2] == ["rev-parse", "--abbrev-ref"]:
+                result.stdout = "HEAD\n"  # detached HEAD
+            elif args[:2] == ["rev-list", "--count"]:
+                result.stdout = "0\n"  # no commits ahead
+            else:
+                result.stdout = ""
+            return result
+
+        with patch('octopoid.git_utils.run_git', side_effect=mock_run_git):
+            _reuse_existing_worktree(temp_dir, worktree_path, task_dir, "main", "task123")
+
+        checkout_calls = [c for c in git_calls if c[:2] == ["checkout", "--detach"]]
+        assert len(checkout_calls) == 1, "Should update detached HEAD to current origin/main"
+        assert "origin/main" in checkout_calls[0]
+
+    def test_leaves_detached_head_with_commits_alone(self, temp_dir):
+        """When detached HEAD has agent commits, leaves it untouched."""
+        from octopoid.git_utils import _reuse_existing_worktree
+
+        worktree_path = temp_dir / "worktree"
+        worktree_path.mkdir(parents=True)
+        task_dir = worktree_path.parent
+        git_calls = []
+
+        def mock_run_git(args, cwd=None, check=True):
+            git_calls.append(args[:])
+            result = MagicMock()
+            result.returncode = 0
+            if args[:2] == ["rev-parse", "--abbrev-ref"]:
+                result.stdout = "HEAD\n"  # detached HEAD
+            elif args[:2] == ["rev-list", "--count"]:
+                result.stdout = "3\n"  # 3 commits ahead — agent did work
+            else:
+                result.stdout = ""
+            return result
+
+        with patch('octopoid.git_utils.run_git', side_effect=mock_run_git):
+            _reuse_existing_worktree(temp_dir, worktree_path, task_dir, "main", "task123")
+
+        checkout_calls = [c for c in git_calls if c[:2] == ["checkout", "--detach"]]
+        assert len(checkout_calls) == 0, "Should NOT update detached HEAD when agent has commits"
