@@ -8,7 +8,7 @@ from pathlib import Path
 # Add parent to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from orchestrator.queue_utils import list_tasks
+from octopoid.queue_utils import list_tasks
 
 
 def main():
@@ -30,7 +30,7 @@ def main():
     print("-" * 60)
 
     result = subprocess.run(
-        [sys.executable, "-m", "orchestrator.orchestrator.roles.breakdown",
+        [sys.executable, "-m", "octopoid.roles.breakdown",
          "--agent-name", "breakdown-agent"],
         cwd=Path(__file__).parent.parent.parent,  # boxen root
     )

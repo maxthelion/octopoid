@@ -53,8 +53,8 @@ To get agent status programmatically:
 
 ```python
 from pathlib import Path
-from orchestrator.config import get_agents, get_agents_runtime_dir
-from orchestrator.state_utils import load_state
+from octopoid.config import get_agents, get_agents_runtime_dir
+from octopoid.state_utils import load_state
 
 for agent in get_agents():
     name = agent['name']

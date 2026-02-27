@@ -41,7 +41,7 @@ import sys
 sys.path.insert(0, "$REPO_ROOT")
 
 # Temporarily override grace period via monkeypatch
-import orchestrator.scheduler as sched
+import octopoid.scheduler as sched
 
 _orig_sweep = sched.sweep_stale_resources
 
@@ -49,9 +49,9 @@ def _patched_sweep():
     """Sweep with overridden grace period."""
     import shutil
     from datetime import datetime, timezone
-    from orchestrator import queue_utils
-    from orchestrator.config import find_parent_project, get_tasks_dir, get_logs_dir
-    from orchestrator.git_utils import run_git
+    from octopoid import queue_utils
+    from octopoid.config import find_parent_project, get_tasks_dir, get_logs_dir
+    from octopoid.git_utils import run_git
 
     GRACE_PERIOD_SECONDS = $GRACE
 

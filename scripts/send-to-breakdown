@@ -8,7 +8,7 @@ from pathlib import Path
 # Add parent to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from orchestrator.queue_utils import send_to_breakdown
+from octopoid.queue_utils import send_to_breakdown
 
 
 def main():
@@ -40,7 +40,7 @@ def main():
         print(f"Breakdown task: {Path(result.get('breakdown_task', '')).name if result.get('breakdown_task') else 'N/A'}")
         print()
         print("Next steps:")
-        print("  1. Run breakdown agent: python -m orchestrator.orchestrator.roles.breakdown")
+        print("  1. Run breakdown agent: python -m octopoid.roles.breakdown")
         print(f"  2. Review breakdown: cat .octopoid/runtime/shared/breakdowns/{result['project_id']}-breakdown.md")
         print(f"  3. Approve: ./scripts/approve-breakdown {result['project_id']}")
     else:
