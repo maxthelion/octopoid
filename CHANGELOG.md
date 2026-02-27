@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Refactored `handle_agent_result_via_flow` in `octopoid/result_handler.py` to extract five single-responsibility helpers: `_resolve_task_and_transition`, `_handle_agent_failure`, `_handle_gatekeeper_reject`, `_handle_approve_and_run_steps`, and `_dispatch_result`. The top-level function is now a ~10-line coordinator. No functional change — all 713 unit tests pass.
+### Changed
 
 - `fail_task(task_id, reason, source, **kwargs)` in `octopoid/tasks.py` is now the single canonical path to the failed queue. All 5 raw `sdk.tasks.update(queue='failed')` callsites replaced:
   - `result_handler.py` flow-dispatch-error (catch-all exception)
