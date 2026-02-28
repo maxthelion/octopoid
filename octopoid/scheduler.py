@@ -1318,7 +1318,20 @@ def check_and_update_finished_agents() -> None:
                     del pids[pid]
                     logger.info(f"Instance {instance_name} (PID {pid}) finished (no task dir)")
             else:
-                # No task ID — clean up the PID
+                # No task ID — background agent job (e.g. codebase_analyst).
+                # Write a run log entry before removing the PID so the dashboard
+                # can surface "last run: 3m ago, processed 2 drafts".
+                try:
+                    from .agent_run_log import write_run_log
+                    from .state_utils import load_state as _load_state
+                    state_path = get_agent_state_path(blueprint_name)
+                    _state = _load_state(state_path)
+                    job_dir = _state.extra.get("job_dir")
+                    started_at = _state.last_started
+                    write_run_log(blueprint_name, job_dir, started_at)
+                    logger.debug(f"Wrote run log for background agent {blueprint_name}")
+                except Exception as _log_err:
+                    logger.debug(f"Run log write failed for {blueprint_name}: {_log_err}")
                 del pids[pid]
                 logger.info(f"Instance {instance_name} (PID {pid}) finished (no task id)")
 

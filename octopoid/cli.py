@@ -181,6 +181,47 @@ def cmd_install_commands(args: argparse.Namespace) -> None:
         print("All commands up to date.")
 
 
+def cmd_trigger_agent(args: argparse.Namespace) -> None:
+    """Force a background agent job to run immediately, bypassing the interval guard.
+
+    Looks up the job by name in .octopoid/jobs.yaml and spawns it regardless of
+    when it last ran. Only works for jobs with type: agent.
+    """
+    from .jobs import load_jobs_yaml, _run_agent_job, JobContext
+    from .scheduler import load_scheduler_state
+
+    job_name = args.job_name
+    jobs = load_jobs_yaml()
+
+    # Find the job definition
+    job_def = next((j for j in jobs if j.get("name") == job_name), None)
+    if job_def is None:
+        available = [j.get("name", "") for j in jobs if j.get("type") == "agent"]
+        print(f"Job '{job_name}' not found.", file=sys.stderr)
+        if available:
+            print(f"Available agent jobs: {', '.join(available)}", file=sys.stderr)
+        sys.exit(1)
+
+    job_type = job_def.get("type", "script")
+    if job_type != "agent":
+        print(
+            f"Job '{job_name}' has type '{job_type}' — only 'agent' jobs can be triggered.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    print(f"Triggering agent job: {job_name}")
+
+    scheduler_state = load_scheduler_state()
+    ctx = JobContext(scheduler_state=scheduler_state, poll_data=None)
+    try:
+        _run_agent_job(job_def, ctx)
+        print(f"Agent job '{job_name}' spawned successfully.")
+    except Exception as e:
+        print(f"Failed to spawn agent job '{job_name}': {e}", file=sys.stderr)
+        sys.exit(1)
+
+
 def cmd_sync_flows(args: argparse.Namespace) -> None:
     """Read all .octopoid/flows/*.yaml and register them on the server."""
     from .config import get_orchestrator_dir
@@ -318,6 +359,14 @@ def build_parser() -> argparse.ArgumentParser:
     # sync-flows
     p_sf = sub.add_parser("sync-flows", help="Register local flow YAML files on the server")
     p_sf.set_defaults(func=cmd_sync_flows)
+
+    # trigger-agent
+    p_ta = sub.add_parser(
+        "trigger-agent",
+        help="Force a background agent job to run immediately (bypasses interval guard)",
+    )
+    p_ta.add_argument("job_name", help="Name of the agent job to trigger (from jobs.yaml)")
+    p_ta.set_defaults(func=cmd_trigger_agent)
 
     return parser
 

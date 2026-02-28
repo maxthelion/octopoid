@@ -617,6 +617,15 @@ def _gather_jobs() -> list[dict[str, Any]]:
             except (ValueError, TypeError):
                 pass
 
+        # Include the most recent run log entry for agent-type jobs
+        last_run_log: dict[str, Any] | None = None
+        if job_type == "agent":
+            try:
+                from .agent_run_log import get_last_run_summary
+                last_run_log = get_last_run_summary(name)
+            except Exception:
+                pass
+
         result.append({
             "name": name,
             "agent_type": "job",
@@ -625,6 +634,7 @@ def _gather_jobs() -> list[dict[str, Any]]:
             "interval": interval,
             "last_run": last_run,
             "next_run": next_run,
+            "last_run_log": last_run_log,
         })
 
     return result
