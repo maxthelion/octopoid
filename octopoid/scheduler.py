@@ -28,7 +28,7 @@ from .config import (
     get_tasks_dir,
     is_system_paused,
 )
-from .git_utils import ensure_worktree, get_task_branch, get_worktree_path, run_git
+from .git_utils import get_task_branch, get_worktree_path, run_git
 from .lock_utils import locked_or_skip
 from .port_utils import get_port_env_vars
 from . import queue_utils
@@ -49,7 +49,6 @@ from .pool import (
 )
 from .result_handler import (
     _get_circuit_breaker_threshold,
-    _get_fail_target_from_flow,
     handle_agent_result,
     handle_agent_result_via_flow,
     handle_fixer_result,
