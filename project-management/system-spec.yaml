@@ -35,8 +35,8 @@ behaviours:
         simplify scope). failed should mean "the system tried to
         self-correct and couldn't", not "the first attempt didn't work".
       source: draft-181
-      status: aspirational  # _handle_fail_outcome still bypasses fail_task()
-      test: null
+      status: enforced
+      test: tests/test_requires_intervention.py::TestHandleFailOutcomeRouting::test_agent_failure_routes_to_requires_intervention
 
     - id: fail-task-single-path
       description: >
@@ -48,8 +48,8 @@ behaviours:
         creates paths where tasks skip intervention, violating
         self-correcting-failure.
       source: draft-181
-      status: aspirational  # _handle_fail_outcome bypasses fail_task()
-      test: null
+      status: enforced
+      test: tests/test_requires_intervention.py::TestNoDirectFailedCalls
 
   task-lifecycle:
     - id: worktree-preservation

@@ -443,20 +443,20 @@ def _handle_done_outcome(sdk: object, task_id: str, task: dict, result: dict, ta
 
 
 def _handle_fail_outcome(sdk: object, task_id: str, task: dict, reason: str, current_queue: str) -> bool:
-    """Move a failed task to the appropriate queue, consulting the flow for the target.
+    """Move a failed task through intervention before it can reach the failed queue.
 
-    Loads the task's flow to find any on_fail target defined on conditions for
-    the current transition. Falls back to "failed" if the flow defines no
-    failure path.
+    Routes all agent failure outcomes (failed, error) through fail_task(), which
+    routes to requires-intervention on first failure and only to failed if the
+    fixer also fails. This satisfies the self-correcting-failure invariant.
 
     Returns:
         True if the task was transitioned (PID safe to remove).
         False if the task was not transitioned and the PID should be kept for retry.
     """
     if current_queue == "claimed":
-        fail_target = _get_fail_target_from_flow(task, current_queue)
-        sdk.tasks.update(task_id, queue=fail_target)
-        logger.debug(f"Task {task_id}: failed (claimed → {fail_target}): {reason}")
+        from .tasks import fail_task  # noqa: PLC0415
+        fail_task(task_id, reason=reason, source="agent-outcome-failed")
+        logger.debug(f"Task {task_id}: failed (claimed → intervention): {reason}")
         return True
     else:
         _TERMINAL_QUEUES = {"done", "failed"}
@@ -1037,15 +1037,13 @@ def handle_fixer_result(task_id: str, agent_name: str, task_dir: Path) -> bool:
                 task_dir, result,
             )
         except Exception as resume_err:
-            # Flow resume failed — move to true terminal failed
+            # Flow resume failed — route through fail_task() which goes directly to
+            # failed when the task is still in requires-intervention (second failure).
             print(f"[{datetime.now().isoformat()}] ERROR: Flow resume failed for {task_id} after fix: {resume_err}")
             logger.debug(f"Fixer: flow resume error for {task_id}: {resume_err}")
             try:
-                from .tasks import get_task_logger  # noqa: PLC0415
-                sdk.tasks.update(task_id, queue="failed", execution_notes=str(resume_err)[:500], claimed_by=None)
-                get_task_logger(task_id).log_failed(
-                    error=str(resume_err)[:500], source="fixer-resume-error"
-                )
+                from .tasks import fail_task  # noqa: PLC0415
+                fail_task(task_id, reason=str(resume_err)[:500], source="fixer-resume-error")
             except Exception as terminal_e:
                 print(f"[{datetime.now().isoformat()}] ERROR: Failed to move {task_id} to failed: {terminal_e}")
 
@@ -1077,11 +1075,11 @@ def handle_fixer_result(task_id: str, agent_name: str, task_dir: Path) -> bool:
         except Exception as msg_e:
             print(f"[{datetime.now().isoformat()}] WARN: Failed to post fixer failure message for {task_id}: {msg_e}")
 
-        # True terminal failure — do NOT go through fail_task() (would re-enter requires-intervention)
+        # True terminal failure — fail_task() goes directly to failed when the task
+        # is already in requires-intervention (second failure path in fail_task).
         try:
-            sdk.tasks.update(task_id, queue="failed", execution_notes=reason_truncated, claimed_by=None)
-            from .tasks import get_task_logger  # noqa: PLC0415
-            get_task_logger(task_id).log_failed(error=reason_truncated, source="fixer-failed")
+            from .tasks import fail_task  # noqa: PLC0415
+            fail_task(task_id, reason=reason_truncated, source="fixer-failed", claimed_by=None)
         except Exception as terminal_e:
             print(f"[{datetime.now().isoformat()}] ERROR: Failed to move {task_id} to failed: {terminal_e}")
 
