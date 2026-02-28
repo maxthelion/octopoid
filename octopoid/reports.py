@@ -122,6 +122,16 @@ def _gather_work(sdk: "OctopoidSDK") -> dict[str, list[dict[str, Any]]]:
             else:
                 checking.append(t)
 
+    # Tasks needing intervention — flag them but keep their actual queue
+    intervention = []
+    for t in sdk.tasks.list(queue='requires-intervention'):
+        formatted = _format_task(t)
+        formatted["needs_intervention"] = True
+        task_id = formatted.get("id")
+        if task_id and task_id in live_turns:
+            formatted["turns"] = live_turns[task_id]
+        intervention.append(formatted)
+
     # "done_today" — tasks completed in the last 24 hours
     done_all = sdk.tasks.list(queue='done')
     cutoff = datetime.now() - timedelta(hours=24)
@@ -132,6 +142,7 @@ def _gather_work(sdk: "OctopoidSDK") -> dict[str, list[dict[str, Any]]]:
         "in_progress": claimed,
         "checking": checking,
         "in_review": in_review,
+        "intervention": intervention,
         "done_today": done_today,
     }
 

@@ -438,7 +438,7 @@ class WorkTab(TabBase):
 
         # Collect all active tasks from all work queues
         all_tasks: list[dict] = []
-        for key in ("incoming", "in_progress", "checking", "in_review", "done_today"):
+        for key in ("incoming", "in_progress", "checking", "in_review", "intervention", "done_today"):
             all_tasks.extend(work.get(key, []))
 
         # Fall back to a default flow definition if server returned none
