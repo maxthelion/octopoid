@@ -802,3 +802,115 @@ class TestStepBaseClassDefaults:
         s = MyStep()
         ctx = StepContext(task={}, result={}, task_dir=tmp_path)
         s.verify(ctx)  # Should not raise
+
+    def test_execute_raises_not_implemented_on_bare_step(self, tmp_path):
+        """Bare Step.execute() raises NotImplementedError."""
+        # Cannot instantiate Step directly (abstract method), use a subclass
+        # that does NOT override execute to confirm the base raises.
+        class BareStep(Step):
+            pass
+
+        s = BareStep()
+        s.name = "bare"
+        ctx = StepContext(task={}, result={}, task_dir=tmp_path)
+        with pytest.raises(NotImplementedError, match="must implement execute"):
+            s.execute(ctx)
+
+
+# =============================================================================
+# rebase_on_base execute phase
+# =============================================================================
+
+
+class TestRebaseOnBaseExecute:
+    """Tests for _RebaseOnBaseStep.execute()."""
+
+    def _make_ctx(self, tmp_path: Path) -> StepContext:
+        (tmp_path / "worktree").mkdir(exist_ok=True)
+        return StepContext(task={}, result={}, task_dir=tmp_path)
+
+    def test_execute_success(self, tmp_path):
+        """execute() performs git fetch and rebase successfully."""
+        from octopoid.steps import STEP_REGISTRY
+        step = STEP_REGISTRY["rebase_on_base"]
+        ctx = self._make_ctx(tmp_path)
+
+        ok = MagicMock(returncode=0, stdout="", stderr="")
+
+        with patch("octopoid.steps.subprocess.run", return_value=ok), \
+             patch("octopoid.config.get_base_branch", return_value="main"):
+            step.execute(ctx)  # Should not raise
+
+    def test_execute_raises_when_fetch_fails(self, tmp_path):
+        """execute() raises RuntimeError when git fetch fails."""
+        from octopoid.steps import STEP_REGISTRY
+        step = STEP_REGISTRY["rebase_on_base"]
+        ctx = self._make_ctx(tmp_path)
+
+        fetch_fail = MagicMock(returncode=1, stdout="", stderr="fatal: connection refused")
+        ok = MagicMock(returncode=0, stdout="", stderr="")
+
+        def mock_run(cmd, *args, **kwargs):
+            if "fetch" in cmd:
+                return fetch_fail
+            return ok
+
+        with patch("octopoid.steps.subprocess.run", side_effect=mock_run), \
+             patch("octopoid.config.get_base_branch", return_value="main"):
+            with pytest.raises(RuntimeError, match="git fetch failed"):
+                step.execute(ctx)
+
+    def test_execute_raises_when_rebase_fails(self, tmp_path):
+        """execute() raises RuntimeError and aborts rebase when git rebase fails."""
+        from octopoid.steps import STEP_REGISTRY
+        step = STEP_REGISTRY["rebase_on_base"]
+        ctx = self._make_ctx(tmp_path)
+
+        ok = MagicMock(returncode=0, stdout="", stderr="")
+        rebase_fail = MagicMock(returncode=1, stdout="conflict", stderr="CONFLICT")
+
+        calls: list = []
+
+        def mock_run(cmd, *args, **kwargs):
+            calls.append(cmd)
+            if "rebase" in cmd and "--abort" not in cmd:
+                return rebase_fail
+            return ok
+
+        with patch("octopoid.steps.subprocess.run", side_effect=mock_run), \
+             patch("octopoid.config.get_base_branch", return_value="main"):
+            with pytest.raises(RuntimeError, match="git rebase"):
+                step.execute(ctx)
+
+        # Verify that git rebase --abort was called after failure
+        abort_calls = [c for c in calls if "rebase" in c and "--abort" in c]
+        assert len(abort_calls) == 1
+
+
+# =============================================================================
+# push_branch execute phase
+# =============================================================================
+
+
+class TestPushBranchExecute:
+    """Tests for _PushBranchStep.execute()."""
+
+    def _make_ctx(self, tmp_path: Path, task: dict | None = None) -> StepContext:
+        (tmp_path / "worktree").mkdir(exist_ok=True)
+        return StepContext(task=task or {"id": "abc123"}, result={}, task_dir=tmp_path)
+
+    def test_execute_calls_repo_manager(self, tmp_path, mock_sdk_for_unit_tests):
+        """execute() calls RepoManager.ensure_on_branch and push_branch."""
+        from octopoid.steps import STEP_REGISTRY
+        step = STEP_REGISTRY["push_branch"]
+        ctx = self._make_ctx(tmp_path)
+
+        mock_repo = MagicMock()
+        mock_repo_cls = MagicMock(return_value=mock_repo)
+
+        with patch("octopoid.repo_manager.RepoManager", mock_repo_cls), \
+             patch("octopoid.git_utils.get_task_branch", return_value="agent/abc123"):
+            step.execute(ctx)
+
+        mock_repo.ensure_on_branch.assert_called_once_with("agent/abc123")
+        mock_repo.push_branch.assert_called_once()
