@@ -65,3 +65,11 @@ Known symptoms and their root causes. **Consult this first when diagnosing a pro
 | `_gather_prs` burning API calls | Function not disabled when expected; verify before trusting plan claims | [CLAUDE.md](../CLAUDE.md#plan-verification-rule) |
 | 409 on submit after lease expires | Agent finished and wrote `result.json` but scheduler didn't process the result before the lease expired. Server rejects `submit` because lease is invalid. Fix: requeue task, re-claim, then submit. Root cause: scheduler was down (see stale state section). | Task 543cd9d7 |
 | 409 on reject/requeue/accept | Server's `canTransition()` checks registered flow transitions. Reverse transitions (reject back to incoming, requeue) must be explicitly registered. Fixed by `_implicit_reverse_transitions()` in `flow.py`. | Commit e210766 |
+
+## Codebase-analyst agent
+
+| Symptom | Likely cause | See |
+|---|---|---|
+| Multiple duplicate codebase-analyst drafts created in same day | `guard.sh` crashing with `No module named orchestrator` — guard silently fails, agent runs without skipping | Task 6693d4d5 |
+| `pytest --cov=orchestrator` shows "no data collected" | `run-quality-checks.sh` targeting wrong package name; fix: `--cov=octopoid` | Task 6693d4d5 |
+| `vulture` or `wily` failing to find files | Scripts target `orchestrator/` path which doesn't exist; fix: use `octopoid/` | Task 6693d4d5 |
