@@ -51,6 +51,86 @@ behaviours:
       status: enforced
       test: tests/test_requires_intervention.py::TestNoDirectFailedCalls
 
+    - id: fixer-agent-handles-failures
+      description: >
+        When a task has needs_intervention set, the scheduler spawns a fixer
+        agent. The fixer diagnoses the problem, applies a fix, and resumes
+        the task flow from where it failed. Direct human intervention is not
+        the first resort.
+      rationale: >
+        Most task failures are mundane (git conflicts, stale state, transient
+        errors) and can be resolved automatically. The fixer agent handles
+        these, reserving human attention for genuinely stuck tasks.
+      source: draft-170
+      status: aspirational
+      test: null
+
+    - id: fixer-circuit-breaker
+      description: >
+        The fixer is limited to a maximum number of attempts per task (currently
+        3). After exhausting attempts, the task moves to terminal failed and a
+        message is posted to the human inbox. The fixer never loops indefinitely.
+      rationale: >
+        Without a circuit breaker, a fixer that reports "fixed" but whose
+        resume always fails will cycle indefinitely, wasting agent resources.
+        A cap ensures stuck tasks reach human attention in bounded time.
+      source: postmortem-2026-02-28-fixer-loop
+      status: enforced
+      test: null  # needs test
+
+    - id: requires-intervention-not-terminal
+      description: >
+        The requires-intervention state is not a graveyard. Tasks in it have
+        an associated fixer agent attempt. Only if the fixer also fails does
+        the task move to failed and need human attention.
+      rationale: >
+        Without this guarantee, requires-intervention becomes a second failed
+        queue. The point is that intervention is active and time-bounded, not
+        passive accumulation.
+      source: draft-170
+      status: aspirational
+      test: null
+
+    - id: unknown-outcome-routes-to-intervention
+      description: >
+        When a task's outcome cannot be determined (inference failure, empty
+        stdout, unrecognized response), the task routes to intervention for
+        review — not automatically to failed. An unknown outcome is ambiguous,
+        not an automatic failure.
+      rationale: >
+        A task with unknown outcome may be perfectly fine (e.g. agent completed
+        work but inference failed). Routing to failed discards potentially
+        completed work. Routing to intervention preserves it for review.
+      source: draft-174
+      status: aspirational
+      test: null
+
+    - id: failure-reason-always-recorded
+      description: >
+        Every path that moves a task to failed records the reason in
+        execution_notes and appends a FAILED entry to the task log. It is
+        always possible to answer "why did this task fail?" without forensic
+        investigation.
+      rationale: >
+        Without recorded reasons, diagnosing failures requires reading
+        scheduler logs, agent stdout, and git state. A recorded reason makes
+        triage instant.
+      source: draft-164
+      status: aspirational
+      test: null
+
+    - id: failed-task-has-recovery-path
+      description: >
+        Every task in the failed queue can be moved to an actionable state
+        (e.g. incoming for retry) without bypassing the state machine. There
+        is a defined flow transition or API action that handles recovery.
+      rationale: >
+        Without a recovery path, tasks in failed require manual hacks to
+        recover. This is fragile, error-prone, and undocumented.
+      source: draft-169
+      status: aspirational
+      test: null
+
   task-lifecycle:
     - id: worktree-preservation
       description: >
@@ -60,6 +140,19 @@ behaviours:
       rationale: >
         Destroying completed work wastes agent turns and creates loops
         where agents redo work that was already done.
+      source: draft-175
+      status: aspirational
+      test: null
+
+    - id: worktree-reuse-over-recreate
+      description: >
+        A fresh worktree is only created when no previous worktree exists for
+        the task. Infrastructure failures, gatekeeper rejection, and manual
+        requeue must all attempt to reuse the existing worktree.
+      rationale: >
+        Creating a fresh worktree when one already exists destroys completed
+        work. Agents then redo work that was already committed, wasting turns
+        and resources.
       source: draft-175
       status: aspirational
       test: null
@@ -74,7 +167,7 @@ behaviours:
         returns without exception but the action didn't happen. This
         causes tasks to be marked done when their work never landed.
       source: draft-180
-      status: aspirational  # task 876eb1ee in progress
+      status: aspirational
       test: null
 
     - id: step-idempotency
@@ -86,7 +179,47 @@ behaviours:
         step. If the step partially succeeded (e.g. branch pushed), the
         retry must not fail because the work already exists.
       source: draft-180
-      status: aspirational  # task 876eb1ee in progress
+      status: aspirational
+      test: null
+
+    - id: step-error-classification
+      description: >
+        Step failures are classified by exception type — RetryableStepError
+        (transient, retry), StepVerificationError (execute ran but verify
+        failed), PermanentStepError (intervention needed). Routing is
+        determined by exception type, not by message parsing.
+      rationale: >
+        Without typed exceptions, all step failures hit the same catch-all.
+        Transient errors are treated the same as permanent errors. Typed
+        classification enables correct routing.
+      source: draft-180
+      status: aspirational
+      test: null
+
+    - id: failed-worktree-retention
+      description: >
+        Failed task worktrees are retained for at least 24 hours after the
+        task enters the failed queue, giving humans time to investigate
+        before cleanup. Done task worktrees may be cleaned up after 1 hour.
+      rationale: >
+        Premature cleanup of failed worktrees destroys evidence needed for
+        debugging. A grace period ensures humans can inspect git state, logs,
+        and partial work before the worktree is swept.
+      source: draft-134
+      status: aspirational
+      test: null
+
+    - id: expired-lease-cleared
+      description: >
+        Tasks with expired leases are detected and their lease state is
+        cleared by the scheduler's housekeeping job within one cycle. A task
+        cannot remain indefinitely blocked by a stale lease_expires_at value.
+      rationale: >
+        Stale leases block tasks from being reclaimed. If lease recovery
+        misses a task, that task is stuck forever with no agent working on
+        it and no way to reclaim it.
+      source: draft-145
+      status: aspirational
       test: null
 
   scheduling:
@@ -101,7 +234,285 @@ behaviours:
       status: aspirational
       test: null
 
+    - id: claim-returns-typed-result
+      description: >
+        tasks.claim() returns an explicit typed result that distinguishes
+        between: task claimed successfully, queue empty, and at-capacity.
+        Callers can determine the specific reason without interpreting None.
+      rationale: >
+        The current claim() returns None for both "no tasks" and "at capacity",
+        making it impossible to distinguish. This causes the scheduler to
+        silently stop claiming with no log entry explaining why.
+      source: draft-156
+      status: aspirational
+      test: null
+
+    - id: flow-sync-preserves-steps
+      description: >
+        When the scheduler syncs flow definitions to the server, it includes
+        the full transition data (runs, conditions, checks, agent) — not just
+        from/to states. Steps like create_pr are never silently dropped.
+      rationale: >
+        Stripped transitions cause steps to be skipped silently, leading to
+        ghost completions (tasks in done with no PR), missing PR numbers,
+        and unmerged work. This was the root cause of a multi-hour outage.
+      source: postmortem-2026-02-28-ghost-completion
+      status: enforced
+      test: null  # needs test
+
+  communication:
+    - id: agents-communicate-via-messages
+      description: >
+        Agents communicate their completion state to the orchestrator via
+        messages or stdout, not by writing files to disk. The scheduler does
+        not need to poll the filesystem to detect agent results.
+      rationale: >
+        File-based result passing (result.json) is fragile — stale files can
+        be misread, there is no acknowledgement, and it couples the scheduler
+        to the agent's filesystem. Messages are timestamped and auditable.
+      source: draft-171
+      status: aspirational
+      test: null
+
+    - id: results-inferred-from-stdout
+      description: >
+        The scheduler infers the agent's outcome from its stdout rather than
+        requiring the agent to write a result.json file. Agents that complete
+        work but omit mechanical file-writing are not erroneously failed.
+      rationale: >
+        LLMs communicate through natural language. Requiring structured file
+        output after a long creative session is fighting what they're good at.
+        The system should interpret natural language output.
+      source: draft-172
+      status: aspirational
+      test: null
+
+    - id: result-inference-uses-cli-auth
+      description: >
+        The result handler infers outcomes using claude -p subprocess
+        invocation, using the same auth mechanism as spawned agents. It does
+        not require a separate ANTHROPIC_API_KEY environment variable.
+      rationale: >
+        The scheduler runs via launchd which does not have ANTHROPIC_API_KEY.
+        Using the anthropic Python SDK causes auth failures. The claude CLI
+        uses its own OAuth/session auth which is always available.
+      source: draft-174
+      status: aspirational
+      test: null
+
+    - id: result-json-references-removed
+      description: >
+        Agent prompts do not instruct agents to write result.json. Agents
+        signal completion via stdout only; the orchestrator infers the outcome
+        from stdout content.
+      rationale: >
+        Leftover result.json instructions cause confusion — agents may write
+        a file nothing reads, or stale files cause incorrect processing.
+      source: draft-174
+      status: aspirational
+      test: null
+
+    - id: completion-announced
+      description: >
+        Every task that transitions to done has a corresponding
+        task_completed message posted by the scheduler.
+      rationale: >
+        Without completion announcements, follow-up work relies on a human
+        noticing and running commands manually. Announcements enable automated
+        post-completion workflows.
+      source: draft-192
+      status: aspirational
+      test: null
+
+    - id: announcement-has-context
+      description: >
+        The completion announcement message includes the task ID, title,
+        linked draft ID (if any), and PR number (if any) — enough for
+        follow-up agents to act without re-fetching.
+      rationale: >
+        Follow-up agents that receive an announcement should not need
+        additional API calls to determine basic task metadata. The
+        announcement should be self-contained.
+      source: draft-192
+      status: aspirational
+      test: null
+
+  intervention:
+    - id: intervention-no-queue-transition
+      description: >
+        Requesting intervention for a task never requires a queue transition.
+        The task stays in its current queue. Intervention is a flag plus a
+        message, not a state change.
+      rationale: >
+        Queue transitions for intervention get blocked by the server's state
+        machine validation. A task can need intervention from any queue.
+        Making intervention a flag avoids whack-a-mole transition additions.
+      source: draft-176
+      status: aspirational
+      test: null
+
+    - id: intervention-context-in-messages
+      description: >
+        All intervention context (error source, failed step, error message)
+        is communicated via task messages with to_actor=fixer, not via local
+        files. The fixer reads messages, not intervention_context.json.
+      rationale: >
+        Messages are the existing communication channel. Using a separate
+        file creates a parallel system that must be kept in sync.
+      source: draft-176
+      status: aspirational
+      test: null
+
+    - id: intervention-resolution-via-reply
+      description: >
+        Intervention is resolved when the fixer posts a reply message (via
+        parent_message_id). The scheduler processes the reply and clears the
+        flag. No separate resolved column or status field.
+      rationale: >
+        Using message replies for resolution reuses existing infrastructure
+        and creates a clear audit trail. The message thread shows the full
+        intervention lifecycle.
+      source: draft-176
+      status: aspirational
+      test: null
+
+  pipeline:
+    - id: ci-before-gatekeeper
+      description: >
+        The gatekeeper never reviews a task whose CI has not passed. CI is a
+        prerequisite for gatekeeper review, not a parallel or post-review check.
+      rationale: >
+        Running CI after gatekeeper approval wastes gatekeeper turns on code
+        that may not even build. CI failures should bounce back to the
+        implementer directly, without LLM involvement.
+      source: draft-185
+      status: aspirational
+      test: null
+
+    - id: ci-failure-is-programmatic
+      description: >
+        When CI fails, the task is returned to the implementer without LLM
+        gatekeeper involvement. The failure context (which tests failed,
+        output) is included in the requeued task.
+      rationale: >
+        CI failures are mechanical — the code doesn't compile or tests fail.
+        The implementer can fix these without gatekeeper review. Involving
+        the gatekeeper wastes an expensive LLM call on a binary signal.
+      source: draft-185
+      status: aspirational
+      test: null
+
+  observability:
+    - id: background-agent-run-visibility
+      description: >
+        Every background agent run produces a log entry visible in the
+        dashboard agents tab, including what was processed and the outcome.
+      rationale: >
+        Background agents are currently opaque — you cannot tell from the
+        dashboard what they did or whether they are silently failing.
+        Visibility enables monitoring and debugging.
+      source: draft-183
+      status: aspirational
+      test: null
+
+    - id: manual-trigger-bypasses-guard
+      description: >
+        A manual trigger command can force a background agent to run
+        immediately, regardless of its interval timer or pending work.
+      rationale: >
+        During development and debugging, waiting for the next scheduled
+        interval is too slow. A manual trigger enables rapid iteration.
+      source: draft-183
+      status: aspirational
+      test: null
+
+    - id: unified-log-file
+      description: >
+        All scheduler, agent, and hook activity is written to a single log
+        file at .octopoid/runtime/logs/octopoid.log. Diagnosing any issue
+        requires checking only one file.
+      rationale: >
+        Scattered log files make diagnosis slow. A single log file with
+        structured entries enables grep-based investigation without knowing
+        which component logged what where.
+      source: draft-168
+      status: aspirational
+      test: null
+
+    - id: analyst-uses-quantitative-tools
+      description: >
+        The codebase analyst runs code quality measurement tools (pytest-cov,
+        vulture, wily) before proposing drafts. Proposals include quantitative
+        data supporting the recommendation.
+      rationale: >
+        Without quantitative data, analyst recommendations are subjective
+        and hard to prioritise. Tools provide objective signals that make
+        the case for each recommendation.
+      source: draft-178
+      status: aspirational
+      test: null
+
+    - id: health-score-logged
+      description: >
+        Every analyst draft includes a numeric health score (1-10) for the
+        analyst's domain.
+      rationale: >
+        A single numeric score provides a longitudinal signal — is the
+        codebase getting better or worse over time?
+      source: draft-191
+      status: aspirational
+      test: null
+
+    - id: health-log-append-only
+      description: >
+        Each analyst has a persistent log file that grows monotonically.
+        Entries are never deleted or modified.
+      rationale: >
+        Append-only ensures the historical trend is preserved. If entries
+        could be modified, the trend becomes unreliable.
+      source: draft-191
+      status: aspirational
+      test: null
+
+    - id: score-has-justification
+      description: >
+        Every health score entry includes a brief text summary explaining
+        the rating.
+      rationale: >
+        A bare number without context is useless. The justification explains
+        what changed since the last score and why the rating went up or down.
+      source: draft-191
+      status: aspirational
+      test: null
+
+  configuration:
+    - id: single-agent-config
+      description: >
+        An agent's configuration exists in exactly one place. All tools,
+        dashboards, and scheduler logic that need agent information read
+        from that single source.
+      rationale: >
+        Agent config currently exists in multiple places (per-agent dirs,
+        agents.yaml, jobs.yaml). Duplicated config leads to contradictions
+        and makes it impossible to know which source is authoritative.
+      source: draft-184
+      status: aspirational
+      test: null
+
   process:
+    - id: system-spec-exists
+      description: >
+        A project-management/system-spec.yaml file exists and documents the
+        system's behavioural invariants. Agents read this file before making
+        changes, so they know what guarantees to preserve.
+      rationale: >
+        Without a centralised store, invariants live scattered across drafts.
+        When a draft is archived, its invariants are archived with it. No
+        agent can answer "what does this system guarantee?"
+      source: draft-181
+      status: enforced
+      test: null  # file exists; needs structural test
+
     - id: drafts-have-invariants
       description: >
         Every draft that proposes a change to system behaviour has an
