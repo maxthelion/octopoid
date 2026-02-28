@@ -1,4 +1,4 @@
-"""Work tab — flow-based kanban board with one nested tab per flow."""
+"""Work tab — matrix view of all tasks."""
 
 from __future__ import annotations
 
@@ -6,13 +6,10 @@ from collections import deque
 
 from rich.text import Text
 from textual.app import ComposeResult
-from textual.events import Key
 from textual.message import Message
 from textual.widget import Widget
-from textual.widgets import DataTable, Label, ListView, TabbedContent, TabPane
-from textual.containers import Horizontal
+from textual.widgets import DataTable
 
-from ..widgets.task_card import TaskCard
 from .base import TabBase
 
 
@@ -22,82 +19,6 @@ class TaskSelected(Message):
     def __init__(self, task: dict) -> None:
         super().__init__()
         self.task = task
-
-
-class WorkColumn(Widget):
-    """A single kanban column: header + scrollable list of task cards."""
-
-    DEFAULT_CSS = """
-    WorkColumn {
-        width: 1fr;
-        height: 100%;
-        border-right: solid $panel-darken-2;
-        padding: 0 1;
-    }
-    WorkColumn:last-of-type {
-        border-right: none;
-    }
-    """
-
-    def __init__(
-        self,
-        title: str,
-        tasks: list,
-        show_progress: bool = False,
-        agent_map: dict | None = None,
-        **kwargs: object,
-    ) -> None:
-        super().__init__(**kwargs)
-        self._col_title = title
-        self._tasks = tasks
-        self._show_progress = show_progress
-        self._agent_map = agent_map or {}
-
-    def compose(self) -> ComposeResult:
-        count = len(self._tasks)
-        yield Label(f" {self._col_title} ({count}) ", classes="column-header")
-        with ListView(classes="task-list"):
-            for task in self._tasks:
-                agent = task.get("agent")
-                agent_status = "idle"
-                if self._show_progress and agent:
-                    agent_info = self._agent_map.get(agent)
-                    if agent_info:
-                        if agent_info.get("paused"):
-                            agent_status = "paused"
-                        else:
-                            agent_status = agent_info.get("status", "idle")
-                    else:
-                        # Task is claimed but we have no record of the agent
-                        agent_status = "orphaned"
-                yield TaskCard(
-                    task,
-                    show_progress=self._show_progress,
-                    agent_status=agent_status,
-                )
-
-    def on_list_view_selected(self, event: ListView.Selected) -> None:
-        """Open detail modal when a task card is selected (Enter or click)."""
-        if isinstance(event.item, TaskCard):
-            self.post_message(TaskSelected(event.item.task_data))
-
-    def on_key(self, event: Key) -> None:
-        """Navigate between columns with left/right arrow keys."""
-        if event.key not in ("left", "right"):
-            return
-        parent = self.parent
-        if parent is None:
-            return
-        columns = list(parent.query(WorkColumn))
-        try:
-            idx = columns.index(self)
-            direction = 1 if event.key == "right" else -1
-            new_idx = idx + direction
-            if 0 <= new_idx < len(columns):
-                event.stop()
-                columns[new_idx].query_one(ListView).focus()
-        except Exception:
-            pass
 
 
 def _order_states_by_transitions(states: list[str], transitions: list[dict]) -> list[str]:
@@ -395,53 +316,8 @@ class MatrixView(Widget):
                 self.post_message(TaskSelected(task))
 
 
-class FlowKanban(Widget):
-    """Kanban board for a single flow: one column per state."""
-
-    DEFAULT_CSS = """
-    FlowKanban {
-        height: 100%;
-    }
-    """
-
-    def __init__(
-        self,
-        flow: dict,
-        tasks_by_queue: dict[str, list],
-        agent_map: dict,
-        **kwargs: object,
-    ) -> None:
-        super().__init__(**kwargs)
-        self._flow = flow
-        self._tasks_by_queue = tasks_by_queue
-        self._agent_map = agent_map
-
-    # Terminal states excluded from the kanban board — they are static
-    # and take up columns without adding value to the active work view.
-    _HIDDEN_STATES = {"done", "failed"}
-
-    def compose(self) -> ComposeResult:
-        states = self._flow.get("states", [])
-        transitions = self._flow.get("transitions", [])
-        ordered_states = _order_states_by_transitions(states, transitions)
-        ordered_states = [s for s in ordered_states if s not in self._HIDDEN_STATES]
-        flow_name = self._flow.get("name", "default")
-        with Horizontal(classes="kanban-board"):
-            for state in ordered_states:
-                tasks = self._tasks_by_queue.get(state, [])
-                show_progress = state not in ("incoming", "done")
-                yield WorkColumn(
-                    state.title(),
-                    tasks,
-                    show_progress=show_progress,
-                    agent_map=self._agent_map if show_progress else None,
-                    classes="kanban-column",
-                    id=f"col-{flow_name}-{state}",
-                )
-
-
 class WorkTab(TabBase):
-    """Kanban board with nested tabs, one per flow."""
+    """Work tab showing the matrix view of all tasks."""
 
     def compose(self) -> ComposeResult:
         work = self._report.get("work", {})
@@ -458,49 +334,19 @@ class WorkTab(TabBase):
         if not flows:
             flows = [{"name": "default", "states": ["incoming", "claimed", "provisional"]}]
 
-        # Group tasks by (flow_name, queue)
-        # Pool "project" tasks into the "default" tab — project tasks use the
-        # same state machine but belong to a project parent.
-        registered_flow_names = {f.get("name") for f in flows}
-        tasks_by_flow_queue: dict[str, dict[str, list]] = {}
-        for task in all_tasks:
-            flow_name = task.get("flow") or "default"
-            if flow_name not in registered_flow_names:
-                flow_name = "default"
-            queue_name = task.get("queue") or "incoming"
-            if flow_name not in tasks_by_flow_queue:
-                tasks_by_flow_queue[flow_name] = {}
-            if queue_name not in tasks_by_flow_queue[flow_name]:
-                tasks_by_flow_queue[flow_name][queue_name] = []
-            tasks_by_flow_queue[flow_name][queue_name].append(task)
-
-        with TabbedContent(classes="flow-tabs"):
-            with TabPane("Matrix", id="flow-tab-matrix"):
-                yield MatrixView(all_tasks, flows, agent_map, id="matrix-view")
-            for flow in flows:
-                flow_name = flow.get("name") or "default"
-                tasks_by_queue = tasks_by_flow_queue.get(flow_name, {})
-                with TabPane(flow_name.title(), id=f"flow-tab-{flow_name}"):
-                    yield FlowKanban(
-                        flow,
-                        tasks_by_queue,
-                        agent_map,
-                        id=f"flow-kanban-{flow_name}",
-                    )
+        yield MatrixView(all_tasks, flows, agent_map, id="matrix-view")
 
     def on_mount(self) -> None:
-        """Focus the first column's task list on initial mount."""
-        self._focus_first_column()
+        """Focus the matrix table on initial mount."""
+        self._focus_matrix()
 
     def on_show(self) -> None:
-        """Restore focus to the first column when the tab becomes active."""
-        self._focus_first_column()
+        """Restore focus to the matrix table when the tab becomes active."""
+        self._focus_matrix()
 
-    def _focus_first_column(self) -> None:
+    def _focus_matrix(self) -> None:
         try:
-            columns = list(self.query(WorkColumn))
-            if columns:
-                columns[0].query_one(ListView).focus()
+            self.query_one(DataTable).focus()
         except Exception:
             pass
 
