@@ -214,6 +214,46 @@ class TestRunTestsStep:
         assert captured_env["PATH"]  # not empty
 
 
+class TestPostReviewCommentStep:
+    """Tests for the post_review_comment step."""
+
+    def test_execute_calls_add_pr_comment(self, mock_sdk_for_unit_tests):
+        """post_review_comment.execute() calls add_pr_comment when pr_number and comment exist."""
+        from octopoid.steps import post_review_comment
+
+        task = {"id": "TASK-abc", "pr_number": 42}
+        result = {"comment": "LGTM!"}
+
+        with patch("octopoid.pr_utils.add_pr_comment") as mock_add:
+            post_review_comment(task, result, Path("/tmp"))
+
+        mock_add.assert_called_once_with(42, "LGTM!")
+
+    def test_execute_skips_when_no_pr_number(self, mock_sdk_for_unit_tests):
+        """post_review_comment.execute() skips silently when task has no pr_number."""
+        from octopoid.steps import post_review_comment
+
+        task = {"id": "TASK-abc"}  # no pr_number
+        result = {"comment": "LGTM!"}
+
+        with patch("octopoid.pr_utils.add_pr_comment") as mock_add:
+            post_review_comment(task, result, Path("/tmp"))
+
+        mock_add.assert_not_called()
+
+    def test_execute_skips_when_no_comment(self, mock_sdk_for_unit_tests):
+        """post_review_comment.execute() skips silently when result has no comment."""
+        from octopoid.steps import post_review_comment
+
+        task = {"id": "TASK-abc", "pr_number": 42}
+        result = {}  # no comment
+
+        with patch("octopoid.pr_utils.add_pr_comment") as mock_add:
+            post_review_comment(task, result, Path("/tmp"))
+
+        mock_add.assert_not_called()
+
+
 class TestMergePrStep:
     """Tests for the merge_pr step."""
 
