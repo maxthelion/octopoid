@@ -41,7 +41,7 @@ class AgentItem(ListItem):
                 badge_status = "paused" if paused else status
                 yield StatusBadge(badge_status)
             else:
-                # Background agent or job — show interval
+                # Background agent or job — show interval and last run age
                 interval = agent.get("interval_seconds") or agent.get("interval", 0)
                 if interval >= 3600:
                     interval_str = f"{interval // 3600}h"
@@ -49,7 +49,15 @@ class AgentItem(ListItem):
                     interval_str = f"{interval // 60}m"
                 else:
                     interval_str = f"{interval}s"
-                yield Label(interval_str, classes="agent-job-interval dim-text")
+
+                # For agent-type jobs, show last run age from run log if available
+                last_run_log = agent.get("last_run_log")
+                if last_run_log and last_run_log.get("finished_at"):
+                    age = format_age(last_run_log["finished_at"])
+                    age_str = f" · {age} ago" if age else ""
+                    yield Label(f"{interval_str}{age_str}", classes="agent-job-interval dim-text")
+                else:
+                    yield Label(interval_str, classes="agent-job-interval dim-text")
 
 
 class AgentDetail(Widget):
@@ -255,6 +263,7 @@ class AgentDetail(Widget):
         interval = agent.get("interval", 0)
         last_run = agent.get("last_run")
         next_run = agent.get("next_run")
+        last_run_log = agent.get("last_run_log")
 
         with VerticalScroll():
             # Job name header
@@ -316,6 +325,33 @@ class AgentDetail(Widget):
                     yield Label(f"Next run: {next_run[:19]}", classes="agent-detail-row dim-text")
             else:
                 yield Label("Next run: (unknown)", classes="agent-detail-row dim-text")
+
+            # Last run log — only for agent-type jobs
+            if job_type == "agent" and last_run_log:
+                yield Label("")  # spacer
+                yield Label("LAST RUN OUTPUT", classes="detail-section-header")
+
+                finished_at = last_run_log.get("finished_at")
+                outcome = last_run_log.get("outcome", "ok")
+                summary = last_run_log.get("summary")
+
+                if finished_at:
+                    age = format_age(finished_at)
+                    age_text = f" ({age} ago)" if age else ""
+                    outcome_text = f"  [{outcome}]" if outcome != "ok" else ""
+                    yield Label(
+                        f"Completed: {finished_at[:19]}{age_text}{outcome_text}",
+                        classes="agent-detail-row",
+                    )
+
+                if summary:
+                    yield Label(summary, classes="agent-detail-row dim-text")
+                else:
+                    yield Label("(no output captured)", classes="agent-detail-row dim-text")
+            elif job_type == "agent":
+                yield Label("")  # spacer
+                yield Label("LAST RUN OUTPUT", classes="detail-section-header")
+                yield Label("(no runs recorded yet)", classes="agent-detail-row dim-text")
 
     def update_agent(self, agent: dict | None, report: dict) -> None:
         """Switch to a new agent and recompose the detail pane."""
