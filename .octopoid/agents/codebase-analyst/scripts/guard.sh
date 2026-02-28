@@ -19,7 +19,7 @@ if orchestrator_path:
     sys.path.insert(0, str(__import__('pathlib').Path(orchestrator_path).parent))
 
 try:
-    from orchestrator.queue_utils import get_sdk
+    from octopoid.queue_utils import get_sdk
     sdk = get_sdk()
     for status in ('idea', 'in_progress'):
         if sdk.drafts.list(status=status, author='codebase-analyst'):

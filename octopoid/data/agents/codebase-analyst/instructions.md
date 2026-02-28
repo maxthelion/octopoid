@@ -29,7 +29,7 @@ import os, sys
 orchestrator_path = os.environ.get('ORCHESTRATOR_PYTHONPATH', '')
 if orchestrator_path:
     sys.path.insert(0, str(__import__('pathlib').Path(orchestrator_path).parent))
-from orchestrator.queue_utils import get_sdk
+from octopoid.queue_utils import get_sdk
 sdk = get_sdk()
 ```
 
