@@ -95,10 +95,10 @@ def test_no_direct_routing_to_failed():
 
 ## The system spec file
 
-Bootstrap `docs/system-spec.yaml` with this first invariant and a few others we already know are true:
+Bootstrap `project-management/system-spec.yaml` with this first invariant and a few others we already know are true:
 
 ```yaml
-# docs/system-spec.yaml
+# project-management/system-spec.yaml
 #
 # Behavioural invariants for the octopoid orchestrator.
 # Each entry describes what the system is supposed to do — not how the code
@@ -201,13 +201,13 @@ But we don't need to build all of that now. **Step 1 is just creating the file a
 
 ## Open Questions
 
-- Should the spec live in `docs/system-spec.yaml` (single file) or `docs/behaviours/` (directory)? Start with single file, split later if it grows.
+- Should the spec live in `project-management/system-spec.yaml` (single file) or `project-management/behaviours/` (directory)? Start with single file, split later if it grows.
 - Should agents be required to update the spec on every change, or should it be maintained by the analyst on a cadence? Start with analyst-maintained to avoid slowing down the implementation loop.
 - How do we handle invariants that are aspirational vs actually enforced? Mark them differently? (e.g. `status: enforced` vs `status: aspirational`)
 
 ## Concrete next steps
 
-1. Create `docs/system-spec.yaml` with the invariants above
+1. Create `project-management/system-spec.yaml` with the invariants above
 2. Fix `_handle_fail_outcome()` to route through `fail_task()` — the one-line fix
 3. Write the test for `self-correcting-failure` — simulate agent failure, assert task goes to `requires-intervention`
 4. Write the structural test for `fail-task-is-the-only-path-to-failed` — grep for direct `queue='failed'` calls

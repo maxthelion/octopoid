@@ -46,7 +46,7 @@ The implementer prompt doesn't say "update the system spec" or "ensure your chan
 
 ## What a canonical system spec looks like
 
-A file (or set of files) like `docs/system-spec.yaml` or `docs/behaviours/` that describes the system in terms of **behavioural invariants**:
+A file (or set of files) like `project-management/system-spec.yaml` or `project-management/behaviours/` that describes the system in terms of **behavioural invariants**:
 
 ```yaml
 behaviours:
@@ -76,7 +76,7 @@ Each behaviour:
 
 ## The key invariant: a centralised store of invariants must exist
 
-The most important thing this draft establishes — and the thing not fully covered by the follow-on drafts — is the **meta-invariant**: there must be a centralised, canonical store of system invariants (`docs/system-spec.yaml`). Every other improvement depends on this existing.
+The most important thing this draft establishes — and the thing not fully covered by the follow-on drafts — is the **meta-invariant**: there must be a centralised, canonical store of system invariants (`project-management/system-spec.yaml`). Every other improvement depends on this existing.
 
 Without a centralised store:
 - Invariants live in drafts, scattered across `project-management/drafts/`
@@ -96,7 +96,7 @@ The lifecycle:
 2. **Draft enqueued** — `/enqueue` checks that tasks collectively cover the invariants
 3. **Tasks implemented** — partial progress is fine, gatekeeper approves at task level
 4. **Draft processed** — `/process-draft` checks whether invariants are met in the code
-5. **Invariants graduate** — met invariants move from the draft to `docs/system-spec.yaml`
+5. **Invariants graduate** — met invariants move from the draft to `project-management/system-spec.yaml`
 6. **Draft archived** — only after invariants are in the centralised store
 
 This is refined in detail in draft #182.
@@ -117,7 +117,7 @@ Instead, invariant management lives at the **draft level**, not the task level:
 
 4. **`/process-draft`**: checks whether the draft's invariants are actually met in the code. If not, the draft stays open and more work gets scheduled. This is the accountability mechanism.
 
-5. **Codebase analyst**: periodically reviews `docs/system-spec.yaml` for staleness — invariants whose tests don't exist, invariants that contradict the code, invariants with `test: null`.
+5. **Codebase analyst**: periodically reviews `project-management/system-spec.yaml` for staleness — invariants whose tests don't exist, invariants that contradict the code, invariants with `test: null`.
 
 6. **Testing analyst**: derives integration tests from untested invariants in the spec. This is the "QA from intent" loop — the spec says what should be true, the analyst writes the test that verifies it.
 
@@ -125,7 +125,7 @@ Instead, invariant management lives at the **draft level**, not the task level:
 
 The spec becomes the source of truth for what tests should exist. The testing analyst:
 
-1. Reads `docs/system-spec.yaml`
+1. Reads `project-management/system-spec.yaml`
 2. Finds behaviours where `test: null`
 3. Writes integration tests that verify the behavioural description
 4. Updates the spec to link the new test
@@ -134,21 +134,21 @@ This inverts the normal flow. Instead of "write code, then maybe write a test," 
 
 ## Refined by later drafts
 
-- **Draft #181** — Bootstraps `docs/system-spec.yaml` with the first concrete invariants (self-correcting failure, step verification, worktree preservation, claim limits). Answers the "how to bootstrap?" question.
+- **Draft #181** — Bootstraps `project-management/system-spec.yaml` with the first concrete invariants (self-correcting failure, step verification, worktree preservation, claim limits). Answers the "how to bootstrap?" question.
 - **Draft #182** — Defines the invariant-driven task pipeline: how invariants flow from drafts through tasks to the system spec. Refines the agent workflow section above. Identifies the process gap where intent gets lost in translation from draft → task → implementation.
 
 ## Open Questions
 
 - What granularity? Too fine-grained and the spec becomes noisy. Too coarse and it doesn't catch regressions. Probably: one entry per user-visible behaviour or system invariant, not per function.
 - YAML or markdown? YAML is machine-parseable (analysts can query it). Markdown is more readable. Could do both — YAML source of truth, markdown rendered view.
-- Should the spec be per-module or global? A single file gets unwieldy. A directory (`docs/behaviours/task-lifecycle.yaml`, `docs/behaviours/flow-system.yaml`) might scale better.
+- Should the spec be per-module or global? A single file gets unwieldy. A directory (`project-management/behaviours/task-lifecycle.yaml`, `project-management/behaviours/flow-system.yaml`) might scale better.
 - How to handle contradictions? If a new task changes behaviour that contradicts an existing spec entry, the agent must update the entry — not just add a new one. `/process-draft` should flag if an invariant was removed without explanation.
 - How do we handle invariants that are aspirational vs enforced? Mark them differently? (e.g. `status: enforced` vs `status: aspirational`)
 - What if a draft has no obvious invariants? Some drafts are pure refactoring or tooling changes. Do they still need invariants, or is "no invariant" a valid answer for some categories of work?
 
 ## Possible Next Steps
 
-- Bootstrap `docs/system-spec.yaml` with initial invariants (draft #181)
+- Bootstrap `project-management/system-spec.yaml` with initial invariants (draft #181)
 - Add `## Invariants` section to the `/draft-idea` template
 - Update `/process-draft` to check invariant satisfaction before archiving
 - Update `/enqueue` to flag when tasks don't fully cover draft invariants

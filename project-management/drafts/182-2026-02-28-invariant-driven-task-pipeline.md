@@ -112,7 +112,7 @@ This is the accountability loop. The draft stays open until reality matches inte
 
 ### 5. Invariants graduate to the system spec
 
-When a draft's invariant is finally met (code satisfies it, test enforces it), the invariant moves from the draft to `docs/system-spec.yaml` (per draft #181). At that point:
+When a draft's invariant is finally met (code satisfies it, test enforces it), the invariant moves from the draft to `project-management/system-spec.yaml` (per draft #181). At that point:
 - The draft can be archived
 - The invariant is permanent — future changes are checked against it
 - The gatekeeper can reference it when reviewing future tasks
@@ -144,7 +144,7 @@ Add an invariant check step:
 1. Read the draft's `## Invariants` section
 2. For each invariant with a testable assertion, run the assertion
 3. If any invariant is not met, the draft cannot be archived — list the gaps
-4. If all invariants are met, check that they've been added to `docs/system-spec.yaml`
+4. If all invariants are met, check that they've been added to `project-management/system-spec.yaml`
 
 ### Draft-idea skill
 When capturing a new idea, ask: "What should be true about the system after this is done?" The answer becomes the invariant.
@@ -165,4 +165,4 @@ No change needed. The gatekeeper checks task-level acceptance criteria, not draf
 - Update `/process-draft` to check invariants before allowing archive
 - Update `/enqueue` to flag when tasks don't fully cover draft invariants
 - Retroactively add invariants to open drafts (especially #170, #175, #176, #180)
-- Bootstrap `docs/system-spec.yaml` with the first few invariants (per draft #181)
+- Bootstrap `project-management/system-spec.yaml` with the first few invariants (per draft #181)
