@@ -66,6 +66,12 @@ Known symptoms and their root causes. **Consult this first when diagnosing a pro
 | 409 on submit after lease expires | Agent finished and wrote `result.json` but scheduler didn't process the result before the lease expired. Server rejects `submit` because lease is invalid. Fix: requeue task, re-claim, then submit. Root cause: scheduler was down (see stale state section). | Task 543cd9d7 |
 | 409 on reject/requeue/accept | Server's `canTransition()` checks registered flow transitions. Reverse transitions (reject back to incoming, requeue) must be explicitly registered. Fixed by `_implicit_reverse_transitions()` in `flow.py`. | Commit e210766 |
 
+## Fixer agents reporting "could not fix" despite fix being applied
+
+| Symptom | Likely cause | See |
+|---|---|---|
+| Fixer agent reports "could not fix" but fix is already committed | Fixer (or original agent) ran `pytest` and saw pre-existing integration test failures unrelated to the task, then concluded tests failed. `test_failed_outcome_moves_to_failed` in `octopoid/tests/test_scheduler_lifecycle.py` hits production API with fake task ID `test123` and always gets a 404 — this is a pre-existing failure. Inspect git log for the fix commit and verify changes directly in the file. | Task 8a8e4590, 2026-02-28 |
+
 ## Codebase-analyst agent
 
 | Symptom | Likely cause | See |
