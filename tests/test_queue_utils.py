@@ -330,11 +330,12 @@ class TestFailTask:
     """Tests for fail_task function."""
 
     def test_fail_task_via_sdk(self, mock_orchestrator_dir, sample_task_file, mock_sdk_for_unit_tests):
-        """fail_task moves task to true-failed when already in requires-intervention."""
-        # Simulate second failure (task already in requires-intervention → true terminal failed)
+        """fail_task moves task to true-failed when needs_intervention is already set."""
+        # Simulate second failure (task already has needs_intervention=True → true terminal failed)
         mock_sdk_for_unit_tests.tasks.get.return_value = {
             "id": "abc12345",
-            "queue": "requires-intervention",
+            "queue": "claimed",
+            "needs_intervention": True,
         }
         mock_sdk_for_unit_tests.tasks.update.return_value = {
             "id": "abc12345",
@@ -349,9 +350,10 @@ class TestFailTask:
             result = fail_task("abc12345", reason="Something went wrong", source="test-source")
 
             # SDK should update task to failed queue with execution_notes
-            mock_sdk_for_unit_tests.tasks.update.assert_called_once_with(
-                "abc12345", queue="failed", execution_notes="Something went wrong"
-            )
+            call_kwargs = mock_sdk_for_unit_tests.tasks.update.call_args.kwargs
+            assert call_kwargs["queue"] == "failed"
+            assert call_kwargs["needs_intervention"] is False
+            assert "Something went wrong" in call_kwargs["execution_notes"]
 
             # Logger should have been called with failure event
             mock_logger.log_failed.assert_called_once()
@@ -364,10 +366,11 @@ class TestFailTask:
     def test_fail_task_truncates_long_error(self, mock_orchestrator_dir, sample_task_file, mock_sdk_for_unit_tests):
         """A 10,000-char error should be truncated in the SDK call (max 500 chars)."""
         long_error = "X" * 10_000
-        # Simulate second failure (task already in requires-intervention)
+        # Simulate second failure (task already has needs_intervention=True)
         mock_sdk_for_unit_tests.tasks.get.return_value = {
             "id": "abc12345",
-            "queue": "requires-intervention",
+            "queue": "claimed",
+            "needs_intervention": True,
         }
         mock_sdk_for_unit_tests.tasks.update.return_value = {
             "id": "abc12345",
@@ -395,10 +398,11 @@ class TestFailTask:
 
     def test_fail_task_passes_extra_kwargs_to_sdk(self, mock_orchestrator_dir, sample_task_file, mock_sdk_for_unit_tests):
         """Extra kwargs (e.g. claimed_by, attempt_count) are forwarded to sdk.tasks.update."""
-        # Simulate second failure (task already in requires-intervention)
+        # Simulate second failure (task already has needs_intervention=True)
         mock_sdk_for_unit_tests.tasks.get.return_value = {
             "id": "abc12345",
-            "queue": "requires-intervention",
+            "queue": "claimed",
+            "needs_intervention": True,
         }
         mock_sdk_for_unit_tests.tasks.update.return_value = {
             "id": "abc12345",

@@ -1,6 +1,6 @@
 # Fixer Agent: Task $task_id
 
-A task has entered the `requires-intervention` queue and needs your help.
+A task has `needs_intervention=true` set and needs your help.
 
 ## Task
 
@@ -15,7 +15,7 @@ $task_content
 
 ## Intervention Context
 
-The following context was recorded when this task failed:
+The following context was recorded when this task failed (from the intervention request message):
 
 ```json
 $intervention_context
@@ -33,7 +33,7 @@ $intervention_context
 You are working in the task's **existing worktree** at `$worktree`. All previous work from the original agent is preserved here — commits, branch state, partial changes.
 
 The task directory (parent of the worktree) is `$task_dir`. It contains:
-- `intervention_context.json`: the context above
+- `intervention_context.json`: fallback context (may be empty if loaded from messages)
 - `step_progress.json`: step execution progress (if available)
 - `stdout.log` / `stderr.log`: logs from the failed agent run
 

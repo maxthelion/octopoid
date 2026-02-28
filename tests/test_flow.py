@@ -202,7 +202,7 @@ class TestFlow:
             ],
         )
         states = flow.get_all_states()
-        assert states == {"incoming", "claimed", "done", "failed", "needs_continuation", "requires-intervention"}
+        assert states == {"incoming", "claimed", "done", "failed", "needs_continuation"}
 
     def test_get_transitions_from(self):
         """Test getting transitions from a specific state."""

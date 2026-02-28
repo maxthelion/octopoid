@@ -53,6 +53,9 @@ class TestCheckAndRequeueExpiredLeases:
             threshold: Circuit breaker threshold (default 3).
         """
         mock_sdk = MagicMock()
+        # Ensure fail_task() sees needs_intervention=False so it takes the first-failure
+        # path (sets needs_intervention=True) rather than the terminal-failure path.
+        mock_sdk.tasks.get.return_value = {"queue": "claimed", "needs_intervention": False}
 
         def _list(queue: str | None = None) -> list[dict]:
             if queue == "claimed":
@@ -68,9 +71,8 @@ class TestCheckAndRequeueExpiredLeases:
             patch("octopoid.tasks.get_sdk", return_value=mock_sdk),
             patch("octopoid.tasks.get_task_logger"),
             patch("octopoid.scheduler._get_circuit_breaker_threshold", return_value=threshold),
-            # Prevent request_intervention from creating real dirs / posting messages
+            # Prevent request_intervention from creating real dirs
             patch("octopoid.config.get_tasks_dir"),
-            patch("octopoid.task_thread.post_message"),
         ):
             check_and_requeue_expired_leases()
 
@@ -243,7 +245,7 @@ class TestCheckAndRequeueExpiredLeases:
         sdk.tasks.update.assert_called_once()
         call_kwargs = sdk.tasks.update.call_args
         assert call_kwargs.args[0] == "TASK-cb"
-        assert call_kwargs.kwargs["queue"] == "requires-intervention"
+        assert call_kwargs.kwargs.get("needs_intervention") is True
         assert call_kwargs.kwargs["attempt_count"] == 3
 
     def test_circuit_breaker_does_not_trip_below_threshold(self) -> None:
@@ -286,7 +288,7 @@ class TestCheckAndRequeueExpiredLeases:
         sdk = self._run([task], threshold=1)
 
         sdk.tasks.update.assert_called_once()
-        assert sdk.tasks.update.call_args.kwargs["queue"] == "requires-intervention"
+        assert sdk.tasks.update.call_args.kwargs.get("needs_intervention") is True
 
 
 # ===========================================================================
@@ -392,7 +394,7 @@ class TestRequeuTask:
 
         sdk.tasks.update.assert_called_once()
         call_kwargs = sdk.tasks.update.call_args.kwargs
-        assert call_kwargs["queue"] == "requires-intervention"
+        assert call_kwargs.get("needs_intervention") is True
         assert call_kwargs["attempt_count"] == 3
 
     def test_circuit_breaker_does_not_trip_below_threshold(self) -> None:
