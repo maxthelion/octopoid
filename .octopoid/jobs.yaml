@@ -95,7 +95,7 @@ jobs:
   # Daily codebase analyst: scans for large/complex files and proposes refactoring.
   # Guard script runs first inside the agent — skips if a pending proposal already exists.
   - name: codebase_analyst
-    interval: 86400
+    interval: 600
     type: agent
     group: remote
     max_instances: 1
@@ -109,7 +109,7 @@ jobs:
   # Focuses on outside-in gaps — features that shipped with no tests, or only over-mocked
   # unit tests with no integration coverage. Guard skips if a proposal already exists.
   - name: testing_analyst
-    interval: 86400
+    interval: 600
     type: agent
     group: remote
     max_instances: 1
@@ -124,7 +124,7 @@ jobs:
   # refactorings with named design patterns and before/after sketches. Guard skips if
   # a proposal already exists.
   - name: architecture_analyst
-    interval: 86400
+    interval: 600
     type: agent
     group: remote
     max_instances: 1
