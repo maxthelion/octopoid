@@ -1848,7 +1848,7 @@ def _register_orchestrator(orchestrator_registered: bool = False) -> None:
     # Reads directly from local YAML files (source of truth for sync).
     # Non-fatal: errors are logged but never block registration.
     try:
-        from .flow import Flow
+        from .flow import Flow, flow_to_server_registration
         from .config import get_orchestrator_dir
         flows_dir = get_orchestrator_dir() / "flows"
         if flows_dir.exists():
@@ -1858,15 +1858,8 @@ def _register_orchestrator(orchestrator_registered: bool = False) -> None:
                 flow_name = flow_path.stem
                 try:
                     flow = Flow.from_yaml_file(flow_path)
-                    states = sorted(flow.get_all_states())
-                    transitions = [
-                        {"from": t.from_state, "to": t.to_state}
-                        for t in flow.transitions
-                    ]
-                    _sdk._request("PUT", f"/api/v1/flows/{flow_name}", json={
-                        "states": states,
-                        "transitions": transitions,
-                    })
+                    flow_data = flow_to_server_registration(flow)
+                    _sdk._request("PUT", f"/api/v1/flows/{flow_name}", json=flow_data)
                     logger.debug(f"Synced flow '{flow_name}' to server")
                 except Exception as flow_err:
                     logger.debug(f"Flow sync failed for '{flow_name}' (non-fatal): {flow_err}")
