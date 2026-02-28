@@ -764,6 +764,10 @@ def handle_agent_result_via_flow(task_id: str, agent_name: str, task_dir: Path, 
 
     logger.debug(f"handle_agent_result_via_flow: task={task_id} agent={agent_name} status={result.get('status')} decision={result.get('decision')}")
 
+    # Initialize before the try block so the except clause can reference it even
+    # if the exception is raised before current_queue is assigned inside the try.
+    current_queue = "unknown"
+
     try:
         sdk = queue_utils.get_sdk()
         _post_agent_result_message(sdk, task_id, agent_name, "gatekeeper", result)
