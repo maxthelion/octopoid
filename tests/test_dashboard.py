@@ -36,13 +36,13 @@ class TestPackageImports:
         assert DataManager is not None
 
     def test_tabs_importable(self):
-        from packages.dashboard.tabs.work import WorkTab, TaskSelected
+        from packages.dashboard.tabs.work import WorkTab, TaskSelected, MatrixView
         from packages.dashboard.tabs.prs import PRsTab
         from packages.dashboard.tabs.inbox import InboxTab
         from packages.dashboard.tabs.agents import AgentsTab
         from packages.dashboard.tabs.done import DoneTab
         from packages.dashboard.tabs.drafts import DraftsTab
-        assert all([WorkTab, TaskSelected, PRsTab, InboxTab, AgentsTab, DoneTab, DraftsTab])
+        assert all([WorkTab, TaskSelected, MatrixView, PRsTab, InboxTab, AgentsTab, DoneTab, DraftsTab])
 
     def test_widgets_importable(self):
         from packages.dashboard.widgets.status_badge import StatusBadge
@@ -247,24 +247,8 @@ class TestTaskSelected:
 
 
 # ---------------------------------------------------------------------------
-# FlowKanban and WorkTab flow-based tests
+# WorkTab flow-based tests
 # ---------------------------------------------------------------------------
-
-
-class TestFlowKanban:
-    """Tests for the FlowKanban widget class."""
-
-    def test_flow_kanban_importable(self):
-        from packages.dashboard.tabs.work import FlowKanban
-        assert FlowKanban is not None
-
-    def test_flow_kanban_accepts_flow_dict(self):
-        from packages.dashboard.tabs.work import FlowKanban
-        flow = {"name": "default", "states": ["incoming", "claimed", "provisional"]}
-        kanban = FlowKanban(flow=flow, tasks_by_queue={}, agent_map={})
-        assert kanban._flow == flow
-        assert kanban._tasks_by_queue == {}
-        assert kanban._agent_map == {}
 
 
 class TestWorkTabFlowGrouping:
@@ -296,11 +280,10 @@ class TestWorkTabFlowGrouping:
             "generated_at": datetime.now().isoformat(),
         }
 
-    def test_work_tab_importable_with_new_classes(self):
-        from packages.dashboard.tabs.work import WorkTab, FlowKanban, WorkColumn
+    def test_work_tab_importable(self):
+        from packages.dashboard.tabs.work import WorkTab, MatrixView
         assert WorkTab is not None
-        assert FlowKanban is not None
-        assert WorkColumn is not None
+        assert MatrixView is not None
 
     def test_work_tab_has_update_data_method(self):
         from packages.dashboard.tabs.work import WorkTab
