@@ -160,7 +160,7 @@ def guard_backpressure(ctx: AgentContext) -> tuple[bool, str]:
     elif claim_from == "intervention":
         # Fixer: check for tasks with needs_intervention=True
         try:
-            sdk = get_sdk()
+            sdk = queue_utils.get_sdk()
             tasks = sdk.tasks.list(needs_intervention=True)
             if not tasks:
                 return (False, "backpressure: no_intervention_tasks")
@@ -222,7 +222,7 @@ def guard_claim_task(ctx: AgentContext) -> tuple[bool, str]:
         blueprint_name = ctx.agent_config.get("blueprint_name", ctx.agent_name)
         active_task_ids = get_active_task_ids(blueprint_name)
         try:
-            sdk = get_sdk()
+            sdk = queue_utils.get_sdk()
             tasks = sdk.tasks.list(needs_intervention=True)
         except Exception as e:
             logger.warning(f"guard_claim_task: failed to list needs_intervention tasks: {e}")
@@ -847,7 +847,7 @@ def _load_intervention_context_for_prompt(task_id: str) -> str:
 
     # Try messages API first — primary intervention context delivery
     try:
-        sdk = get_sdk()
+        sdk = queue_utils.get_sdk()
         messages = sdk.messages.list(task_id=task_id, to_actor="fixer", type="intervention_request")
         if messages:
             # Parse the JSON block from the most recent message
