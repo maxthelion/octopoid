@@ -273,10 +273,10 @@ class MatrixView(Widget):
     def _build_rows(self) -> list[tuple[dict, str]]:
         """Return ordered (task, indent_prefix) pairs.
 
-        Rows are sorted by most recent activity first (updated_at > claimed_at >
-        created_at). Done tasks are capped at the 5 most recent. Parent tasks
-        come first with their children indented beneath them. Orphaned children
-        appear last with the indent prefix.
+        Rows are grouped by queue in lifecycle order (incoming first, done/failed
+        last), matching the column order. Within each queue group, tasks are sorted
+        by most recent activity first. Done tasks are capped at the 5 most recent.
+        Parent tasks come first with their children indented beneath them.
         """
         # Limit done tasks to the 5 most recent
         done_tasks = [t for t in self._all_tasks if (t.get("queue") or "incoming") == "done"]
@@ -288,8 +288,21 @@ class MatrixView(Widget):
             if (t.get("queue") or "incoming") != "done" or t.get("id", "") in allowed_done_ids
         ]
 
-        # Sort all tasks by most recent activity (descending)
-        filtered.sort(key=self._task_recency_key, reverse=True)
+        # Sort by queue lifecycle order (matching column order), then by recency within each queue
+        column_order = self._get_ordered_columns()
+        queue_rank = {q: i for i, q in enumerate(column_order)}
+        filtered.sort(key=lambda t: (
+            queue_rank.get(t.get("queue") or "incoming", 999),
+            # Within a queue, most recent first (negate by reversing string sort)
+        ))
+        # Stable secondary sort: most recent activity first within each queue group
+        from itertools import groupby
+        grouped: list[dict] = []
+        for _queue, group in groupby(filtered, key=lambda t: t.get("queue") or "incoming"):
+            bucket = list(group)
+            bucket.sort(key=self._task_recency_key, reverse=True)
+            grouped.extend(bucket)
+        filtered = grouped
 
         children_map: dict[str, list[dict]] = {}
         for task in filtered:
