@@ -162,6 +162,10 @@ Show agent-proposed drafts awaiting review.
 - Query drafts API for status=proposed
 - Show pending agent suggestions
 
+## Invariants
+
+No new invariants. This draft proposes replacing the proposal system with the drafts system, and adding a simplifier agent. The changes affect workflow tooling and agent configuration only — no new runtime system behaviour is introduced.
+
 ## Open Questions
 
 - Should the simplifier agent also look at test coverage gaps, or keep it focused on line reduction?

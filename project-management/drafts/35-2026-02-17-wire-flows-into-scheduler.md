@@ -114,3 +114,8 @@ The scheduler needs to read flows to answer three questions it currently hardcod
 - Enqueue as task, blocked by TASK-639ee879, blocking TASK-2bf1ad9b
 - Gatekeeper is the proof — verify it works through flows
 - Implementer conversion (TASK-2bf1ad9b) becomes "add steps to registry + flow YAML" instead of "write another hardcoded handler"
+
+
+## Invariants
+
+- `flows-drive-all-transitions`: All task state transitions are driven by flow definitions loaded from YAML. No state transitions are hardcoded in the scheduler. Adding a new transition requires updating a flow YAML, not modifying Python code.

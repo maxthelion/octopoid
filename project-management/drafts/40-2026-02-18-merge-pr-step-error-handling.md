@@ -129,3 +129,8 @@ This is the safety net — if the pre-condition guard somehow misses a conflict,
 - Should the mergeability check happen in the guard chain (before spawn) or as a flow pre-condition (after claim, before first step)? Guard chain is simpler; flow pre-condition is more general.
 - `check_pr_mergeable` requires a GitHub API call. Is that too expensive to run on every scheduler tick? Could cache with short TTL.
 - Should auto-rebase be a housekeeping job or a flow step that runs before `merge_pr`?
+
+
+## Invariants
+
+- `merge-failure-is-defined-transition`: When a PR cannot be merged (conflicts, failed checks), the scheduler routes the task through a defined flow transition rather than silently leaving it in the current queue. The gatekeeper is never sent to review a task whose PR cannot land.

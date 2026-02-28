@@ -72,3 +72,8 @@ Replace lines 891-1002. New pattern:
 1. Run scheduler with `--once --debug`, verify agent can complete a task end-to-end
 2. Check debug logs show state-first pattern ("already provisional, updating metadata only")
 3. Verify no TypeErrors from fixed argument mismatches
+
+## Invariants
+
+- `result-handling-state-first`: `handle_agent_result()` fetches the current task state from the server before taking any action. Each outcome (submitted, failed, needs_continuation) is handled based on the task's actual current queue, not assumed state.
+- `result-handling-idempotent`: `handle_agent_result()` can be called multiple times safely. If the task is already in the expected state from a prior call or from the `submit-pr` script, the second call updates metadata only — it does not attempt a duplicate state transition.

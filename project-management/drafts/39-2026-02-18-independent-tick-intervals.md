@@ -173,6 +173,11 @@ Combine Option A with the activity-aware scaling from the layered approach:
 - Scheduler reads it to pick active/idle/dormant mode
 - Scale remote poll interval accordingly
 
+## Invariants
+
+- `scheduler-uses-poll-endpoint`: The scheduler makes at most 1-2 API calls per tick cycle by using a summary poll endpoint (`/api/v1/scheduler/poll`) that returns all read state in one response, rather than making separate calls per queue or per agent.
+- `scheduler-activity-aware`: The scheduler adapts its tick frequency based on recent activity — faster during active work, slower during idle and dormant periods — to stay within API rate limits while remaining responsive.
+
 ## Open Questions
 
 - Should we add a request counter to the SDK so we can monitor actual usage?

@@ -54,6 +54,10 @@ task, status = sdk.tasks.claim(...)
 
 Came up while processing draft #92 (SDK claim integration tests). The draft documented the None-on-404/429 contract as load-bearing, which prompted the question: shouldn't this be more explicit?
 
+## Invariants
+
+- `claim-returns-typed-result`: `tasks.claim()` returns an explicit typed result that distinguishes between: task claimed successfully, queue empty (no work available), and at-capacity (max_claimed limit reached). Callers can determine the specific reason without interpreting `None` return values.
+
 ## Open Questions
 
 - Which approach (A/B/C) fits best with the existing SDK style?

@@ -69,3 +69,8 @@ The scheduler's claim logic should check: "does this agent already have a task i
 - Add retry logic to the finish script's submit call
 - Add a "stale claim detector" to the lease expiry housekeeping job (TASK-96a53880 in incoming)
 - Investigate server logs for the failed transition
+
+
+## Invariants
+
+No new invariants — this is a postmortem document. Root causes were addressed in subsequent fixes to the lease and claim system.

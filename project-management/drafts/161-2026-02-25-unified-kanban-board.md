@@ -68,3 +68,8 @@ Clicking/selecting a row could open the task detail modal (same as current kanba
 ## Context
 
 The dashboard uses Textual (terminal UI). The current `FlowKanban` and `WorkColumn` widgets would be replaced entirely by this matrix approach.
+
+
+## Invariants
+
+No new invariants — this is a dashboard UI improvement to show all flows in a single unified kanban view.

@@ -224,3 +224,8 @@ Phase E (docs)              — can start anytime, finish after D
 - **Phase B is the critical gate.** If scripts mode has issues, all cleanup (Phase D) is blocked. Test thoroughly.
 - **Remediation gap in scripts mode**: In Python mode, implementer.py programmatically reruns hooks after Claude fixes issues. In scripts mode, Claude IS the agent — remediation depends on the prompt instructing Claude to retry. Make sure the prompt covers this.
 - **Phase D is destructive.** Only proceed after multiple successful task cycles in scripts mode. Keep Python mode as fallback until confident.
+
+
+## Invariants
+
+No new invariants — this is a completion plan for the agent architecture refactor described in AGENT_ARCHITECTURE_REFACTOR.md. It does not introduce new system behaviour beyond what the main refactor document specifies.

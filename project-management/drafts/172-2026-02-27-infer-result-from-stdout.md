@@ -135,3 +135,8 @@ If the inference returns `{"outcome": "unknown"}`, route to `requires-interventi
 
 - **Draft #170** (requires-intervention): Unknown inference outcomes route to requires-intervention.
 - **Draft #171** (actor model / messages): Longer-term architectural shift. This draft solves the immediate reliability problem.
+
+
+## Invariants
+
+- `results-inferred-from-stdout`: The scheduler infers the agent's outcome from its stdout rather than requiring the agent to write a `result.json` file. Agents that complete work but omit the mechanical file-writing step are not erroneously failed.

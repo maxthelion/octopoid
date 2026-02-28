@@ -448,3 +448,8 @@ Octopoid v2.0 has **excellent foundational architecture** (state machine, leases
 **Work Remaining**: ~40% feature completeness, mostly CRUD APIs and workflow logic
 
 **Recommendation**: Fix the worktree bug (P0), then focus on completing drafts/projects APIs (P0/P1) before adding polish features (P2/P3).
+
+
+## Invariants
+
+No new invariants — this is a historical requirements analysis document from early v2.0 development. The specific gaps it identified have been addressed in subsequent drafts and tasks.

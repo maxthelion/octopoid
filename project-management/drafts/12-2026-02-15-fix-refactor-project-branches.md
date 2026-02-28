@@ -77,3 +77,8 @@ REFACTOR-02 unblocks, gets the same branch with REFACTOR-01's commits already th
 ## What about REFACTOR-03 through REFACTOR-12?
 
 They're all in incoming with `branch: feature/client-server-architecture`. Once the project branch is set, `get_task_branch()` will route them all to `refactor/scheduler-agent`. They should also have `blocked_by` set to chain them sequentially — otherwise they'll race and clobber each other on the shared branch.
+
+
+## Invariants
+
+No new invariants — this is an operational fix for a specific project's branch configuration. No durable system behaviour changes.

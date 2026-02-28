@@ -132,6 +132,13 @@ This came up after a day of debugging where every fix revealed another broken la
 
 The v2.0 migration (API-only) was the right architectural call, but it was done incrementally — removing `is_db_enabled()` checks, adding SDK calls — rather than rethinking the spawn/state/lifecycle model. The result is v1 plumbing carrying v2 data.
 
+## Invariants
+
+- `one-spawn-path`: There is a single spawn function — no branching based on `spawn_mode`, `lightweight`, or role-specific conditions. Agent differences are expressed as config, not code.
+- `server-is-source-of-truth`: The server (Cloudflare Workers + D1) is the sole source of truth for task state. Local files are ephemeral runtime data (PIDs, worktree paths). Task queue and metadata are not maintained in local files.
+- `fail-loudly`: Unhandled errors are surfaced immediately and visibly — no bare `except: pass`, no swallowed exceptions in result handling. Failed operations fail the task explicitly rather than leaving it stuck.
+- `conventions-over-config`: Agent directories, worktree paths, script locations, and branch naming follow fixed conventions. Nothing that can be a convention is made configurable.
+
 ## Open Questions
 
 - How much of this is "fix the abstractions" vs "rewrite the scheduler"? The guard chain, spawn strategies, and state management are tightly coupled.

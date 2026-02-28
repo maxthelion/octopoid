@@ -59,6 +59,10 @@ This is a large-scale cleanup best done in phases:
 6. **Clean docs and commands** — remove db mentions from markdown files
 7. **Run tests** — verify nothing breaks
 
+## Invariants
+
+No new invariants. This draft proposes deleting the local SQLite database backend — a cleanup of dead code from v1. The invariant that the system is API-only is already captured in other drafts.
+
 ## Open Questions
 
 - Should `orchestrator/migrate.py` be deleted entirely or repurposed for API migrations?

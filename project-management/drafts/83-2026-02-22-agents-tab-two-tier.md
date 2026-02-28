@@ -34,3 +34,8 @@ Draft 79 added job agents to the agents tab, but these are the low-level schedul
 - Read background agent definitions from agents.yaml (non-flow agents)
 - Display last run, interval, and recent output for each background agent
 - Decide what to do with the jobs section from draft 79
+
+
+## Invariants
+
+No new invariants — this is a dashboard UI improvement for the agents tab layout.

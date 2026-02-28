@@ -25,6 +25,11 @@ The original ephemeral worktrees design doc (037) specified cleanup on task comp
 - What about worktrees for tasks stuck in `claimed` with expired leases and dead processes?
 - Should `octopoid worktrees-clean` be updated to respect the 1-hour grace period too?
 
+## Invariants
+
+- `worktrees-swept-periodically`: A scheduler housekeeping job sweeps worktrees for tasks that have been in `done` or `failed` for more than 1 hour. Task logs are archived before deletion.
+- `worktree-grace-period`: Worktrees are not deleted immediately on task completion. A minimum 1-hour grace period allows post-completion inspection before cleanup.
+
 ## Possible Next Steps
 
 - Add a `sweep_worktrees()` function to the scheduler that runs on each tick

@@ -26,6 +26,10 @@ We implemented draft 92 (SDK claim tests) which was proposed by the testing-anal
 - What interval is right? 2 hours? 4 hours? The guard makes it cheap to run frequently, but each invocation still costs a haiku/sonnet call if the guard passes.
 - Should the guard also check for `in_progress` drafts (not just `idea`)? If a draft has been enqueued as a task but the task isn't done yet, the analyst might propose something in the same area.
 
+## Invariants
+
+No new invariants. This is a configuration-only change (reducing `interval_seconds` in analyst agent YAML files). The key property — that analyst agents skip if a pending proposal already exists — is enforced by the existing `guard.sh` scripts, not by the interval setting.
+
 ## Possible Next Steps
 
 - Change `interval_seconds` from `86400` to `7200` (2h) or `14400` (4h) in all three agent.yaml files

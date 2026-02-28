@@ -40,6 +40,10 @@ Use **Opus** for this agent. It needs to interpret multiple tool outputs, cross-
 - What thresholds trigger action? e.g. "any file with MI < 20 gets a refactor task", "any function with cyclomatic complexity > 15 gets flagged"
 - wily needs a clean git state to build its index — how does this work in an agent worktree?
 
+## Invariants
+
+- `analyst-uses-quantitative-tools`: The codebase analyst agent runs code quality measurement tools (pytest-cov for coverage, pydeps for dependency graphs, vulture for dead code, wily for complexity trends) before proposing refactoring or quality improvement drafts. Proposals include quantitative data supporting the recommendation, not just qualitative code reading.
+
 ## Possible Next Steps
 
 - Add the four tools to the agent environment (pip install in the venv or system-wide)

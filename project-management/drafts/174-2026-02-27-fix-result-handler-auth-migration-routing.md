@@ -120,6 +120,12 @@ else:
 
 Push the task through manually — it completed successfully and just needs to be moved from failed to the right queue.
 
+## Invariants
+
+- `unknown-outcome-routes-to-intervention`: When a task's outcome cannot be determined (inference failure, empty stdout, unrecognized response), the task routes to intervention for human review — not automatically to failed. An unknown outcome is an ambiguous situation, not an automatic failure.
+- `result-inference-uses-cli-auth`: The result handler infers outcomes using `claude -p` subprocess invocation, using the same auth mechanism as spawned agents. It does not use the `anthropic` Python SDK or any mechanism requiring a separate `ANTHROPIC_API_KEY` environment variable.
+- `result-json-references-removed`: Agent prompts do not instruct agents to write `result.json`. Agents signal completion via stdout only; the orchestrator infers the outcome from stdout content.
+
 ## Open Questions
 
 - Should haiku inference have a timeout? If `claude -p` hangs, the scheduler tick blocks. The subprocess call should have a `timeout=30` or similar.

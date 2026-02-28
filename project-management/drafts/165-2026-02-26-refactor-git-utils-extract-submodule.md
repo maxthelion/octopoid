@@ -41,3 +41,8 @@ file, update `from .git_utils import …` calls at the three or four import site
 No logic changes needed. The test file `tests/test_git_utils.py` (812 lines)
 would need its import updated as well. Risk is low — functions have no circular
 dependencies on the rest of `git_utils.py`.
+
+
+## Invariants
+
+No new invariants — this is a pure refactoring of `git_utils.py` to extract a `submodule_utils` module. No behaviour changes.

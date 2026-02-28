@@ -143,6 +143,11 @@ This should be a project with 3 sequential tasks on the refactoring branch:
 - Verify task 2 worktree sees task 1's commits
 - Verify worktrees are detached, not deleted
 
+## Invariants
+
+- `projects-use-server-api`: Project CRUD (`get_project`, `list_projects`, `create_project`) uses the server API via the Python SDK. No local YAML files are used to store or retrieve project state.
+- `worktree-detaches-after-completion`: After a task completes, its worktree HEAD is detached (not deleted). The branch is freed for the next task, but the worktree remains for inspection until the sweeper removes it.
+
 ## Open Questions
 
 - Should we keep local YAML files as a cache/fallback, or delete them entirely? The server is the source of truth, but local files provide offline visibility.

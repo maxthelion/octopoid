@@ -58,3 +58,8 @@ The `merge_pr` step in `orchestrator/steps.py`:
 - Implement retry logic in `merge_pr`: attempt rebase, if trivial conflicts (CHANGELOG, README), auto-resolve, if complex conflicts, go to `needs-rebase`
 - Consider a merge queue approach where PRs land sequentially, reducing the window for conflicts
 - Add a "rebase-only" agent mode that takes a conflicted branch and resolves conflicts without re-implementing
+
+
+## Invariants
+
+- `rebase-conflict-preserves-work`: When a rebase-at-merge conflict is detected, the agent's work (commits, PR) is preserved. The task is not discarded — it is sent back with conflict context so the agent can resolve it or a human can intervene.

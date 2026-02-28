@@ -157,6 +157,12 @@ This came up after two incidents in one session:
 
 Both are symptoms of the same root cause: the step pipeline assumes "no exception = success" and has no idempotency or verification.
 
+## Invariants
+
+- `step-verification`: Flow steps are only marked as completed after verification that the action durably took effect. A step function returning without exception is not sufficient — the `verify()` phase must confirm the action succeeded (e.g. branch exists on remote, PR exists on GitHub, task state updated on server).
+- `step-idempotency`: Flow steps can be safely retried. Each step's `pre_check()` phase detects whether the work is already done and skips re-execution if so. A step that fails partway through can be retried without side effects.
+- `step-error-classification`: Step failures are classified by exception type — `RetryableStepError` (transient, retry), `StepVerificationError` (execute ran but verify failed), `PermanentStepError` (intervention needed). Routing is determined by exception type, not by exception message parsing.
+
 ## Open Questions
 
 - Should pre_check and verify share a common "query the state" method? They're checking similar things — pre_check asks "is it done?" and verify asks "did it work?" — which is the same question at different times.

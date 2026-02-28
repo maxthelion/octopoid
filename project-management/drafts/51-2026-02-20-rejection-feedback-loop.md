@@ -83,3 +83,8 @@ Of the 7 tasks in the done queue with `rejection_count > 0`, all required manual
 - Implement Option A (server migration + orchestrator change) as a task
 - Or implement Option C as a quick win with no server dependency
 - Add a `$continuation_section` fix at the same time
+
+
+## Invariants
+
+- `rejection-feedback-visible-on-retry`: When a gatekeeper rejects a task, the rejection reason is stored server-side and automatically included in the implementer's prompt on the next attempt. The implementer does not need to rediscover the problems from scratch.

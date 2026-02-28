@@ -85,6 +85,10 @@ In scheduler.py:905-908, the `rebase_on_main` hook generates instructions that s
 ### Long-term
 4. **Implement the rebaser role** — a lightweight (no Claude) agent that rebases branches automatically, saving Claude turns for actual code work
 
+## Invariants
+
+No new invariants. This is a postmortem about operational discipline. The system's rejection→requeue→retry flow is the documented expected behaviour (captured in other drafts). The lesson is to trust that flow rather than manually intervening.
+
 ## Lesson
 
 Trust the system. When a task fails review, the flow handles it. Manual intervention should be reserved for cases where the system is genuinely broken (e.g., orphan bug preventing queue transitions), not for speeding up a retry cycle that the system can handle on its own.

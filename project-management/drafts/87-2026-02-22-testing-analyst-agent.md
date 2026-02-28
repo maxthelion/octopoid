@@ -69,6 +69,11 @@ The codebase analyst (Draft 69) already exists as a model for this kind of perio
 - **Grep test content.** Search `tests/integration/` for references to changed files/functions. Content-based matching, not filename convention.
 - **No test quality checks in v1.** Scope limited to coverage gaps. Quality checks (empty assertions, assert True) deferred to follow-up.
 
+## Invariants
+
+- `testing-analyst-runs-periodically`: A testing analyst agent runs on a regular schedule, reviews recently completed tasks for testing gaps, and proposes integration tests for untested or under-tested features.
+- `testing-analyst-outside-in`: The testing analyst prioritises integration and end-to-end test gaps over unit test gaps, consistent with the outside-in testing philosophy documented in `docs/testing.md`.
+
 ## Possible Next Steps
 
 - Create the agent config and scripts, following the codebase analyst pattern

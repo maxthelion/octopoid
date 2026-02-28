@@ -22,6 +22,10 @@ This came up when TASK-ed00d313 (agent pool model) was created with `branch: mai
 
 Related: Draft #22 (worktree detached HEAD lifecycle), Draft #5 (worktree sweeper).
 
+## Invariants
+
+- `worktree-branch-verified`: Before spawning an agent, the scheduler verifies that any existing worktree for the task is based on the task's current branch. A branch mismatch causes the stale worktree to be replaced with a fresh one from the correct branch.
+
 ## Open Questions
 
 - Should we check the exact commit ancestry, or just compare the branch name? Branch name comparison is simpler but less precise.

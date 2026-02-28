@@ -202,6 +202,10 @@ def sweep_stale_resources() -> None:
 - **CCN reduction**: `sweep_stale_resources` drops from CCN=24 to ~8. `_cleanup_stale_task` has
   its own CCN of ~10 — correctly bounded since it has exactly one job.
 
+## Invariants
+
+No new invariants. This is a pure refactoring — extracting `_cleanup_stale_task` from `sweep_stale_resources` without changing cleanup behavior, grace periods, or which resources are deleted. The external behavior of the sweep is unchanged.
+
 ## Metrics
 
 - **File:** `octopoid/scheduler.py`

@@ -26,6 +26,10 @@ Found three "Test Task" entries in the queue (`1fdc070d`, `0225290a`, `e99447fd`
 - Should the server reject task creation requests that don't include provenance info, or just log a warning?
 - Do we need a `created_by` field on the task schema, or should this go into a generic `metadata` JSON column?
 
+## Invariants
+
+- `task-provenance-tracked`: Every task record carries provenance metadata — `created_by_agent` (the agent name that created it) and `parent_task_id` (the task the agent was working on, if any). Tasks created with no provenance are distinguishable as human-created.
+
 ## Possible Next Steps
 
 - Add `created_by_agent` and `parent_task_id` columns to the tasks schema (or a `metadata` JSON field)

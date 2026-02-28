@@ -74,3 +74,8 @@ This confirms Options A or B are the right approach.
 - Update `tests/conftest.py` to use singleton or transport-level mock
 - Remove all per-module `get_sdk` patches
 - Verify no tests create real server tasks (count incoming before/after)
+
+
+## Invariants
+
+- `sdk-mock-single-intercept`: Tests that need to mock the SDK intercept at the transport layer (a single patch point), not at individual module import sites. Adding a new module that uses `get_sdk()` does not require updating test fixtures.

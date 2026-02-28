@@ -134,6 +134,12 @@ def test_gatekeeper_reject_flow(scoped_sdk):
 
 This is the sweet spot: testing real orchestrator logic with real server state, without needing Claude.
 
+## Invariants
+
+- `flow-tests-verify-lifecycle`: The integration test suite includes flow tests that exercise full task lifecycle transitions (incoming → claimed → provisional → done, and the rejection path) against a real server using scoped isolation.
+- `gatekeeper-wired-into-flow`: The gatekeeper is wired into the scheduler and flow YAML. Provisional tasks cannot reach `done` without passing automated review — the scheduler does not require manual human intervention for each task.
+- `test-infrastructure-gates-features`: New features and agents are built on top of a working test infrastructure. End-to-end flow tests exist before new agent types are introduced.
+
 ## Open Questions
 
 - Should we pause TASK-3ca8857a (pool model) until phases 1-2 are done, or let it keep trying in parallel? It's burning agent cycles but might eventually land.

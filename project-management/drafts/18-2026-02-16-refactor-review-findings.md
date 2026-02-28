@@ -613,3 +613,8 @@ The scheduler refactor **successfully achieved its primary objectives**:
 The refactor represents a major improvement in code quality and maintainability. The deviations from the original spec are minor and mostly represent improvements (e.g., using `spawn_mode` config instead of hardcoded role dispatch). The codebase is now well-positioned for future extensions like new agent types, custom spawn strategies, and per-agent guard configuration.
 
 **Recommendation:** ✅ **APPROVE AND MERGE**
+
+
+## Invariants
+
+No new invariants — this is a review findings document. All follow-up work was superseded by subsequent drafts.

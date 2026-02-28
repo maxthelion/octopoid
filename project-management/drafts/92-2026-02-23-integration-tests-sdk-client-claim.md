@@ -46,3 +46,7 @@ Add integration tests in `tests/integration/test_sdk_client.py` using the `scope
 The scheduler loop runs every few seconds and calls `tasks.claim()` continuously. The `None`-on-404/429 contract is load-bearing: without it, a quiet queue would crash the orchestrator. This code path is exercised thousands of times per day in production but never exercised in tests. A routine refactor of the exception-handling logic in `_request()` or `claim()` could silently break this, causing the orchestrator to stop working entirely when no tasks are available — exactly the normal idle state.
 
 The `scoped_sdk` fixture already handles test isolation perfectly (each test gets its own `scope` on the server), so adding these tests requires no new infrastructure.
+
+## Invariants
+
+No new invariants. This draft proposes tests for existing SDK behaviour. The key contract (`claim()` returns `None` on 404/429) is the existing required behaviour — the tests verify it, not introduce it.

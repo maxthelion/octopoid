@@ -64,3 +64,8 @@ Also wire it into `init.py` so that `octopoid init` registers flows when scaffol
 - Add flow registration to `orchestrator/init.py`
 - Verify `sdk.flows.register()` handles upsert correctly
 - Could be a quick direct fix or a small task
+
+
+## Invariants
+
+- `local-flows-synced-to-server`: Flow YAML files in `.octopoid/flows/` are synchronised to the server on scheduler startup. The dashboard's flow registry matches what the scheduler is actually using.

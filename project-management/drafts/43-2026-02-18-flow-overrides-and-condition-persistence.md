@@ -38,3 +38,9 @@ Proposed: store `conditions_passed: ["tests_pass", "gatekeeper_review"]` on the 
 - How should overrides interact with condition ordering? Can you insert new conditions or only skip/modify existing ones?
 - Should condition persistence be a server-side field on the task, or stored locally?
 - Is there a simpler mechanism than full flow_overrides? (e.g. task-level flags like `auto_merge: true`)
+
+
+## Invariants
+
+- `task-flow-overrides`: Individual tasks can override specific transitions in their flow (e.g. skip gatekeeper review). Overrides are stored on the task and persist across retries.
+- `condition-state-persists`: When a flow condition (e.g. gatekeeper approval) is satisfied, that satisfaction is stored and not re-checked on subsequent scheduler ticks.

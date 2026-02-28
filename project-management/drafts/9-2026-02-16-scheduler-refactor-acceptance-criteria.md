@@ -360,3 +360,7 @@ pytest tests/ -v
 # Check the scheduler refactor tests specifically
 pytest tests/test_scheduler_refactor.py -v
 ```
+
+## Invariants
+
+No new invariants. This draft is an acceptance criteria checklist for the scheduler refactor — a verification document, not a design document. The invariants captured in other drafts (pure functions, one spawn path, declarative flows) describe the system properties being verified here.

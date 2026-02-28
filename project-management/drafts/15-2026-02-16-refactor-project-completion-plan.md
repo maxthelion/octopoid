@@ -77,3 +77,8 @@ For each: decide whether to fix now or create a task.
 - Clean up stale worktrees from the refactor tasks
 - Update MEMORY.md with what we learned
 - Re-enable GH issue monitor once dedup is fixed (or leave disabled)
+
+
+## Invariants
+
+No new invariants — this is an operational plan for completing the scheduler refactor project.

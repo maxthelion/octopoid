@@ -105,6 +105,10 @@ Draft 36's "most dangerous gap" remains: no test covers incoming → scheduler t
 2. **Add pool concurrency tests.** Especially duplicate-claim prevention (once TASK-pool-dedup-claim lands).
 3. **Add scheduler pipeline integration test.** Use the mock agent harness to test guard chain → claim → spawn → result → flow dispatch as one connected test.
 
+## Invariants
+
+No new invariants. This is a progress assessment report, not a design document. The testing gaps identified here are addressed in drafts 27 and 40.
+
 ## Summary
 
 We're significantly better than 24 hours ago — Tier 1 blockers are resolved, pool model is live, gatekeeper works, error logging exists. But the **testing pyramid is bottom-heavy**: lots of unit tests with mocked dependencies, good E2E for API/lifecycle, but the critical middle layer (scheduler pipeline with mock agents) is completely missing. Draft 40's mock agent design is the key to closing this gap.

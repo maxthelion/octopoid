@@ -80,3 +80,8 @@ The right fix is to delete `process_orchestrator_hooks` entirely (Draft 41) and 
 - [ ] Fix `can_transition` to check for failed hooks (immediate, P0)
 - [ ] Delete `process_orchestrator_hooks` once flow path handles all cases (Draft 41)
 - [ ] The `create_pr` base branch bug (TASK-e37bc845) is still the upstream cause — it creates PRs against `main` instead of the task's branch
+
+
+## Invariants
+
+No new invariants — this is a postmortem document. The specific bug (task accepted despite merge_pr failure) was a regression from the hook manager dual-path problem.

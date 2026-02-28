@@ -177,6 +177,10 @@ agent to finish or kill it first.
 - How does the OpenClaw author handle the "agent is mid-tool-call and can't see input" timing issue?
 - Would this work with Codex too, or is it Claude Code specific?
 
+## Invariants
+
+No new invariants. This is an exploratory/feasibility draft assessing whether mid-flight agent intervention via tmux is viable. The draft concludes that significant infrastructure changes would be required (switching from `-p` pipe mode to interactive mode) and defers any decision. No system behaviour changes are proposed.
+
 ## Possible Next Steps
 
 - Spike: spawn Claude Code interactively in tmux, try sending a message mid-task, see what happens

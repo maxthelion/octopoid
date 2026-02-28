@@ -113,6 +113,10 @@ packages/dashboard/
     dashboard.tcss     # Textual CSS for theming
 ```
 
+## Invariants
+
+No new invariants. This draft proposes a UI refactor of the dashboard from curses to Textual. No new runtime system behaviour is introduced.
+
 ## Next Steps
 
 1. Research Textual patterns — look at example apps for tab navigation, live data refresh, split panes

@@ -224,3 +224,8 @@ This is intentionally the first agent migrated to the pure-function model. If it
 - Should `claim_for_review` keep the task in `provisional` (recommended) or move it to a new `reviewing` queue state?
 - Should the orchestrator trust the gatekeeper's test results, or re-run tests independently as verification?
 - If the gatekeeper agent crashes (no result.json), should the task be automatically requeued or flagged for human review?
+
+
+## Invariants
+
+- `gatekeeper-pure-function`: The gatekeeper agent is implemented as a pure function: it receives task details, emits a review decision (`approve`/`reject`/`unknown`), and does no direct queue manipulation. The scheduler drives the resulting state transition.

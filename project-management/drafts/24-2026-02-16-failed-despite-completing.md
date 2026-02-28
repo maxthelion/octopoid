@@ -132,3 +132,8 @@ Fixes 1 and 2 are quick wins that should be done regardless.
 - Draft 7: Sanity-check gatekeeper (would catch incomplete submissions)
 - TASK-ad3a4e7a: Gatekeeper implementation (in queue)
 - TASK-7a393cef: The task that triggered this pattern 3 times
+
+
+## Invariants
+
+No new invariants — this is a postmortem document. The root cause analysis and fix are described in subsequent drafts (result inference, stdout-based outcomes).

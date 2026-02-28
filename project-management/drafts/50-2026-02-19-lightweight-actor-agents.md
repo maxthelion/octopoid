@@ -64,3 +64,8 @@ Came up while discussing dashboard improvements and the drafts tab redesign. The
 - Prototype one end-to-end flow: background agent proposes "archive draft" → button appears in dashboard → click sends message → draft gets archived
 - Extend Draft 34's messages table with action-specific fields (or create a separate actions table)
 - Identify the first 3-5 useful lightweight agents to build
+
+
+## Invariants
+
+- `actors-respond-to-inbox`: Background actor agents respond to messages in their inbox. Dashboard buttons and other system components communicate with actors by writing to their inbox rather than calling them directly.

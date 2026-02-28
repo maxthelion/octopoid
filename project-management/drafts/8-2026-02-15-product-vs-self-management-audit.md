@@ -171,3 +171,8 @@ Because octopoid uses itself, agents need explicit rules about which side they'r
 4. **The `.octopoid/` directory is like `.env` — instance-specific, not the product.** Agents should treat it the way they'd treat any project's config: read it to understand the setup, don't change it unless the task is specifically about our setup.
 
 These rules should go in `.octopoid/global-instructions.md` (which agents read) and in the product's agent instructions template.
+
+
+## Invariants
+
+No new invariants — this is an analysis and audit document identifying where product and self-management code overlap.

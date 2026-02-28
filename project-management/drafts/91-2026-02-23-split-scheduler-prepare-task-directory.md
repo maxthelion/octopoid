@@ -132,3 +132,8 @@ Each helper has CCN ≤ 4 and can be tested with a plain dict — no filesystem 
   - `_build_required_steps`: ~4
   - `_load_global_instructions`: ~2
   - `_load_review_section`: ~2
+
+
+## Invariants
+
+No new invariants — this is a pure refactoring of `prepare_task_directory` to reduce cyclomatic complexity. No behaviour changes.

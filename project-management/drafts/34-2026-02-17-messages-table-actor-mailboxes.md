@@ -159,6 +159,11 @@ This came up while reviewing draft #31 (agents as pure functions) and the actor 
 
 It also addresses draft #30's "state scattered everywhere" problem — messages become the single source of truth for all agent↔orchestrator communication.
 
+## Invariants
+
+- `messages-as-audit-trail`: All agent-orchestrator communication for a task is persisted as messages in the server's messages table. The complete history of a task (instructions given, results returned, rejections, test feedback) is queryable from one source of truth.
+- `messages-replace-result-files`: Agent results are communicated via server-side messages, not via `result.json` files on disk. No orchestrator behavior depends on `result.json` existing after the messages system is in place.
+
 ## Open Questions
 
 - Should messages be immutable (append-only log) or editable? Append-only is simpler and matches the actor model (you can't un-send a message).

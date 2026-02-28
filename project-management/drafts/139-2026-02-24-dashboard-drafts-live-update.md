@@ -28,6 +28,10 @@ The drafts tab only updates when:
 3. **Separate draft polling** — poll drafts independently on a slower interval (e.g. every 30s)
 4. **Accept it** — drafts change infrequently enough that manual R is fine
 
+## Invariants
+
+No new invariants. This is a UI/UX improvement — making the drafts tab poll for updates automatically. No new system behaviour is introduced; the fix adds a polling signal, not a new state machine or lifecycle requirement.
+
 ## Open Questions
 
 - Is this worth fixing, or is manual refresh acceptable for drafts?

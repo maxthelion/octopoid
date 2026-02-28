@@ -51,3 +51,8 @@ causes it to:
 `subprocess.CompletedProcess` objects and cannot catch any of these real-world failure
 modes. The `conflicting_repo` fixture already exists specifically for this kind of test
 and is underused.
+
+
+## Invariants
+
+No new invariants — this proposes adding integration tests for `repo_manager.py` with real git operations. Testing improvement only.

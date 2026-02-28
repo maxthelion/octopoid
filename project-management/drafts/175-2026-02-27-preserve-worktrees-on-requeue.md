@@ -45,6 +45,11 @@ When `prepare_task_directory()` is called for a task that already has a worktree
 
 The agent prompt should also note that previous work may exist in the worktree, so the agent checks what's already done before starting.
 
+## Invariants
+
+- `worktree-preservation`: When a task is requeued after an agent has already worked on it, the existing worktree and commits are preserved. The scheduler detects an existing worktree for the task and reuses it rather than creating a fresh one from main.
+- `worktree-reuse-over-recreate`: A fresh worktree is only created when no previous worktree exists for the task. Infrastructure failures (pipeline error, lease expiry, step failure), gatekeeper rejection, and manual requeue must all attempt to reuse the existing worktree.
+
 ## Open Questions
 
 - Should the rebase be automatic, or should the scheduler just reuse the worktree as-is and let the agent handle any conflicts?

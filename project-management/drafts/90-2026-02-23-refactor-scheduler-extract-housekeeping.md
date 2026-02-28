@@ -60,3 +60,7 @@ set. Estimated reduction: **~1,000 lines** from scheduler.py (down to ~1,400 lin
   so there are no import-site changes outside the `orchestrator/` package.
 - Existing tests in `tests/test_scheduler_refactor.py` and related files will need import-path
   updates if they reference these functions directly.
+
+## Invariants
+
+No new invariants. This is a pure refactoring — moving housekeeping functions from `scheduler.py` into a new `housekeeping.py` module without changing their behavior. The scheduler's external behavior is unchanged.

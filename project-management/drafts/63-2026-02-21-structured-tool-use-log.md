@@ -55,6 +55,11 @@ Option D: **Hybrid — hook writes raw events, post-processing summarizes.** The
 
 Came up while investigating why agents appear to use hundreds of turns. The tool_counter was inflating numbers (counting tool calls not turns) and never resetting on requeue. The dashboard progress bar was actively misleading.
 
+## Invariants
+
+- `turn-count-accurate`: The dashboard's turn counter reflects the actual number of API turns used by an agent, not the number of individual tool calls. One turn may include multiple tool calls; the counter reports turns.
+- `activity-log-requeue-safe`: When a task is requeued, the activity log preserves history from prior attempts with a separator line. The log accumulates across all attempts for a task; it is never wiped on requeue.
+
 ## Open Questions
 
 - Which generation approach (A/B/C/D) is most reliable? Option C is simplest but agents might forget. Option A is mechanical but noisy.

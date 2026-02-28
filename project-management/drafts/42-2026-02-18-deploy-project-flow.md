@@ -24,3 +24,8 @@ Without the deployed flow, project tasks either use the default flow (which crea
 
 - Are projects actively used right now? If not, this can wait until they are.
 - Does the child_flow model in `flow.py` actually get read by the scheduler, or is it just modeled but unused?
+
+
+## Invariants
+
+- `projects-have-flow-file`: Every active project has a flow YAML file deployed to `.octopoid/flows/`. Project tasks use the project flow rather than the default flow.

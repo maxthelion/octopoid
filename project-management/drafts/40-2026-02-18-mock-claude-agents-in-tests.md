@@ -370,3 +370,8 @@ Every step is real code except the agent process and `gh` CLI. When `handle_agen
 4. Write `run_mock_agent` helper and the happy-path lifecycle test as proof of concept
 5. Expand to the full scenario matrix
 6. Integrate with draft 44's unified result handler (test it before it ships)
+
+
+## Invariants
+
+No new invariants — this is a testing improvement proposal. Mocking Claude agents in integration tests does not change system behaviour.

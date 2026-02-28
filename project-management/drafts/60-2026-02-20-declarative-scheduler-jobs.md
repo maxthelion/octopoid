@@ -86,6 +86,11 @@ Job types:
 - **`script`** — calls a registered Python function (like flow steps)
 - **`agent`** — spawns a Claude agent with a prompt (like flow conditions with `type: agent`)
 
+## Invariants
+
+- `jobs-declarative`: Scheduler housekeeping jobs are defined in YAML configuration (like flows), not hardcoded as if-statements in the scheduler's main loop. Adding a new job requires only a YAML entry and a registered function — not changes to the scheduler's core loop.
+- `jobs-extensible`: Both scripted (Python function) and agent-type (LLM-based) jobs are supported by the job system. The distinction is in the job's `type` field, not its implementation location.
+
 ## Open Questions
 
 - Should jobs use the same `@register_step()` pattern as flow steps, or a separate `@register_job()` decorator?

@@ -115,3 +115,8 @@ The most dangerous gap right now is **no tests on the scheduler's critical path*
 2. Should `claim_for_review` keep tasks in `provisional` or move to a `reviewing` state? (Draft #29)
 3. Should flow tests live in `tests/integration/` or new `tests/flows/`? (Draft #33)
 4. Should messages be added alongside or replace `task_history` events table? (Draft #34)
+
+
+## Invariants
+
+No new invariants — this is a synthesis/analysis document summarising progress across multiple workstreams.

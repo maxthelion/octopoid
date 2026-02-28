@@ -423,3 +423,9 @@ For orchestrator hooks (e.g., `merge_pr` on BEFORE_MERGE):
 ## Immediate prerequisite
 
 Commit pending orchestrator changes (`base.py`, `git_utils.py`, `github_issue_monitor.py`) so existing agents work while we build alongside.
+
+
+## Invariants
+
+- `agents-no-python-imports-from-worktree`: Agent processes (implementers) do not import the `orchestrator` Python package from within their worktree. Agents use script-based invocation with explicit paths, so uncommitted orchestrator changes do not silently break running agents.
+- `hooks-server-enforced`: Hook completion is tracked server-side. The server validates that all required hooks for a transition point are satisfied before allowing a state change. It is impossible for a task to skip a required hook and still transition.
