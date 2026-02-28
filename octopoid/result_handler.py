@@ -1057,21 +1057,23 @@ def handle_fixer_result(task_id: str, agent_name: str, task_dir: Path) -> bool:
         except Exception as msg_e:
             print(f"[{datetime.now().isoformat()}] WARN: Failed to post fixer reply message for {task_id}: {msg_e}")
 
-        # Clear the needs_intervention flag
-        try:
-            sdk.tasks.update(task_id, needs_intervention=False)
-        except Exception as clear_e:
-            print(f"[{datetime.now().isoformat()}] WARN: Failed to clear needs_intervention for {task_id}: {clear_e}")
-
-        # Resume the interrupted flow transition
+        # Resume the interrupted flow transition, then clear needs_intervention.
+        # IMPORTANT: clear needs_intervention AFTER resume succeeds, not before.
+        # If we clear it first and resume fails, fail_task sees needs_intervention=False
+        # and treats it as a first failure — re-entering intervention and creating a loop.
         try:
             _resume_flow(
                 sdk, task_id, task, previous_queue, steps_completed, step_that_failed,
                 task_dir, result,
             )
+            # Resume succeeded — now safe to clear the flag
+            try:
+                sdk.tasks.update(task_id, needs_intervention=False)
+            except Exception as clear_e:
+                print(f"[{datetime.now().isoformat()}] WARN: Failed to clear needs_intervention for {task_id}: {clear_e}")
         except Exception as resume_err:
-            # Flow resume failed — fail_task() will detect needs_intervention=False
-            # (already cleared above) so it won't double-count. Use direct terminal.
+            # Flow resume failed — needs_intervention is still True, so fail_task
+            # will correctly treat this as a second failure and go to terminal failed.
             print(f"[{datetime.now().isoformat()}] ERROR: Flow resume failed for {task_id} after fix: {resume_err}")
             logger.debug(f"Fixer: flow resume error for {task_id}: {resume_err}")
             try:

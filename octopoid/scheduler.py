@@ -228,11 +228,48 @@ def guard_claim_task(ctx: AgentContext) -> tuple[bool, str]:
             logger.warning(f"guard_claim_task: failed to list needs_intervention tasks: {e}")
             return (False, "intervention_query_failed")
 
+        MAX_FIXER_ATTEMPTS = 3
+
         task = None
         for candidate in tasks:
-            if candidate.get("id") not in active_task_ids:
-                task = candidate
-                break
+            if candidate.get("id") in active_task_ids:
+                continue
+
+            # Circuit breaker: count previous fixer attempts via intervention_reply messages.
+            # If a task has been through the fixer loop too many times, move it to
+            # terminal failed and notify the user instead of spawning another fixer.
+            cid = candidate.get("id", "")
+            try:
+                msgs = sdk._request("GET", f"/api/v1/tasks/{cid}/messages")
+                fixer_replies = [
+                    m for m in msgs.get("messages", [])
+                    if m.get("type") == "intervention_reply"
+                ]
+                if len(fixer_replies) >= MAX_FIXER_ATTEMPTS:
+                    logger.warning(
+                        f"Fixer circuit breaker: task {cid} has {len(fixer_replies)} "
+                        f"fixer attempts (max {MAX_FIXER_ATTEMPTS}), moving to failed"
+                    )
+                    sdk.tasks.update(cid, queue="failed", needs_intervention=False,
+                                     execution_notes=f"Fixer circuit breaker: {len(fixer_replies)} attempts exhausted")
+                    sdk.messages.create(
+                        task_id=cid,
+                        from_actor="scheduler",
+                        to_actor="human",
+                        type="circuit_breaker",
+                        content=(
+                            f"Task {cid} exhausted {len(fixer_replies)} fixer attempts and has been "
+                            f"moved to failed. The fixer kept reporting 'fixed' but the flow resume "
+                            f"kept failing — this likely indicates an infrastructure issue rather than "
+                            f"a code problem. Please investigate manually."
+                        ),
+                    )
+                    continue  # Skip this candidate, try the next one
+            except Exception as msg_e:
+                logger.debug(f"Fixer circuit breaker: failed to check messages for {cid}: {msg_e}")
+
+            task = candidate
+            break
 
         if task is None:
             return (False, "no_task_to_claim")
