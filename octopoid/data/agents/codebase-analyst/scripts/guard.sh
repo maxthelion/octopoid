@@ -14,9 +14,9 @@ python3 - <<'EOF'
 import os
 import sys
 
-orchestrator_path = os.environ.get('ORCHESTRATOR_PYTHONPATH', '')
-if orchestrator_path:
-    sys.path.insert(0, str(__import__('pathlib').Path(orchestrator_path).parent))
+pythonpath = os.environ.get('ORCHESTRATOR_PYTHONPATH', '')
+if pythonpath:
+    sys.path.insert(0, str(__import__('pathlib').Path(pythonpath).parent))
 
 try:
     from octopoid.queue_utils import get_sdk

@@ -46,10 +46,10 @@ Use Python to call the SDK and create a draft:
 ```python
 import os, sys, json
 
-# Set up orchestrator import path
-orchestrator_path = os.environ.get('ORCHESTRATOR_PYTHONPATH', '')
-if orchestrator_path:
-    sys.path.insert(0, str(__import__('pathlib').Path(orchestrator_path).parent))
+# Set up Python import path
+pythonpath = os.environ.get('ORCHESTRATOR_PYTHONPATH', '')
+if pythonpath:
+    sys.path.insert(0, str(__import__('pathlib').Path(pythonpath).parent))
 
 from octopoid.queue_utils import get_sdk
 sdk = get_sdk()

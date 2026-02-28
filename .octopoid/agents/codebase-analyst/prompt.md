@@ -50,7 +50,7 @@ The `--cov-report=term-missing` output shows each file's coverage percentage and
 Look for:
 - Files with coverage below **50%** — undertested and risky to change safely
 - Files with coverage below **30%** — critical gap, almost no safety net
-- Focus on core orchestrator files: `scheduler.py`, `jobs.py`, `flow.py`, `queue_utils.py`
+- Focus on core octopoid files: `scheduler.py`, `jobs.py`, `flow.py`, `queue_utils.py`
 - The "Miss" columns show the untested line ranges — read them to understand what functionality has no test cover
 
 Severity guide:
@@ -66,7 +66,7 @@ Vulture reports unused imports, variables, functions, and re-exports with a conf
 Look for:
 - **Unused imports** — almost always safe to remove (clean, easy win)
 - **Unused functions** in core files — may be dead code accumulation over time
-- **Unused re-exports** in `queue_utils.py` or `__init__.py` — check whether they're intentional public API before flagging (they may be used by callers outside the `orchestrator/` package)
+- **Unused re-exports** in `queue_utils.py` or `__init__.py` — check whether they're intentional public API before flagging (they may be used by callers outside the `octopoid/` package)
 - Items with **80%+ confidence** are reliable; lower confidence may be false positives
 
 Severity guide:
@@ -147,9 +147,9 @@ Always run the initialization block first. Then enqueue any mechanical fixes you
 import os, sys
 from pathlib import Path
 
-orchestrator_path = os.environ.get('ORCHESTRATOR_PYTHONPATH', '')
-if orchestrator_path:
-    sys.path.insert(0, str(Path(orchestrator_path).parent))
+pythonpath = os.environ.get('ORCHESTRATOR_PYTHONPATH', '')
+if pythonpath:
+    sys.path.insert(0, str(Path(pythonpath).parent))
 
 from octopoid.tasks import create_task
 
@@ -196,9 +196,9 @@ If there are any judgement-call recommendations remaining (or mechanical finding
 import os, sys, json
 from datetime import date
 
-orchestrator_path = os.environ.get('ORCHESTRATOR_PYTHONPATH', '')
-if orchestrator_path:
-    sys.path.insert(0, str(__import__('pathlib').Path(orchestrator_path).parent))
+pythonpath = os.environ.get('ORCHESTRATOR_PYTHONPATH', '')
+if pythonpath:
+    sys.path.insert(0, str(__import__('pathlib').Path(pythonpath).parent))
 
 from octopoid.queue_utils import get_sdk
 sdk = get_sdk()

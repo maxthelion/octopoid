@@ -22,13 +22,13 @@ You are a read-only analysis agent. You do not write code, make commits, or modi
 
 ## SDK usage
 
-Import the SDK via the orchestrator:
+Import the SDK via the Python path:
 
 ```python
 import os, sys
-orchestrator_path = os.environ.get('ORCHESTRATOR_PYTHONPATH', '')
-if orchestrator_path:
-    sys.path.insert(0, str(__import__('pathlib').Path(orchestrator_path).parent))
+pythonpath = os.environ.get('ORCHESTRATOR_PYTHONPATH', '')
+if pythonpath:
+    sys.path.insert(0, str(__import__('pathlib').Path(pythonpath).parent))
 from octopoid.queue_utils import get_sdk
 sdk = get_sdk()
 ```
