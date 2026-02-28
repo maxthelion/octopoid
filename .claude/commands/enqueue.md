@@ -26,25 +26,13 @@ When run without arguments, I'll ask for:
    - `P3` - Low (nice-to-have)
 4. **Context** - Background and motivation
 5. **Acceptance Criteria** - Specific requirements
-6. **Proposed / awaiting approval?** - If the user says the task is "proposed", "not yet ready", "needs approval", "hold for now", or similar, set `blocked_by="awaiting-approval"`. The task will be created in the queue but won't be claimed by agents until a human runs `/approve-task <task-id>` to unblock it.
-
-## Enqueuing from a draft
-
-When the user references a draft (by number, filename, or "that draft"), read the draft file first. If it has an **Open Questions** section with unanswered questions:
-
-1. List each open question
-2. State what you are assuming for each one
-3. Show the user your assumptions **before** creating the task
-4. Let them correct any assumptions before proceeding
-
-Do not silently resolve open questions — the user needs to see and approve the answers, since they become baked into the task description that the implementing agent will follow.
 
 ## Implementation
 
-Use `create_task()` from `orchestrator.tasks` to create tasks. This function writes the task file to `.octopoid/tasks/` **and** registers it on the server in one step:
+Use `create_task()` from `octopoid.tasks` to create tasks. This function writes the task file to `.octopoid/tasks/` **and** registers it on the server in one step:
 
 ```python
-from orchestrator.tasks import create_task
+from octopoid.tasks import create_task
 
 create_task(
     title="Add rate limiting to API",
@@ -60,24 +48,20 @@ create_task(
 )
 ```
 
-### Proposed tasks (awaiting approval)
-
-If the user indicates the task is not ready to be worked on yet — e.g. "proposed", "not yet ready", "needs approval", "park this for later", "hold off on this" — pass `blocked_by="awaiting-approval"`:
-
-```python
-create_task(
-    title="Refactor authentication module",
-    role="implement",
-    priority="P2",
-    context="...",
-    acceptance_criteria=["..."],
-    blocked_by="awaiting-approval",  # won't be claimed until approved
-)
-```
-
-The task will appear in the queue but agents will skip it. To release it, run `/approve-task <task-id>`.
-
 Do **not** write task files manually or place them in any queue directory. Always use `create_task()`.
+
+## Invariant coverage (when enqueuing from a draft)
+
+When creating tasks from a draft that has an `## Invariants` section, check whether the tasks you're creating collectively cover the invariants. This doesn't mean every task must fully satisfy every invariant — partial progress is fine. But the gap should be explicit.
+
+After creating tasks, summarise:
+- Which invariants the task(s) fully address
+- Which invariants are only partially covered (and what remains)
+- Which invariants are not covered at all by this batch of tasks
+
+If important invariants are not covered, suggest additional tasks or flag them to the user. The goal is that by the time all tasks from a draft are done, the invariants should be met. If a single task can't cover an invariant, say so — don't silently drop it.
+
+Also check `project-management/system-spec.yaml` — if the draft's invariants overlap with existing spec entries, reference them. If they're new, they'll be added to the spec when `/process-draft` confirms they're met.
 
 ## Task File Location
 
@@ -114,13 +98,7 @@ the service.
 
 The task will be:
 1. Registered on the server and visible in the queue immediately
-2. Claimed by an agent with matching role on next scheduler tick (unless `blocked_by="awaiting-approval"` is set)
+2. Claimed by an agent with matching role on next scheduler tick
 3. Worked on and moved to done/failed
 
-If the task was created as proposed (with `blocked_by="awaiting-approval"`), it will remain unclaimed until a human runs `/approve-task <task-id>`.
-
 Check status with `/queue-status`.
-
-## Related Commands
-
-- `/approve-task` — Approve a proposed task and allow agents to claim it

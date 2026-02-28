@@ -68,6 +68,18 @@ Content:
 
 <User's description, cleaned up slightly but preserving their intent>
 
+## Invariants
+
+<What should be true about the system after this work is complete? State as
+testable behavioural invariants — not what to build, but what should hold.>
+
+- **<invariant-id>**: <human-readable invariant statement>
+
+If the idea doesn't obviously have invariants (e.g. pure refactoring, tooling),
+note that explicitly: "No new invariants — this is a refactoring/tooling change."
+If you're unsure what the invariants should be, list candidates and flag them
+as open questions.
+
 ## Context
 
 <Why this came up — reference the conversation or situation if obvious>

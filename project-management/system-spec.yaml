@@ -1,0 +1,130 @@
+# project-management/system-spec.yaml
+#
+# Behavioural invariants for the octopoid orchestrator.
+#
+# Each entry describes what the system is supposed to do — not how the code
+# works, but what guarantees it provides. Tests are derived from these
+# invariants. Agents read this spec before making changes.
+#
+# Invariants enter this file when a draft's invariant has been verified as
+# met in the code. See draft #182 for the lifecycle:
+#   draft (invariant stated) -> tasks (partial progress) -> process-draft
+#   (invariant verified) -> system-spec.yaml (invariant permanent)
+#
+# Format:
+#   id: unique kebab-case identifier
+#   description: human-readable invariant statement
+#   rationale: why this invariant matters
+#   source: draft or task that introduced it
+#   status: aspirational | enforced
+#     - aspirational: intent is agreed, code doesn't fully satisfy it yet
+#     - enforced: code satisfies it AND a test verifies it
+#   test: path to test that verifies it (null = needs test)
+
+behaviours:
+  failure-handling:
+    - id: self-correcting-failure
+      description: >
+        Every task failure goes through intervention before reaching the
+        failed queue. A task only reaches failed after at least one
+        intervention attempt. Direct routing to failed without intervention
+        is a bug.
+      rationale: >
+        The fixer agent can handle many failures autonomously (retry with
+        more turns, identify missing prerequisites, fix git conflicts,
+        simplify scope). failed should mean "the system tried to
+        self-correct and couldn't", not "the first attempt didn't work".
+      source: draft-181
+      status: aspirational  # _handle_fail_outcome still bypasses fail_task()
+      test: null
+
+    - id: fail-task-single-path
+      description: >
+        All code paths that move a task to the failed queue must go through
+        fail_task(). No code should call sdk.tasks.update(queue='failed')
+        directly except fail_task() itself.
+      rationale: >
+        fail_task() implements the intervention-first logic. Bypassing it
+        creates paths where tasks skip intervention, violating
+        self-correcting-failure.
+      source: draft-181
+      status: aspirational  # _handle_fail_outcome bypasses fail_task()
+      test: null
+
+  task-lifecycle:
+    - id: worktree-preservation
+      description: >
+        When a task is requeued after an agent has worked on it, the
+        existing worktree and commits are preserved. The agent resumes
+        from existing work, not from scratch.
+      rationale: >
+        Destroying completed work wastes agent turns and creates loops
+        where agents redo work that was already done.
+      source: draft-175
+      status: aspirational
+      test: null
+
+    - id: step-verification
+      description: >
+        Flow steps are only marked as completed in step_progress.json
+        after verification that the action durably took effect (e.g.
+        branch exists on remote after push, PR exists after create_pr).
+      rationale: >
+        Without verification, steps can ghost-complete — the function
+        returns without exception but the action didn't happen. This
+        causes tasks to be marked done when their work never landed.
+      source: draft-180
+      status: aspirational  # task 876eb1ee in progress
+      test: null
+
+    - id: step-idempotency
+      description: >
+        Flow steps can be safely retried. Each step checks whether its
+        work is already done before executing, and skips if so.
+      rationale: >
+        When the fixer resumes a failed flow, it re-runs from the failed
+        step. If the step partially succeeded (e.g. branch pushed), the
+        retry must not fail because the work already exists.
+      source: draft-180
+      status: aspirational  # task 876eb1ee in progress
+      test: null
+
+  scheduling:
+    - id: claim-limit
+      description: >
+        The scheduler never claims more tasks than max_claimed allows
+        for any agent blueprint.
+      rationale: >
+        Overclaiming wastes resources and can cause contention. Each
+        blueprint defines its capacity and the scheduler respects it.
+      source: bootstrap
+      status: aspirational
+      test: null
+
+  process:
+    - id: drafts-have-invariants
+      description: >
+        Every draft that proposes a change to system behaviour has an
+        Invariants section stating what should be true after the work
+        is complete. If a draft has no invariants, that is surfaced for
+        discussion rather than silently skipped.
+      rationale: >
+        Without explicit invariants, intent evaporates during the
+        draft-to-task translation. The implementer follows mechanical
+        acceptance criteria and the broader intent is lost.
+      source: draft-182
+      status: aspirational
+      test: null
+
+    - id: process-draft-checks-invariants
+      description: >
+        A draft cannot be archived until its invariants are verified as
+        met in the code and added to the system spec. process-draft
+        checks invariant satisfaction, not just task completion.
+      rationale: >
+        Without this check, drafts get archived when their tasks are
+        done, even if the invariant they described isn't actually met.
+        The accountability loop is broken.
+      source: draft-182
+      status: aspirational
+      test: null

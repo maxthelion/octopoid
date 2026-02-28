@@ -73,22 +73,51 @@ If the draft contains architecture-level content, check whether an existing doc 
 
 **If running in automated mode:** include proposed rules and architecture docs in the inbox message. Do not modify rule files or docs directly — flag them for human review.
 
-### 4. Decide whether to archive
+### 4. Check invariant satisfaction
+
+If the draft has an `## Invariants` section, check whether each invariant is actually met in the code **before** deciding whether to archive. This is the critical accountability step — task completion is necessary but not sufficient.
+
+For each invariant:
+1. Read the invariant statement
+2. If it has a testable assertion (grep pattern, test function, code structure check), run it
+3. If it doesn't have a testable assertion, use judgement: read the relevant code and determine whether the invariant holds
+4. Report the result: **met**, **partially met** (explain the gap), or **not met**
+
+**If all invariants are met:**
+- Check whether they've been added to `project-management/system-spec.yaml` with `status: enforced` and a test path
+- If not, add them (or flag for the user to add in automated mode)
+- The draft can be archived
+
+**If any invariant is not met:**
+- The draft **cannot be archived**, even if all its tasks are "done"
+- List the unmet invariants and the specific gaps
+- Suggest additional tasks to close the gaps
+- Set draft status to `in_progress` or `partial`
+
+**If the draft has no invariants section:**
+- Flag this: "This draft has no invariants. Should it? What should be true about the system after this work is complete?"
+- In automated mode, include this question in the inbox message
+- In human-guided mode, ask the user directly
+
+### 5. Decide whether to archive
 
 **Archive the draft if:**
 - All proposed work is complete (tasks done, changes merged, decisions implemented)
+- All invariants are met in the code (checked in step 4)
+- Invariants have been added to `project-management/system-spec.yaml`
 - No outstanding work remains to be scheduled
 - The draft served its purpose and is now historical reference
 
 **Keep in drafts/ if:**
 - Work has been started but not finished (tasks enqueued but not complete)
+- Invariants are not yet met (even if tasks are "done")
 - Multi-phase plan with later phases not yet started
 - Still actively being referenced for ongoing work
 - Open questions remain unanswered
 
-**Update status on the server (step 6).** Do NOT update status in the local markdown file — the server is the sole source of truth for draft status.
+**Update status on the server (step 7).** Do NOT update status in the local markdown file — the server is the sole source of truth for draft status.
 
-### 5. Add processing summary (whether archiving or not)
+### 6. Add processing summary (whether archiving or not)
 
 Prepend a processing summary block to track what's been done:
 
@@ -108,7 +137,7 @@ Prepend a processing summary block to track what's been done:
 - `automated` — processed by an agent without human intervention (e.g. post-accept hook)
 - `mixed` — some steps automated, some required human input
 
-### 6. Update status on server
+### 7. Update status on server
 
 Update the draft status via SDK:
 

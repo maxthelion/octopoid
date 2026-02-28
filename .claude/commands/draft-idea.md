@@ -18,7 +18,7 @@ Extract:
 Fetch existing drafts via the SDK:
 
 ```python
-from orchestrator.queue_utils import get_sdk
+from octopoid.queue_utils import get_sdk
 sdk = get_sdk()
 existing = sdk.drafts.list()
 ```
@@ -33,7 +33,7 @@ Scan titles for ideas that overlap with this one. If a duplicate or near-duplica
 Register the draft on the server. The server auto-assigns the next integer ID.
 
 ```python
-from orchestrator.queue_utils import get_sdk
+from octopoid.queue_utils import get_sdk
 sdk = get_sdk()
 result = sdk.drafts.create(
     title=title,
@@ -67,6 +67,18 @@ Content:
 ## Idea
 
 <User's description, cleaned up slightly but preserving their intent>
+
+## Invariants
+
+<What should be true about the system after this work is complete? State as
+testable behavioural invariants — not what to build, but what should hold.>
+
+- **<invariant-id>**: <human-readable invariant statement>
+
+If the idea doesn't obviously have invariants (e.g. pure refactoring, tooling),
+note that explicitly: "No new invariants — this is a refactoring/tooling change."
+If you're unsure what the invariants should be, list candidates and flag them
+as open questions.
 
 ## Context
 

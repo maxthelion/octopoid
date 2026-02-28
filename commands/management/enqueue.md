@@ -50,6 +50,19 @@ create_task(
 
 Do **not** write task files manually or place them in any queue directory. Always use `create_task()`.
 
+## Invariant coverage (when enqueuing from a draft)
+
+When creating tasks from a draft that has an `## Invariants` section, check whether the tasks you're creating collectively cover the invariants. This doesn't mean every task must fully satisfy every invariant — partial progress is fine. But the gap should be explicit.
+
+After creating tasks, summarise:
+- Which invariants the task(s) fully address
+- Which invariants are only partially covered (and what remains)
+- Which invariants are not covered at all by this batch of tasks
+
+If important invariants are not covered, suggest additional tasks or flag them to the user. The goal is that by the time all tasks from a draft are done, the invariants should be met. If a single task can't cover an invariant, say so — don't silently drop it.
+
+Also check `project-management/system-spec.yaml` — if the draft's invariants overlap with existing spec entries, reference them. If they're new, they'll be added to the spec when `/process-draft` confirms they're met.
+
 ## Task File Location
 
 Tasks are written to:
