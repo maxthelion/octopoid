@@ -7,9 +7,12 @@ Covers:
 - execute_steps() writes step_progress.json
 - handle_fixer_result() resumes flow on outcome=fixed
 - handle_fixer_result() moves to true failed on outcome=failed
+- _handle_fail_outcome() routes agent failures through intervention (not directly to failed)
+- Structural invariant: no direct sdk.tasks.update(queue='failed') outside fail_task()
 """
 
 import json
+import re
 from pathlib import Path
 from unittest.mock import MagicMock, call, patch
 
@@ -325,18 +328,25 @@ class TestHandleFixerResultFailed:
         (task_dir / "intervention_context.json").write_text(json.dumps(ctx))
 
     def test_failed_outcome_moves_to_true_failed(self, tmp_path):
-        """outcome=failed calls sdk.tasks.update(queue='failed')."""
+        """outcome=failed routes through fail_task() which goes to 'failed' from requires-intervention."""
         task_dir = tmp_path / "TASK-cant-fix"
         task_dir.mkdir()
         self._write_intervention_context(task_dir)
 
-        sdk = MagicMock()
-        sdk.tasks.get.return_value = {"id": "TASK-cant-fix", "queue": "requires-intervention", "flow": "default"}
-        sdk.tasks.update.return_value = {}
+        # tasks_sdk is used by fail_task() internally via octopoid.tasks.get_sdk
+        tasks_sdk = MagicMock()
+        tasks_sdk.tasks.get.return_value = {"id": "TASK-cant-fix", "queue": "requires-intervention", "flow": "default"}
+        tasks_sdk.tasks.update.return_value = {}
+
+        # result_handler_sdk is used by handle_fixer_result() itself
+        result_handler_sdk = MagicMock()
+        result_handler_sdk.tasks.get.return_value = {"id": "TASK-cant-fix", "queue": "requires-intervention", "flow": "default"}
+
         failed_result = {"outcome": "failed", "diagnosis": "cannot fix this"}
 
         with (
-            patch("octopoid.result_handler.queue_utils.get_sdk", return_value=sdk),
+            patch("octopoid.result_handler.queue_utils.get_sdk", return_value=result_handler_sdk),
+            patch("octopoid.tasks.get_sdk", return_value=tasks_sdk),
             patch("octopoid.result_handler.infer_result_from_stdout", return_value=failed_result),
             patch("octopoid.task_thread.post_message"),
             patch("octopoid.tasks.get_task_logger"),
@@ -345,8 +355,9 @@ class TestHandleFixerResultFailed:
             result = handle_fixer_result("TASK-cant-fix", "fixer-1", task_dir)
 
         assert result is True
-        sdk.tasks.update.assert_called_once()
-        call_kwargs = sdk.tasks.update.call_args
+        # fail_task() uses tasks_sdk to update queue to 'failed'
+        tasks_sdk.tasks.update.assert_called_once()
+        call_kwargs = tasks_sdk.tasks.update.call_args
         assert call_kwargs[0][0] == "TASK-cant-fix"
         assert call_kwargs[1]["queue"] == "failed"
 
@@ -356,13 +367,18 @@ class TestHandleFixerResultFailed:
         task_dir.mkdir()
         self._write_intervention_context(task_dir)
 
-        sdk = MagicMock()
-        sdk.tasks.get.return_value = {"id": "TASK-cant-fix", "queue": "requires-intervention", "flow": "default"}
-        sdk.tasks.update.return_value = {}
+        tasks_sdk = MagicMock()
+        tasks_sdk.tasks.get.return_value = {"id": "TASK-cant-fix", "queue": "requires-intervention", "flow": "default"}
+        tasks_sdk.tasks.update.return_value = {}
+
+        result_handler_sdk = MagicMock()
+        result_handler_sdk.tasks.get.return_value = {"id": "TASK-cant-fix", "queue": "requires-intervention", "flow": "default"}
+
         failed_result = {"outcome": "failed", "diagnosis": "cannot fix this"}
 
         with (
-            patch("octopoid.result_handler.queue_utils.get_sdk", return_value=sdk),
+            patch("octopoid.result_handler.queue_utils.get_sdk", return_value=result_handler_sdk),
+            patch("octopoid.tasks.get_sdk", return_value=tasks_sdk),
             patch("octopoid.result_handler.infer_result_from_stdout", return_value=failed_result),
             patch("octopoid.task_thread.post_message"),
             patch("octopoid.tasks.get_task_logger"),
@@ -424,3 +440,143 @@ class TestFlowRequiresIntervention:
         froms_tos = [(t["from"], t["to"]) for t in implicit]
         assert ("claimed", "requires-intervention") in froms_tos
         assert ("requires-intervention", "failed") in froms_tos
+
+
+# =============================================================================
+# _handle_fail_outcome() — agent failure routing
+# =============================================================================
+
+
+class TestHandleFailOutcomeRouting:
+    """_handle_fail_outcome() routes agent failures through intervention, not directly to failed."""
+
+    def _make_sdk(self, current_queue: str) -> MagicMock:
+        sdk = MagicMock()
+        sdk.tasks.get.return_value = {"id": "TASK-1", "queue": current_queue}
+        sdk.tasks.update.return_value = {"id": "TASK-1", "queue": "requires-intervention"}
+        return sdk
+
+    def test_agent_failure_routes_to_requires_intervention(self, tmp_path):
+        """Agent outcome=failed causes task to go to requires-intervention, not directly to failed."""
+        task_id = "TASK-fail"
+        task_dir = tmp_path / task_id
+        task_dir.mkdir()
+
+        sdk = self._make_sdk("claimed")
+        task = {"id": task_id, "queue": "claimed", "flow": "default"}
+
+        with (
+            patch("octopoid.tasks.get_sdk", return_value=sdk),
+            patch("octopoid.config.get_tasks_dir", return_value=tmp_path),
+            patch("octopoid.tasks.get_task_logger"),
+            patch("octopoid.task_thread.post_message"),
+        ):
+            from octopoid.result_handler import _handle_fail_outcome
+            result = _handle_fail_outcome(sdk, task_id, task, "agent reported failure", "claimed")
+
+        assert result is True
+        # Must route to requires-intervention, not to failed
+        sdk.tasks.update.assert_called_once()
+        call_args = sdk.tasks.update.call_args
+        assert call_args[1]["queue"] == "requires-intervention"
+
+    def test_agent_failure_does_not_call_failed_directly(self, tmp_path):
+        """_handle_fail_outcome never calls sdk.tasks.update(queue='failed') directly."""
+        task_id = "TASK-fail2"
+        task_dir = tmp_path / task_id
+        task_dir.mkdir()
+
+        sdk = self._make_sdk("claimed")
+        task = {"id": task_id, "queue": "claimed", "flow": "default"}
+
+        failed_calls = []
+
+        def capture_update(tid, **kwargs):
+            if kwargs.get("queue") == "failed":
+                failed_calls.append(kwargs)
+            return {"id": tid, "queue": kwargs.get("queue", "unknown")}
+
+        sdk.tasks.update.side_effect = capture_update
+
+        with (
+            patch("octopoid.tasks.get_sdk", return_value=sdk),
+            patch("octopoid.config.get_tasks_dir", return_value=tmp_path),
+            patch("octopoid.tasks.get_task_logger"),
+            patch("octopoid.task_thread.post_message"),
+        ):
+            from octopoid.result_handler import _handle_fail_outcome
+            _handle_fail_outcome(sdk, task_id, task, "agent error", "claimed")
+
+        assert failed_calls == [], (
+            "_handle_fail_outcome should not route directly to 'failed'; "
+            f"got direct failed calls: {failed_calls}"
+        )
+
+    def test_terminal_queue_returns_true_without_transition(self):
+        """When task is already in a terminal queue, _handle_fail_outcome removes stale PID."""
+        sdk = MagicMock()
+        task = {"id": "TASK-done", "queue": "done", "flow": "default"}
+
+        from octopoid.result_handler import _handle_fail_outcome
+        result = _handle_fail_outcome(sdk, "TASK-done", task, "too late", "done")
+
+        assert result is True
+        sdk.tasks.update.assert_not_called()
+
+    def test_non_claimed_non_terminal_returns_false(self):
+        """When task is in a non-terminal queue that isn't claimed, keep PID for retry."""
+        sdk = MagicMock()
+        task = {"id": "TASK-prov", "queue": "provisional", "flow": "default"}
+
+        from octopoid.result_handler import _handle_fail_outcome
+        result = _handle_fail_outcome(sdk, "TASK-prov", task, "odd state", "provisional")
+
+        assert result is False
+        sdk.tasks.update.assert_not_called()
+
+
+# =============================================================================
+# Structural invariant: no direct queue='failed' calls outside fail_task()
+# =============================================================================
+
+
+class TestNoDirectFailedCalls:
+    """Structural invariant: only fail_task() may call sdk.tasks.update(queue='failed')."""
+
+    def test_result_handler_has_no_direct_failed_update(self):
+        """result_handler.py contains no direct sdk.tasks.update(...queue='failed'...) call."""
+        import octopoid.result_handler as _mod
+
+        source_file = Path(_mod.__file__)
+        source = source_file.read_text()
+
+        # Match patterns like: sdk.tasks.update(...queue="failed"...) or queue='failed'
+        # We look for the update call with queue=failed together on a line or nearby.
+        # The only legitimate occurrence of queue="failed" in result_handler is inside
+        # a call to fail_task() — fail_task itself lives in tasks.py, not here.
+        direct_failed_pattern = re.compile(
+            r'\.tasks\.update\s*\([^)]*queue\s*=\s*["\']failed["\']',
+            re.DOTALL,
+        )
+        matches = direct_failed_pattern.findall(source)
+        assert matches == [], (
+            "result_handler.py contains a direct sdk.tasks.update(queue='failed') call "
+            f"outside fail_task(): {matches}"
+        )
+
+    def test_scheduler_has_no_direct_failed_update(self):
+        """scheduler.py contains no direct sdk.tasks.update(queue='failed') call."""
+        import octopoid.scheduler as _mod
+
+        source_file = Path(_mod.__file__)
+        source = source_file.read_text()
+
+        direct_failed_pattern = re.compile(
+            r'\.tasks\.update\s*\([^)]*queue\s*=\s*["\']failed["\']',
+            re.DOTALL,
+        )
+        matches = direct_failed_pattern.findall(source)
+        assert matches == [], (
+            "scheduler.py contains a direct sdk.tasks.update(queue='failed') call "
+            f"outside fail_task(): {matches}"
+        )
