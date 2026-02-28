@@ -331,8 +331,8 @@ class MatrixView(Widget):
         table.add_column("Task", key="task_name", width=42)
         for col in columns:
             # Abbreviate headers to keep columns narrow
-            abbrev = col[:7]
-            table.add_column(abbrev, key=f"col_{col}", width=10)
+            abbrev = col[:9]
+            table.add_column(abbrev, key=f"col_{col}", width=9)
         yield table
 
     def on_mount(self) -> None:
