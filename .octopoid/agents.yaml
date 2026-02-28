@@ -26,7 +26,7 @@ agents:
   fixer:
     role: fixer
     spawn_mode: scripts
-    claim_from: requires-intervention
+    claim_from: intervention
     interval_seconds: 60
     max_turns: 50
     model: sonnet

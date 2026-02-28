@@ -157,6 +157,17 @@ def guard_backpressure(ctx: AgentContext) -> tuple[bool, str]:
         if not can_proceed:
             return (False, f"backpressure: {reason}")
         return (True, "")
+    elif claim_from == "intervention":
+        # Fixer: check for tasks with needs_intervention=True
+        try:
+            sdk = get_sdk()
+            tasks = sdk.tasks.list(needs_intervention=True)
+            if not tasks:
+                return (False, "backpressure: no_intervention_tasks")
+        except Exception as e:
+            logger.warning(f"guard_backpressure: failed to query needs_intervention tasks: {e}")
+            return (False, "backpressure: intervention_query_failed")
+        return (True, "")
     else:
         # Non-incoming queues (provisional, breakdown, etc.)
         if ctx.queue_counts is not None:
@@ -205,6 +216,35 @@ def guard_claim_task(ctx: AgentContext) -> tuple[bool, str]:
     # When claiming from a non-incoming queue (e.g. provisional), do not filter
     # by the agent's own role — the tasks there may have a different original role.
     role_filter = ctx.role if claim_from == "incoming" else None
+
+    if claim_from == "intervention":
+        # Fixer: find a task with needs_intervention=True without transitioning it
+        blueprint_name = ctx.agent_config.get("blueprint_name", ctx.agent_name)
+        active_task_ids = get_active_task_ids(blueprint_name)
+        try:
+            sdk = get_sdk()
+            tasks = sdk.tasks.list(needs_intervention=True)
+        except Exception as e:
+            logger.warning(f"guard_claim_task: failed to list needs_intervention tasks: {e}")
+            return (False, "intervention_query_failed")
+
+        task = None
+        for candidate in tasks:
+            if candidate.get("id") not in active_task_ids:
+                task = candidate
+                break
+
+        if task is None:
+            return (False, "no_task_to_claim")
+
+        # Write task to agent runtime dir (same as claim_and_prepare_task does)
+        agent_dir = get_agents_runtime_dir() / ctx.agent_name
+        agent_dir.mkdir(parents=True, exist_ok=True)
+        import json as _json
+        (agent_dir / "claimed_task.json").write_text(_json.dumps(task, indent=2))
+
+        ctx.claimed_task = task
+        return (True, "")
 
     task = claim_and_prepare_task(
         agent_name=ctx.agent_name,
@@ -794,12 +834,32 @@ def _load_review_section(task_id: str) -> str:
 
 
 def _load_intervention_context_for_prompt(task_id: str) -> str:
-    """Load intervention_context.json for a task as a formatted JSON string.
+    """Load intervention context for a task as a formatted JSON string.
+
+    Tries the messages API first (intervention_request message to fixer),
+    falling back to intervention_context.json in the task directory.
 
     Returns empty JSON object string if not found or task_id is empty.
     """
+    import json as _json
     if not task_id:
         return "{}"
+
+    # Try messages API first — primary intervention context delivery
+    try:
+        sdk = get_sdk()
+        messages = sdk.messages.list(task_id=task_id, to_actor="fixer", type="intervention_request")
+        if messages:
+            # Parse the JSON block from the most recent message
+            content = messages[-1].get("content", "")
+            import re as _re
+            match = _re.search(r"```json\s*(.*?)\s*```", content, _re.DOTALL)
+            if match:
+                return match.group(1)
+    except Exception:
+        pass
+
+    # Fallback: read from file
     ctx_path = get_tasks_dir() / task_id / "intervention_context.json"
     if ctx_path.exists():
         try:
@@ -1287,7 +1347,7 @@ def check_and_update_finished_agents() -> None:
                 task_dir = get_tasks_dir() / task_id
                 if task_dir.exists():
                     try:
-                        if claim_from == "requires-intervention":
+                        if blueprint_name == "fixer" or claim_from == "intervention":
                             # Fixer agents use dedicated result handler
                             transitioned = handle_fixer_result(task_id, instance_name, task_dir)
                         elif claim_from != "incoming":

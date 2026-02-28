@@ -895,18 +895,40 @@ def handle_agent_result(task_id: str, agent_name: str, task_dir: Path) -> bool:
 # Fixer agent result handler
 # ---------------------------------------------------------------------------
 
-def _load_intervention_context(task_dir: Path) -> dict:
-    """Load intervention_context.json from a task directory.
+def _load_intervention_context(task_id: str, task_dir: Path) -> tuple[dict, str | None]:
+    """Load intervention context for a task.
 
-    Returns an empty dict if the file is missing or unreadable.
+    Tries the messages API first (intervention_request message to fixer),
+    falling back to intervention_context.json in the task directory.
+
+    Returns:
+        Tuple of (context_dict, message_id_or_None). The message_id is set when
+        context was loaded from a message (used to post the reply).
     """
+    import re as _re
+
+    # Try messages API first — primary intervention context delivery
+    try:
+        sdk = queue_utils.get_sdk()
+        messages = sdk.messages.list(task_id=task_id, to_actor="fixer", type="intervention_request")
+        if messages:
+            msg = messages[-1]
+            content = msg.get("content", "")
+            match = _re.search(r"```json\s*(.*?)\s*```", content, _re.DOTALL)
+            if match:
+                ctx = json.loads(match.group(1))
+                return ctx, msg.get("id")
+    except Exception as e:
+        logger.debug(f"_load_intervention_context: messages query failed for {task_id}: {e}")
+
+    # Fallback: read from file
     ctx_path = task_dir / "intervention_context.json"
     if ctx_path.exists():
         try:
-            return json.loads(ctx_path.read_text())
+            return json.loads(ctx_path.read_text()), None
         except (json.JSONDecodeError, OSError):
             pass
-    return {}
+    return {}, None
 
 
 def _resume_flow(
@@ -973,8 +995,8 @@ def handle_fixer_result(task_id: str, agent_name: str, task_dir: Path) -> bool:
     """Handle the result of a fixer agent run.
 
     Infers the fixer outcome from stdout.log and takes the appropriate action:
-    - outcome=fixed  → resume the interrupted flow from where it left off,
-                        skip already-completed steps, post a success message.
+    - outcome=fixed  → clear needs_intervention, resume interrupted flow,
+                        skip already-completed steps, post a reply message.
     - anything else  → move to TRUE failed (terminal), post a failure message.
 
     The fixer communicates through stdout — the scheduler infers the outcome.
@@ -992,8 +1014,8 @@ def handle_fixer_result(task_id: str, agent_name: str, task_dir: Path) -> bool:
     outcome = result.get("outcome", "error")
     logger.debug(f"Fixer result for task {task_id}: outcome={outcome}")
 
-    # Load intervention context recorded when the task entered requires-intervention
-    intervention_context = _load_intervention_context(task_dir)
+    # Load intervention context from messages (primary) or file (fallback)
+    intervention_context, request_message_id = _load_intervention_context(task_id, task_dir)
     previous_queue = intervention_context.get("previous_queue", "incoming")
     steps_completed = intervention_context.get("steps_completed") or []
     step_that_failed = intervention_context.get("step_that_failed") or ""
@@ -1010,9 +1032,8 @@ def handle_fixer_result(task_id: str, agent_name: str, task_dir: Path) -> bool:
         diagnosis = result.get("diagnosis", "")
         fix_applied = result.get("fix_applied", "")
 
-        # Post success audit message
+        # Post reply message to the intervention request (threaded reply)
         try:
-            from .task_thread import post_message  # noqa: PLC0415
             content_parts = ["## Fixer resolved the issue"]
             if diagnosis:
                 content_parts.append(f"\n**Diagnosis:** {diagnosis}")
@@ -1020,15 +1041,23 @@ def handle_fixer_result(task_id: str, agent_name: str, task_dir: Path) -> bool:
                 content_parts.append(f"\n**Fix applied:** {fix_applied}")
             if step_that_failed:
                 content_parts.append(f"\nResuming flow from step: `{step_that_failed}`")
-            content_parts.append(f"\nTask restored to `{previous_queue}` → resuming transition.")
-            post_message(
-                task_id,
-                role="scheduler",
+            content_parts.append(f"\nTask will resume from `{previous_queue}`.")
+            sdk.messages.create(
+                task_id=task_id,
+                from_actor="fixer",
+                to_actor="scheduler",
+                type="intervention_reply",
                 content="\n".join(content_parts),
-                author="scheduler-fixer",
+                parent_message_id=request_message_id,
             )
         except Exception as msg_e:
-            print(f"[{datetime.now().isoformat()}] WARN: Failed to post fixer success message for {task_id}: {msg_e}")
+            print(f"[{datetime.now().isoformat()}] WARN: Failed to post fixer reply message for {task_id}: {msg_e}")
+
+        # Clear the needs_intervention flag
+        try:
+            sdk.tasks.update(task_id, needs_intervention=False)
+        except Exception as clear_e:
+            print(f"[{datetime.now().isoformat()}] WARN: Failed to clear needs_intervention for {task_id}: {clear_e}")
 
         # Resume the interrupted flow transition
         try:
@@ -1037,8 +1066,8 @@ def handle_fixer_result(task_id: str, agent_name: str, task_dir: Path) -> bool:
                 task_dir, result,
             )
         except Exception as resume_err:
-            # Flow resume failed — route through fail_task() which goes directly to
-            # failed when the task is still in requires-intervention (second failure).
+            # Flow resume failed — fail_task() will detect needs_intervention=False
+            # (already cleared above) so it won't double-count. Use direct terminal.
             print(f"[{datetime.now().isoformat()}] ERROR: Flow resume failed for {task_id} after fix: {resume_err}")
             logger.debug(f"Fixer: flow resume error for {task_id}: {resume_err}")
             try:
@@ -1058,25 +1087,26 @@ def handle_fixer_result(task_id: str, agent_name: str, task_dir: Path) -> bool:
         )
         reason_truncated = str(reason)[:500]
 
-        # Post failure audit message
+        # Post reply message
         try:
-            from .task_thread import post_message  # noqa: PLC0415
-            content = f"## Fixer could not resolve the issue. Moving to failed.\n\n"
+            content = "## Fixer could not resolve the issue. Moving to failed.\n\n"
             diagnosis = result.get("diagnosis", "")
             if diagnosis:
                 content += f"**Diagnosis:** {diagnosis}\n"
             content += "\nThis task requires human attention."
-            post_message(
-                task_id,
-                role="scheduler",
+            sdk.messages.create(
+                task_id=task_id,
+                from_actor="fixer",
+                to_actor="scheduler",
+                type="intervention_reply",
                 content=content,
-                author="scheduler-fixer",
+                parent_message_id=request_message_id,
             )
         except Exception as msg_e:
             print(f"[{datetime.now().isoformat()}] WARN: Failed to post fixer failure message for {task_id}: {msg_e}")
 
-        # True terminal failure — fail_task() goes directly to failed when the task
-        # is already in requires-intervention (second failure path in fail_task).
+        # True terminal failure — fail_task() detects needs_intervention=True and
+        # moves to failed (second failure path).
         try:
             from .tasks import fail_task  # noqa: PLC0415
             fail_task(task_id, reason=reason_truncated, source="fixer-failed", claimed_by=None)

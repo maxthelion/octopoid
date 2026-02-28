@@ -310,11 +310,15 @@ def request_intervention(
     previous_queue: str,
     **sdk_kwargs,
 ) -> dict:
-    """Move a task to requires-intervention and store intervention context.
+    """Flag a task for intervention without moving it to a different queue.
+
+    Sets needs_intervention=True on the task and posts a message to the fixer
+    actor with the intervention context. The task stays in its current queue.
 
     Called by fail_task() when a task first encounters an error. Records the
-    intervention context (previous queue, error info, step progress) locally so
-    the fixer agent can read it and the scheduler can resume the flow on fix.
+    intervention context (previous queue, error info, step progress) both in a
+    message (primary — fixer reads this) and in intervention_context.json
+    (fallback for prompt rendering).
 
     Args:
         task_id: Task identifier
@@ -357,7 +361,7 @@ def request_intervention(
         "entered_at": datetime.now().isoformat(),
     }
 
-    # Persist intervention context in task dir (read by fixer prompt renderer)
+    # Persist intervention context in task dir (fallback for fixer prompt rendering)
     try:
         (task_dir / "intervention_context.json").write_text(
             _json.dumps(intervention_context, indent=2)
@@ -365,11 +369,11 @@ def request_intervention(
     except OSError as write_err:
         print(f"[{datetime.now().isoformat()}] WARN: Failed to write intervention_context for {task_id}: {write_err}")
 
-    # Move to requires-intervention on server
+    # Set needs_intervention=True — task stays in its current queue
     result = sdk.tasks.update(
         task_id,
-        queue="requires-intervention",
-        execution_notes=f"requires-intervention: {reason_truncated}",
+        needs_intervention=True,
+        execution_notes=f"needs-intervention: {reason_truncated}",
         **sdk_kwargs,
     )
 
@@ -377,29 +381,31 @@ def request_intervention(
         logger = get_task_logger(task_id)
         logger.log_requeued(
             from_queue=previous_queue,
-            to_queue="requires-intervention",
+            to_queue="needs-intervention",
             reason=reason_truncated,
         )
     except Exception as log_err:
         print(f"[{datetime.now().isoformat()}] WARN: task log write failed for {task_id}: {log_err}")
 
-    # Post message to task thread for audit trail
+    # Post structured message to fixer actor (primary intervention context delivery)
+    steps_str = ", ".join(steps_completed) if steps_completed else "none"
+    ctx_json = _json.dumps(intervention_context, indent=2)
     try:
-        from .task_thread import post_message
-        steps_str = ", ".join(steps_completed) if steps_completed else "none"
-        post_message(
-            task_id,
-            role="scheduler",
+        sdk.messages.create(
+            task_id=task_id,
+            from_actor="scheduler",
+            to_actor="fixer",
+            type="intervention_request",
             content=(
-                f"## Task moved to requires-intervention\n\n"
+                f"## Intervention Request\n\n"
                 f"**Error source:** {source}\n"
                 f"**Error:** {reason_truncated}\n"
                 f"**Previous queue:** {previous_queue}\n"
                 f"**Steps completed:** {steps_str}\n"
                 f"**Step that failed:** {step_that_failed or 'unknown'}\n\n"
-                f"A fixer agent will attempt to resolve this automatically."
+                f"A fixer agent will diagnose and fix this automatically.\n\n"
+                f"```json\n{ctx_json}\n```"
             ),
-            author="scheduler",
         )
     except Exception as msg_err:
         print(f"[{datetime.now().isoformat()}] WARN: Failed to post intervention message for {task_id}: {msg_err}")
@@ -412,14 +418,15 @@ def request_intervention(
 
 
 def fail_task(task_id: str, reason: str, source: str, **sdk_kwargs) -> dict:
-    """Route a failing task — to requires-intervention (first failure) or failed (terminal).
+    """Route a failing task — sets needs_intervention (first failure) or to failed (terminal).
 
-    On first failure (task not already in requires-intervention): moves to
-    requires-intervention and records an intervention_context so the fixer
-    agent can diagnose and resume.
+    On first failure (task does not already have needs_intervention=True): sets
+    needs_intervention=True and posts an intervention_request message so the
+    fixer agent can diagnose and resume. The task stays in its current queue.
 
-    On second failure (task already in requires-intervention, meaning the fixer
-    itself failed): moves to the true 'failed' terminal state.
+    On second failure (task already has needs_intervention=True, meaning the
+    fixer itself failed): clears the flag and moves to the true 'failed'
+    terminal state.
 
     Raises ValueError if the task is already in the 'done' queue — done is a
     terminal success state and must not be overwritten by a failure.
@@ -450,10 +457,11 @@ def fail_task(task_id: str, reason: str, source: str, **sdk_kwargs) -> dict:
             f"(source={source}, reason={reason_stdout})"
         )
 
-    # If already in requires-intervention, the fixer also failed → true terminal failure.
-    if current_queue == "requires-intervention":
+    # If needs_intervention is already set, the fixer also failed → true terminal failure.
+    if (current_task or {}).get("needs_intervention"):
         result = sdk.tasks.update(
-            task_id, queue="failed", execution_notes=reason_truncated, **sdk_kwargs
+            task_id, queue="failed", needs_intervention=False,
+            execution_notes=reason_truncated, **sdk_kwargs
         )
         try:
             logger = get_task_logger(task_id)
@@ -463,7 +471,7 @@ def fail_task(task_id: str, reason: str, source: str, **sdk_kwargs) -> dict:
         print(f"[{datetime.now().isoformat()}] FAILED task={task_id} source={source} reason={reason_stdout}")
         return result
 
-    # First failure: route to requires-intervention.
+    # First failure: set needs_intervention=True (task stays in current queue).
     # Ensure previous_queue is a plain string (current_queue may be None).
     previous_queue = current_queue if isinstance(current_queue, str) else "unknown"
     return request_intervention(

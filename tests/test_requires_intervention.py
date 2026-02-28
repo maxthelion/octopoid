@@ -1,14 +1,16 @@
-"""Tests for the requires-intervention queue and fixer agent subsystem.
+"""Tests for the message-based intervention system.
 
 Covers:
-- fail_task() routes to requires-intervention on first failure
-- fail_task() routes to true failed when already in requires-intervention
-- request_intervention() writes intervention_context.json
+- fail_task() sets needs_intervention=True on first failure (no queue transition)
+- fail_task() moves to true failed when needs_intervention is already set
+- request_intervention() sets needs_intervention=True and posts intervention_request message
+- request_intervention() still writes intervention_context.json (fallback)
 - execute_steps() writes step_progress.json
-- handle_fixer_result() resumes flow on outcome=fixed
+- handle_fixer_result() clears needs_intervention and resumes flow on outcome=fixed
+- handle_fixer_result() posts a reply message (intervention_reply) on success
 - handle_fixer_result() moves to true failed on outcome=failed
 - _handle_fail_outcome() routes agent failures through intervention (not directly to failed)
-- Structural invariant: no direct sdk.tasks.update(queue='failed') outside fail_task()
+- Structural invariants: no requires-intervention queue in flow system, no direct failed updates
 """
 
 import json
@@ -25,17 +27,22 @@ import pytest
 
 
 class TestFailTaskRouting:
-    """fail_task routes based on the task's current queue."""
+    """fail_task routes based on the task's needs_intervention flag."""
 
-    def _make_sdk(self, current_queue: str) -> MagicMock:
+    def _make_sdk(self, needs_intervention: bool = False, current_queue: str = "claimed") -> MagicMock:
         sdk = MagicMock()
-        sdk.tasks.get.return_value = {"id": "TASK-1", "queue": current_queue}
-        sdk.tasks.update.return_value = {"id": "TASK-1", "queue": "requires-intervention"}
+        sdk.tasks.get.return_value = {
+            "id": "TASK-1",
+            "queue": current_queue,
+            "needs_intervention": needs_intervention,
+        }
+        sdk.tasks.update.return_value = {"id": "TASK-1", "queue": current_queue, "needs_intervention": True}
+        sdk.messages.create.return_value = {"id": "msg-1"}
         return sdk
 
-    def test_first_failure_calls_request_intervention(self, tmp_path):
-        """First failure (task in 'claimed') routes to requires-intervention."""
-        sdk = self._make_sdk("claimed")
+    def test_first_failure_sets_needs_intervention(self, tmp_path):
+        """First failure sets needs_intervention=True (no queue transition)."""
+        sdk = self._make_sdk(needs_intervention=False, current_queue="claimed")
         task_dir = tmp_path / "TASK-1"
         task_dir.mkdir()
 
@@ -43,20 +50,40 @@ class TestFailTaskRouting:
             patch("octopoid.tasks.get_sdk", return_value=sdk),
             patch("octopoid.config.get_tasks_dir", return_value=tmp_path),
             patch("octopoid.tasks.get_task_logger"),
-            patch("octopoid.task_thread.post_message"),
         ):
             from octopoid.tasks import fail_task
             fail_task("TASK-1", reason="something broke", source="test-source")
 
-        # Should update to requires-intervention (not failed)
+        # Must call sdk.tasks.update with needs_intervention=True — NOT queue transition
         sdk.tasks.update.assert_called_once()
         call_kwargs = sdk.tasks.update.call_args
         assert call_kwargs[0][0] == "TASK-1"
-        assert call_kwargs[1]["queue"] == "requires-intervention"
+        assert call_kwargs[1].get("needs_intervention") is True
+        assert "queue" not in call_kwargs[1] or call_kwargs[1].get("queue") != "failed"
+
+    def test_first_failure_does_not_change_queue(self, tmp_path):
+        """First failure must NOT transition the task to a different queue."""
+        sdk = self._make_sdk(needs_intervention=False, current_queue="claimed")
+        task_dir = tmp_path / "TASK-1"
+        task_dir.mkdir()
+
+        with (
+            patch("octopoid.tasks.get_sdk", return_value=sdk),
+            patch("octopoid.config.get_tasks_dir", return_value=tmp_path),
+            patch("octopoid.tasks.get_task_logger"),
+        ):
+            from octopoid.tasks import fail_task
+            fail_task("TASK-1", reason="something broke", source="test-source")
+
+        # The update must NOT include queue="requires-intervention"
+        call_kwargs = sdk.tasks.update.call_args
+        assert call_kwargs[1].get("queue") != "requires-intervention", (
+            "fail_task must not transition to requires-intervention queue"
+        )
 
     def test_second_failure_routes_to_true_failed(self):
-        """When task is already in requires-intervention, fail_task goes to true failed."""
-        sdk = self._make_sdk("requires-intervention")
+        """When needs_intervention is already True, fail_task goes to true failed."""
+        sdk = self._make_sdk(needs_intervention=True, current_queue="claimed")
         sdk.tasks.update.return_value = {"id": "TASK-1", "queue": "failed"}
 
         with (
@@ -70,10 +97,12 @@ class TestFailTaskRouting:
         call_kwargs = sdk.tasks.update.call_args
         assert call_kwargs[0][0] == "TASK-1"
         assert call_kwargs[1]["queue"] == "failed"
+        assert call_kwargs[1].get("needs_intervention") is False
 
     def test_done_task_raises(self):
         """fail_task raises ValueError when task is already done."""
-        sdk = self._make_sdk("done")
+        sdk = MagicMock()
+        sdk.tasks.get.return_value = {"id": "TASK-1", "queue": "done", "needs_intervention": False}
 
         with (
             patch("octopoid.tasks.get_sdk", return_value=sdk),
@@ -86,27 +115,87 @@ class TestFailTaskRouting:
 
 
 # =============================================================================
-# request_intervention() context storage
+# request_intervention() — sets flag and posts message
 # =============================================================================
 
 
 class TestRequestIntervention:
-    """request_intervention() writes intervention_context.json and posts audit message."""
+    """request_intervention() sets needs_intervention=True and posts an intervention_request message."""
 
-    def test_writes_intervention_context_json(self, tmp_path):
-        """intervention_context.json is written to the task directory."""
+    def test_sets_needs_intervention_flag(self, tmp_path):
+        """needs_intervention=True is set on the task (no queue transition)."""
         task_id = "TASK-ctx"
         task_dir = tmp_path / task_id
         task_dir.mkdir()
 
         sdk = MagicMock()
-        sdk.tasks.update.return_value = {"id": task_id, "queue": "requires-intervention"}
+        sdk.tasks.update.return_value = {"id": task_id, "needs_intervention": True}
+        sdk.messages.create.return_value = {"id": "msg-1"}
 
         with (
             patch("octopoid.tasks.get_sdk", return_value=sdk),
             patch("octopoid.config.get_tasks_dir", return_value=tmp_path),
             patch("octopoid.tasks.get_task_logger"),
-            patch("octopoid.task_thread.post_message"),
+        ):
+            from octopoid.tasks import request_intervention
+            request_intervention(
+                task_id,
+                reason="rebase failed",
+                source="rebase-error",
+                previous_queue="claimed",
+            )
+
+        sdk.tasks.update.assert_called_once()
+        call_kwargs = sdk.tasks.update.call_args
+        assert call_kwargs[0][0] == task_id
+        assert call_kwargs[1].get("needs_intervention") is True
+        assert "queue" not in call_kwargs[1] or call_kwargs[1].get("queue") != "requires-intervention"
+
+    def test_posts_intervention_request_message(self, tmp_path):
+        """An intervention_request message is posted to_actor=fixer."""
+        task_id = "TASK-msg"
+        task_dir = tmp_path / task_id
+        task_dir.mkdir()
+
+        sdk = MagicMock()
+        sdk.tasks.update.return_value = {"id": task_id, "needs_intervention": True}
+        sdk.messages.create.return_value = {"id": "msg-1"}
+
+        with (
+            patch("octopoid.tasks.get_sdk", return_value=sdk),
+            patch("octopoid.config.get_tasks_dir", return_value=tmp_path),
+            patch("octopoid.tasks.get_task_logger"),
+        ):
+            from octopoid.tasks import request_intervention
+            request_intervention(
+                task_id,
+                reason="push failed",
+                source="push-error",
+                previous_queue="claimed",
+            )
+
+        sdk.messages.create.assert_called_once()
+        msg_kwargs = sdk.messages.create.call_args[1]
+        assert msg_kwargs["task_id"] == task_id
+        assert msg_kwargs["to_actor"] == "fixer"
+        assert msg_kwargs["type"] == "intervention_request"
+        # Context JSON is embedded in the message content
+        assert "```json" in msg_kwargs["content"]
+
+    def test_writes_intervention_context_json_fallback(self, tmp_path):
+        """intervention_context.json is still written as a fallback."""
+        task_id = "TASK-ctx"
+        task_dir = tmp_path / task_id
+        task_dir.mkdir()
+
+        sdk = MagicMock()
+        sdk.tasks.update.return_value = {"id": task_id}
+        sdk.messages.create.return_value = {"id": "msg-1"}
+
+        with (
+            patch("octopoid.tasks.get_sdk", return_value=sdk),
+            patch("octopoid.config.get_tasks_dir", return_value=tmp_path),
+            patch("octopoid.tasks.get_task_logger"),
         ):
             from octopoid.tasks import request_intervention
             request_intervention(
@@ -136,12 +225,12 @@ class TestRequestIntervention:
 
         sdk = MagicMock()
         sdk.tasks.update.return_value = {}
+        sdk.messages.create.return_value = {"id": "msg-1"}
 
         with (
             patch("octopoid.tasks.get_sdk", return_value=sdk),
             patch("octopoid.config.get_tasks_dir", return_value=tmp_path),
             patch("octopoid.tasks.get_task_logger"),
-            patch("octopoid.task_thread.post_message"),
         ):
             from octopoid.tasks import request_intervention
             request_intervention(
@@ -223,10 +312,10 @@ class TestExecuteStepsProgress:
 
 
 class TestHandleFixerResultFixed:
-    """handle_fixer_result resumes the flow when fixer reports outcome=fixed."""
+    """handle_fixer_result clears needs_intervention and resumes the flow when fixer reports outcome=fixed."""
 
-    def _make_task(self, queue: str = "requires-intervention") -> dict:
-        return {"id": "TASK-fix", "queue": queue, "flow": "default"}
+    def _make_task(self, queue: str = "claimed") -> dict:
+        return {"id": "TASK-fix", "queue": queue, "flow": "default", "needs_intervention": True}
 
     def _write_intervention_context(
         self, task_dir: Path, previous_queue: str, steps_completed: list, step_that_failed: str
@@ -239,6 +328,82 @@ class TestHandleFixerResultFixed:
             "error_message": "test error",
         }
         (task_dir / "intervention_context.json").write_text(json.dumps(ctx))
+
+    def test_fixed_outcome_clears_needs_intervention(self, tmp_path):
+        """outcome=fixed clears needs_intervention=False on the task."""
+        from octopoid.flow import Flow, Transition
+
+        task_dir = tmp_path / "TASK-fix"
+        task_dir.mkdir()
+        self._write_intervention_context(task_dir, "claimed", [], "")
+
+        sdk = MagicMock()
+        sdk.tasks.get.return_value = self._make_task()
+        sdk.tasks.update.return_value = {}
+        sdk.messages.list.return_value = []
+        sdk.messages.create.return_value = {"id": "reply-1"}
+
+        mock_transition = Transition(
+            from_state="claimed", to_state="provisional",
+            conditions=[], runs=[],
+        )
+        mock_flow = Flow(name="default", description="", transitions=[mock_transition])
+        fixed_result = {"outcome": "fixed", "diagnosis": "fixed it", "fix_applied": "applied"}
+
+        with (
+            patch("octopoid.result_handler.queue_utils.get_sdk", return_value=sdk),
+            patch("octopoid.result_handler.infer_result_from_stdout", return_value=fixed_result),
+            patch("octopoid.flow.load_flow", return_value=mock_flow),
+            patch("octopoid.steps.execute_steps"),
+            patch("octopoid.result_handler._perform_transition"),
+        ):
+            from octopoid.result_handler import handle_fixer_result
+            handle_fixer_result("TASK-fix", "fixer-1", task_dir)
+
+        # needs_intervention must be cleared
+        clear_calls = [
+            c for c in sdk.tasks.update.call_args_list
+            if c[1].get("needs_intervention") is False
+        ]
+        assert clear_calls, "handle_fixer_result must clear needs_intervention=False"
+
+    def test_fixed_outcome_posts_reply_message(self, tmp_path):
+        """outcome=fixed posts an intervention_reply message."""
+        from octopoid.flow import Flow, Transition
+
+        task_dir = tmp_path / "TASK-fix"
+        task_dir.mkdir()
+        self._write_intervention_context(task_dir, "claimed", [], "")
+
+        sdk = MagicMock()
+        sdk.tasks.get.return_value = self._make_task()
+        sdk.tasks.update.return_value = {}
+        sdk.messages.list.return_value = [{"id": "req-1", "content": "```json\n{}\n```"}]
+        sdk.messages.create.return_value = {"id": "reply-1"}
+
+        mock_transition = Transition(
+            from_state="claimed", to_state="provisional",
+            conditions=[], runs=[],
+        )
+        mock_flow = Flow(name="default", description="", transitions=[mock_transition])
+        fixed_result = {"outcome": "fixed", "diagnosis": "fixed it", "fix_applied": "applied"}
+
+        with (
+            patch("octopoid.result_handler.queue_utils.get_sdk", return_value=sdk),
+            patch("octopoid.result_handler.infer_result_from_stdout", return_value=fixed_result),
+            patch("octopoid.flow.load_flow", return_value=mock_flow),
+            patch("octopoid.steps.execute_steps"),
+            patch("octopoid.result_handler._perform_transition"),
+        ):
+            from octopoid.result_handler import handle_fixer_result
+            handle_fixer_result("TASK-fix", "fixer-1", task_dir)
+
+        reply_calls = [
+            c for c in sdk.messages.create.call_args_list
+            if c[1].get("type") == "intervention_reply"
+        ]
+        assert reply_calls, "handle_fixer_result must post an intervention_reply message"
+        assert reply_calls[0][1].get("to_actor") == "scheduler"
 
     def test_fixed_outcome_resumes_remaining_steps(self, tmp_path):
         """outcome=fixed causes the remaining flow steps to execute (skipping completed)."""
@@ -256,8 +421,9 @@ class TestHandleFixerResultFixed:
         sdk = MagicMock()
         sdk.tasks.get.return_value = self._make_task()
         sdk.tasks.update.return_value = {}
+        sdk.messages.list.return_value = []
+        sdk.messages.create.return_value = {"id": "reply-1"}
 
-        # Build a mock flow with a claimed→provisional transition that runs all 3 steps
         mock_transition = Transition(
             from_state="claimed",
             to_state="provisional",
@@ -272,7 +438,6 @@ class TestHandleFixerResultFixed:
         with (
             patch("octopoid.result_handler.queue_utils.get_sdk", return_value=sdk),
             patch("octopoid.result_handler.infer_result_from_stdout", return_value=fixed_result),
-            patch("octopoid.task_thread.post_message"),
             patch("octopoid.flow.load_flow", return_value=mock_flow),
             patch("octopoid.steps.execute_steps",
                   side_effect=lambda names, *_: steps_run.extend(names)),
@@ -294,12 +459,14 @@ class TestHandleFixerResultFixed:
 
         sdk = MagicMock()
         sdk.tasks.get.return_value = self._make_task()
+        sdk.tasks.update.return_value = {}
+        sdk.messages.list.return_value = []
+        sdk.messages.create.return_value = {"id": "reply-1"}
         fixed_result = {"outcome": "fixed", "diagnosis": "fixed it", "fix_applied": "applied"}
 
         with (
             patch("octopoid.result_handler.queue_utils.get_sdk", return_value=sdk),
             patch("octopoid.result_handler.infer_result_from_stdout", return_value=fixed_result),
-            patch("octopoid.task_thread.post_message"),
             patch("octopoid.steps.execute_steps"),
             patch("octopoid.result_handler._perform_transition"),
         ):
@@ -327,20 +494,32 @@ class TestHandleFixerResultFailed:
         }
         (task_dir / "intervention_context.json").write_text(json.dumps(ctx))
 
-    def test_failed_outcome_moves_to_true_failed(self, tmp_path):
-        """outcome=failed routes through fail_task() which goes to 'failed' from requires-intervention."""
+    def test_failed_outcome_calls_fail_task(self, tmp_path):
+        """outcome=failed routes through fail_task() which detects needs_intervention=True → failed."""
         task_dir = tmp_path / "TASK-cant-fix"
         task_dir.mkdir()
         self._write_intervention_context(task_dir)
 
         # tasks_sdk is used by fail_task() internally via octopoid.tasks.get_sdk
         tasks_sdk = MagicMock()
-        tasks_sdk.tasks.get.return_value = {"id": "TASK-cant-fix", "queue": "requires-intervention", "flow": "default"}
+        tasks_sdk.tasks.get.return_value = {
+            "id": "TASK-cant-fix",
+            "queue": "claimed",
+            "flow": "default",
+            "needs_intervention": True,
+        }
         tasks_sdk.tasks.update.return_value = {}
 
         # result_handler_sdk is used by handle_fixer_result() itself
         result_handler_sdk = MagicMock()
-        result_handler_sdk.tasks.get.return_value = {"id": "TASK-cant-fix", "queue": "requires-intervention", "flow": "default"}
+        result_handler_sdk.tasks.get.return_value = {
+            "id": "TASK-cant-fix",
+            "queue": "claimed",
+            "flow": "default",
+            "needs_intervention": True,
+        }
+        result_handler_sdk.messages.list.return_value = []
+        result_handler_sdk.messages.create.return_value = {"id": "reply-1"}
 
         failed_result = {"outcome": "failed", "diagnosis": "cannot fix this"}
 
@@ -348,18 +527,18 @@ class TestHandleFixerResultFailed:
             patch("octopoid.result_handler.queue_utils.get_sdk", return_value=result_handler_sdk),
             patch("octopoid.tasks.get_sdk", return_value=tasks_sdk),
             patch("octopoid.result_handler.infer_result_from_stdout", return_value=failed_result),
-            patch("octopoid.task_thread.post_message"),
             patch("octopoid.tasks.get_task_logger"),
         ):
             from octopoid.result_handler import handle_fixer_result
             result = handle_fixer_result("TASK-cant-fix", "fixer-1", task_dir)
 
         assert result is True
-        # fail_task() uses tasks_sdk to update queue to 'failed'
+        # fail_task() should have been called → tasks_sdk updated to queue=failed
         tasks_sdk.tasks.update.assert_called_once()
         call_kwargs = tasks_sdk.tasks.update.call_args
         assert call_kwargs[0][0] == "TASK-cant-fix"
         assert call_kwargs[1]["queue"] == "failed"
+        assert call_kwargs[1].get("needs_intervention") is False
 
     def test_failed_outcome_does_not_call_execute_steps(self, tmp_path):
         """outcome=failed never tries to resume flow steps."""
@@ -368,11 +547,22 @@ class TestHandleFixerResultFailed:
         self._write_intervention_context(task_dir)
 
         tasks_sdk = MagicMock()
-        tasks_sdk.tasks.get.return_value = {"id": "TASK-cant-fix", "queue": "requires-intervention", "flow": "default"}
+        tasks_sdk.tasks.get.return_value = {
+            "id": "TASK-cant-fix",
+            "queue": "claimed",
+            "flow": "default",
+            "needs_intervention": True,
+        }
         tasks_sdk.tasks.update.return_value = {}
 
         result_handler_sdk = MagicMock()
-        result_handler_sdk.tasks.get.return_value = {"id": "TASK-cant-fix", "queue": "requires-intervention", "flow": "default"}
+        result_handler_sdk.tasks.get.return_value = {
+            "id": "TASK-cant-fix",
+            "queue": "claimed",
+            "needs_intervention": True,
+        }
+        result_handler_sdk.messages.list.return_value = []
+        result_handler_sdk.messages.create.return_value = {"id": "reply-1"}
 
         failed_result = {"outcome": "failed", "diagnosis": "cannot fix this"}
 
@@ -380,7 +570,6 @@ class TestHandleFixerResultFailed:
             patch("octopoid.result_handler.queue_utils.get_sdk", return_value=result_handler_sdk),
             patch("octopoid.tasks.get_sdk", return_value=tasks_sdk),
             patch("octopoid.result_handler.infer_result_from_stdout", return_value=failed_result),
-            patch("octopoid.task_thread.post_message"),
             patch("octopoid.tasks.get_task_logger"),
             patch("octopoid.steps.execute_steps") as mock_steps,
         ):
@@ -397,6 +586,7 @@ class TestHandleFixerResultFailed:
 
         sdk = MagicMock()
         sdk.tasks.get.return_value = None
+        sdk.messages.list.return_value = []
         failed_result = {"outcome": "failed", "diagnosis": "could not complete"}
 
         with (
@@ -410,18 +600,17 @@ class TestHandleFixerResultFailed:
 
 
 # =============================================================================
-# flow.py — requires-intervention in builtin states
+# flow.py — requires-intervention NOT in builtin states
 # =============================================================================
 
 
-class TestFlowRequiresIntervention:
-    """requires-intervention is registered as a builtin state in the flow system."""
+class TestFlowNoRequiresIntervention:
+    """requires-intervention is NOT registered as a builtin state in the flow system."""
 
-    def test_requires_intervention_in_all_states(self):
-        """get_all_states() includes requires-intervention for any flow."""
+    def test_requires_intervention_not_in_all_states(self):
+        """get_all_states() does NOT include requires-intervention."""
         from octopoid.flow import Flow, Transition
 
-        # Build a minimal flow with one transition
         flow = Flow(
             name="test",
             description="test flow",
@@ -430,16 +619,23 @@ class TestFlowRequiresIntervention:
             ],
         )
         all_states = flow.get_all_states()
-        assert "requires-intervention" in all_states
+        assert "requires-intervention" not in all_states, (
+            "requires-intervention must not be a builtin flow state — "
+            "intervention is now signaled via needs_intervention flag"
+        )
 
-    def test_implicit_transitions_include_requires_intervention(self):
-        """Implicit transitions include claimed→requires-intervention."""
+    def test_implicit_transitions_no_requires_intervention(self):
+        """_implicit_reverse_transitions() does NOT include requires-intervention transitions."""
         from octopoid.flow import _implicit_reverse_transitions
 
         implicit = _implicit_reverse_transitions([])
         froms_tos = [(t["from"], t["to"]) for t in implicit]
-        assert ("claimed", "requires-intervention") in froms_tos
-        assert ("requires-intervention", "failed") in froms_tos
+        assert ("claimed", "requires-intervention") not in froms_tos, (
+            "claimed → requires-intervention must not be an implicit transition"
+        )
+        assert ("requires-intervention", "failed") not in froms_tos, (
+            "requires-intervention → failed must not be an implicit transition"
+        )
 
 
 # =============================================================================
@@ -452,33 +648,38 @@ class TestHandleFailOutcomeRouting:
 
     def _make_sdk(self, current_queue: str) -> MagicMock:
         sdk = MagicMock()
-        sdk.tasks.get.return_value = {"id": "TASK-1", "queue": current_queue}
-        sdk.tasks.update.return_value = {"id": "TASK-1", "queue": "requires-intervention"}
+        sdk.tasks.get.return_value = {
+            "id": "TASK-1",
+            "queue": current_queue,
+            "needs_intervention": False,
+        }
+        sdk.tasks.update.return_value = {"id": "TASK-1", "needs_intervention": True}
+        sdk.messages.create.return_value = {"id": "msg-1"}
         return sdk
 
-    def test_agent_failure_routes_to_requires_intervention(self, tmp_path):
-        """Agent outcome=failed causes task to go to requires-intervention, not directly to failed."""
+    def test_agent_failure_sets_needs_intervention(self, tmp_path):
+        """Agent outcome=failed causes needs_intervention=True, not a direct queue transition."""
         task_id = "TASK-fail"
         task_dir = tmp_path / task_id
         task_dir.mkdir()
 
         sdk = self._make_sdk("claimed")
-        task = {"id": task_id, "queue": "claimed", "flow": "default"}
+        task = {"id": task_id, "queue": "claimed", "flow": "default", "needs_intervention": False}
 
         with (
             patch("octopoid.tasks.get_sdk", return_value=sdk),
             patch("octopoid.config.get_tasks_dir", return_value=tmp_path),
             patch("octopoid.tasks.get_task_logger"),
-            patch("octopoid.task_thread.post_message"),
         ):
             from octopoid.result_handler import _handle_fail_outcome
             result = _handle_fail_outcome(sdk, task_id, task, "agent reported failure", "claimed")
 
         assert result is True
-        # Must route to requires-intervention, not to failed
+        # Must set needs_intervention, NOT transition to requires-intervention queue
         sdk.tasks.update.assert_called_once()
         call_args = sdk.tasks.update.call_args
-        assert call_args[1]["queue"] == "requires-intervention"
+        assert call_args[1].get("needs_intervention") is True
+        assert call_args[1].get("queue") != "requires-intervention"
 
     def test_agent_failure_does_not_call_failed_directly(self, tmp_path):
         """_handle_fail_outcome never calls sdk.tasks.update(queue='failed') directly."""
@@ -487,14 +688,14 @@ class TestHandleFailOutcomeRouting:
         task_dir.mkdir()
 
         sdk = self._make_sdk("claimed")
-        task = {"id": task_id, "queue": "claimed", "flow": "default"}
+        task = {"id": task_id, "queue": "claimed", "flow": "default", "needs_intervention": False}
 
         failed_calls = []
 
         def capture_update(tid, **kwargs):
             if kwargs.get("queue") == "failed":
                 failed_calls.append(kwargs)
-            return {"id": tid, "queue": kwargs.get("queue", "unknown")}
+            return {"id": tid, "needs_intervention": True}
 
         sdk.tasks.update.side_effect = capture_update
 
@@ -502,7 +703,6 @@ class TestHandleFailOutcomeRouting:
             patch("octopoid.tasks.get_sdk", return_value=sdk),
             patch("octopoid.config.get_tasks_dir", return_value=tmp_path),
             patch("octopoid.tasks.get_task_logger"),
-            patch("octopoid.task_thread.post_message"),
         ):
             from octopoid.result_handler import _handle_fail_outcome
             _handle_fail_outcome(sdk, task_id, task, "agent error", "claimed")
@@ -551,9 +751,6 @@ class TestNoDirectFailedCalls:
         source = source_file.read_text()
 
         # Match patterns like: sdk.tasks.update(...queue="failed"...) or queue='failed'
-        # We look for the update call with queue=failed together on a line or nearby.
-        # The only legitimate occurrence of queue="failed" in result_handler is inside
-        # a call to fail_task() — fail_task itself lives in tasks.py, not here.
         direct_failed_pattern = re.compile(
             r'\.tasks\.update\s*\([^)]*queue\s*=\s*["\']failed["\']',
             re.DOTALL,
