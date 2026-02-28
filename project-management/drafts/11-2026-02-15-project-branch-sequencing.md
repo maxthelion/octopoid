@@ -148,3 +148,8 @@ We created `PROJ-scheduler-agent-refactor` with 12 sequential tasks. To use this
 4. The agents can then run through the chain, each seeing the prior task's work
 
 Alternatively: implement project-branch sequencing as a prerequisite task (task 0) before the 12 refactor tasks. It's small enough (~110 lines) and would be the first real test of the project system.
+
+
+## Invariants
+
+- `project-task-shared-branch`: Tasks in a project are all based on the project's shared branch, not on `main`. Each task's commits are visible to subsequent tasks in the same project.

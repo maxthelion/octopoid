@@ -113,3 +113,8 @@ The only data that's file-only is the **full markdown body** (the `## Context` a
 5. Remove `.octopoid/tasks/` directory and all file-management code
 6. Update CLAUDE.md rules and documentation
 7. Update integration tests
+
+
+## Invariants
+
+- `task-content-on-server`: Task content (title, description, acceptance criteria) is stored on the server and retrieved via the SDK. Local task markdown files are not the source of truth and are not required for agent operation.

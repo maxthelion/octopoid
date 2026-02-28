@@ -108,3 +108,8 @@ Run `python orchestrator/init.py -y` to create the new `.octopoid/` structure fr
 | `scripts/*.sh` | Path updates |
 | `tests/` (~15 files) | Mock path strings |
 | `docs/` (~3 files) | Documentation |
+
+
+## Invariants
+
+- `single-octopoid-directory`: The orchestrator uses a single `.octopoid/` directory for all configuration and runtime state. The legacy `.orchestrator/` directory does not exist. All paths in config, agents, and scripts reference `.octopoid/`.

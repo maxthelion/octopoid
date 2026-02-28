@@ -358,3 +358,8 @@ Steps 1-6 are a pure refactor with no behavior change. Step 7 adds the new capab
 ## Relationship to Draft #39 (Per-Job Intervals)
 
 Draft #39 proposed activity-aware interval scaling (e.g. check leases more often when agents are active). That's orthogonal — once jobs are declarative, Draft #39 becomes a simple extension: add an `interval_active` / `interval_idle` field to the YAML schema and have `is_job_due` pick the right interval based on system state.
+
+
+## Invariants
+
+- `jobs-declarative-yaml`: Scheduler background jobs (housekeeping, polling, analysis) are declared in YAML and dispatched by a generic runner. Adding a new job does not require modifying the scheduler's core loop.

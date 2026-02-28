@@ -278,3 +278,8 @@ def run_agent(agent_name, task_id):
 4. Validator role
 5. Planning escalation
 6. Micro-task generation from plans
+
+
+## Invariants
+
+No new invariants — this proposal (SQLite-based state management) was superseded by the Cloudflare Workers + D1 API approach. The system uses the server API for all state, not local SQLite.

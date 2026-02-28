@@ -299,3 +299,8 @@ The scheduler reads `spawn_mode` from the agent directory and dispatches accordi
 2. **Should housekeeping jobs have their own intervals?** Currently some have ad-hoc throttling (`_check_queue_health_throttled` runs every 30 minutes). Could formalise this with a `last_run` timestamp per job.
 
 3. **Locking:** The agent lock currently wraps both evaluation and spawn. Should it only wrap spawn? Evaluation is read-only except for state updates in guard_not_running and guard_backpressure.
+
+
+## Invariants
+
+- `scheduler-pipeline-phases`: The scheduler `run_scheduler()` function is organised into distinct phases (housekeeping, agent evaluation) with clear extension points. Adding a new agent type or guard does not require modifying a deeply nested loop body.

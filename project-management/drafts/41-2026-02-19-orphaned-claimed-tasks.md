@@ -189,3 +189,8 @@ Note: there are already tasks in incoming for some of these tests (`914b1e2a` â€
 
 - Draft 37: Atomic claim transactions (server-side data consistency â€” different failure mode: `claimed_by=NULL`)
 - Draft 39: Independent tick intervals (lease expiry check could be a fast-tick local job)
+
+
+## Invariants
+
+- `claimed-tasks-have-running-process`: A task in the `claimed` queue always has an associated agent process running (or a valid PID file). Tasks with no running process and no result are detected as stale and re-queued by the scheduler's housekeeping sweep.

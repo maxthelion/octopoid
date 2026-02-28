@@ -93,3 +93,8 @@ This is a server change and can be done later.
 - Add FAILED entries to `.octopoid/logs/tasks/TASK-*.log`
 - Write a server task for the `/tasks/:id/fail` endpoint
 - Add `/recover-task` skill for manual recovery of incorrectly-failed tasks
+
+
+## Invariants
+
+- `failure-reason-always-recorded`: Every path that moves a task to `failed` records the reason in `execution_notes` and appends a FAILED entry to the task log. It is always possible to answer "why did this task fail?" without forensic investigation.

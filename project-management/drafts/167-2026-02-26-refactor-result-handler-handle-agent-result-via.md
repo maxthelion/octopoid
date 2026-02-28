@@ -141,3 +141,8 @@ def _handle_approve_and_run_steps(task_id, agent_name, task, transition, result,
 - **Current parameter count:** 4
 - **Estimated CCN after:** ~5 per helper function (top-level coordinator ≤4)
 - **Call site:** `scheduler.py:check_and_update_finished_agents` — called on every agent completion
+
+
+## Invariants
+
+No new invariants — this is a pure refactoring to reduce cyclomatic complexity in `handle_agent_result_via_flow`. No behaviour changes.

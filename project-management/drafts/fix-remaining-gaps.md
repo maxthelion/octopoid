@@ -117,3 +117,8 @@ When Phase D2 is done, delete:
 ```
 
 Items 1-3 are independent and can be done in parallel. Total effort: ~30 minutes.
+
+
+## Invariants
+
+No new invariants — this is a cleanup plan for remaining gaps in the agent architecture refactor. It is a transitional document, not a new capability proposal.

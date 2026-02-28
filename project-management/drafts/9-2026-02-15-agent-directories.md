@@ -206,3 +206,8 @@ See also: `project-management/drafts/8-2026-02-15-product-vs-self-management-aud
 - **Portable:** Users can copy an agent directory to create a variant
 - **Clean separation:** Product agents vs instance fleet vs custom agents
 - **Simpler scheduler:** Just find the directory and assemble, no role class dispatch
+
+
+## Invariants
+
+- `agent-config-consolidated`: All configuration for an agent type (model, instructions, scripts) lives in a single agent directory. Config is not scattered across multiple files and directories.

@@ -80,3 +80,8 @@ The "processing" state acts as a claim — if the scheduler sees a message in "p
 - Create the system prompt template for action agents
 - Implement the spawn → result → cleanup cycle
 - Test with the existing "archive draft 80" message sitting on the server
+
+
+## Invariants
+
+- `messages-trigger-agent-spawning`: Unprocessed `action_command` messages in an actor's inbox cause the scheduler to spawn a lightweight agent. The agent processes the message, posts a result, and the orchestrator marks the message as processed or escalates on failure.

@@ -98,3 +98,8 @@ Deploy if the server schema has changed.
 - Try the upgrade on a branch first to validate the process
 - Document the upgrade steps so future upgrades are repeatable
 - Consider adding a version check to the scheduler that warns if code has changed since startup
+
+
+## Invariants
+
+No new invariants — this is an operational upgrade plan for the local octopoid installation.

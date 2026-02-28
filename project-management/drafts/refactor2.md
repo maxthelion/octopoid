@@ -356,3 +356,8 @@ For orchestrator hooks (e.g., `merge_pr` on BEFORE_MERGE):
 ## Immediate prerequisite
 
 Commit pending orchestrator changes (`base.py`, `git_utils.py`, `github_issue_monitor.py`) so existing agents work while we build alongside.
+
+
+## Invariants
+
+No new invariants — this is an earlier version of the agent architecture refactor plan. The invariants are captured in AGENT_ARCHITECTURE_REFACTOR.md.

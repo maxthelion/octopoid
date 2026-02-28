@@ -26,3 +26,8 @@ The system has two kinds of agents: flow agents that participate in the task lif
 - Audit what agent types exist and where their config/status lives
 - Design the agents tab layout to accommodate both types
 - Enqueue as a task once the data model for job agents is clearer
+
+
+## Invariants
+
+No new invariants — this is a dashboard UI improvement. The agents tab should show both flow agents and job agents, but this is a visibility change, not a behaviour change.

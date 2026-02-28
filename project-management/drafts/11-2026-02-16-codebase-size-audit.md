@@ -88,3 +88,8 @@ This should be a **phased purge**, not a single task:
 - Is `octopoid-status.py` redundant with the dashboard?
 - What's the right size target? 8,000 lines for orchestrator/ would mean cutting ~40%.
 - Should we set a per-file limit (e.g. 500 lines) as a project convention?
+
+
+## Invariants
+
+No new invariants — this is a codebase size audit document. It identifies large files for potential refactoring but does not propose specific system behaviour changes.

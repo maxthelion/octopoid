@@ -306,3 +306,8 @@ This is a single-task job if we use the re-export shim (no caller changes needed
 - **Draft 17 (Declarative Flows)**: This refactor gives flows a clean task lifecycle to hook into. The `_transition()` function is a natural place to check flow-defined rules.
 - **Draft 18 (Codebase Size Audit)**: This directly addresses the #1 target (queue_utils.py, 2,711 lines).
 - **Draft 19 (queue_utils Audit)**: This is the implementation of the split proposed there.
+
+
+## Invariants
+
+No new invariants — this is a refactoring plan to split queue_utils.py into entity modules. The refactoring preserves existing behaviour without adding new capabilities.

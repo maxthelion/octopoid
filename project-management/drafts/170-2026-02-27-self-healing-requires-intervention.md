@@ -196,3 +196,9 @@ Task in provisional, gatekeeper approved
 - **Draft #167** (refactor handle_agent_result_via_flow): The refactoring makes it easier to implement the "remember where we were in the flow" logic
 - **Draft #168** (unified logging): The fixer agent needs good logs to diagnose issues — unified logging makes this much easier
 - **Draft #164** (unified fail_task): `fail_task()` becomes the entry point for `requires-intervention` instead of `failed`
+
+
+## Invariants
+
+- `fixer-agent-handles-failures`: When a task enters the `requires-intervention` queue, the scheduler spawns a fixer agent. The fixer diagnoses the problem, applies a fix, and resumes the task flow from where it failed. Direct human CLI intervention should not be the first resort.
+- `requires-intervention-not-terminal`: The `requires-intervention` queue is not a graveyard. Tasks in it have an associated fixer agent attempt. Only if the fixer also fails does the task need human attention.

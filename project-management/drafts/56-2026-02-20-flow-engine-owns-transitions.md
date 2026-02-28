@@ -134,3 +134,8 @@ for pid, info in dead_pids.items():
 - Should step failures retry in-place (keep in `claimed`, re-run steps on next tick) or requeue to `incoming` (agent runs again from scratch)?
 - Should there be a `max_step_retries` config per flow or per transition?
 - Should the `submit_to_server` step be kept for backwards compatibility, or removed entirely? If kept, the engine should detect it and skip its own transition call.
+
+
+## Invariants
+
+- `flow-engine-owns-transitions`: The flow engine owns all state machine transitions. Steps are pre-transition side effects that run before the target queue is reached. No step modifies the task queue directly — the flow engine does that after all steps complete.

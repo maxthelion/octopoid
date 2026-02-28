@@ -144,3 +144,8 @@ These rules apply equally to manual human review and automated gatekeeper review
 ## Next Steps
 
 Decide on the open questions above, then this becomes a task to evolve the existing `gatekeeper.ts` role with Phase 1 scripted checks feeding into the existing Phase 2 LLM review.
+
+
+## Invariants
+
+- `gatekeeper-checks-tests`: The gatekeeper verifies that the test suite passes before accepting any task. A task with failing tests must not reach the `done` queue.

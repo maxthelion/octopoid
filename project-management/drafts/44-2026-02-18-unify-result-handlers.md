@@ -179,3 +179,8 @@ Messages don't change the flow format. They change the *transport* — how the r
 - Should `needs_continuation` be a flow concept (e.g. `on_incomplete: needs_continuation` on transitions) or stay as a special outcome?
 - For Phase 2, what's the `Effect` type? Something like `MoveTo(queue)`, `RunSteps(steps)`, `RejectWithFeedback(comment)`, `PostMessage(content)`?
 - In Phase 3, does the agent need the SDK to post messages? Currently agents are pure (no SDK). Could use a lightweight HTTP POST instead, or the finish script could post the message.
+
+
+## Invariants
+
+- `single-result-handler`: All agent types (implementer, gatekeeper, lightweight actors) use a single result handling code path. There is no separate handler per role — the agent emits a result and the flow drives what happens next.

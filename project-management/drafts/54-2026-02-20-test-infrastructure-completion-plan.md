@@ -254,3 +254,8 @@ Phases 1 and 2 can run in parallel. Within each phase, tasks without dependency 
 - Should we add a `pytest` marker like `@pytest.mark.mock_agent` to distinguish mock agent tests from SDK-only integration tests? This would let us run mock agent tests separately (they're slower due to subprocess + git setup).
 - Should the stateful fake gh use a temp file or an in-memory approach (e.g. a small Python HTTP server)? File-based is simpler but slower; server-based is cleaner but more infrastructure.
 - Do we want test coverage reporting? pytest-cov is easy to add but the numbers will be misleading since most of the codebase is scheduler logic that only runs under integration tests.
+
+
+## Invariants
+
+No new invariants — this is a test infrastructure completion plan. It was superseded by the PROJ-f58c4adc project with individual task-level tracking.

@@ -79,3 +79,8 @@ The codebase analyst (Draft 69) already finds large files, but it only measures 
 - Write the analysis script(s) — likely needs multiple passes (function length, nesting depth, duplication detection)
 - Write the prompt emphasising concrete proposals with before/after examples
 - Consider whether to use Opus for deeper architectural reasoning
+
+
+## Invariants
+
+No new invariants — this proposes a new background analyst agent. The agent is an operational addition and does not change existing system behaviour guarantees.

@@ -177,3 +177,8 @@ Scheduler-side hooks (`before_merge`) and type-based agent filtering are defined
 5. **Task without type** → uses project-level hooks → defaults
 6. **Unit tests** → `pytest tests/test_hooks.py` passes with mocked subprocess
 7. **Integration** → start test server, create typed task, run scheduler, verify correct hooks fire
+
+
+## Invariants
+
+- `hooks-declarative-per-type`: Hooks are declared in `.octopoid/config.yaml` per task type (e.g. `product`, `infrastructure`). The hooks for a task are resolved at task creation time using the resolution order: task type → project hooks → defaults.

@@ -38,3 +38,8 @@ Currently the task detail view only shows metadata (ID, title, role, priority, b
 - Prototype the split-panel layout in curses (top summary + left menu + right content)
 - Add scrollable content rendering (curses pad or manual offset tracking)
 - Wire up data loading for each content view
+
+
+## Invariants
+
+No new invariants — this is a UI improvement proposal for the task detail view in the dashboard.

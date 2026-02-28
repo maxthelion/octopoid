@@ -89,3 +89,8 @@ Alternatively, as an interim step, the job function could be wired into the exis
 2. Wire it into the scheduler (either via `@register_job` if draft 61 lands first, or via a hardcoded `is_job_due` block as interim)
 3. Delete old `github_issue_monitor.py` role and agent config
 4. Test: create a test issue, verify task appears in queue
+
+
+## Invariants
+
+- `issue-poller-is-a-job`: The GitHub issue poller runs as a scheduled job via `@register_job`, not as a legacy `BaseRole` agent. It uses `create_task()` to create tasks and respects the GitHub API rate limit.

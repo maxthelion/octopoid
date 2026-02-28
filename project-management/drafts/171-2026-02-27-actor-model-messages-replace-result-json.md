@@ -133,3 +133,8 @@ Same structure for all agent types — the `content` varies by role but the enve
 - **Draft #170** (self-healing fixer): Phase 1 of this migration — scheduler posts result.json as a message for the fixer agent
 - **Draft #169** (force-queue endpoint): Admin recovery endpoint, orthogonal but benefits from message audit trail
 - **Draft #168** (unified logging): Logging and messages are complementary — logs for debugging, messages for task lifecycle
+
+
+## Invariants
+
+- `agents-communicate-via-messages`: Agents communicate their completion state to the orchestrator via a server-side message (or stdout), not by writing files to disk. The scheduler does not need to poll the filesystem to detect agent results.

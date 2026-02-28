@@ -107,3 +107,8 @@ for wt in run_git(["worktree", "list", "--porcelain"], cwd=parent_repo).stdout.s
 - [ ] Add validation: when creating a project with tasks on `feature/*`, `base_branch` should match
 - [ ] `approve_and_merge` for project tasks (no PR) must push the shared branch to origin before marking done
 - [ ] `create_task_worktree` should warn/error if it's about to discard unpushed commits on a branch it's recreating
+
+
+## Invariants
+
+No new invariants — this is a lessons-learned document capturing debugging insights, not proposing new system behaviour.

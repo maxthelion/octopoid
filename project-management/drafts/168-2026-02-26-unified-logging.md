@@ -133,3 +133,8 @@ Files to change (in rough order):
 
 - Should the dashboard also log to the same file, or keep its own?
 - Should we add a `/logs` skill to tail/search the unified log from the CLI?
+
+
+## Invariants
+
+- `unified-log-file`: All scheduler, agent, and hook activity is written to a single log file at `.octopoid/runtime/logs/octopoid.log`. Diagnosing any issue requires checking only one file.

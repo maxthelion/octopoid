@@ -31,3 +31,8 @@ Currently there's a binary choice: either a task is in the queue and agents will
 - Add server support for the new queue value
 - Build a simple promotion mechanism (human command or skill)
 - Allow agents to create proposed tasks via `create_task()` with a `queue="proposed"` parameter
+
+
+## Invariants
+
+- `proposed-tasks-need-promotion`: Tasks in the `proposed` queue are not automatically claimed by agents. They require explicit human or system promotion to `incoming` before work begins.

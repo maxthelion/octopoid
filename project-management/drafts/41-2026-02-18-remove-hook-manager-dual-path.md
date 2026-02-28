@@ -28,3 +28,8 @@ Migrate everything the hook manager does into flow conditions or runs:
 
 - Are there hooks that don't map cleanly to flow conditions? (e.g. hooks that modify data rather than gate transitions)
 - Should hook evidence recording be preserved as a flow feature?
+
+
+## Invariants
+
+- `flows-single-transition-mechanism`: Flows are the only mechanism that controls task state transitions. There is no parallel hook manager or imperative transition system running alongside flows. Every transition requires a matching flow definition.

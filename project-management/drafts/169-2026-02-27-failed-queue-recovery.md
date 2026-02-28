@@ -71,3 +71,8 @@ Combine two fixes:
 - Harden `handle_agent_result_via_flow` catch-all: check if task already in `done` before calling `fail_task()`
 - Consider `non_fatal_after` pattern for post-merge steps
 - Add `/resolve` skill for human recovery workflow
+
+
+## Invariants
+
+- `failed-task-has-recovery-path`: Every task in the `failed` queue can be moved to an actionable state (e.g. `incoming` for retry) without bypassing the state machine. There is a defined flow transition or API action that handles recovery.

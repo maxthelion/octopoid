@@ -92,3 +92,8 @@ Fix 4 is a design improvement for later.
 | Flow step retries | ~40/day | ~10/day (Fix 3) |
 | Agent processes | Variable | Unchanged |
 | **Total** | **~22,100/hour** | **~3/hour** |
+
+
+## Invariants
+
+- `github-api-rate-limit-safe`: The dashboard and scheduler consume fewer than 1,000 GitHub API calls per hour under normal operating conditions. Dashboard polling does not trigger per-PR API calls.
