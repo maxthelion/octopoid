@@ -2010,12 +2010,78 @@ def sweep_stale_resources() -> None:
             logger.debug(f"sweep_stale_resources: git worktree prune failed: {e}")
 
 
+def check_and_evaluate_checks() -> None:
+    """Evaluate async checks for tasks in check-gated transitions.
+
+    For each unclaimed task in 'provisional', loads its flow and looks for a
+    transition from 'provisional' that has configured checks. Evaluates them:
+
+    - All PASS: do nothing — the task is now claimable by the gatekeeper.
+    - Any FAIL: move task to on_checks_fail (typically 'incoming') with context.
+    - Any PENDING: do nothing — checks still running, retry on next tick.
+
+    Tasks that are actively claimed (claimed_by set) are skipped — the
+    gatekeeper is already reviewing them.
+    """
+    from .checks import CheckResult, evaluate_checks  # noqa: PLC0415
+    from .flow import load_flow  # noqa: PLC0415
+
+    try:
+        sdk = queue_utils.get_sdk()
+        tasks = sdk.tasks.list(queue="provisional") or []
+    except Exception as e:
+        logger.debug(f"check_and_evaluate_checks: failed to list provisional tasks: {e}")
+        return
+
+    for task in tasks:
+        # Skip tasks actively claimed by the gatekeeper
+        if task.get("claimed_by"):
+            continue
+
+        task_id = task.get("id", "unknown")
+        flow_name = task.get("flow") or "default"
+
+        try:
+            flow = load_flow(flow_name)
+        except Exception as e:
+            logger.debug(f"check_and_evaluate_checks: could not load flow '{flow_name}' for task {task_id}: {e}")
+            continue
+
+        transitions = flow.get_transitions_from("provisional")
+        if not transitions:
+            continue
+
+        transition = transitions[0]
+        if not transition.checks:
+            continue  # No checks configured — task is claimable without evaluation
+
+        result, reason = evaluate_checks(transition.checks, task)
+        logger.debug(f"check_and_evaluate_checks: task {task_id} checks={transition.checks} → {result.value}")
+
+        if result == CheckResult.FAIL:
+            fail_target = transition.on_checks_fail or "incoming"
+            logger.info(f"check_and_evaluate_checks: task {task_id} check failed ({reason}), moving to '{fail_target}'")
+            try:
+                sdk.tasks.update(
+                    task_id,
+                    queue=fail_target,
+                    claimed_by=None,
+                    lease_expires_at=None,
+                    context=f"Check failed: {reason}",
+                )
+            except Exception as e:
+                logger.warning(f"check_and_evaluate_checks: failed to move task {task_id} to '{fail_target}': {e}")
+        # PASS or PENDING: leave task in provisional; gatekeeper may claim (PASS) or
+        # we'll check again on the next tick (PENDING).
+
+
 HOUSEKEEPING_JOBS = [
     _register_orchestrator,
     check_and_requeue_expired_leases,
     check_and_update_finished_agents,
     _check_queue_health_throttled,
     check_project_completion,
+    check_and_evaluate_checks,
     sweep_stale_resources,
 ]
 

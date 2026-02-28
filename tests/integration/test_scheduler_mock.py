@@ -290,8 +290,9 @@ class TestHappyPath:
         )
         assert result.returncode == 0, f"Mock gatekeeper failed: {result.stderr}"
 
-        # handle_agent_result_via_flow → post_review_comment, check_ci,
+        # handle_agent_result_via_flow → post_review_comment,
         # rebase_on_base, merge_pr, update_changelog → done
+        # check_ci now runs as a scheduler check before gatekeeper claim
         # Mock merge_pr to skip real git rebase/merge — just accept the task.
         # Mock rebase_on_base and update_changelog — they need a real worktree
         # which gatekeeper tests don't set up.

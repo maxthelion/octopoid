@@ -30,6 +30,9 @@ transitions:
         script: run-tests
 
   "provisional -> done":
+    # CI must pass before human approval can be granted.
+    checks: [check_ci]
+    on_checks_fail: incoming
     conditions:
       - name: human_approval
         type: manual
@@ -42,4 +45,4 @@ transitions:
     # aggregate_child_changes collects changes.md from each child task's runtime
     # dir and writes the concatenated result to task_dir/changes.md so that
     # update_changelog can process it as normal.
-    runs: [check_ci, merge_pr, aggregate_child_changes, update_changelog]
+    runs: [merge_pr, aggregate_child_changes, update_changelog]

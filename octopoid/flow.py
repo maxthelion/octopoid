@@ -151,6 +151,8 @@ class Transition:
     agent: str | None = None  # Agent role that handles work in from_state
     runs: list[str] = field(default_factory=list)  # Scripts to run during transition
     conditions: list[Condition] = field(default_factory=list)  # Gates that must pass
+    checks: list[str] = field(default_factory=list)  # Async checks polled before conditions
+    on_checks_fail: str | None = None  # State to move to if any check fails
 
     @classmethod
     def from_dict(cls, key: str, data: dict[str, Any]) -> "Transition":
@@ -179,6 +181,8 @@ class Transition:
             agent=data.get("agent"),
             runs=data.get("runs", []),
             conditions=conditions,
+            checks=data.get("checks", []),
+            on_checks_fail=data.get("on_checks_fail"),
         )
 
     def validate(self, flow_name: str, valid_states: set[str]) -> list[str]:
@@ -219,6 +223,13 @@ class Transition:
         # Validate runs reference existing scripts
         # Note: We can't validate scripts exist here because we don't know which
         # agent they belong to. Script validation happens at runtime.
+
+        # Validate on_checks_fail target
+        if self.on_checks_fail and self.on_checks_fail not in valid_states:
+            errors.append(
+                f"Flow '{flow_name}' transition '{transition_key}': "
+                f"on_checks_fail state '{self.on_checks_fail}' is not a valid state"
+            )
 
         # Validate conditions
         for condition in self.conditions:
@@ -338,6 +349,8 @@ class Flow:
                 agent=t.get("agent"),
                 runs=t.get("runs", []),
                 conditions=conditions,
+                checks=t.get("checks", []),
+                on_checks_fail=t.get("on_checks_fail"),
             ))
 
         _inject_terminal_steps(transitions)
@@ -375,7 +388,9 @@ class Flow:
         for trans in self.transitions:
             states.add(trans.from_state)
             states.add(trans.to_state)
-            # Also add states referenced in on_fail
+            # Also add states referenced in on_checks_fail and condition on_fail
+            if trans.on_checks_fail:
+                states.add(trans.on_checks_fail)
             for cond in trans.conditions:
                 if cond.on_fail:
                     states.add(cond.on_fail)
@@ -513,7 +528,7 @@ def generate_default_flow() -> str:
     The flow engine owns transitions — steps are pre-transition side effects.
     - incoming → claimed: implementer agent claims
     - claimed → provisional: runs push_branch, run_tests, create_pr
-    - provisional → done: gatekeeper agent reviews, runs post_review_comment, merge_pr
+    - provisional → done: CI checked first, then gatekeeper reviews, then merges
     """
     return """name: default
 description: Standard implementation with review
@@ -526,6 +541,8 @@ transitions:
     runs: [push_branch, run_tests, create_pr]
 
   "provisional -> done":
+    checks: [check_ci]
+    on_checks_fail: incoming
     conditions:
       - name: gatekeeper_review
         type: agent
@@ -600,7 +617,7 @@ def _serialize_condition(c: Condition) -> dict:
 
 
 def _serialize_transitions(transitions: list[Transition]) -> list[dict]:
-    """Serialize transitions including agent, runs, and conditions."""
+    """Serialize transitions including agent, runs, conditions, and checks."""
     result = []
     for t in transitions:
         td: dict[str, Any] = {"from": t.from_state, "to": t.to_state}
@@ -610,6 +627,10 @@ def _serialize_transitions(transitions: list[Transition]) -> list[dict]:
             td["runs"] = t.runs
         if t.conditions:
             td["conditions"] = [_serialize_condition(c) for c in t.conditions]
+        if t.checks:
+            td["checks"] = t.checks
+        if t.on_checks_fail:
+            td["on_checks_fail"] = t.on_checks_fail
         result.append(td)
     return result
 
@@ -631,6 +652,12 @@ def _implicit_reverse_transitions(transitions: list[Transition]) -> list[dict]:
         seen.add((t.from_state, t.to_state))
 
     implicit: list[dict] = []
+
+    # on_checks_fail reverse transitions (checks run before conditions)
+    for t in transitions:
+        if t.on_checks_fail and (t.from_state, t.on_checks_fail) not in seen:
+            implicit.append({"from": t.from_state, "to": t.on_checks_fail})
+            seen.add((t.from_state, t.on_checks_fail))
 
     # on_fail reverse transitions
     for t in transitions:

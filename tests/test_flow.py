@@ -609,10 +609,10 @@ class TestInjectTerminalSteps:
         trans = Transition(
             from_state="provisional",
             to_state="done",
-            runs=["post_review_comment", "check_ci"],
+            runs=["post_review_comment", "update_changelog"],
         )
         _inject_terminal_steps([trans])
-        assert trans.runs == ["post_review_comment", "check_ci", "rebase_on_base", "merge_pr"]
+        assert trans.runs == ["post_review_comment", "update_changelog", "rebase_on_base", "merge_pr"]
 
     def test_only_rebase_missing_merge_pr_present(self):
         """Only the missing step is injected when one is already present."""
@@ -660,3 +660,118 @@ class TestInjectTerminalSteps:
         done_trans = next(t for t in flow.transitions if t.to_state == "done")
         assert "rebase_on_base" in done_trans.runs
         assert "merge_pr" in done_trans.runs
+
+
+class TestTransitionChecks:
+    """Tests for checks/on_checks_fail on transitions."""
+
+    def test_from_dict_parses_checks(self):
+        """Transition.from_dict parses 'checks' list from YAML."""
+        trans = Transition.from_dict(
+            "provisional -> done",
+            {"checks": ["check_ci"], "on_checks_fail": "incoming"},
+        )
+        assert trans.checks == ["check_ci"]
+        assert trans.on_checks_fail == "incoming"
+
+    def test_from_dict_defaults_to_empty_checks(self):
+        """Transition without checks defaults to empty list and no on_checks_fail."""
+        trans = Transition.from_dict("incoming -> claimed", {"agent": "implementer"})
+        assert trans.checks == []
+        assert trans.on_checks_fail is None
+
+    def test_from_server_dict_parses_checks(self):
+        """Flow.from_server_dict parses checks and on_checks_fail."""
+        data = {
+            "name": "test",
+            "transitions": [
+                {
+                    "from_state": "provisional",
+                    "to_state": "done",
+                    "checks": ["check_ci"],
+                    "on_checks_fail": "incoming",
+                },
+            ],
+        }
+        flow = Flow.from_server_dict(data)
+        trans = next(t for t in flow.transitions if t.from_state == "provisional")
+        assert trans.checks == ["check_ci"]
+        assert trans.on_checks_fail == "incoming"
+
+    def test_get_all_states_includes_on_checks_fail(self):
+        """Flow.get_all_states includes on_checks_fail target state."""
+        data = {
+            "name": "test",
+            "description": "test",
+            "transitions": {
+                "incoming -> claimed": {"agent": "implementer"},
+                "provisional -> done": {
+                    "checks": ["check_ci"],
+                    "on_checks_fail": "incoming",
+                },
+            },
+        }
+        flow = Flow.from_dict(data)
+        states = flow.get_all_states()
+        assert "incoming" in states
+
+    def test_serialize_includes_checks(self):
+        """_serialize_transitions includes checks and on_checks_fail."""
+        from octopoid.flow import _serialize_transitions
+
+        trans = Transition(
+            from_state="provisional",
+            to_state="done",
+            checks=["check_ci"],
+            on_checks_fail="incoming",
+        )
+        serialized = _serialize_transitions([trans])
+        assert len(serialized) == 1
+        assert serialized[0]["checks"] == ["check_ci"]
+        assert serialized[0]["on_checks_fail"] == "incoming"
+
+    def test_serialize_omits_empty_checks(self):
+        """_serialize_transitions omits empty checks/on_checks_fail."""
+        from octopoid.flow import _serialize_transitions
+
+        trans = Transition(from_state="incoming", to_state="claimed", agent="implementer")
+        serialized = _serialize_transitions([trans])
+        assert "checks" not in serialized[0]
+        assert "on_checks_fail" not in serialized[0]
+
+    def test_implicit_reverse_includes_on_checks_fail(self):
+        """_implicit_reverse_transitions adds on_checks_fail reverse transition."""
+        from octopoid.flow import _implicit_reverse_transitions
+
+        transitions = [
+            Transition(
+                from_state="provisional",
+                to_state="done",
+                checks=["check_ci"],
+                on_checks_fail="incoming",
+            ),
+        ]
+        implicit = _implicit_reverse_transitions(transitions)
+        pairs = [(t["from"], t["to"]) for t in implicit]
+        assert ("provisional", "incoming") in pairs
+
+    def test_default_yaml_has_checks(self):
+        """The default.yaml file declares checks: [check_ci] on provisional -> done."""
+        from octopoid.flow import generate_default_flow
+
+        import yaml as _yaml
+        data = _yaml.safe_load(generate_default_flow())
+        prov_to_done = data["transitions"]["provisional -> done"]
+        assert "checks" in prov_to_done
+        assert "check_ci" in prov_to_done["checks"]
+        assert prov_to_done.get("on_checks_fail") == "incoming"
+
+    def test_default_yaml_no_check_ci_in_runs(self):
+        """check_ci is not in the runs list of provisional -> done in default flow."""
+        from octopoid.flow import generate_default_flow
+
+        import yaml as _yaml
+        data = _yaml.safe_load(generate_default_flow())
+        prov_to_done = data["transitions"]["provisional -> done"]
+        runs = prov_to_done.get("runs", [])
+        assert "check_ci" not in runs
