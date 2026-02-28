@@ -51,6 +51,12 @@ Adding `X -> requires-intervention` for every queue is whack-a-mole. The message
 
 `failed` is a true terminal state (fixer also failed, or unrecoverable error). It stays as a queue. The message-based approach replaces only the "fixable" intervention path.
 
+## Invariants
+
+- **intervention-no-queue-transition**: Requesting intervention for a task never requires a queue transition. The task stays in its current queue. Intervention is a flag + message, not a state change.
+- **intervention-context-in-messages**: All intervention context (error source, failed step, error message) is communicated via task messages with `to_actor=fixer`, not via local files or separate data structures. The fixer reads messages, not `intervention_context.json`.
+- **intervention-resolution-via-reply**: Intervention is resolved when the fixer posts a reply message (via `parent_message_id`). The scheduler processes the reply and clears the flag. No separate "resolved" column or status field.
+
 ## Open Questions
 
 - Should the fixer claim the task while working, or does `blocked_by=fixer` suffice to prevent other agents from touching it?
