@@ -1,5 +1,5 @@
 role: analyse
-model: sonnet
+model: opus
 max_turns: 30
 interval_seconds: 600
 spawn_mode: scripts
