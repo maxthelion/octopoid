@@ -48,7 +48,7 @@ except Exception as e:
     })
 
 # Fetch tasks by queue
-for queue in ['incoming', 'claimed', 'provisional', 'done', 'failed']:
+for queue in ['incoming', 'claimed', 'provisional', 'requires-intervention', 'done', 'failed']:
     try:
         tasks = sdk.tasks.list(queue=queue)
         data["queues"][queue] = tasks
@@ -128,7 +128,7 @@ if failed_tasks:
 # Print queue summary
 print(f"Last tick: {data['heartbeat'] or 'unknown'}")
 
-for queue in ['incoming', 'claimed', 'provisional', 'done', 'failed']:
+for queue in ['incoming', 'claimed', 'provisional', 'requires-intervention', 'done', 'failed']:
     tasks = data["queues"].get(queue, [])
     print(f"\n{queue.upper()} ({len(tasks)} tasks)")
     if tasks:
@@ -141,6 +141,14 @@ for queue in ['incoming', 'claimed', 'provisional', 'done', 'failed']:
                 age = t.get('_age_mins')
                 age_str = f" {age}m" if age else ""
                 extra = f" | {t.get('claimed_by', '?')}{age_str}"
+            if queue == 'requires-intervention':
+                ctx_path = Path(f".octopoid/runtime/tasks/{tid}/intervention_context.json")
+                if ctx_path.exists():
+                    try:
+                        ctx = json.loads(ctx_path.read_text())
+                        extra = f" | {ctx.get('error_source', '?')}: {ctx.get('error_message', '?')[:40]}"
+                    except (json.JSONDecodeError, OSError):
+                        pass
             if queue == 'failed':
                 reason = t.get('_failure_reason')
                 if reason:

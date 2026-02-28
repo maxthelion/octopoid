@@ -11,7 +11,7 @@ Run this Python script to fetch queue data and diagnostics:
 ```python
 import json, os
 from pathlib import Path
-from orchestrator.queue_utils import get_sdk
+from octopoid.queue_utils import get_sdk
 from datetime import datetime, timezone
 
 sdk = get_sdk()
@@ -38,7 +38,7 @@ try:
                 data["problems"].append({
                     "type": "stale_heartbeat",
                     "detail": f"Last heartbeat was {data['heartbeat']}. Scheduler may be stopped or crashing.",
-                    "suggestion": "Check if scheduler is running: `launchctl list | grep octopoid`. Check logs in .octopoid/logs/scheduler.log for errors."
+                    "suggestion": "Check if scheduler is running: `launchctl list | grep octopoid`. Check logs in .octopoid/runtime/logs/octopoid.log for errors."
                 })
 except Exception as e:
     data["problems"].append({
@@ -48,7 +48,7 @@ except Exception as e:
     })
 
 # Fetch tasks by queue
-for queue in ['incoming', 'claimed', 'provisional', 'done', 'failed']:
+for queue in ['incoming', 'claimed', 'provisional', 'requires-intervention', 'done', 'failed']:
     try:
         tasks = sdk.tasks.list(queue=queue)
         data["queues"][queue] = tasks
@@ -110,6 +110,13 @@ if failed_tasks:
             "task_ids": [t.get("id") for t in no_stdout],
             "suggestion": "These tasks were never completed. Review what the agent did in .octopoid/runtime/tasks/<id>/worktree, then requeue or rewrite the task."
         })
+    if rejected:
+        data["problems"].append({
+            "type": "rejected_by_gatekeeper",
+            "detail": f"{len(rejected)} failed task(s) completed but were rejected by the gatekeeper.",
+            "task_ids": [t.get("id") for t in rejected],
+            "suggestion": "Check PR review comments for rejection reasons. Rewrite the task file to address feedback, then requeue."
+        })
     if errored:
         data["problems"].append({
             "type": "agent_reported_failure",
@@ -121,7 +128,7 @@ if failed_tasks:
 # Print queue summary
 print(f"Last tick: {data['heartbeat'] or 'unknown'}")
 
-for queue in ['incoming', 'claimed', 'provisional', 'done', 'failed']:
+for queue in ['incoming', 'claimed', 'provisional', 'requires-intervention', 'done', 'failed']:
     tasks = data["queues"].get(queue, [])
     print(f"\n{queue.upper()} ({len(tasks)} tasks)")
     if tasks:
@@ -134,6 +141,14 @@ for queue in ['incoming', 'claimed', 'provisional', 'done', 'failed']:
                 age = t.get('_age_mins')
                 age_str = f" {age}m" if age else ""
                 extra = f" | {t.get('claimed_by', '?')}{age_str}"
+            if queue == 'requires-intervention':
+                ctx_path = Path(f".octopoid/runtime/tasks/{tid}/intervention_context.json")
+                if ctx_path.exists():
+                    try:
+                        ctx = json.loads(ctx_path.read_text())
+                        extra = f" | {ctx.get('error_source', '?')}: {ctx.get('error_message', '?')[:40]}"
+                    except (json.JSONDecodeError, OSError):
+                        pass
             if queue == 'failed':
                 reason = t.get('_failure_reason')
                 if reason:
@@ -153,6 +168,29 @@ if data["problems"]:
         print(f"   -> {p['suggestion']}")
 else:
     print("\nNo problems detected.")
+
+# Print recent errors from unified log
+log_path = Path(".octopoid/runtime/logs/octopoid.log")
+if log_path.exists():
+    lines = log_path.read_text().splitlines()
+    errors = [l for l in lines if "[ERROR]" in l or "[WARN" in l]
+    recent = errors[-10:] if errors else []
+    if recent:
+        print(f"\n--- RECENT ERRORS (last {len(recent)} from octopoid.log) ---")
+        for line in recent:
+            print(f"  {line}")
+    else:
+        print("\n--- LOG: no recent errors in octopoid.log ---")
+else:
+    # Fall back to launchd stderr
+    stderr_path = Path(".octopoid/runtime/logs/launchd-stderr.log")
+    if stderr_path.exists():
+        lines = stderr_path.read_text().splitlines()
+        recent = lines[-10:] if lines else []
+        if recent:
+            print(f"\n--- RECENT ERRORS (last {len(recent)} from launchd-stderr.log) ---")
+            for line in recent:
+                print(f"  {line}")
 ```
 
 ### Step 2: Analyse and suggest
