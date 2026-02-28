@@ -157,17 +157,26 @@ else:
 
 ### Step 2: Analyse and suggest
 
-After displaying the script output, review the problems list and proactively suggest concrete next steps. For example:
+After displaying the script output, review the problems list. **Look for patterns and root causes, not just symptoms.** If multiple problems share a common underlying issue, diagnose and suggest fixing the root cause rather than treating each symptom individually.
+
+**Think holistically:**
+- If several tasks failed at the same step, the step implementation is broken — suggest fixing the step, not requeuing each task
+- If tasks are getting stuck in claimed, the error handling or flow transition logic may be wrong — suggest investigating the step runner, not just manually pushing each task through
+- If tasks show as done but their work never landed on main, the step verification is missing — suggest adding verification, not just manually merging each one
+- If the same class of failure keeps recurring across different tasks, there's a systemic issue — suggest a `/draft-idea` or `/enqueue` for the structural fix
+
+**Per-problem guidance** (but always look for the bigger picture first):
 
 - **Stale heartbeat**: Offer to check scheduler logs or restart it
-- **Stuck claimed tasks**: Offer to investigate the worktree and requeue
-- **Ran out of turns**: Offer to check what the agent accomplished and whether to cherry-pick or requeue with a simpler scope
-- **Rejected tasks**: Offer to look at the PR comments and rewrite the task
-- **Agent failures**: Offer to read the failure reason and fix the underlying issue
+- **Stuck claimed tasks**: Investigate *why* — check step_progress.json, intervention_context.json, and stderr.log. Is the error handling swallowing exceptions? Is a flow transition being rejected by the server?
+- **Ran out of turns**: Check what the agent accomplished and whether to cherry-pick or requeue with a simpler scope
+- **Rejected tasks**: Look at the PR comments and suggest rewriting the task
+- **Agent failures**: Read the failure reason and suggest fixing the underlying issue
 - **Empty incoming + active failed**: Point out that work is blocked and suggest triaging the failed queue
 - **API errors / 401s**: Flag the auth issue and suggest checking OCTOPOID_API_KEY
+- **Ghost completions** (task done but work not on main): Check step_progress.json — if steps are marked completed that clearly didn't succeed, the step execution pipeline needs verification logic
 
-Be specific — reference task IDs, suggest exact commands, and offer to take action.
+**Don't just suggest band-aids.** If the queue shows broken state, suggest the systemic fix (draft, task, or code investigation) alongside any immediate unblocking actions. The goal is to stop the problem from recurring, not just clean up after it.
 
 ## Related Commands
 
