@@ -1,3 +1,15 @@
+---
+**Processed:** 2026-02-28
+**Mode:** human-guided
+**Actions taken:**
+- Discovered `check_ci` step already exists in `steps.py:83` and is in `default.yaml` flow
+- But it runs AFTER gatekeeper approval (in `provisional → done` runs), not before
+- CI failure goes through intervention/fixer, not back to implementer
+- Updated with async checks design
+- Scoped to simplest robust version: built-in checks only, parallel only, one check (check_ci)
+**Outstanding items:** Ready for enqueue
+---
+
 # CI as a pipeline step before gatekeeper
 
 **Captured:** 2026-02-28
@@ -5,40 +17,97 @@
 ## Raw
 
 > My preferred approach would be that CI is part of the pipeline but not duplicated in gatekeeper. What's a good way for that to fit in? before or after gatekeeper? What happens if CI fails? Thrown back for implementers to fix programmatically? LLM gatekeeper shouldn't need to be involved
+>
+> we want check_ci to be before the gatekeeper. The main issue seems to be that this needs to be run asynchronously. Basically, the process should be that the implementer stops work. Scheduler sees they are finished and sets of a bunch of checks on the work. The checks write their results somewhere, and the scheduler notes that they've been started. The scheduler looks for completed checks on every tick and notes whether or not all the conditions are met. If not, we can specify what happens (eg an onfail event).
 
-## Idea
+## Problem
 
-CI (GitHub Actions) should be a step in the task flow, not something the gatekeeper duplicates. Currently:
+CI runs after gatekeeper approval. PR #261 was approved by the gatekeeper (811/811 local tests passed) but broke 6 integration tests that only CI runs. The gatekeeper can't catch these — it doesn't have a test server.
 
-- **Gatekeeper** runs `pytest` locally in its worktree (811 unit tests)
-- **CI** runs both unit tests and integration tests (with a real server)
-- The gatekeeper can't run integration tests (no server), so it approves code that breaks them
-- This just happened: PR #261 passed gatekeeper review (811/811 tests) but broke 6 integration tests in CI
+## Design
 
-The fix: CI runs **before** the gatekeeper, as a flow step. If CI fails, the task goes back to the implementer to fix — no LLM involved, just a programmatic bounce. The gatekeeper only sees tasks where CI already passes.
+### Checks: pure functions polled by the scheduler
 
-### Flow change
+A check is a pure function: `(task) → pass | fail | pending`. Stateless, idempotent. The scheduler calls it on every tick for tasks waiting at a transition.
 
-Current:
-```
-claimed → provisional: [rebase_on_base, push_branch, create_pr]
-provisional → done: gatekeeper reviews (runs tests locally, duplicating CI)
-```
+```python
+class CheckResult(Enum):
+    PASS = "pass"
+    FAIL = "fail"
+    PENDING = "pending"
 
-Proposed:
-```
-claimed → provisional: [rebase_on_base, push_branch, create_pr]
-provisional: check_ci step polls GitHub Actions status
-  - CI passes → gatekeeper can claim
-  - CI fails → task bounces back to implementer (requeue to incoming with CI failure context)
-provisional → done: gatekeeper reviews (no need to run tests — CI already passed)
+@register_check("check_ci")
+def check_ci(task: dict) -> CheckResult:
+    pr_number = task.get("pr_number")
+    if not pr_number:
+        return CheckResult.PASS
+    # poll gh pr checks, return PASS/FAIL/PENDING
 ```
 
-The `check_ci` step is an async polling step — it waits for GitHub Actions to report a result on the PR, then either proceeds or bounces. The gatekeeper's `run-tests` script becomes unnecessary (or optional as a sanity check).
+### Flow configuration
+
+```yaml
+provisional -> done:
+  checks: [check_ci]
+  on_checks_fail: incoming
+
+  condition:
+    type: agent
+    agent: gatekeeper
+    on_fail: incoming
+  runs: [rebase_on_base, merge_pr, update_changelog]
+```
+
+`checks` run before `condition`. The gatekeeper can only claim the task once all checks pass.
+
+### Scheduler lifecycle
+
+On each tick, for each task waiting at a transition with `checks`:
+1. Call all check functions (parallel — all at once)
+2. All return PASS → task is eligible for the transition's condition (gatekeeper can claim)
+3. Any return FAIL → requeue to `on_checks_fail` queue with failure context
+4. Any return PENDING → skip, try next tick
 
 ### What happens on CI failure
 
-The task is requeued to `incoming` with context about which tests failed. The implementer picks it up, sees the failure output, fixes the code, and pushes again. This is fully programmatic — no LLM gatekeeper needed to diagnose "tests are failing". The implementer agent is the right one to fix code.
+Task goes back to `incoming` with CI failure context. Implementer picks it up, fixes code, pushes. Fully programmatic — no gatekeeper or fixer involved.
+
+### Scope (v1)
+
+Keep it simple and robust:
+- **Built-in checks only** — no user-extensible scripts, just registered Python functions
+- **Parallel only** — all checks fire at once, no chaining
+- **One check to start** — `check_ci` (already mostly implemented in `steps.py:83`)
+- **Results as messages** — post check results as task messages for dashboard visibility
+
+### What changes
+
+1. Add `CheckResult` enum and `@register_check` decorator to a new `checks.py` module
+2. Move `check_ci` logic from `steps.py` step to `checks.py` check (different signature — takes `task`, returns `CheckResult` instead of raising)
+3. Add `checks` and `on_checks_fail` to flow schema
+4. Update scheduler to evaluate checks before allowing condition (gatekeeper claim)
+5. Remove `check_ci` from `runs` list in `default.yaml`
+6. Remove `run-tests` from gatekeeper scripts (CI already covers it)
+
+### Testing
+
+Pure functions with a registry make this easy to test:
+
+```python
+@register_check("test_pass")
+def test_pass(task: dict) -> CheckResult:
+    return CheckResult.PASS
+
+@register_check("test_fail")
+def test_fail(task: dict) -> CheckResult:
+    return CheckResult.FAIL
+```
+
+Integration tests with `scoped_sdk`:
+- All checks pass → gatekeeper can claim
+- Check fails → task bounced to incoming with context
+- Check pending → task stays, not claimable
+- No checks configured → gatekeeper can claim immediately (backwards compatible)
 
 ## Invariants
 
@@ -47,21 +116,4 @@ The task is requeued to `incoming` with context about which tests failed. The im
 
 ## Context
 
-Task 795d194c (intervention-first failure routing) was approved by the gatekeeper with 811/811 tests passing, but broke 6 integration tests in CI. The gatekeeper couldn't catch this because it doesn't run integration tests — it has no test server. Rather than giving the gatekeeper a test server (duplicating CI infrastructure), CI should be a gate in the pipeline that runs before the gatekeeper.
-
-Also note: some dangling commits in the repo suggest a `check_ci` step was attempted before but never landed.
-
-## Open Questions
-
-- How does `check_ci` handle the async nature of CI? Poll every N seconds? Webhook? Or just check on the next scheduler tick?
-- What's the timeout? If CI hasn't reported after X minutes, what happens?
-- Should `check_ci` block the task in `provisional` (preventing gatekeeper claim) or use a separate queue state?
-- Should the gatekeeper still run a fast local test suite as a sanity check, or rely entirely on CI?
-
-## Possible Next Steps
-
-- Implement `check_ci` step that polls GitHub Actions status via `gh` CLI
-- Add `check_ci` to the `claimed → provisional` flow (after `create_pr`)
-- Add CI failure → requeue logic with failure context
-- Remove or simplify gatekeeper's `run-tests` script
-- Update flow definition in `default.yaml`
+Task 795d194c was approved by the gatekeeper with 811/811 tests passing, but broke 6 integration tests in CI. The `check_ci` step already exists in `steps.py:83` but runs after gatekeeper approval in the `provisional → done` runs list. Moving it before the gatekeeper requires the async checks concept because CI takes minutes to complete and can't block a synchronous step list.
