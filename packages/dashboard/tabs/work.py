@@ -240,6 +240,16 @@ class MatrixView(Widget):
     def _cell_value(self, task: dict, state: str, frame: int) -> Text:
         if (task.get("queue") or "incoming") != state:
             return Text("")
+        needs_intervention = task.get("needs_intervention", False)
+        if needs_intervention:
+            cell = Text(justify="left")
+            turns = int(task.get("turns") or 0)
+            if turns:
+                cell.append(f"{turns:>3}", style="bold #aaaaaa")
+            else:
+                cell.append("   ")
+            cell.append(" ! ", style="bold #ff5555")
+            return cell
         icon = self._state_icon(state, frame)
         if state not in self._STATIC_STATES:
             turns = int(task.get("turns") or 0)
