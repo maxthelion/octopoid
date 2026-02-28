@@ -74,17 +74,52 @@ Each behaviour:
 - Is read by agents before making changes (so they know what to preserve)
 - Is updated by agents after making changes (so new behaviours are captured)
 
+## The key invariant: a centralised store of invariants must exist
+
+The most important thing this draft establishes — and the thing not fully covered by the follow-on drafts — is the **meta-invariant**: there must be a centralised, canonical store of system invariants (`docs/system-spec.yaml`). Every other improvement depends on this existing.
+
+Without a centralised store:
+- Invariants live in drafts, scattered across `project-management/drafts/`
+- When a draft is archived, its invariants are archived with it
+- No agent can answer "what are all the things this system guarantees?"
+- Improvements get applied locally because there's no list of system-wide properties to check against
+
+The store is what makes everything else work. Draft #181 bootstraps it with the first entries. Draft #182 defines how invariants flow into it. But the existence of the store itself is this draft's contribution.
+
+## How invariants enter the store
+
+Every draft should have its invariants extracted — either when it is enqueued into work (`/enqueue`) or when it is processed (`/process-draft`). If a draft doesn't have invariants, we should discuss what they should be. A draft that proposes a change to system behaviour without stating what should be true afterwards is incomplete.
+
+The lifecycle:
+
+1. **Draft captured** — idea described, invariants stated in `## Invariants` section
+2. **Draft enqueued** — `/enqueue` checks that tasks collectively cover the invariants
+3. **Tasks implemented** — partial progress is fine, gatekeeper approves at task level
+4. **Draft processed** — `/process-draft` checks whether invariants are met in the code
+5. **Invariants graduate** — met invariants move from the draft to `docs/system-spec.yaml`
+6. **Draft archived** — only after invariants are in the centralised store
+
+This is refined in detail in draft #182.
+
 ## How it fits into the agent workflow
 
-1. **Implementer**: reads the spec before starting. After completing work, appends any new behaviours introduced by the change. If the change modifies an existing behaviour, updates the description.
+*Note: the original version of this section proposed that implementers update the spec on every change and the gatekeeper checks it was touched. Draft #182 refines this — see below.*
 
-2. **Gatekeeper**: checks that the spec was updated if the diff introduces new behaviour. Checks that existing behaviours still have passing tests. Flags untested behaviours.
+The implementer is typically a Sonnet model following mechanical acceptance criteria. It doesn't have the broader context to know which system invariants its change might affect. Asking it to update the spec on every commit is unreliable.
 
-3. **Codebase analyst**: periodically reviews the spec for staleness — behaviours whose tests no longer exist, behaviours that contradict the code, behaviours that have no test.
+Instead, invariant management lives at the **draft level**, not the task level:
 
-4. **Testing analyst**: derives integration tests from untested behaviours in the spec. This is the "QA from intent" loop — the spec says what should be true, the analyst writes the test that verifies it.
+1. **Interactive Claude (Opus)**: writes drafts with invariants, creates tasks that collectively cover them. The human's intent is captured in the draft, translated into mechanical work in tasks.
 
-5. **Flow step**: a `validate_spec` step in `claimed -> provisional` that checks the spec file was touched if the diff is non-trivial.
+2. **Implementer (Sonnet)**: follows task acceptance criteria. Doesn't need to know about invariants — that's handled upstream (draft) and downstream (process-draft). Partial progress toward an invariant is fine.
+
+3. **Gatekeeper**: checks task completion, not invariant satisfaction. A task that makes partial progress toward a draft's invariant should be approved if it meets its own criteria.
+
+4. **`/process-draft`**: checks whether the draft's invariants are actually met in the code. If not, the draft stays open and more work gets scheduled. This is the accountability mechanism.
+
+5. **Codebase analyst**: periodically reviews `docs/system-spec.yaml` for staleness — invariants whose tests don't exist, invariants that contradict the code, invariants with `test: null`.
+
+6. **Testing analyst**: derives integration tests from untested invariants in the spec. This is the "QA from intent" loop — the spec says what should be true, the analyst writes the test that verifies it.
 
 ## How tests get derived from intent
 
@@ -97,18 +132,25 @@ The spec becomes the source of truth for what tests should exist. The testing an
 
 This inverts the normal flow. Instead of "write code, then maybe write a test," it's "the behaviour exists in the spec, therefore a test must exist." The spec is the accountability mechanism.
 
+## Refined by later drafts
+
+- **Draft #181** — Bootstraps `docs/system-spec.yaml` with the first concrete invariants (self-correcting failure, step verification, worktree preservation, claim limits). Answers the "how to bootstrap?" question.
+- **Draft #182** — Defines the invariant-driven task pipeline: how invariants flow from drafts through tasks to the system spec. Refines the agent workflow section above. Identifies the process gap where intent gets lost in translation from draft → task → implementation.
+
 ## Open Questions
 
 - What granularity? Too fine-grained and the spec becomes noisy. Too coarse and it doesn't catch regressions. Probably: one entry per user-visible behaviour or system invariant, not per function.
 - YAML or markdown? YAML is machine-parseable (analysts can query it). Markdown is more readable. Could do both — YAML source of truth, markdown rendered view.
-- How to bootstrap? We can't write the full spec from scratch. Start with the behaviours we already have tests for, then grow organically as tasks complete.
 - Should the spec be per-module or global? A single file gets unwieldy. A directory (`docs/behaviours/task-lifecycle.yaml`, `docs/behaviours/flow-system.yaml`) might scale better.
-- How to handle contradictions? If a new task changes behaviour that contradicts an existing spec entry, the agent must update the entry — not just add a new one. The gatekeeper should flag if a spec entry was removed without explanation.
+- How to handle contradictions? If a new task changes behaviour that contradicts an existing spec entry, the agent must update the entry — not just add a new one. `/process-draft` should flag if an invariant was removed without explanation.
+- How do we handle invariants that are aspirational vs enforced? Mark them differently? (e.g. `status: enforced` vs `status: aspirational`)
+- What if a draft has no obvious invariants? Some drafts are pure refactoring or tooling changes. Do they still need invariants, or is "no invariant" a valid answer for some categories of work?
 
 ## Possible Next Steps
 
-- Bootstrap a minimal spec with 10-15 behaviours from existing tests and task descriptions
-- Update the implementer prompt to read and update the spec
-- Update the gatekeeper prompt to check spec was touched
-- Update the testing analyst to derive tests from untested spec entries
-- Add a `validate_spec` flow step
+- Bootstrap `docs/system-spec.yaml` with initial invariants (draft #181)
+- Add `## Invariants` section to the `/draft-idea` template
+- Update `/process-draft` to check invariant satisfaction before archiving
+- Update `/enqueue` to flag when tasks don't fully cover draft invariants
+- Retroactively add invariants to open drafts (#170, #175, #176, #180)
+- Have the codebase analyst review the spec periodically for staleness
