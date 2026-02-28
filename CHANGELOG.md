@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `WorkTab` now renders `MatrixView` directly without a `TabbedContent` wrapper
+
+### Removed
+- `FlowKanban` class from `packages/dashboard/tabs/work.py`
+- `WorkColumn` class from `packages/dashboard/tabs/work.py`
+- Per-flow kanban tab panes from the work tab
+- Kanban-related CSS (`.kanban-board`, `.kanban-column`, `FlowKanban`) from `dashboard.tcss`
+- Unused imports (`ListView`, `TabbedContent`, `TabPane`, `Horizontal`) from `work.py`
 ### Added
 
 - Unified logging via Python's standard `logging` module configured in `octopoid/__init__.py`
