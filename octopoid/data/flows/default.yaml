@@ -9,9 +9,15 @@ transitions:
     runs: [rebase_on_base, push_branch, run_tests, create_pr]
 
   "provisional -> done":
+    # CI must pass before the gatekeeper can claim the task for review.
+    # check_ci polls GitHub CI status each scheduler tick. FAIL moves the
+    # task back to incoming so the implementer can fix it; PENDING leaves
+    # it in provisional until the next tick.
+    checks: [check_ci]
+    on_checks_fail: incoming
     conditions:
       - name: gatekeeper_review
         type: agent
         agent: gatekeeper
         on_fail: incoming
-    runs: [post_review_comment, check_ci, rebase_on_base, merge_pr, update_changelog]
+    runs: [post_review_comment, rebase_on_base, merge_pr, update_changelog]

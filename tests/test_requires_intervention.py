@@ -428,7 +428,7 @@ class TestHandleFixerResultFixed:
             from_state="claimed",
             to_state="provisional",
             conditions=[],
-            runs=["push_branch", "create_pr", "check_ci"],
+            runs=["push_branch", "create_pr", "update_changelog"],
         )
         mock_flow = Flow(name="default", description="", transitions=[mock_transition])
 
