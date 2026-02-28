@@ -77,6 +77,12 @@ This means consolidating into flow runs loses no capability. Flow `transition.ru
 
 If per-task step customization is ever needed, the `flow_overrides` field already exists in the task schema (currently unused). That would be the natural extension — override specific transition runs for a single task without creating a whole new flow.
 
+## Invariants
+
+- `flow-runs-single-source`: Flow YAML `transition.runs` is the single source of truth for what steps execute during task transitions. The task-level hooks field and `process_orchestrator_hooks` are not executed; all step execution goes through the flow engine.
+- `rebase-before-merge`: The `rebase_on_base` step runs before `merge_pr` in every flow that transitions a task to done. A merge failure caused by a missing rebase step is a flow misconfiguration bug.
+- `rebase-failure-requeues`: If `rebase_on_base` fails during `provisional → done`, the task is rejected back to `incoming` for retry, not moved to `failed`.
+
 ## Open Questions
 
 - Should `process_orchestrator_hooks` be removed in one go, or gradually (first make flows complete, then deprecate hooks, then remove)?

@@ -51,6 +51,10 @@ Integration tests are polluting the production server. This needs a systemic fix
 - Should we keep the tool counter hook? Same question
 - What's the right cleanup strategy for integration tests — delete-on-teardown, or use unique prefixes and batch-delete?
 
+## Invariants
+
+- `integration-tests-use-local-server`: Integration tests always run against the local test server (port 9787), never against production. The `conftest.py` fixture enforces this — tests that would hit production fail fast.
+
 ## Possible Next Steps
 
 - **Quick win:** Fix integration test `conftest.py` to use local server only (fixes 6 + prevents data pollution)

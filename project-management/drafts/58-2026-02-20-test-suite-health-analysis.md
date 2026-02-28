@@ -63,6 +63,10 @@ The testing project shifted Octopoid from almost no integration testing to 133 i
 6. Set up CI workflow to run integration tests (Draft #27 scope)
 7. Write Level 3 scheduler loop test (Draft #27)
 
+## Invariants
+
+No new invariants. This is a post-project test suite health report. The gaps identified here are tracked in drafts 27 (scheduler integration tests) and the general testing philosophy in `docs/testing.md`.
+
 ## Verdict
 
 **PROJ-f58c4adc was successful.** The test suite provides genuine confidence that core lifecycle, flow engine, recovery, and concurrency work correctly. The 48 failures are from test gaps, not system bugs — except one real production bug in orchestrator registration that the tests correctly identified.

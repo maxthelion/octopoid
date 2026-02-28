@@ -289,6 +289,13 @@ transitions:
 3. Keep `submit-pr` temporarily (it's idempotent — if the agent calls it, the scheduler's flow steps will see the PR already exists)
 4. Once stable, remove `submit-pr` from agent scripts and update prompts
 
+## Invariants
+
+- `agents-no-server-calls`: Agents never call the octopoid server API directly. Only the orchestrator/scheduler interacts with the server on behalf of agents. Agents have no SDK imports and no server credentials.
+- `orchestrator-owns-lifecycle`: The orchestrator/scheduler creates branches, pushes commits, creates PRs, and posts PR comments after an agent finishes. Agents only write code and make commits. Infrastructure operations happen outside the agent session.
+- `agent-result-via-stdout`: Agents signal completion and outcome via stdout only. The orchestrator infers the outcome from stdout content. No result.json, finish script, fail script, or direct server calls are used by agents to communicate outcome.
+- `scheduler-creates-branch`: The scheduler creates or checks out the task branch in `prepare_task_directory` before spawning the agent. Agents never create branches themselves.
+
 ## Open Questions
 
 - Should agents be able to run tests themselves during development (for iteration), with the orchestrator running them again as verification? Or strictly orchestrator-only?

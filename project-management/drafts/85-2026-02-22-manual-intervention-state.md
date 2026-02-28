@@ -55,6 +55,10 @@ Came up while manually completing two tasks (109f0768, e7f566de) that were done 
 
 Also relevant for the 39 failed tasks in the queue — many are obsolete and should be resolvable with a note like "superseded by TASK-xxx" without going through the full flow.
 
+## Invariants
+
+- `manual-resolution-available`: Any task can be moved to a terminal resolved state from any queue (incoming, claimed, provisional, failed) by a human actor without going through the normal agent flow. The resolution must include who performed it and why, creating an audit trail.
+
 ## Open Questions
 
 - Should `resolved` be a separate terminal state (like `done` and `failed`), or should resolved tasks just go to `done` with a `resolution` metadata field?

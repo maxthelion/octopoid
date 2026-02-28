@@ -36,6 +36,10 @@ The fix is a ~5 line change in `sweep_stale_resources()`: pick the grace period 
 
 A task failed overnight and by morning the worktree had already been swept. The logs were archived (to `.octopoid/runtime/logs/<task-id>/`) but the worktree — which contains the actual code changes, git history, and working state — was gone. This makes it much harder to understand what went wrong and whether any work is salvageable.
 
+## Invariants
+
+- `failed-worktree-retention`: Failed task worktrees are retained for at least 24 hours after the task enters the `failed` queue, giving humans time to investigate before cleanup. Done task worktrees may be cleaned up after 1 hour.
+
 ## Open Questions
 
 - Is 24 hours the right retention for failed tasks, or should it be longer (48h? 72h)?

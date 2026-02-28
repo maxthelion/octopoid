@@ -105,6 +105,11 @@ Found during investigation of why TASK-b0a63d8b and TASK-451ec77d were stuck in 
 
 This connects to draft #25 (fix PR metadata loss) — the submit endpoint has the same two-step pattern. Atomic submit would fix both issues.
 
+## Invariants
+
+- `claim-is-atomic`: The claim operation (queue transition + claimed_by assignment) is a single atomic database operation. A task cannot end up in the `claimed` queue with `claimed_by = NULL` due to a partial write.
+- `no-orphaned-claimed-tasks`: No task can exist in the `claimed` queue without a valid `claimed_by` value. Any orphaned state (claimed_by = NULL in claimed queue) is detected by the scheduler's housekeeping and the task is requeued to `incoming`.
+
 ## Open Questions
 
 - Does D1 `batch()` provide true transactional atomicity (all-or-nothing), or just sequential execution?

@@ -69,6 +69,10 @@ Option 2 (manual sequencing with `blocked_by`) is the pragmatic choice for the p
 3. Auto-inherit project branch on task creation
 4. End-to-end integration test: project with 2 sequential tasks through full lifecycle
 
+## Invariants
+
+No new invariants. This draft is an audit report identifying what's missing from the project system implementation. The invariants for what the project system *should* do are captured in draft 46.
+
 ## Related
 
 - Draft 42: "Deploy Project Flow" (idea)

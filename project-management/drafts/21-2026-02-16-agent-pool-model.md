@@ -105,6 +105,11 @@ The `agents.yaml` format changes. Old format lists instances, new format lists b
 3. **Stats**: Per-task (server-side task history), not per-blueprint or per-instance. No local state files.
 4. **Backpressure**: Unchanged — global `max_open_prs` check before spawning. Already instance-agnostic.
 
+## Invariants
+
+- `agents-are-pooled`: Agents are defined as blueprints with `max_instances` in `agents.yaml`. The scheduler spawns instances dynamically up to the `max_instances` limit — no pre-named instances.
+- `instances-are-ephemeral`: Agent instances have no persistent state beyond their associated task. Instance identity is tracked by task ID and PID, not by named agent slots.
+
 ## Possible Next Steps
 
 - Prototype the new agents.yaml format and scheduler loop

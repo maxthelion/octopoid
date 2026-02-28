@@ -60,6 +60,11 @@ The draft at `project-management/drafts/AGENT_ARCHITECTURE_REFACTOR.md` describe
 
 Discovered while running the scheduler with `--once`. implementer-1 claimed gh-13 and created the full task directory (worktree, scripts, prompt, env.sh), but `claude -p` immediately exited because of the `CLAUDECODE` env var. The empty `OCTOPOID_SERVER_URL` was found by inspecting env.sh.
 
+## Invariants
+
+- `spawn-excludes-claudecode-env`: The scheduler strips `CLAUDECODE` from the environment before spawning agent subprocesses, preventing nested Claude Code session errors.
+- `server-url-from-config`: The `OCTOPOID_SERVER_URL` written to `env.sh` is read from config (`.octopoid/config.yaml`), not from the parent process environment. Agents always have a valid server URL regardless of how the scheduler was started.
+
 ## Open Questions
 
 - Should the scheduler detect and log when `claude -p` fails immediately (exit within seconds)?

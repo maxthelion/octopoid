@@ -74,6 +74,10 @@ All 7 incoming tasks + 1 claimed task were created by the github-issue-monitor f
 5. **Remove stale tasks** from queue for closed/rewritten issues and re-create from updated issues
 6. **Reprioritize**: GH-9 (observability) is genuinely high priority; GH-13 and GH-3 are low priority polish
 
+## Invariants
+
+No new invariants. This draft is a one-time triage analysis of stale GitHub issues following the v2.0 architecture migration. No new system behaviour is introduced.
+
 ## Open Questions
 
 - Should we close all issues and re-create fresh ones? Or update in place?

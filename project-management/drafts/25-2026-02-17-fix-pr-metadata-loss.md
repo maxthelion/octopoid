@@ -44,6 +44,10 @@ Then delete the separate PATCH call for PR info.
 
 The `submit-pr` script is called by agents after creating a PR. It transitions the task from claimed to provisional. The scheduler also processes `result.json` when the agent exits, but if the script already submitted, the scheduler skips the transition — and may also skip the PR metadata update from `result.json`.
 
+## Invariants
+
+- `pr-metadata-atomic-submit`: The `pr_url` and `pr_number` fields are included in the submit payload as part of the same API call that transitions the task to provisional. No task can reach the `provisional` queue without having PR metadata stored atomically.
+
 ## Open Questions
 
 - Should we also fix the scheduler's `handle_agent_result` to always update PR metadata from `result.json`, even if the task is already in provisional?

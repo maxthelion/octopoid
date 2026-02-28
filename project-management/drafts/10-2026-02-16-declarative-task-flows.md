@@ -88,6 +88,11 @@ This is a good idea. Some observations:
 
 **The review/gatekeeper integration is the hardest part.** Currently the gatekeeper system has its own orchestration (dispatch checks, collect results, decide pass/fail). A flow would need to either absorb that logic or hook into it cleanly. This is the area most likely to get messy.
 
+## Invariants
+
+- `flows-declarative`: Task lifecycle steps (hooks, transitions, review stages) are defined in YAML flow files, not embedded in tasks at creation time or hardcoded in the scheduler. A task's flow name identifies which YAML file governs its lifecycle.
+- `flows-single-source`: The flow YAML is the single source of truth for what happens to a task between creation and completion. There is no parallel hook system running alongside flows.
+
 ## Open Questions
 
 - How many distinct flows do we actually need today? If it's just 2-3, is YAML config worth it vs a simple enum?

@@ -112,6 +112,12 @@ Roles are different — they're about what kind of work exists, which is deploym
 
 Discovered while debugging why agents couldn't claim tasks after a server redeploy. The scheduler sends `role_filter='implementer'` (agent config), server filters `WHERE role IN ('implementer')`, but tasks have `role='implement'`. 69 consecutive failures, invisible until investigation.
 
+## Invariants
+
+- `roles-server-registered`: Role identifiers are registered by the orchestrator on startup and stored in the server's roles table. The server has no hardcoded role values in TypeScript enums or type definitions.
+- `roles-validated-at-creation`: Task creation with an unknown role is rejected with a clear error (400). Tasks with unregisterable roles cannot enter the queue.
+- `roles-single-convention`: All role string values are consistent across the orchestrator and server. There is no AGENT_TO_TASK_ROLE mapping or conversion layer — one role string works everywhere.
+
 ## Open Questions
 
 - Should `claims_from` be part of the role definition (server knows it) or stay in the flow definition (orchestrator knows it)?

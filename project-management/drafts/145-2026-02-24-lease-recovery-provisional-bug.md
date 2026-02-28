@@ -36,6 +36,10 @@
 
 Observed while investigating agent turn usage. A task was stuck in provisional with an expired lease, and the scheduler wasn't clearing it despite ticking normally. This blocks the gatekeeper from picking up the task for review.
 
+## Invariants
+
+- `expired-lease-cleared`: Tasks with expired leases in any queue are detected and their lease state is cleared by the scheduler's housekeeping job within one housekeeping cycle. A task cannot remain indefinitely blocked by a stale `lease_expires_at` value — lease recovery runs on a regular interval and must handle tasks regardless of whether `claimed_by` is set.
+
 ## Open Questions
 
 - Which failure point is the actual cause? Need to reproduce and check scheduler debug logs.

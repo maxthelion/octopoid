@@ -74,6 +74,10 @@ The inbox was recently built (Draft #78, #80, #81) as a minimal first pass — r
 - How much of this is dashboard work vs server/dispatcher work? The structured responses from action agents would need changes to the message_dispatcher.
 - Should we define a message schema (type, title, body, entity_ref, actions) that agents write to, or keep it freeform and parse on the dashboard side?
 
+## Invariants
+
+No new invariants. This is a UI/UX overhaul of the inbox tab — structured display, threading, relative timestamps, and a sent tab. No new system lifecycle behaviour is introduced; the improvements affect presentation and interaction, not state transitions.
+
 ## Possible Next Steps
 
 - Define a message display schema: `{title, summary, entity_type, entity_id, timestamp, actions[]}`

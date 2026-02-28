@@ -95,6 +95,12 @@ Replace all raw worktree git calls in `create_task_worktree()`, `ensure_worktree
 3. `pytest tests/test_git_utils.py tests/test_task_worktrees.py`
 4. Manual test: submit-pr creates branch and opens PR
 
+## Invariants
+
+- `worktrees-always-detached`: Worktrees are always created as detached HEADs — never using `git worktree add -b`. Named branches are created by the scheduler's `push_branch` step at task completion, not at worktree creation time.
+- `worktree-ops-wrapped`: All git worktree operations go through named functions (`_add_detached_worktree`, `_remove_worktree`), never via raw `run_git` calls scattered across the codebase.
+- `task-branch-env-var`: The scheduler exports `TASK_BRANCH` as an environment variable to agent scripts, allowing them to know their target branch name without querying git.
+
 ## Open Questions
 
 - Should `RepoManager` also own worktree lifecycle (create/cleanup), or keep those as free functions in `git_utils.py`?

@@ -42,3 +42,7 @@ Third test: **`fail_task()` moves task to failed**
 `create_task()` is the single authorised entry point for task creation — it constructs the content markdown, generates the ID, and stores it on the server. If this function regresses (e.g., content field is accidentally dropped, branch defaulting breaks, or the SDK call silently swallows an error), agents will claim tasks with no content and fail silently. This has happened before. Integration tests using `scoped_sdk` exercise the real API contract without hitting production, and would catch regressions immediately.
 
 The `claim_task()` and `submit_completion()` functions drive the core task lifecycle that the entire orchestrator depends on — having no tests here is a significant gap given that these functions are called hundreds of times per day.
+
+## Invariants
+
+No new invariants. This draft proposes integration tests for existing required behaviour in `tasks.py`. The tests verify behaviour that is already required (`create_task()` stores content, `claim_task()` transitions queue) — they do not introduce new requirements.

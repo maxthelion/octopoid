@@ -230,6 +230,11 @@ These checks write to the health log and, optionally, fire alerts.
 
 Phase 1 is two small changes that would have prevented the exact incident we just had. Phases 2-4 build on that foundation progressively.
 
+## Invariants
+
+- `circuit-breaker-prevents-infinite-retry`: A task that repeatedly fails the same flow step is stopped after a configurable number of retries. The task is moved to `failed` with a clear error indicating which step tripped the circuit breaker, rather than retrying indefinitely.
+- `task-health-annotations`: Task records carry error history fields (`last_error`, `error_count`, `requeue_count`, `last_flow_step`) that are updated by `handle_agent_result` and the lease monitor on every error or requeue. Queue diagnostics tools read these fields directly from the task record.
+
 ## Open Questions
 
 - **Alert delivery:** Terminal notification vs. dashboard banner vs. webhook to Slack — which is the primary channel? Probably dashboard banner for day-to-day, webhook for overnight/unattended runs. Worth supporting both?

@@ -48,6 +48,11 @@ The existing test suite has a critical gap: nothing tests the scheduler's end-to
 
 Discovered during investigation of why TASK-3ca8857a sat in incoming for hours. The d858559 commit ("delete old code paths replaced by flows") claimed flows replaced `guard_claim_task`, but they don't — nothing else claims tasks. The commit passed all existing tests.
 
+## Invariants
+
+- `guard-chain-composition-tested`: A test asserts that `AGENT_GUARDS` contains the expected guards in the expected order. Removing or reordering a guard causes the test to fail.
+- `spawn-strategy-selection-tested`: Unit tests assert that each `spawn_mode` and agent config combination maps to the correct spawn strategy — agents with `claimed_task` get `spawn_implementer`, lightweight agents get `spawn_lightweight`, etc.
+
 ## Open Questions
 
 - Should scheduler integration tests run against a real server (like the existing API integration tests) or use mocks?

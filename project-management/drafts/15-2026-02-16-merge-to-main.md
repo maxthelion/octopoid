@@ -59,6 +59,10 @@ Once the feature branch is clean and all refactor work is integrated:
 - Continue adhoc tasks on main going forward
 - Keep feature branch for reference (per CLAUDE.md: never delete branches)
 
+## Invariants
+
+No new invariants. This draft is a merge planning document (refactor → feature → main). It describes a one-time sequencing decision, not ongoing system behaviour.
+
 ## Open questions
 
 - Can any of the 5 blocked tasks (e.g. gatekeeper) be deferred to post-merge on main instead?

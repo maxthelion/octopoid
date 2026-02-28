@@ -23,6 +23,10 @@ Likely cause: the monitor checks for open GitHub issues and creates tasks, but d
 - Should dedup also check for closed GitHub issues before creating tasks?
 - Were the issues still open on GitHub because the completion flow didn't close them? (Yes — confirmed for GH-9, GH-10, GH-13)
 
+## Invariants
+
+- `issue-monitor-checks-all-queues`: The GitHub issue monitor checks all queues — including `done` and `failed` — before creating a task for an issue. An issue with an existing task in any queue does not produce a duplicate.
+
 ## Possible Next Steps
 
 - Read `orchestrator/roles/github_issue_monitor.py` and trace the dedup logic

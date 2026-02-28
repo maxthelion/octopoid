@@ -199,6 +199,12 @@ Once the spec file exists:
 
 But we don't need to build all of that now. **Step 1 is just creating the file and the first test.** The workflow integration comes later.
 
+## Invariants
+
+- `system-spec-exists`: A `project-management/system-spec.yaml` file exists and documents the system's behavioural invariants. Agents read this file before making changes, so they know what guarantees to preserve.
+- `self-correcting-failure`: Every task failure goes through intervention before reaching the `failed` queue. A task only reaches `failed` after at least one intervention attempt. Direct routing to `failed` without intervention is a bug.
+- `fail-task-single-path`: All code paths that move a task to the `failed` queue go through `fail_task()`. No code calls `sdk.tasks.update(queue='failed')` directly except `fail_task()` itself.
+
 ## Open Questions
 
 - Should the spec live in `project-management/system-spec.yaml` (single file) or `project-management/behaviours/` (directory)? Start with single file, split later if it grows.

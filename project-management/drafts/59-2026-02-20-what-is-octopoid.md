@@ -197,3 +197,7 @@ This means a 10-task project produces 1 PR, not 10.
 - **Distribution** is simple — the server handles coordination, orchestrators are stateless clients
 
 The system deliberately avoids giving agents any control over their own lifecycle. An agent cannot requeue itself, cannot create follow-up tasks, cannot merge its own PR. All of that is the scheduler's job, governed by the flow definition. This makes the system predictable — you can read the YAML and know exactly what will happen.
+
+## Invariants
+
+No new invariants. This draft is the system architecture documentation — a descriptive document that explains the design decisions and patterns already captured as invariants in other drafts (agents as pure functions, declarative flows, worktrees on detached HEAD, guard chain ordering, etc.).

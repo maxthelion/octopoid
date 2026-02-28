@@ -37,6 +37,11 @@
 
 Task 1 → Task 2 → Task 3 → Task 4 (each blocked_by the previous)
 
+## Invariants
+
+- `project-uses-child-flow`: Tasks with a `project_id` are dispatched through the project's `child_flow` transitions (defined in `project.yaml`), not the default flow. Project child tasks commit to the shared branch directly without creating individual PRs.
+- `project-tasks-inherit-branch`: When `create_task(project_id=X)` is called without an explicit `branch`, the task automatically inherits the project's branch.
+
 ## Related
 
 - Draft 45: Project system audit
