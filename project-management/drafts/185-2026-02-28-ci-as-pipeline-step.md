@@ -114,6 +114,12 @@ Integration tests with `scoped_sdk`:
 - **ci-before-gatekeeper**: The gatekeeper never reviews a task whose CI has not passed. CI is a prerequisite for gatekeeper review, not a parallel check.
 - **ci-failure-is-programmatic**: When CI fails, the task is returned to the implementer without LLM gatekeeper involvement. The failure context (which tests failed, output) is included in the requeued task.
 
+## Why checks are not steps
+
+The existing step model (`execute_steps`) is synchronous — call a function, it succeeds or fails. When `check_ci` was added as a step, it had to abuse `RetryableStepError` to express "not done yet", and `result_handler.py:778` has a special-case catch just for this. The scheduler "retries" by not removing the PID, which is confusing because there's no actual agent process running.
+
+Steps are the wrong abstraction for async operations. A step runs once during a transition. A check is polled repeatedly until it resolves. `PENDING` is a normal return value, not an exception. The scheduler calls checks on each tick as part of its evaluation loop — no hacks, no special exception handling, no fake PIDs.
+
 ## Context
 
 Task 795d194c was approved by the gatekeeper with 811/811 tests passing, but broke 6 integration tests in CI. The `check_ci` step already exists in `steps.py:83` but runs after gatekeeper approval in the `provisional → done` runs list. Moving it before the gatekeeper requires the async checks concept because CI takes minutes to complete and can't block a synchronous step list.
