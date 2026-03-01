@@ -188,12 +188,66 @@ def _run_job(job_def: dict, ctx: JobContext) -> None:
         logger.debug(f"{name} FAILED: {e}")
 
 
+def _resolve_job_agent_config(job_def: dict) -> dict:
+    """Load agent config for a job-type entry.
+
+    Lookup order:
+    1. If the job_def has an explicit 'agent_dir' key, load agent.yaml from there.
+    2. Otherwise, derive the directory name from the job name (replacing '_' with '-')
+       and look in .octopoid/agents/<derived-name>/agent.yaml.
+    3. Fall back to the inline 'agent_config' dict in the job_def if no agent.yaml found.
+
+    The job-level 'interval' is NOT merged here — the caller uses it to set
+    AgentContext.interval directly.
+
+    Args:
+        job_def: Job definition dict from jobs.yaml.
+
+    Returns:
+        Agent config dict loaded from agent.yaml (with agent_dir injected),
+        or the inline agent_config dict as a fallback.
+    """
+    import yaml as _yaml
+    from .config import find_parent_project, get_agents_base_dir
+
+    name = job_def.get("name", "")
+
+    # 1. Explicit agent_dir in job_def
+    explicit_dir = job_def.get("agent_dir", "")
+    if explicit_dir:
+        agent_dir = Path(explicit_dir)
+        if not agent_dir.is_absolute():
+            agent_dir = find_parent_project() / agent_dir
+        agent_yaml_path = agent_dir / "agent.yaml"
+        if agent_yaml_path.exists():
+            with open(agent_yaml_path) as f:
+                config = _yaml.safe_load(f) or {}
+            config["agent_dir"] = str(agent_dir)
+            return config
+
+    # 2. Derive directory name from job name (codebase_analyst → codebase-analyst)
+    derived_name = name.replace("_", "-")
+    agents_base = get_agents_base_dir()
+    for candidate in [derived_name, name]:
+        candidate_dir = agents_base / candidate
+        agent_yaml_path = candidate_dir / "agent.yaml"
+        if agent_yaml_path.exists():
+            with open(agent_yaml_path) as f:
+                config = _yaml.safe_load(f) or {}
+            config["agent_dir"] = str(candidate_dir)
+            return config
+
+    # 3. Fallback: inline agent_config from job_def
+    return dict(job_def.get("agent_config", {}))
+
+
 def _run_agent_job(job_def: dict, ctx: JobContext) -> None:
     """Spawn a one-shot Claude agent for a job with type: agent.
 
     Counts against pool capacity. Uses the lightweight spawn strategy so no
-    worktree is required. The agent receives its task via agent_config fields
-    defined in the job YAML.
+    worktree is required. Agent config is loaded from the agent directory's
+    agent.yaml (single source of truth). The job-level interval and
+    max_instances override the agent.yaml values when present.
     """
     from .scheduler import (
         AgentContext,
@@ -201,20 +255,21 @@ def _run_agent_job(job_def: dict, ctx: JobContext) -> None:
         get_spawn_strategy,
         load_state,
     )
-    from .state_utils import AgentState
 
     name = job_def.get("name", "")
     blueprint = job_def.get("blueprint", name)
     max_instances = job_def.get("max_instances", 1)
-    agent_config = dict(job_def.get("agent_config", {}))
 
-    # Check pool capacity before spawning
+    # Check pool capacity before doing any config loading
     running = count_running_instances(blueprint)
     if running >= max_instances:
         logger.debug(f"Agent job '{name}' at capacity ({running}/{max_instances}), skipping")
         return
 
     logger.debug(f"Spawning agent job '{name}'")
+
+    # Load agent config from agent.yaml (with inline fallback)
+    agent_config = _resolve_job_agent_config(job_def)
 
     agent_config.setdefault("name", name)
     agent_config.setdefault("blueprint_name", blueprint)

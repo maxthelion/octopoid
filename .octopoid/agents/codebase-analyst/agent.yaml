@@ -4,6 +4,7 @@ max_turns: 30
 interval_seconds: 600
 spawn_mode: scripts
 lightweight: true
+job_agent: true
 allowed_tools:
   - Read
   - Glob

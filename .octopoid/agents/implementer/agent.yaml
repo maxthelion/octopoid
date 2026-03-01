@@ -4,6 +4,7 @@ max_turns: 200
 interval_seconds: 60
 spawn_mode: scripts
 lightweight: false
+max_instances: 2
 allowed_tools:
   - Read
   - Write

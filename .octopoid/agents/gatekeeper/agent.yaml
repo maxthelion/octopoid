@@ -4,6 +4,8 @@ max_turns: 100
 interval_seconds: 120
 spawn_mode: scripts
 lightweight: false
+claim_from: provisional
+max_instances: 1
 allowed_tools:
   - Read
   - Glob

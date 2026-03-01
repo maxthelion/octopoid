@@ -252,39 +252,95 @@ def _resolve_agent_dir(entry: dict[str, Any]) -> "Path | None":
         return None
 
 
-def get_agents() -> list[dict[str, Any]]:
-    """Get list of configured agents.
+def get_agents_base_dir() -> Path:
+    """Get the base directory where per-agent directories live."""
+    return get_orchestrator_dir() / "agents"
 
-    Reads the 'agents:' dict key from agents.yaml (new format), falling back
-    to the legacy 'fleet:' list if 'agents:' is absent or not a dict.
 
-    New format (agents dict): each key is a blueprint name; the value is the
-    config. ``blueprint_name`` and ``max_instances`` (default 1) are injected
-    into each returned entry. The ``name`` field is set to ``blueprint_name``
-    if not already present.
+def discover_agent_config(agent_dir: Path) -> dict[str, Any] | None:
+    """Load and return the agent config from an agent directory's agent.yaml.
 
-    Legacy format (fleet list): read as before. ``blueprint_name`` is set to
-    the entry's ``name`` field and ``max_instances`` defaults to 1.
+    Args:
+        agent_dir: Path to the agent directory (e.g. .octopoid/agents/implementer)
 
     Returns:
-        List of agent configs with merged type defaults.
-        Each entry includes 'blueprint_name' and 'max_instances'.
-        Entries with a resolvable agent directory also include 'agent_dir'.
+        Merged agent config dict with 'name', 'blueprint_name', 'agent_dir' injected,
+        or None if the directory has no agent.yaml or is a job-only agent.
     """
-    config = load_agents_config()
+    agent_yaml_path = agent_dir / "agent.yaml"
+    if not agent_yaml_path.exists():
+        return None
 
-    # Determine source: prefer new 'agents' dict, fall back to 'fleet' list
+    with open(agent_yaml_path) as f:
+        config = yaml.safe_load(f) or {}
+
+    # Skip job-only agents — they are invoked via jobs.yaml, not pool evaluation
+    if config.get("job_agent", False):
+        return None
+
+    blueprint_name = agent_dir.name
+    config.setdefault("name", blueprint_name)
+    config.setdefault("blueprint_name", blueprint_name)
+    config.setdefault("max_instances", 1)
+    config.setdefault("enabled", True)
+    config["agent_dir"] = str(agent_dir)
+
+    return config
+
+
+def get_agents() -> list[dict[str, Any]]:
+    """Get list of configured pool agents by scanning .octopoid/agents/*/agent.yaml.
+
+    Each subdirectory of .octopoid/agents/ that contains an agent.yaml is
+    treated as a pool agent. Directories whose agent.yaml has ``job_agent: true``
+    are excluded — those agents are invoked via jobs.yaml instead.
+
+    The directory name becomes the ``blueprint_name`` and ``name`` for the agent
+    unless the agent.yaml explicitly sets a ``name`` field.
+
+    Falls back to reading from agents.yaml (legacy 'agents' dict or 'fleet' list)
+    if the agents base directory does not exist or contains no valid agent.yaml files.
+
+    Returns:
+        List of agent configs. Each entry includes:
+        - 'name': agent name (used for state/lock file paths)
+        - 'blueprint_name': pool blueprint name (used for PID tracking)
+        - 'agent_dir': absolute path to the agent directory
+        - 'max_instances': max concurrent pool instances (default 1)
+        - all fields from agent.yaml (role, model, max_turns, interval_seconds, etc.)
+    """
+    agents_base = get_agents_base_dir()
+
+    if agents_base.exists() and agents_base.is_dir():
+        discovered: list[dict[str, Any]] = []
+        for agent_dir in sorted(agents_base.iterdir()):
+            if not agent_dir.is_dir():
+                continue
+            config = discover_agent_config(agent_dir)
+            if config is None:
+                continue
+            if not config.get("enabled", True):
+                continue
+            discovered.append(config)
+
+        if discovered:
+            return discovered
+
+    # Legacy fallback: read from agents.yaml agents/fleet keys
+    try:
+        config = load_agents_config()
+    except FileNotFoundError:
+        return []
+
     agents_raw = config.get("agents")
     fleet_raw = config.get("fleet")
 
     if isinstance(agents_raw, dict):
-        # New format: agents is a dict keyed by blueprint name
         source_entries: list[dict[str, Any]] = [
             {"blueprint_name": k, **v}
             for k, v in agents_raw.items()
         ]
     elif fleet_raw:
-        # Legacy format: fleet is a list of named entries
         source_entries = [
             {"blueprint_name": entry.get("name", ""), **entry}
             for entry in fleet_raw
@@ -295,33 +351,23 @@ def get_agents() -> list[dict[str, Any]]:
     agents = []
     for entry in source_entries:
         blueprint_name = entry.get("blueprint_name", "")
-
-        # Ensure name is set (fall back to blueprint_name)
         entry.setdefault("name", blueprint_name)
-
-        # Ensure max_instances defaults to 1
         entry.setdefault("max_instances", 1)
 
         agent_dir = _resolve_agent_dir(entry)
 
         if agent_dir is not None:
-            # Load type defaults from agent.yaml
             type_defaults: dict[str, Any] = {}
             agent_yaml = agent_dir / "agent.yaml"
             if agent_yaml.exists():
                 with open(agent_yaml) as f:
                     type_defaults = yaml.safe_load(f) or {}
-
-            # Merge: type defaults < entry overrides
             merged = {**type_defaults, **entry}
             merged["agent_dir"] = str(agent_dir)
         else:
             merged = dict(entry)
 
-        # Ensure 'enabled' defaults to True if not specified
         merged.setdefault("enabled", True)
-
-        # Skip disabled agents
         if not merged.get("enabled", True):
             continue
 
