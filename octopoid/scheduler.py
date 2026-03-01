@@ -2687,6 +2687,12 @@ def _run_agent_evaluation_loop(queue_counts: dict | None) -> None:
     for agent_config in agents:
         agent_name = agent_config.get("name")
         role = agent_config.get("role") or agent_config.get("type")
+
+        # Skip job-scheduled agents — they are invoked by jobs.yaml, not the pool loop.
+        if agent_config.get("job_agent"):
+            logger.debug(f"Skipping job agent {agent_name} (managed by jobs.yaml)")
+            continue
+
         if not agent_name or not role:
             missing = []
             if not agent_name:

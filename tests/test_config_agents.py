@@ -200,6 +200,91 @@ class TestGetAgentsNewFormat:
         assert "agent_dir" in agent
 
 
+class TestGetAgentsJobAgentFlag:
+    """Tests for job_agent: true agents appearing in get_agents()."""
+
+    def _make_agents_dir(self, project: Path) -> Path:
+        agents_dir = project / ".octopoid" / "agents"
+        agents_dir.mkdir(parents=True, exist_ok=True)
+        return agents_dir
+
+    def test_job_agent_included_in_get_agents(self, tmp_project):
+        """Agents with job_agent: true are included in get_agents() output."""
+        agents_dir = self._make_agents_dir(tmp_project)
+        agent_dir = agents_dir / "codebase-analyst"
+        agent_dir.mkdir()
+        (agent_dir / "agent.yaml").write_text(yaml.dump({
+            "role": "analyse",
+            "job_agent": True,
+            "model": "opus",
+            "max_turns": 30,
+        }))
+
+        with _patch_project(tmp_project):
+            from octopoid.config import get_agents
+            agents = get_agents()
+
+        assert len(agents) == 1
+        agent = agents[0]
+        assert agent["blueprint_name"] == "codebase-analyst"
+        assert agent["role"] == "analyse"
+        assert agent["job_agent"] is True
+
+    def test_job_agent_flag_preserved_in_config(self, tmp_project):
+        """The job_agent flag is passed through so callers can filter."""
+        agents_dir = self._make_agents_dir(tmp_project)
+
+        # Create one pool agent and one job agent
+        pool_dir = agents_dir / "implementer"
+        pool_dir.mkdir()
+        (pool_dir / "agent.yaml").write_text(yaml.dump({
+            "role": "implement",
+            "model": "sonnet",
+        }))
+
+        job_dir = agents_dir / "testing-analyst"
+        job_dir.mkdir()
+        (job_dir / "agent.yaml").write_text(yaml.dump({
+            "role": "analyse",
+            "job_agent": True,
+            "model": "sonnet",
+        }))
+
+        with _patch_project(tmp_project):
+            from octopoid.config import get_agents
+            agents = get_agents()
+
+        assert len(agents) == 2
+        pool_agents = [a for a in agents if not a.get("job_agent")]
+        job_agents = [a for a in agents if a.get("job_agent")]
+        assert len(pool_agents) == 1
+        assert pool_agents[0]["blueprint_name"] == "implementer"
+        assert len(job_agents) == 1
+        assert job_agents[0]["blueprint_name"] == "testing-analyst"
+
+    def test_get_agents_includes_all_analyst_types(self, tmp_project):
+        """All analyst variants (codebase, testing, architecture) appear in output."""
+        agents_dir = self._make_agents_dir(tmp_project)
+        for name in ["codebase-analyst", "testing-analyst", "architecture-analyst"]:
+            d = agents_dir / name
+            d.mkdir()
+            (d / "agent.yaml").write_text(yaml.dump({
+                "role": "analyse",
+                "job_agent": True,
+                "model": "sonnet",
+                "max_turns": 30,
+            }))
+
+        with _patch_project(tmp_project):
+            from octopoid.config import get_agents
+            agents = get_agents()
+
+        names = {a["blueprint_name"] for a in agents}
+        assert "codebase-analyst" in names
+        assert "testing-analyst" in names
+        assert "architecture-analyst" in names
+
+
 class TestGetAgentsLegacyFleetFormat:
     """Tests for backwards compatibility with the legacy fleet-list format."""
 
