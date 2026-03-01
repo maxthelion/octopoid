@@ -7,7 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `get_agents()` now scans `.octopoid/agents/*/agent.yaml` as the primary source of agent config. Each subdirectory with an `agent.yaml` is discovered as an agent; the directory name becomes the `blueprint_name` unless `blueprint_name` is set explicitly in the yaml.
+- Fallback to `agents.yaml` `agents:`/`fleet:` dict still works for backward compatibility (used by tests).
+- `guard_backpressure` and `guard_claim_task` skip their checks for `lightweight: true` agents (analysts), allowing them to be spawned by `agent_evaluation_loop` without needing a task in a queue.
+- `agents.yaml` cleaned up: `agents:` section removed; only `paused` flag and `queue_limits` remain.
+- `jobs.yaml` cleaned up: `type: agent` entries for `codebase_analyst`, `testing_analyst`, `architecture_analyst` removed; their config now lives entirely in `.octopoid/agents/*/agent.yaml`.
+
 ### Added
+- Added missing fields to per-agent `agent.yaml` files to make them self-contained:
+  - `implementer/agent.yaml`: `max_instances: 2`
+  - `gatekeeper/agent.yaml`: `blueprint_name: sanity-check-gatekeeper`, `claim_from: provisional`, `max_instances: 1`
+  - `fixer/agent.yaml`: `claim_from: requires-intervention`, `max_instances: 1`
+  - Analyst agents: `interval_seconds: 86400` (daily, matching previous jobs.yaml schedule)
+- New test class `TestGetAgentsDirectoryScan` in `tests/test_config_agents.py` covering directory scanning behavior.
 
 - **`octopoid/agent_run_log.py`**: New module for reading and writing run logs for background agent jobs (`codebase_analyst`, `testing_analyst`, `architecture_analyst`). Each completed run is appended as a JSONL entry with `started_at`, `finished_at`, `outcome`, and a `summary` extracted from the agent's `stdout.log`. Logs are stored at `.octopoid/runtime/agent-run-logs/{job_name}.jsonl`.
 
