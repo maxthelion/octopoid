@@ -269,7 +269,7 @@ merge_pr = STEP_REGISTRY["merge_pr"]
 
 
 @register_step("reject_with_feedback")
-def reject_with_feedback(task: dict, result: dict, task_dir: Path) -> None:
+class _RejectWithFeedbackStep(Step):
     """Reject task and return to incoming with feedback.
 
     Posts the review comment to the PR (so it's visible to both humans and
@@ -279,47 +279,73 @@ def reject_with_feedback(task: dict, result: dict, task_dir: Path) -> None:
 
     Also posts the feedback as a rejection message on the task thread so the
     next agent sees the full rejection history without any task file rewriting.
+
+    check_done: task is in incoming queue or has rejection_reason (already rejected).
+    verify: confirms task was rejected on server after execute().
     """
-    from . import queue_utils
-    from .config import get_base_branch
-    from .task_thread import post_message
 
-    sdk = queue_utils.get_sdk()
-    comment = result.get("comment", "Rejected by gatekeeper")
+    def check_done(self, ctx: StepContext) -> bool:
+        """Check if the task has already been rejected (back in incoming queue)."""
+        from .sdk import get_sdk
+        sdk = get_sdk()
+        task = sdk.tasks.get(ctx.task["id"])
+        if not task:
+            return False
+        return task.get("queue") == "incoming" or bool(task.get("rejection_reason"))
 
-    # Post the review comment to the PR so it's visible to humans and implementers
-    pr_number = task.get("pr_number")
-    if pr_number and comment:
-        from .pr_utils import add_pr_comment
+    def execute(self, ctx: StepContext) -> None:
+        from . import queue_utils
+        from .config import get_base_branch
+        from .task_thread import post_message
+
+        task = ctx.task
+        result = ctx.result
+        sdk = queue_utils.get_sdk()
+        comment = result.get("comment", "Rejected by gatekeeper")
+
+        # Post the review comment to the PR so it's visible to humans and implementers
+        pr_number = task.get("pr_number")
+        if pr_number and comment:
+            from .pr_utils import add_pr_comment
+            try:
+                add_pr_comment(int(pr_number), comment)
+            except Exception as e:
+                logger.warning(f"reject_with_feedback: failed to post PR comment: {e}")
+
+        # Append explicit rebase instructions if not already present in the comment
+        base_branch = get_base_branch()
+        rebase_instructions = (
+            f"\n\n**Before Retrying:**\n"
+            f"Rebase your branch onto the base branch before making changes:\n"
+            f"```bash\n"
+            f"git fetch origin\n"
+            f"git rebase origin/{base_branch}\n"
+            f"```\n"
+            f"Then fix the issues above and push again."
+        )
+        if "git rebase" not in comment:
+            reason = comment + rebase_instructions
+        else:
+            reason = comment
+
+        # Post rejection as a message on the task thread so the next agent sees it
+        task_id = task["id"]
         try:
-            add_pr_comment(int(pr_number), comment)
+            post_message(task_id, role="rejection", content=reason, author="gatekeeper")
         except Exception as e:
-            logger.warning(f"reject_with_feedback: failed to post PR comment: {e}")
+            logger.warning(f"reject_with_feedback: failed to post thread message: {e}")
 
-    # Append explicit rebase instructions if not already present in the comment
-    base_branch = get_base_branch()
-    rebase_instructions = (
-        f"\n\n**Before Retrying:**\n"
-        f"Rebase your branch onto the base branch before making changes:\n"
-        f"```bash\n"
-        f"git fetch origin\n"
-        f"git rebase origin/{base_branch}\n"
-        f"```\n"
-        f"Then fix the issues above and push again."
-    )
-    if "git rebase" not in comment:
-        reason = comment + rebase_instructions
-    else:
-        reason = comment
+        sdk.tasks.reject(task_id, reason=reason, rejected_by="gatekeeper")
 
-    # Post rejection as a message on the task thread so the next agent sees it
-    task_id = task["id"]
-    try:
-        post_message(task_id, role="rejection", content=reason, author="gatekeeper")
-    except Exception as e:
-        logger.warning(f"reject_with_feedback: failed to post thread message: {e}")
+    def verify(self, ctx: StepContext) -> None:
+        if not self.check_done(ctx):
+            raise StepVerificationError(
+                f"reject_with_feedback verify failed: task {ctx.task['id']} "
+                f"is not in incoming queue after rejection"
+            )
 
-    sdk.tasks.reject(task_id, reason=reason, rejected_by="gatekeeper")
+
+reject_with_feedback = STEP_REGISTRY["reject_with_feedback"]
 
 
 # =============================================================================
@@ -641,101 +667,192 @@ rebase_on_base = STEP_REGISTRY["rebase_on_base"]
 
 
 @register_step("rebase_on_project_branch")
-def rebase_on_project_branch(task: dict, result: dict, task_dir: Path) -> None:
+class _RebaseOnProjectBranchStep(Step):
     """Rebase the worktree onto the project's shared branch.
 
     Fetches the project's branch via the SDK and rebases, so each child task
     sees the previous child's work.
+
+    check_done: HEAD is already a descendant of origin/project_branch (merge-base --is-ancestor).
+    pre_check: fetch project branch then check_done.
+    verify: HEAD is a descendant of origin/project_branch after rebase.
     """
-    from .sdk import get_sdk
 
-    project_id = task.get("project_id")
-    if not project_id:
-        logger.debug("rebase_on_project_branch: no project_id on task, skipping")
-        return
+    def _get_project_branch(self, ctx: StepContext) -> str | None:
+        """Fetch project branch from SDK. Returns None if no project_id. Raises on not found."""
+        project_id = ctx.task.get("project_id")
+        if not project_id:
+            return None
+        from .sdk import get_sdk
+        sdk = get_sdk()
+        project = sdk.projects.get(project_id)
+        if not project:
+            raise RuntimeError(f"rebase_on_project_branch: project {project_id} not found")
+        project_branch = project.get("branch")
+        if not project_branch:
+            raise RuntimeError(f"rebase_on_project_branch: project {project_id} has no branch")
+        return project_branch
 
-    sdk = get_sdk()
-    project = sdk.projects.get(project_id)
-    if not project:
-        raise RuntimeError(f"rebase_on_project_branch: project {project_id} not found")
-
-    project_branch = project.get("branch")
-    if not project_branch:
-        raise RuntimeError(f"rebase_on_project_branch: project {project_id} has no branch")
-
-    worktree = task_dir / "worktree"
-
-    fetch = subprocess.run(
-        ["git", "fetch", "origin"],
-        cwd=worktree, capture_output=True, text=True,
-    )
-    if fetch.returncode != 0:
-        raise RuntimeError(f"rebase_on_project_branch: git fetch failed:\n{fetch.stderr}")
-
-    rebase = subprocess.run(
-        ["git", "rebase", f"origin/{project_branch}"],
-        cwd=worktree, capture_output=True, text=True,
-    )
-    if rebase.returncode != 0:
-        raise RuntimeError(
-            f"rebase_on_project_branch: git rebase failed:\n{rebase.stdout}\n{rebase.stderr}"
+    def check_done(self, ctx: StepContext) -> bool:
+        """Check if HEAD is already a descendant of origin/project_branch."""
+        project_branch = self._get_project_branch(ctx)
+        if not project_branch:
+            return True  # No project_id — nothing to do, treat as done
+        worktree = ctx.task_dir / "worktree"
+        result = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", f"origin/{project_branch}", "HEAD"],
+            cwd=worktree, capture_output=True, text=True, timeout=30,
         )
+        return result.returncode == 0
 
-    logger.info(f"rebase_on_project_branch: rebased onto origin/{project_branch}")
+    def pre_check(self, ctx: StepContext) -> bool:
+        """Fetch project branch then check if HEAD is already a descendant."""
+        project_branch = self._get_project_branch(ctx)
+        if not project_branch:
+            logger.debug("rebase_on_project_branch: no project_id on task, skipping")
+            return True  # Skip — nothing to do
+        worktree = ctx.task_dir / "worktree"
+        subprocess.run(
+            ["git", "fetch", "origin", project_branch],
+            cwd=worktree, capture_output=True, text=True, timeout=60,
+        )
+        return self.check_done(ctx)
+
+    def execute(self, ctx: StepContext) -> None:
+        project_id = ctx.task.get("project_id")
+        if not project_id:
+            logger.debug("rebase_on_project_branch: no project_id on task, skipping")
+            return
+
+        project_branch = self._get_project_branch(ctx)
+        worktree = ctx.task_dir / "worktree"
+
+        fetch = subprocess.run(
+            ["git", "fetch", "origin"],
+            cwd=worktree, capture_output=True, text=True,
+        )
+        if fetch.returncode != 0:
+            raise RuntimeError(f"rebase_on_project_branch: git fetch failed:\n{fetch.stderr}")
+
+        rebase = subprocess.run(
+            ["git", "rebase", f"origin/{project_branch}"],
+            cwd=worktree, capture_output=True, text=True,
+        )
+        if rebase.returncode != 0:
+            subprocess.run(["git", "rebase", "--abort"], cwd=worktree, capture_output=True, text=True)
+            raise RuntimeError(
+                f"rebase_on_project_branch: git rebase failed:\n{rebase.stdout}\n{rebase.stderr}"
+            )
+
+        logger.info(f"rebase_on_project_branch: rebased onto origin/{project_branch}")
+
+    def verify(self, ctx: StepContext) -> None:
+        if not self.check_done(ctx):
+            project_branch = self._get_project_branch(ctx)
+            raise StepVerificationError(
+                f"rebase_on_project_branch verify failed: HEAD is not a descendant of "
+                f"origin/{project_branch} after rebase"
+            )
+
+
+rebase_on_project_branch = STEP_REGISTRY["rebase_on_project_branch"]
 
 
 @register_step("create_project_pr")
-def create_project_pr(project: dict, result: dict, project_dir: Path) -> None:
+class _CreateProjectPrStep(Step):
     """Create a PR for a project's shared branch. Stores PR metadata on the project.
 
-    This step is used in project flows (not task flows). The 'project' dict is a
-    project object (has 'id', 'title', 'branch', 'base_branch').
-    project_dir is the parent project root directory used for gh CLI operations.
+    This step is used in project flows (not task flows). ctx.task is a project
+    object (has 'id', 'title', 'branch', 'base_branch'); ctx.task_dir is the
+    parent project root directory used for gh CLI operations.
+
+    pre_check: PR already exists for this branch? Store metadata and skip.
+    check_done: PR exists for project branch on GitHub.
+    verify: PR exists and pr_number is stored on the project.
     """
-    from .config import find_parent_project, get_base_branch
-    from .sdk import get_sdk
 
-    project_id = project["id"]
-    project_title = project.get("title", project_id)
-    project_branch = project.get("branch")
+    def _get_cwd(self, ctx: StepContext) -> Path:
+        from .config import find_parent_project
+        return ctx.task_dir if (ctx.task_dir and ctx.task_dir != Path(".")) else find_parent_project()
 
-    if not project_branch:
-        raise RuntimeError(f"create_project_pr: project {project_id} has no branch")
-
-    base_branch = project.get("base_branch") or get_base_branch()
-    cwd = project_dir if (project_dir and project_dir != Path(".")) else find_parent_project()
-
-    pr_body = (
-        f"## Project: {project_title}\n\n"
-        f"All child tasks for project `{project_id}` are complete. "
-        f"This PR merges the shared project branch into `{base_branch}`."
-    )
-
-    # Check if PR already exists for this branch
-    pr_check = subprocess.run(
-        [
-            "gh", "pr", "view", project_branch,
-            "--json", "url,number",
-            "-q", '.url + " " + (.number|tostring)',
-        ],
-        cwd=cwd,
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-
-    pr_url: str | None = None
-    pr_number: int | None = None
-
-    if pr_check.returncode == 0 and pr_check.stdout.strip():
-        parts = pr_check.stdout.strip().rsplit(" ", 1)
-        pr_url = parts[0]
+    def check_done(self, ctx: StepContext) -> bool:
+        """Check if a PR already exists for the project branch."""
+        project_branch = ctx.task.get("branch")
+        if not project_branch:
+            return False
+        cwd = self._get_cwd(ctx)
+        result = subprocess.run(
+            ["gh", "pr", "view", project_branch, "--json", "number"],
+            cwd=cwd, capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode != 0 or not result.stdout.strip():
+            return False
         try:
-            pr_number = int(parts[1]) if len(parts) > 1 else None
-        except ValueError:
-            pass
-        logger.info(f"create_project_pr: PR already exists for {project_id}: {pr_url}")
-    else:
+            data = json.loads(result.stdout)
+            return bool(data.get("number"))
+        except json.JSONDecodeError:
+            return False
+
+    def pre_check(self, ctx: StepContext) -> bool:
+        """If PR already exists, store its metadata on the project and skip execute."""
+        project_branch = ctx.task.get("branch")
+        if not project_branch:
+            return False
+        cwd = self._get_cwd(ctx)
+        result = subprocess.run(
+            ["gh", "pr", "view", project_branch, "--json", "number,url"],
+            cwd=cwd, capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode != 0 or not result.stdout.strip():
+            return False
+        try:
+            data = json.loads(result.stdout)
+            pr_number = data.get("number")
+            pr_url = data.get("url")
+            if pr_number:
+                from .sdk import get_sdk
+                sdk = get_sdk()
+                update_kwargs: dict = {}
+                if pr_url:
+                    update_kwargs["pr_url"] = pr_url
+                update_kwargs["pr_number"] = pr_number
+                try:
+                    sdk.projects.update(ctx.task["id"], **update_kwargs)
+                except Exception as e:
+                    logger.warning(f"create_project_pr pre_check: failed to store PR metadata: {e}")
+                logger.info(
+                    f"create_project_pr pre_check: PR #{pr_number} already exists for "
+                    f"{ctx.task['id']}, skipping"
+                )
+                return True
+        except json.JSONDecodeError as e:
+            logger.warning(f"create_project_pr pre_check: error checking PR: {e}")
+        return False
+
+    def execute(self, ctx: StepContext) -> None:
+        from .config import get_base_branch
+        from .sdk import get_sdk
+
+        project = ctx.task
+        project_id = project["id"]
+        project_title = project.get("title", project_id)
+        project_branch = project.get("branch")
+
+        if not project_branch:
+            raise RuntimeError(f"create_project_pr: project {project_id} has no branch")
+
+        base_branch = project.get("base_branch") or get_base_branch()
+        cwd = self._get_cwd(ctx)
+
+        pr_body = (
+            f"## Project: {project_title}\n\n"
+            f"All child tasks for project `{project_id}` are complete. "
+            f"This PR merges the shared project branch into `{base_branch}`."
+        )
+
+        pr_url: str | None = None
+        pr_number: int | None = None
+
         pr_create = subprocess.run(
             [
                 "gh", "pr", "create",
@@ -752,6 +869,7 @@ def create_project_pr(project: dict, result: dict, project_dir: Path) -> None:
 
         if pr_create.returncode != 0:
             if "already exists" in (pr_create.stderr or ""):
+                # Race: PR was created between pre_check and execute — fetch it
                 retry = subprocess.run(
                     [
                         "gh", "pr", "view", project_branch,
@@ -789,15 +907,31 @@ def create_project_pr(project: dict, result: dict, project_dir: Path) -> None:
                     pass
             logger.info(f"create_project_pr: created PR {pr_url} for {project_id}")
 
-    # Store PR metadata on the project (without changing status — the flow engine does that)
-    if pr_url or pr_number is not None:
+        # Store PR metadata on the project (without changing status — the flow engine does that)
+        if pr_url or pr_number is not None:
+            sdk = get_sdk()
+            update_kwargs: dict = {}
+            if pr_url:
+                update_kwargs["pr_url"] = pr_url
+            if pr_number is not None:
+                update_kwargs["pr_number"] = pr_number
+            sdk.projects.update(project_id, **update_kwargs)
+
+    def verify(self, ctx: StepContext) -> None:
+        if not self.check_done(ctx):
+            raise StepVerificationError(
+                "create_project_pr verify failed: PR not found on GitHub after creation"
+            )
+        from .sdk import get_sdk
         sdk = get_sdk()
-        update_kwargs: dict = {}
-        if pr_url:
-            update_kwargs["pr_url"] = pr_url
-        if pr_number is not None:
-            update_kwargs["pr_number"] = pr_number
-        sdk.projects.update(project_id, **update_kwargs)
+        project = sdk.projects.get(ctx.task["id"])
+        if not project or not project.get("pr_number"):
+            raise StepVerificationError(
+                "create_project_pr verify failed: pr_number not stored on project after PR creation"
+            )
+
+
+create_project_pr = STEP_REGISTRY["create_project_pr"]
 
 
 @register_step("update_changelog")
@@ -904,7 +1038,7 @@ update_changelog = STEP_REGISTRY["update_changelog"]
 
 
 @register_step("aggregate_child_changes")
-def aggregate_child_changes(task: dict, result: dict, task_dir: Path) -> None:
+class _AggregateChildChangesStep(Step):
     """Aggregate changes.md files from all child tasks into task_dir/changes.md.
 
     Used in project flows: reads each child task's changes.md from its runtime
@@ -912,84 +1046,129 @@ def aggregate_child_changes(task: dict, result: dict, task_dir: Path) -> None:
     subsequent update_changelog step can process them as normal.
 
     Skips silently if no child tasks exist or none have a changes.md file.
+
+    check_done: output changes.md exists in task_dir and is non-empty.
+    verify: default no-op (step is safe to retry; empty output is a valid outcome).
     """
-    from .config import get_tasks_dir
-    from .sdk import get_sdk
 
-    project_id = task.get("id")
-    if not project_id:
-        logger.debug("aggregate_child_changes: no id on task, skipping")
-        return
+    def check_done(self, ctx: StepContext) -> bool:
+        """Check if the output changes.md exists and has content."""
+        output_file = ctx.task_dir / "changes.md"
+        if not output_file.exists():
+            return False
+        return bool(output_file.read_text().strip())
 
-    sdk = get_sdk()
-    try:
-        child_tasks = sdk.projects.get_tasks(project_id)
-    except Exception as e:
-        logger.warning(f"aggregate_child_changes: failed to get child tasks for {project_id}: {e}")
-        return
+    def execute(self, ctx: StepContext) -> None:
+        from .config import get_tasks_dir
+        from .sdk import get_sdk
 
-    if not child_tasks:
-        logger.debug(f"aggregate_child_changes: no child tasks for project {project_id}, skipping")
-        return
+        project_id = ctx.task.get("id")
+        if not project_id:
+            logger.debug("aggregate_child_changes: no id on task, skipping")
+            return
 
-    tasks_dir = get_tasks_dir()
-    aggregated_parts: list[str] = []
+        sdk = get_sdk()
+        try:
+            child_tasks = sdk.projects.get_tasks(project_id)
+        except Exception as e:
+            logger.warning(f"aggregate_child_changes: failed to get child tasks for {project_id}: {e}")
+            return
 
-    for child_task in child_tasks:
-        child_id = child_task.get("id")
-        if not child_id:
-            continue
-        child_changes_file = tasks_dir / child_id / "changes.md"
-        if not child_changes_file.exists():
-            continue
-        content = child_changes_file.read_text().strip()
-        if content:
-            aggregated_parts.append(content)
+        if not child_tasks:
+            logger.debug(f"aggregate_child_changes: no child tasks for project {project_id}, skipping")
+            return
 
-    if not aggregated_parts:
-        logger.debug(f"aggregate_child_changes: no child changes.md files found for {project_id}, skipping")
-        return
+        tasks_dir = get_tasks_dir()
+        aggregated_parts: list[str] = []
 
-    output_file = task_dir / "changes.md"
-    output_file.write_text("\n\n".join(aggregated_parts) + "\n")
-    logger.info(
-        f"aggregate_child_changes: aggregated {len(aggregated_parts)} child "
-        f"changes.md file(s) for {project_id}"
-    )
+        for child_task in child_tasks:
+            child_id = child_task.get("id")
+            if not child_id:
+                continue
+            child_changes_file = tasks_dir / child_id / "changes.md"
+            if not child_changes_file.exists():
+                continue
+            content = child_changes_file.read_text().strip()
+            if content:
+                aggregated_parts.append(content)
+
+        if not aggregated_parts:
+            logger.debug(
+                f"aggregate_child_changes: no child changes.md files found for {project_id}, skipping"
+            )
+            return
+
+        output_file = ctx.task_dir / "changes.md"
+        output_file.write_text("\n\n".join(aggregated_parts) + "\n")
+        logger.info(
+            f"aggregate_child_changes: aggregated {len(aggregated_parts)} child "
+            f"changes.md file(s) for {project_id}"
+        )
+
+
+aggregate_child_changes = STEP_REGISTRY["aggregate_child_changes"]
 
 
 @register_step("merge_project_pr")
-def merge_project_pr(project: dict, result: dict, project_dir: Path) -> None:
+class _MergeProjectPrStep(Step):
     """Merge the project's PR via gh CLI.
 
     Used in project flows for the 'provisional -> done' transition.
     Requires the project to have a 'pr_number' set (by create_project_pr).
+
+    check_done: PR state is MERGED (prevents ghost completions).
+    verify: PR state is MERGED after merge attempt.
     """
-    from .config import find_parent_project
 
-    project_id = project["id"]
-    pr_number = project.get("pr_number")
+    def check_done(self, ctx: StepContext) -> bool:
+        """Check if the project's PR is already in MERGED state."""
+        pr_number = ctx.task.get("pr_number")
+        if not pr_number:
+            return False
+        result = subprocess.run(
+            ["gh", "pr", "view", str(pr_number), "--json", "state", "-q", ".state"],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode != 0:
+            return False
+        return result.stdout.strip().upper() == "MERGED"
 
-    if not pr_number:
-        raise RuntimeError(
-            f"merge_project_pr: project {project_id} has no pr_number — "
-            f"create_project_pr must run first"
+    def execute(self, ctx: StepContext) -> None:
+        from .config import find_parent_project
+
+        project_id = ctx.task["id"]
+        pr_number = ctx.task.get("pr_number")
+
+        if not pr_number:
+            raise RuntimeError(
+                f"merge_project_pr: project {project_id} has no pr_number — "
+                f"create_project_pr must run first"
+            )
+
+        cwd = ctx.task_dir if (ctx.task_dir and ctx.task_dir != Path(".")) else find_parent_project()
+
+        merge_result = subprocess.run(
+            ["gh", "pr", "merge", str(pr_number), "--merge"],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=60,
         )
 
-    cwd = project_dir if (project_dir and project_dir != Path(".")) else find_parent_project()
+        if merge_result.returncode != 0:
+            raise RuntimeError(
+                f"merge_project_pr: failed to merge PR #{pr_number} for {project_id}: "
+                f"{merge_result.stderr.strip()}"
+            )
 
-    merge_result = subprocess.run(
-        ["gh", "pr", "merge", str(pr_number), "--merge"],
-        cwd=cwd,
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
+        logger.info(f"merge_project_pr: merged PR #{pr_number} for {project_id}")
 
-    if merge_result.returncode != 0:
-        raise RuntimeError(
-            f"merge_project_pr: failed to merge PR #{pr_number} for {project_id}: "
-            f"{merge_result.stderr.strip()}"
-        )
+    def verify(self, ctx: StepContext) -> None:
+        if not self.check_done(ctx):
+            pr_number = ctx.task.get("pr_number")
+            raise StepVerificationError(
+                f"merge_project_pr verify failed: PR #{pr_number} not in MERGED state after merge attempt"
+            )
 
-    logger.info(f"merge_project_pr: merged PR #{pr_number} for {project_id}")
+
+merge_project_pr = STEP_REGISTRY["merge_project_pr"]
