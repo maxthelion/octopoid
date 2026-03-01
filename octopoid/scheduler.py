@@ -238,19 +238,42 @@ def guard_claim_task(ctx: AgentContext) -> tuple[bool, str]:
             # If a task has been through the fixer loop too many times, move it to
             # terminal failed and notify the user instead of spawning another fixer.
             cid = candidate.get("id", "")
+
+            # Skip tasks already moved to failed — the update may have succeeded
+            # even if the subsequent message post failed, so re-check queue state.
+            if candidate.get("queue") == "failed":
+                continue
+
             try:
                 msgs = sdk._request("GET", f"/api/v1/tasks/{cid}/messages")
                 fixer_replies = [
                     m for m in msgs.get("messages", [])
                     if m.get("type") == "intervention_reply"
                 ]
-                if len(fixer_replies) >= MAX_FIXER_ATTEMPTS:
-                    logger.warning(
-                        f"Fixer circuit breaker: task {cid} has {len(fixer_replies)} "
-                        f"fixer attempts (max {MAX_FIXER_ATTEMPTS}), moving to failed"
-                    )
+                # Skip if circuit breaker already fired for this task — prevents
+                # duplicate messages when the task remains in intervention state
+                # across multiple scheduler ticks.
+                circuit_breaker_msgs = [
+                    m for m in msgs.get("messages", [])
+                    if m.get("type") == "circuit_breaker"
+                ]
+                if circuit_breaker_msgs:
+                    continue
+            except Exception as msg_e:
+                logger.debug(f"Fixer circuit breaker: failed to check messages for {cid}: {msg_e}")
+                fixer_replies = []
+
+            if len(fixer_replies) >= MAX_FIXER_ATTEMPTS:
+                logger.warning(
+                    f"Fixer circuit breaker: task {cid} has {len(fixer_replies)} "
+                    f"fixer attempts (max {MAX_FIXER_ATTEMPTS}), moving to failed"
+                )
+                try:
                     sdk.tasks.update(cid, queue="failed", needs_intervention=False,
                                      execution_notes=f"Fixer circuit breaker: {len(fixer_replies)} attempts exhausted")
+                except Exception as update_e:
+                    logger.error(f"Fixer circuit breaker: failed to move task {cid} to failed: {update_e}")
+                try:
                     sdk.messages.create(
                         task_id=cid,
                         from_actor="scheduler",
@@ -263,9 +286,9 @@ def guard_claim_task(ctx: AgentContext) -> tuple[bool, str]:
                             f"a code problem. Please investigate manually."
                         ),
                     )
-                    continue  # Skip this candidate, try the next one
-            except Exception as msg_e:
-                logger.debug(f"Fixer circuit breaker: failed to check messages for {cid}: {msg_e}")
+                except Exception as msg_post_e:
+                    logger.error(f"Fixer circuit breaker: failed to post circuit_breaker message for {cid}: {msg_post_e}")
+                continue  # Skip this candidate, try the next one
 
             task = candidate
             break
