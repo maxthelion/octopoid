@@ -31,6 +31,7 @@ Known symptoms and their root causes. **Consult this first when diagnosing a pro
 |---|---|---|
 | Scheduler runs old code after editing `.py` files | Stale `__pycache__`; run `find octopoid -name '__pycache__' -type d -exec rm -rf {} +` | [CLAUDE.md](../CLAUDE.md#scheduler-and-python-caching) |
 | Agent marked as failed despite completing work | Stale `result.json` from previous run | [2026-02-15 postmortem](postmortems/2026-02-15-TASK-stale-result-60f52b91.md) |
+| Task in `requires-intervention` with "Empty stdout — agent may have crashed" and `step_that_failed: "merge_pr"` but no PR exists | Agent completed code changes and made a commit, but crashed (OOM or timeout) before writing stdout. The scheduler ran `rebase_on_base` (succeeded) then tried `merge_pr` which failed since no branch/PR was created. The fix commit is in the worktree's detached HEAD. Fixer agent should verify commit is correct and write "Fixed" — `handle_fixer_result()` will resume the `claimed -> provisional` flow steps (`push_branch`, `create_pr`) to push the branch and create the PR. | Task cdd7cdce, 2026-03-01 |
 | Scheduler crashing with `No module named orchestrator.scheduler` | Package renamed from `orchestrator` to `octopoid` but launchd plist not updated. Fix: update `~/Library/LaunchAgents/com.octopoid.scheduler.plist` to use `octopoid.scheduler`, then `launchctl unload && launchctl load`. | 2026-02-26 session |
 
 ## Projects
