@@ -345,9 +345,11 @@ class TestFailureScenarios:
             role_filter="implement",
         )
 
-        worktree = tmp_path / "worktree"
-        _init_git_repo_basic(worktree)
+        # Worktree must be inside task_dir so any step that accesses
+        # task_dir/worktree finds a valid git repo.
         task_dir = tmp_path / "task"
+        worktree = task_dir / "worktree"
+        _init_git_repo_basic(worktree)
 
         result = _run_mock_agent(
             worktree, task_dir,
@@ -359,8 +361,9 @@ class TestFailureScenarios:
 
         task = scoped_sdk.tasks.get(task_id)
         assert task is not None
-        assert task["queue"] == "failed", (
-            f"Expected failed queue, got {task['queue']}"
+        # First failure routes through fail_task() → requires-intervention, not directly to failed.
+        assert task.get("needs_intervention"), (
+            f"Expected needs_intervention=True after failure, got queue={task['queue']!r}"
         )
 
     def test_agent_crash_goes_to_failed(
@@ -395,14 +398,18 @@ class TestFailureScenarios:
         assert result.returncode != 0, "Mock agent should exit non-zero in crash mode"
         assert not (task_dir / "stdout.log").exists()
 
-        # No stdout.log → outcome=unknown → task moves to failed
+        # No stdout.log → outcome=unknown → first failure routes to requires-intervention,
+        # not directly to failed. Task stays in claimed with needs_intervention=True.
         handle_agent_result(task_id, "mock-implementer", task_dir)
 
         task = scoped_sdk.tasks.get(task_id)
         assert task is not None
-        assert task["queue"] != "claimed", "Task must not remain stuck in claimed after crash"
-        assert task["queue"] == "failed", (
-            f"Expected failed after crash, got {task['queue']}"
+        # First failure (self-correcting-failure invariant): needs_intervention=True, not directly failed.
+        assert task["queue"] == "claimed", (
+            f"Task should stay in claimed queue (awaiting fixer), got {task['queue']!r}"
+        )
+        assert task.get("needs_intervention"), (
+            "Task must have needs_intervention=True so fixer agent can pick it up"
         )
 
 

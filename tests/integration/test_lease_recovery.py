@@ -212,9 +212,11 @@ class TestLeaseExpiry:
 
         # Run mock agent with failure outcome — writes stdout.log without
         # requiring a git remote (failure path skips push_branch).
-        worktree = tmp_path / "worktree"
-        _init_git_repo_basic(worktree)
+        # Worktree must be inside task_dir so that if any step accesses
+        # task_dir/worktree it finds a valid git repo.
         task_dir = tmp_path / "task"
+        worktree = task_dir / "worktree"
+        _init_git_repo_basic(worktree)
 
         result = _run_mock_agent(
             worktree,
@@ -225,28 +227,33 @@ class TestLeaseExpiry:
         )
         assert result.returncode == 0, f"Mock agent failed: {result.stderr}"
 
-        # Process result — transitions task from 'claimed' to 'failed'.
+        # Process result — first failure routes through fail_task() →
+        # requires-intervention. Task stays in claimed with needs_intervention=True.
         handle_agent_result(task_id, "mock-implementer", task_dir)
 
         task = scoped_sdk.tasks.get(task_id)
         assert task is not None
-        assert task["queue"] == "failed", (
-            f"Precondition: expected failed after agent result, got {task['queue']!r}"
+        # Precondition: task has needs_intervention=True (first failure → intervention).
+        assert task.get("needs_intervention"), (
+            f"Precondition: expected needs_intervention=True after agent result, "
+            f"got queue={task['queue']!r}, needs_intervention={task.get('needs_intervention')!r}"
         )
 
-        # Run lease monitor with real time — task is not in 'claimed', must be a no-op.
-        # Also run with mocked future time to be sure even a "stale" entry is ignored.
+        # Run lease monitor with mocked future time.
+        # The server sets a default lease on every claim, so the far-future mocked
+        # time will trigger the monitor to requeue the task from 'claimed' to
+        # 'incoming'. This is expected — the task keeps needs_intervention=True
+        # so the fixer can still find and process it from any queue.
         with _advance_time_to_future():
             check_and_requeue_expired_leases()
 
         task = scoped_sdk.tasks.get(task_id)
         assert task is not None
-        assert task["queue"] == "failed", (
-            f"Expected task to remain in 'failed' after lease monitor, "
-            f"got {task['queue']!r}"
-        )
-        assert task["queue"] != "incoming", (
-            "Lease monitor must not requeue a task that already left 'claimed'"
+        # The lease monitor requeues the task (claimed → incoming), but
+        # needs_intervention=True must be preserved so the fixer picks it up.
+        assert task.get("needs_intervention"), (
+            f"needs_intervention must survive lease requeue, "
+            f"got queue={task['queue']!r}, needs_intervention={task.get('needs_intervention')!r}"
         )
 
 

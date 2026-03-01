@@ -227,8 +227,10 @@ class TestMergeConflictScenarios:
         assert task["queue"] != "done", (
             "Task must NOT reach done when gh pr merge fails"
         )
-        assert task["queue"] == "failed", (
-            f"Expected failed after merge error, got {task['queue']}"
+        # First failure routes through fail_task() → requires-intervention, not directly to failed.
+        # The task stays in its current queue with needs_intervention=True.
+        assert task.get("needs_intervention"), (
+            f"Expected needs_intervention=True after merge error, got queue={task['queue']!r}, task={task!r}"
         )
 
 

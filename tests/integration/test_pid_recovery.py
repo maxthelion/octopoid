@@ -115,10 +115,12 @@ class TestDeadPIDRecovery:
             f"Dead PID {dead_pid} should have been removed from running_pids.json"
         )
 
-        # 7. Assert: task moved to failed queue
+        # 7. Assert: first failure routes through fail_task() → requires-intervention.
+        # Task stays in its current queue with needs_intervention=True (not directly to failed).
         task = scoped_sdk.tasks.get(task_id)
-        assert task["queue"] == "failed", (
-            f"Expected task in 'failed' queue after dead PID recovery, got '{task['queue']}'"
+        assert task.get("needs_intervention"), (
+            f"Expected needs_intervention=True after dead PID recovery, "
+            f"got queue='{task['queue']}', needs_intervention={task.get('needs_intervention')!r}"
         )
 
 

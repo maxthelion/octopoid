@@ -224,11 +224,14 @@ def mock_infer_result_from_stdout(monkeypatch):
             else:
                 return {"outcome": "failed", "diagnosis": "Inferred: could not fix"}
         else:
-            # implementer
-            if "done" in text or "complete" in text or "successfully" in text or "all acceptance criteria" in text:
-                return {"outcome": "done"}
+            # implementer — check continuation and failure BEFORE done to avoid
+            # "could not complete" matching the "complete" done keyword.
+            if "continuation needed" in text or "partial progress" in text:
+                return {"outcome": "needs_continuation"}
             elif "failed" in text or "cannot complete" in text or "could not complete" in text:
                 return {"outcome": "failed", "reason": "Inferred from stdout"}
+            elif "done" in text or "complete" in text or "successfully" in text or "all acceptance criteria" in text:
+                return {"outcome": "done"}
             else:
                 return {"outcome": "unknown", "reason": "Could not infer outcome"}
 
