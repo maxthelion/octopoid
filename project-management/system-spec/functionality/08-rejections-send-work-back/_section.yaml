@@ -1,0 +1,11 @@
+title: Rejections from gatekeepers send work back to be redone
+principle: >
+  Rejected tasks return to the implementation queue with full context
+  preserved so the next agent can fix the specific issues identified.
+description: >
+  When a gatekeeper rejects work, the task moves back to incoming (or a
+  configured on_fail target) with its rejection count incremented. The
+  rejection feedback is posted as a PR comment and stored as a message,
+  giving the next implementer clear guidance on what to fix. The existing
+  worktree is preserved so the next agent continues from the current state
+  rather than starting over.

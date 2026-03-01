@@ -1,0 +1,44 @@
+title: Claiming and assignment invariants
+description: >
+  Invariants governing how the scheduler claims tasks and assigns agents
+  to work on them.
+invariants:
+  - id: atomic-claims-prevent-conflicts
+    description: >
+      Task claiming uses the server's atomic claim API so no two
+      schedulers can claim the same task. The server rejects the claim
+      if the task is already claimed.
+    rationale: >
+      Without atomic claims, two schedulers could claim the same task and
+      spawn duplicate agents.
+    source: core-architecture
+    implemented: true
+    tested: false
+    test: null
+
+  - id: scheduler-claims-incoming-tasks
+    description: >
+      The scheduler polls the server for tasks in the incoming queue and
+      claims them using the atomic claim API. Claiming sets claimed_by
+      and starts a lease timer.
+    rationale: >
+      Polling with atomic claims is the simplest mechanism that prevents
+      duplicate work across multiple scheduler instances.
+    source: core-architecture
+    implemented: true
+    tested: false
+    test: null
+
+  - id: claimed-task-gets-agent
+    description: >
+      After claiming a task, the scheduler spawns an agent process in
+      the task's worktree. The agent type is determined by the task's
+      role and the flow's current transition.
+    rationale: >
+      The flow transition determines what kind of work is needed. The
+      scheduler matches agent type to transition so the right tool is
+      used for the right job.
+    source: core-architecture
+    implemented: true
+    tested: false
+    test: null

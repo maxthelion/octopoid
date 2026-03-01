@@ -1,0 +1,12 @@
+title: Completed work is checked by gatekeepers
+principle: >
+  Gatekeepers are pure review functions that receive context and return a
+  decision, never mutating system state themselves.
+description: >
+  When a task reaches the review stage, the scheduler dispatches a
+  gatekeeper agent that receives the task description and PR diff as input.
+  The gatekeeper returns a structured decision (approve or reject) via
+  result.json. It never calls the server API or moves tasks between
+  queues — state mutation is exclusively the scheduler's responsibility.
+  CI checks run before the gatekeeper to avoid wasting tokens on code
+  that doesn't compile or pass tests.

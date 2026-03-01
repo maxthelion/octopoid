@@ -1,0 +1,12 @@
+title: The intent behind the work is canonised after it is done
+principle: >
+  After work is merged, the system updates its own specification to reflect
+  what was built and why. This is not optional — multiple workers ensure
+  completed work is properly recorded.
+description: >
+  In the same way that the changelog is written after a task completes,
+  the specification itself should be updated. When work is merged, the
+  system should have workers that ensure the intent, invariants, and
+  capabilities are recorded in the spec. This closes the loop: drafts
+  define intent, tasks implement it, and the spec records what was
+  actually built. Without this, the spec drifts from reality.

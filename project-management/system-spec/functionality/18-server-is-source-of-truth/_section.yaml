@@ -1,0 +1,9 @@
+title: "The source of truth for status and claims on work is the server"
+principle: >
+  All durable state lives in the server's database, and every component reads from it rather than caching locally.
+description: >
+  The server's D1 database is the single source of truth for task state, claims, and transitions.
+  The scheduler reads all state from the server on every tick without caching between ticks,
+  ensuring multiple schedulers see a consistent view. The server enforces valid state transitions,
+  uses lease-based locking for crash recovery, and all programmatic access goes through the SDK
+  to ensure consistent error handling and API versioning.

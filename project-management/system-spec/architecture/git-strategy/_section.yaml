@@ -1,0 +1,13 @@
+title: Worktrees for isolation, late rebase for safety
+principle: >
+  Every agent works in its own git worktree. Worktrees stay on
+  detached HEAD. Named branches are created only at push time.
+  Rebasing happens late — just before merge — to minimise conflict
+  windows.
+description: >
+  Git is how agents deliver work. Each task gets a worktree at
+  .octopoid/runtime/tasks/<id>/worktree/. The worktree is created
+  on detached HEAD from the base branch. The agent makes commits.
+  When the scheduler runs the push_branch step, it creates a named
+  branch and pushes. Rebasing onto the latest base happens in the
+  merge step, not during agent work.

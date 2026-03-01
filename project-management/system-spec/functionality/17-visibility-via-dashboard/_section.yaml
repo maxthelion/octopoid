@@ -1,0 +1,9 @@
+title: "Visibility of work is via agent scripts and a TUI dashboard"
+principle: >
+  The human can see the full state of the system — tasks, agents, and drafts — through a dashboard and CLI skills.
+description: >
+  The system provides visibility through two channels: a TUI dashboard that shows tasks grouped
+  by queue state, agent statuses, and draft suggestions with live updates; and CLI skills that
+  are markdown files instructing Claude Code to perform ad-hoc operations using the SDK. Together
+  these ensure the human always knows what the system is doing, what's stuck, and can intervene
+  without diving into logs or database queries.

@@ -1,0 +1,13 @@
+title: Reducing code complexity at every opportunity
+principle: >
+  Complexity is the enemy. Delete dead code. Extract large functions.
+  Prefer simple patterns over clever abstractions. If something can
+  be declarative instead of programmatic, make it declarative. If
+  something can be a pure function, make it pure.
+description: >
+  The system actively fights complexity. Background analyst agents
+  scan for oversized functions, duplicated code, and unnecessary
+  abstractions. The architecture prefers flat structures over deep
+  hierarchies, pure functions over stateful objects, and YAML config
+  over hardcoded logic. When code grows too complex, it's a signal
+  to split, simplify, or delete.

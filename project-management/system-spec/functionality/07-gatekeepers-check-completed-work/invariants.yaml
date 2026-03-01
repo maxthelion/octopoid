@@ -1,0 +1,30 @@
+title: Gatekeeper review invariants
+description: >
+  Invariants governing how gatekeepers review completed work.
+invariants:
+  - id: gatekeeper-is-pure-function
+    description: >
+      The gatekeeper receives the task description and PR diff as input
+      and returns result.json with a decision (approve/reject). It never
+      calls the server API or moves tasks between queues — that's the
+      scheduler's job.
+    rationale: >
+      The gatekeeper is a reviewer, not an operator. Mixing review
+      judgement with state mutation creates coupling and race conditions.
+    source: draft-041
+    implemented: true
+    tested: false
+    test: null
+
+  - id: ci-before-gatekeeper
+    description: >
+      CI checks run before the gatekeeper review. The scheduler polls
+      check status as pure functions and only proceeds to dispatch the
+      gatekeeper when all checks pass.
+    rationale: >
+      Running the gatekeeper before CI wastes tokens reviewing code that
+      doesn't even compile or pass tests.
+    source: draft-condition-system
+    implemented: false
+    tested: false
+    test: null

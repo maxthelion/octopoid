@@ -1,0 +1,13 @@
+title: Declarative configuration over hardcoded logic
+principle: >
+  Behaviour is defined in YAML, not buried in code. Flows, jobs, agent
+  definitions, and conditions are all declared, not programmed. Adding
+  a new flow transition or a new background job means adding a YAML
+  entry, not modifying a 2000-line Python file.
+description: >
+  The system has three declarative registries: flows (task lifecycle
+  state machines), jobs (periodic housekeeping), and agents (who does
+  the work). Each follows the same pattern: YAML declares intent, a
+  registry maps names to callables, and a dispatcher executes them.
+  This makes the system's behaviour visible and auditable in config
+  files rather than scattered across code.

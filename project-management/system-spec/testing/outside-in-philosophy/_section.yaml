@@ -1,0 +1,12 @@
+title: Outside-in — real server preferred over mocks
+principle: >
+  Test the real thing. Prefer end-to-end tests with a real local
+  server over mocked unit tests. Only mock what you absolutely must
+  (the LLM, GitHub API). Everything else — scheduler, flow engine,
+  steps, SDK, server — runs for real.
+description: >
+  The testing philosophy is outside-in: the highest-value tests are
+  the ones that exercise real code paths against a real server. Mocks
+  hide bugs by replacing the thing you're trying to test. The system
+  uses a local test server (port 9787) with scoped isolation so each
+  test gets a clean slate without touching production.

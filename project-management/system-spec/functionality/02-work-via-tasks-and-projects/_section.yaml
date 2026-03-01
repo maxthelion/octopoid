@@ -1,0 +1,11 @@
+title: Work is done via tasks and projects
+principle: >
+  All implementation work is represented as tasks created through the API,
+  optionally grouped into projects that share a base branch.
+description: >
+  Tasks are the atomic unit of work in the system. Each task has an ID,
+  title, content with acceptance criteria, a role, and a flow that governs
+  its lifecycle. Tasks must always be created through create_task() to
+  ensure content is stored on the server and branches are correctly
+  defaulted. Projects group related tasks that are worked on sequentially
+  against a shared branch.

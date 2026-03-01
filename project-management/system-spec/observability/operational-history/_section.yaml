@@ -1,0 +1,11 @@
+title: Operational history is preserved
+principle: >
+  The system remembers what happened. Unified logs, issues recorded,
+  postmortems written. The same problem is never investigated from
+  scratch twice.
+description: >
+  Every error, every fix, every escalation is recorded. The issues log
+  captures symptoms and fixes so the next person (or agent) who sees
+  the same symptom finds the answer immediately. Postmortems are
+  written for significant incidents. The fixer agent writes to the
+  issues log as part of its fix workflow.

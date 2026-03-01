@@ -1,0 +1,9 @@
+title: "Work is done in git worktrees, created by the scheduler"
+principle: >
+  Each task gets an isolated git worktree so agents cannot interfere with each other or the main checkout.
+description: >
+  The scheduler creates a dedicated git worktree for each task under .octopoid/runtime/tasks/<id>/worktree.
+  Worktrees are always on detached HEAD to avoid git branch conflicts, with named branches created only
+  at push time. When a task is requeued after rejection, its worktree is preserved so the next agent
+  builds on previous work rather than starting from scratch. This isolation model means multiple agents
+  can work concurrently without filesystem conflicts.

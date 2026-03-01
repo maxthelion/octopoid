@@ -1,0 +1,40 @@
+title: Invariants
+description: >
+  Rules ensuring work production is demand-driven and bounded by capacity.
+invariants:
+  - id: analyst-guard-prevents-pileup
+    description: >
+      Each analyst agent checks for existing pending drafts (same author, status=idea) before
+      running. If one already exists, the agent exits immediately without producing a new
+      suggestion.
+    rationale: >
+      Without the guard, analysts produce suggestions faster than humans review them. The
+      pending draft count grows unbounded, creating noise.
+    source: draft-087
+    implemented: true
+    tested: false
+    test: null
+
+  - id: short-intervals-for-responsiveness
+    description: >
+      Analyst intervals are short enough (hours, not days) so new suggestions appear promptly
+      after one is acted on. The guard ensures frequency doesn't create volume.
+    rationale: >
+      Long intervals mean long waits after acting on a suggestion. Short intervals + guard
+      = responsive without flooding.
+    source: draft-087
+    implemented: false
+    tested: false
+    test: null
+
+  - id: scheduler-respects-concurrency
+    description: >
+      The scheduler limits the number of concurrently running agents per pool. It only claims
+      new tasks when there is capacity, preventing resource exhaustion.
+    rationale: >
+      Without concurrency limits, a burst of incoming tasks would spawn unbounded agents,
+      exhausting CPU, memory, and API rate limits.
+    source: core-architecture
+    implemented: true
+    tested: false
+    test: null

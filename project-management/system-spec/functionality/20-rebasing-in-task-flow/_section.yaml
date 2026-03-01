@@ -1,0 +1,9 @@
+title: "Rebasing happens multiple times in the task flow as a defined step"
+principle: >
+  Rebasing is a mechanical flow step executed by the scheduler at defined points, not by agents during implementation.
+description: >
+  Rebasing onto the latest base branch is deferred until just before merge to give agents a stable
+  base during implementation. It is defined as a flow step (rebase_on_base) that the scheduler
+  executes at specific points in the transition — typically before PR creation and before merge.
+  When a rebase fails due to conflicts, the task is rejected back to incoming with conflict details
+  so the next agent can resolve it in the preserved worktree.

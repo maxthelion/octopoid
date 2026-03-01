@@ -1,0 +1,62 @@
+title: Worktrees isolate agents from each other
+description: >
+  Every task gets its own worktree. Agents cannot see or interfere
+  with each other's work. The worktree is the agent's sandbox.
+
+invariants:
+  - id: one-worktree-per-task
+    description: >
+      Each task gets its own git worktree at
+      .octopoid/runtime/tasks/<id>/worktree/. The agent operates
+      exclusively within this worktree. No two agents share a
+      worktree.
+    rationale: >
+      Shared working directories cause agents to overwrite each
+      other's changes. Worktrees provide filesystem-level isolation.
+    source: draft-059
+    implemented: true
+    tested: false
+    test: null
+
+  - id: detached-head-always
+    description: >
+      Worktrees are always on detached HEAD. Named branches are
+      created only when the scheduler runs push_branch. Agents never
+      call git checkout <branch> in a worktree.
+    rationale: >
+      Git refuses to checkout a branch that's already checked out in
+      another worktree. Detached HEAD avoids this entirely.
+    source: draft-059, CLAUDE.md
+    implemented: true
+    tested: false
+    test: null
+
+  - id: late-rebase
+    description: >
+      Rebasing onto the latest base branch happens just before merge,
+      not during agent work. This minimises the window where conflicts
+      can occur and means agents don't need to deal with rebase
+      conflicts.
+    rationale: >
+      Early rebasing means the agent spends time resolving conflicts
+      instead of doing its actual work. Late rebasing means the
+      mechanical merge step handles it, and if it fails, the task
+      goes back for the fixer agent.
+    source: draft-093
+    implemented: true
+    tested: false
+    test: null
+
+  - id: preserve-worktrees-on-requeue
+    description: >
+      When a task is requeued (sent back to incoming), its worktree
+      is preserved. The next agent picks up where the previous one
+      left off rather than starting from scratch.
+    rationale: >
+      Destroying a worktree on requeue means losing completed work.
+      Many requeues are due to post-processing failures, not bad
+      agent work.
+    source: draft-175
+    implemented: true
+    tested: false
+    test: null

@@ -1,0 +1,13 @@
+title: The system is self-healing where possible
+principle: >
+  When something breaks, the system tries to fix it before asking a
+  human. The fixer agent handles routine failures. Expired leases are
+  reclaimed. The goal is anti-fragility — the system gets stronger
+  from errors by recording what went wrong and how it was fixed.
+description: >
+  Self-healing means: detect the problem, diagnose it, apply a fix,
+  resume the task's flow from where it left off, and record what
+  happened. The fixer agent is the primary mechanism. For issues the
+  fixer can't resolve, a dedicated ops agent can see problems as they
+  occur and take proactive action — triaging severity, identifying
+  recurring patterns, and escalating with full context.

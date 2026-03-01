@@ -1,0 +1,50 @@
+title: Simplicity principles
+description: >
+  Concrete rules that keep complexity in check. These are actively
+  enforced through analyst agents, code review, and architectural
+  decisions.
+
+invariants:
+  - id: delete-dead-code
+    description: >
+      Dead code is deleted, not commented out. If code is unreachable,
+      unused, or from a deprecated system, it is removed. Old systems
+      (proposal utils, hook manager, file-based queue) are deleted
+      entirely, not left as fallbacks.
+    rationale: >
+      Dead code misleads readers and agents. The proposer/curator
+      system (964 lines) persisted long after it was replaced by
+      drafts. It confused agents into trying to use it.
+    source: draft-016, draft-036
+    implemented: true
+    tested: false
+    test: null
+
+  - id: no-premature-abstraction
+    description: >
+      Abstractions are introduced only when they simplify existing
+      code, not to accommodate hypothetical future use. Three similar
+      lines of code are better than a premature utility function.
+    rationale: >
+      Premature abstractions add indirection that makes the system
+      harder to understand. The system should be readable by agents,
+      which means preferring obvious code over clever code.
+    source: draft-089, CLAUDE.md
+    implemented: true
+    tested: false
+    test: null
+
+  - id: single-path-for-each-concern
+    description: >
+      Each concern (task transitions, agent communication, PR
+      management) has exactly one code path. There are no parallel
+      systems, no fallbacks to a different mechanism, no "old way"
+      that still works alongside the "new way."
+    rationale: >
+      Dual paths cause bugs where one path is maintained and the
+      other silently rots. The hook manager running alongside flows
+      was the canonical example.
+    source: draft-041, draft-036
+    implemented: true
+    tested: false
+    test: null

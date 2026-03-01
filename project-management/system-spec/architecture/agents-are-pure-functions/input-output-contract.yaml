@@ -1,0 +1,51 @@
+title: Input → work → result.json, nothing else
+description: >
+  Each agent type has a fixed input/output contract. The agent receives
+  a rendered prompt and a worktree. It does work. It writes result.json
+  with an outcome and optional data. It never touches the server.
+
+invariants:
+  - id: agents-write-result-json
+    description: >
+      Every agent writes a result.json file with at minimum an outcome
+      field (done, failure). The scheduler reads this file to determine
+      what happened. This is the only communication channel from agent
+      to orchestrator.
+    rationale: >
+      A single output file is easy to check, easy to parse, and
+      impossible for the agent to partially complete. Either the file
+      exists with a valid outcome, or it doesn't.
+    source: draft-031
+    implemented: true
+    tested: false
+    test: null
+
+  - id: agents-never-call-server
+    description: >
+      Agents do not import the SDK, call the server API, move tasks
+      between queues, create PRs, or perform any action that modifies
+      system state. They operate only within their worktree.
+    rationale: >
+      When agents drove their own lifecycle, the gatekeeper had 102
+      consecutive failures. Removing server access from agents
+      eliminates the entire class of bugs where agents fail at
+      lifecycle management rather than at their actual job.
+    source: draft-031, draft-029
+    implemented: true
+    tested: false
+    test: null
+
+  - id: orchestrator-handles-mechanics
+    description: >
+      All mechanical operations (push branch, create PR, rebase, merge,
+      state transitions) are performed by the scheduler after reading
+      the agent's result. The agent's success means "I did my creative
+      work" — the scheduler then runs the mechanical pipeline.
+    rationale: >
+      Mechanical steps are deterministic and testable. Running them
+      in the scheduler means they can be retried, logged, and
+      debugged without re-running the agent.
+    source: draft-031
+    implemented: true
+    tested: false
+    test: null

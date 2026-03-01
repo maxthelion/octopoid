@@ -1,0 +1,47 @@
+title: Three declarative registries — flows, jobs, agents
+description: >
+  The system's behaviour is defined in three YAML registries that
+  share the same pattern: declare in config, register a callable,
+  dispatch generically.
+
+invariants:
+  - id: flows-are-yaml
+    description: >
+      Task lifecycle transitions are defined in flow YAML files under
+      .octopoid/flows/. Each flow declares states, transitions,
+      conditions, and steps. The flow engine reads these at runtime.
+      No lifecycle logic is hardcoded.
+    rationale: >
+      A YAML file can be read, audited, and modified by anyone
+      (including agents). Hardcoded transitions require code changes
+      and can't be inspected without reading Python.
+    source: draft-010, draft-020
+    implemented: true
+    tested: false
+    test: null
+
+  - id: jobs-are-yaml
+    description: >
+      Periodic housekeeping jobs are defined in .octopoid/jobs.yaml
+      with interval, type, and run target. Adding a new job is a
+      config change. The generic run_due_jobs() loop dispatches them.
+    rationale: >
+      Hardcoded job blocks in the scheduler required touching 4
+      places to add a single new job.
+    source: draft-060, draft-061
+    implemented: true
+    tested: false
+    test: null
+
+  - id: agents-are-yaml
+    description: >
+      Agent definitions live in agent directories under .octopoid/agents/
+      with an agent.yaml file declaring the agent's role, pool, interval,
+      and scripts. The scheduler discovers agents from these directories.
+    rationale: >
+      Agent config in a single discoverable place means the scheduler
+      doesn't need hardcoded knowledge of which agents exist.
+    source: draft-184
+    implemented: true
+    tested: false
+    test: null

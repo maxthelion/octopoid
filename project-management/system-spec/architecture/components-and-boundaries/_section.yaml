@@ -1,0 +1,15 @@
+title: Four components with clear boundaries
+principle: >
+  The system has four components: server, scheduler, agents, and
+  dashboard. Each has a clear responsibility and communicates with
+  others through defined interfaces. No component reaches into
+  another's internals.
+description: >
+  Server (Cloudflare Workers + D1): source of truth. Atomic claims,
+  lease-based locking, state machine validation.
+  Scheduler (Python daemon): single supervisor. Reads results, drives
+  transitions, spawns agents, runs housekeeping.
+  Agents (Claude Code processes): stateless pure functions. Receive
+  task, do work, write result.
+  Dashboard (Textual TUI): real-time monitoring and lightweight
+  actions. Polls server, displays state, sends messages.

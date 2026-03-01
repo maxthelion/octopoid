@@ -1,0 +1,9 @@
+title: "Agents are assigned work primarily through messages"
+principle: >
+  All agent-orchestrator communication is persisted as messages in a single queryable source of truth.
+description: >
+  Rather than scattering communication across result files, PR comments, task rewrites, and logs,
+  the system uses a messages table as the canonical record of all agent interactions. Instructions,
+  results, rejections, and test feedback are all persisted as messages. Agents communicate their
+  completion state via messages or stdout-captured results rather than writing files to disk,
+  eliminating the fragility of filesystem-based communication.

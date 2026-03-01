@@ -1,0 +1,11 @@
+title: Human intervention is the last resort, not the first
+principle: >
+  Problems are triaged by severity automatically. Only genuinely stuck
+  tasks reach the human. The human spends time on decisions, not
+  babysitting.
+description: >
+  The system escalates through levels: automatic retry → fixer agent →
+  ops agent → human. Each level handles a broader class of problems.
+  By the time something reaches the human inbox, it comes with full
+  context (diagnosis, what was tried, why it failed) so the human can
+  make a decision quickly rather than investigating from scratch.

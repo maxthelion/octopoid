@@ -1,0 +1,46 @@
+title: Post-merge canonisation invariants
+description: >
+  Invariants governing how the system records completed work in the
+  specification and changelog after merge.
+invariants:
+  - id: changelog-updated-after-merge
+    description: >
+      After a task's PR is merged, the update_changelog step reads the
+      agent's changes.md file and prepends it to CHANGELOG.md on main.
+      Agents write to changes.md, never directly to CHANGELOG.md.
+    rationale: >
+      Direct CHANGELOG.md writes by agents cause constant rebase
+      conflicts because every task touches the same file. Writing to
+      changes.md isolates each task's changelog entry until merge time.
+    source: CLAUDE.md
+    implemented: true
+    tested: false
+    test: null
+
+  - id: spec-updated-after-merge
+    description: >
+      After work is merged, workers update the system spec to reflect
+      what was built. New invariants are added, existing invariants are
+      updated (e.g. implemented flipped to true), and the spec stays
+      current with the actual system.
+    rationale: >
+      Without automatic spec updates, the spec drifts from reality.
+      The spec was built by reading drafts and code — it should be
+      maintained the same way, as an ongoing process not a one-off.
+    source: draft-208
+    implemented: false
+    tested: false
+    test: null
+
+  - id: process-draft-checks-invariants
+    description: >
+      /process-draft checks whether the draft's invariants actually hold
+      in the code before archiving the draft — not just whether tasks
+      completed, but whether the intent was achieved.
+    rationale: >
+      A draft isn't done when its tasks are done. It's done when the
+      invariants it defined actually hold.
+    source: draft-182
+    implemented: false
+    tested: false
+    test: null

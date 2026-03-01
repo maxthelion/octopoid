@@ -1,0 +1,53 @@
+title: Fixer agent for task recovery, ops agent for system health
+description: >
+  Two agents handle different scopes of problems. The fixer agent
+  handles individual task failures. The ops agent handles system-level
+  health — queue throughput, recurring failure patterns, resource
+  exhaustion.
+
+invariants:
+  - id: fixer-handles-routine-failures
+    description: >
+      When a task enters requires-intervention, the scheduler spawns
+      a fixer agent. The fixer diagnoses the problem (reads error
+      context, checks logs, inspects git state), applies a fix, and
+      writes result.json so the task can resume its flow from where
+      it failed.
+    rationale: >
+      Most task failures are mundane — git conflicts, stale state,
+      transient errors. A human fixing these in the terminal is
+      wasted time that an agent can handle.
+    source: draft-170
+    implemented: false
+    tested: false
+    test: null
+
+  - id: fixer-records-issues
+    description: >
+      The fixer agent records every issue it encounters in the issues
+      log (symptoms, root cause, fix applied). If it identifies a
+      recurring pattern, it writes a draft proposing a permanent fix.
+    rationale: >
+      Recording issues builds institutional memory. The same problem
+      is never investigated twice from scratch.
+    source: draft-170
+    implemented: false
+    tested: false
+    test: null
+
+  - id: ops-agent-sees-system-health
+    description: >
+      A dedicated operations agent monitors system-level health:
+      queue throughput, agent success rates, recurring failure
+      patterns, resource utilisation. It takes proactive action —
+      not waiting for a human to notice a stuck queue, but detecting
+      it and either fixing it or escalating with full context.
+    rationale: >
+      The fixer agent handles individual task failures. But nobody
+      monitors whether the system as a whole is healthy — whether
+      tasks are flowing, whether agents are succeeding, whether
+      the same issue keeps recurring.
+    source: draft-205
+    implemented: false
+    tested: false
+    test: null

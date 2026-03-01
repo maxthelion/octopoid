@@ -1,0 +1,9 @@
+title: "Agents are stateless and mostly fungible"
+principle: >
+  Agents are pure functions that read task content, produce results, and never mutate system state.
+description: >
+  Agents operate only within their worktree — they read task content, write code, and produce a
+  result.json file. They do not import the SDK, call the server API, push code, create PRs, or
+  move tasks between queues. All mechanical operations are performed by the scheduler after reading
+  the agent's result. This makes agents replaceable, testable, and free from distributed state
+  management problems.

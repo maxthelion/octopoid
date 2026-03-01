@@ -1,0 +1,40 @@
+title: Invariants
+description: >
+  Rules governing when and how rebasing occurs within the task flow.
+invariants:
+  - id: late-rebase
+    description: >
+      Rebasing onto the latest base branch happens just before merge, not during agent work.
+      This minimises conflicts during implementation.
+    rationale: >
+      Rebasing during implementation creates moving targets. Late rebase means agents work
+      against a stable base.
+    source: core-architecture
+    implemented: true
+    tested: false
+    test: null
+
+  - id: rebase-is-flow-step
+    description: >
+      Rebasing is a mechanical flow step (rebase_on_base) executed by the scheduler, not by
+      agents. It runs at defined points in the flow — typically before PR creation and
+      before merge.
+    rationale: >
+      Making rebase a flow step ensures it happens consistently and is visible in the
+      flow definition. Agent-driven rebasing would be inconsistent and error-prone.
+    source: flow-definition
+    implemented: true
+    tested: false
+    test: null
+
+  - id: rebase-failure-is-recoverable
+    description: >
+      When a rebase fails due to conflicts, the task is rejected back to incoming with the
+      conflict details. The next agent resolves the conflict in the preserved worktree.
+    rationale: >
+      Rebase conflicts are expected in a multi-agent system. Making them recoverable rather
+      than terminal ensures work is not lost.
+    source: result_handler.py
+    implemented: true
+    tested: false
+    test: null

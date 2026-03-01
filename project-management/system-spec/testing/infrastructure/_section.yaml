@@ -1,0 +1,12 @@
+title: Test infrastructure — local server, fixtures, isolation
+principle: >
+  The test infrastructure makes it easy to write real integration
+  tests. A local server starts with one script. Fixtures handle
+  scope isolation. The barrier to writing a test against the real
+  server is as low as writing a mocked unit test.
+description: >
+  Test server on port 9787, started by start-test-server.sh with
+  automatic migrations. scoped_sdk fixture for per-test isolation.
+  mock-agent.sh for replacing Claude processes. fake gh for GitHub
+  API calls. The infrastructure is designed so that "just mock it"
+  is never the path of least resistance.

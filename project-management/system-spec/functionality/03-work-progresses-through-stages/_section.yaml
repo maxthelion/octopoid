@@ -1,0 +1,10 @@
+title: Work progresses through defined stages
+principle: >
+  Every task's lifecycle is governed by a declarative flow YAML that is the
+  single source of truth for transitions, conditions, and steps.
+description: >
+  Flow YAMLs define the complete path a task takes from creation to
+  completion. There is no parallel hook system or imperative lifecycle
+  manager — flows are the only transition path. The flow engine
+  automatically injects terminal steps for transitions targeting done,
+  so flow authors cannot accidentally omit merge logic.

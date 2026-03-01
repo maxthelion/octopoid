@@ -1,0 +1,48 @@
+title: Test-driven implementation invariants
+description: >
+  Rules ensuring that testing is driven by the spec and integral to
+  implementation, not an afterthought.
+invariants:
+  - id: work-relates-to-invariants
+    description: >
+      Every enqueued task either adds new invariants to the spec tree,
+      replaces existing invariants, or is a solution to an existing
+      invariant. There is no work that exists outside the spec's
+      knowledge of the system.
+    rationale: >
+      Work that doesn't relate to invariants is invisible to the spec.
+      If we can't say which invariant a task serves, we can't verify
+      whether the work achieved its intent.
+    source: draft-208
+    implemented: false
+    tested: false
+    test: null
+
+  - id: changing-invariants-start-with-failing-test
+    description: >
+      When work changes or adds invariants, the implementer starts by
+      writing a failing integration test derived from the invariant,
+      then builds the functionality to make it pass. The test and the
+      code ship together in the same PR.
+    rationale: >
+      Writing the test first forces the invariant to be concrete and
+      testable. It also guarantees the test actually fails before the
+      implementation — preventing tests that pass regardless.
+    source: draft-208
+    implemented: false
+    tested: false
+    test: null
+
+  - id: single-implementer-does-both
+    description: >
+      The implementer writes both the integration test and the
+      implementation. This is part of their task instructions, not a
+      separate follow-up task assigned to someone else.
+    rationale: >
+      Splitting test-writing from implementation creates a backlog of
+      unverified work. The person writing the code understands what
+      to test. Keeping it in one task ensures it actually gets done.
+    source: draft-208
+    implemented: false
+    tested: false
+    test: null

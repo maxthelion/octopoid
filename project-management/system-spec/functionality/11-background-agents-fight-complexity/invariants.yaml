@@ -1,0 +1,46 @@
+title: Background analyst invariants
+description: >
+  Invariants governing how background agents monitor and improve the
+  system.
+invariants:
+  - id: analysts-produce-drafts
+    description: >
+      Background analyst agents (codebase, testing, architecture) examine
+      the system and produce output as drafts via the SDK. Their
+      suggestions enter the same pipeline as human ideas — reviewed,
+      processed into tasks, implemented.
+    rationale: >
+      Agents shouldn't push changes directly. Their suggestions go
+      through the same review pipeline as human ideas, maintaining
+      quality control.
+    source: draft-087
+    implemented: true
+    tested: false
+    test: null
+
+  - id: analysts-use-tools-not-just-llm
+    description: >
+      Analysts use static analysis tools (lizard for complexity, jscpd
+      for duplication, vulture for dead code) to gather structured data,
+      then use the LLM to interpret findings and propose specific
+      improvements.
+    rationale: >
+      Pure LLM analysis misses quantitative signals. Static tools provide
+      objective measurements that ground the LLM's suggestions in data.
+    source: draft-087
+    implemented: false
+    tested: false
+    test: null
+
+  - id: one-suggestion-per-run
+    description: >
+      Each analyst run produces at most one draft — the single most
+      impactful improvement found. This keeps signal-to-noise high and
+      prevents suggestion fatigue.
+    rationale: >
+      Multiple suggestions per run creates noise. The analyst should pick
+      the best one and present it clearly.
+    source: draft-087
+    implemented: true
+    tested: false
+    test: null

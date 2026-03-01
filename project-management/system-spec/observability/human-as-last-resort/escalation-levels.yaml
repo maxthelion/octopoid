@@ -1,0 +1,37 @@
+title: Escalation levels — retry, fixer, ops, human
+description: >
+  Problems move through escalation levels. Each level handles
+  a broader class of issues. The human only sees what genuinely
+  needs a human decision.
+
+invariants:
+  - id: escalation-chain-exists
+    description: >
+      Task failures follow an escalation chain: automatic retry
+      (for transient errors), fixer agent (for diagnosable failures),
+      ops agent (for systemic issues), human (for genuinely stuck
+      tasks requiring judgement). Each level can resolve the issue
+      or escalate to the next.
+    rationale: >
+      Without escalation levels, every failure reaches the human
+      immediately. Most can be handled automatically.
+    source: draft-170, draft-205
+    implemented: false
+    tested: false
+    test: null
+
+  - id: escalations-carry-context
+    description: >
+      When a problem escalates to the human, it arrives with the
+      full diagnosis: what error occurred, what step failed, what
+      the fixer tried, why it couldn't be resolved. The human
+      makes a decision, not an investigation.
+    rationale: >
+      A notification that says "task failed" is useless. A
+      notification that says "task failed at merge_pr because of
+      conflict in scheduler.py, fixer attempted rebase but the
+      conflict is semantic not textual" is actionable.
+    source: draft-053, draft-170
+    implemented: false
+    tested: false
+    test: null

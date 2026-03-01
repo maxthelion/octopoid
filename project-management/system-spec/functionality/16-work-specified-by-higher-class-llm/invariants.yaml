@@ -1,0 +1,41 @@
+title: Invariants
+description: >
+  Rules governing the division of cognitive labour between LLM tiers.
+invariants:
+  - id: interactive-claude-writes-tasks
+    description: >
+      Task content and acceptance criteria are written by the human-interactive Claude session
+      (opus-class), not by the implementing agent. The implementer receives a fully specified task.
+    rationale: >
+      Opus-class models have the context and judgement to make architectural decisions.
+      Delegating specification to cheaper models produces vague or incorrect task definitions.
+    source: core-workflow
+    implemented: true
+    tested: false
+    test: null
+
+  - id: implementers-are-lower-cost
+    description: >
+      Implementing agents are typically sonnet-class models — cheaper and faster. They follow
+      specific instructions rather than making architectural decisions.
+    rationale: >
+      Most implementation work is straightforward code writing that doesn't require the
+      reasoning capacity of opus-class models. Using cheaper models for execution keeps
+      costs proportional to complexity.
+    source: core-workflow
+    implemented: true
+    tested: false
+    test: null
+
+  - id: task-content-is-complete
+    description: >
+      Task content includes context, acceptance criteria, and enough detail for the
+      implementer to work without asking questions. The quality of the specification
+      determines the quality of the output.
+    rationale: >
+      Agents cannot ask clarifying questions mid-task. Incomplete specifications lead to
+      incorrect implementations, wasted compute, and rejection cycles.
+    source: core-workflow
+    implemented: true
+    tested: false
+    test: null

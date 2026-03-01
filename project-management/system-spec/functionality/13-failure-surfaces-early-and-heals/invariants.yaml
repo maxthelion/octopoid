@@ -1,0 +1,79 @@
+title: Failure handling invariants
+description: >
+  Rules governing how failures are detected, diagnosed, and resolved
+  by the system rather than by manual human intervention.
+invariants:
+  - id: intervention-before-failed
+    description: >
+      When a task hits an error, it enters requires-intervention before
+      it can reach failed. A fixer agent is spawned to diagnose and fix
+      the problem. Only if the fixer cannot resolve it does the task
+      reach failed — meaning genuinely stuck.
+    rationale: >
+      Most task failures are mundane (git conflicts, stale state,
+      transient errors). A fixer agent can resolve them automatically.
+      The failed queue had 14 tasks, most with outcome=done — the work
+      was done but post-processing broke.
+    source: draft-170
+    implemented: false
+    tested: false
+    test: null
+
+  - id: diagnostic-agent-handles-failed
+    description: >
+      A diagnostic agent monitors the failed queue. For each failed task
+      it performs a post-mortem: reads the task history, error context,
+      and previous results to diagnose the root cause. It then takes
+      action — re-enqueue (with or without worktree), force through,
+      or cancel — rather than leaving it for a human.
+    rationale: >
+      Currently humans babysit the failed queue. Most failed tasks have
+      patterns: the same step fails repeatedly, or the work was done but
+      a post-processing step broke. An agent can diagnose these and take
+      appropriate action.
+    source: draft-208
+    implemented: false
+    tested: false
+    test: null
+
+  - id: diagnostic-agent-spots-patterns
+    description: >
+      The diagnostic agent reads previous failure results across tasks
+      to identify recurring patterns. When it spots a systemic issue
+      (e.g. the same flow step failing for multiple tasks), it schedules
+      work to fix the root cause rather than patching individual tasks.
+    rationale: >
+      Fixing individual tasks is treating symptoms. Reading across
+      failures to find patterns is treating causes. The agent should
+      propose drafts for systemic fixes.
+    source: draft-208
+    implemented: false
+    tested: false
+    test: null
+
+  - id: failures-have-recorded-reasons
+    description: >
+      Every task that enters requires-intervention or failed has a
+      recorded diagnosis: what went wrong, which step failed, what
+      the fixer attempted, why it couldn't be resolved.
+    rationale: >
+      Without recorded reasons, debugging requires manual investigation
+      of each stuck task.
+    source: draft-170
+    implemented: false
+    tested: false
+    test: null
+
+  - id: circuit-breaker-stops-loops
+    description: >
+      Circuit breaker detects tasks in retry loops (same step failing
+      repeatedly, or fixer reporting fixed but task not advancing) and
+      escalates to failed after a configurable number of attempts.
+    rationale: >
+      Without a circuit breaker, a task that always fails the same step
+      would loop indefinitely between fixer and retry, consuming
+      resources and producing no progress.
+    source: postmortem-fixer-loop
+    implemented: true
+    tested: false
+    test: null

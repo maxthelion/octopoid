@@ -1,0 +1,46 @@
+title: Merge workflow invariants
+description: >
+  Invariants governing how approved work is merged into the codebase.
+invariants:
+  - id: approve-triggers-merge-flow
+    description: >
+      When a gatekeeper approves, the scheduler runs terminal steps:
+      rebase onto base branch, then merge the PR. These steps are
+      auto-injected by the flow engine.
+    rationale: >
+      Auto-injecting terminal steps ensures every approval path includes
+      merge logic. Without this, flow authors could accidentally omit
+      rebase or merge and tasks would be marked done with unmerged PRs.
+    source: flow.py
+    implemented: true
+    tested: false
+    test: null
+
+  - id: merge-failures-are-recoverable
+    description: >
+      If rebase or merge fails (e.g. conflicts), the task is rejected
+      back to incoming with the conflict details. The next agent resolves
+      the conflict rather than re-implementing.
+    rationale: >
+      Merge conflicts are a normal part of concurrent development.
+      Treating them as recoverable rejections rather than fatal errors
+      keeps the pipeline moving.
+    source: result_handler.py
+    implemented: true
+    tested: false
+    test: null
+
+  - id: approve-performs-transition
+    description: >
+      After all terminal steps succeed, the scheduler performs the state
+      transition moving the task to done. [BUG: This is currently
+      broken — see postmortem
+      2026-03-01-gatekeeper-approve-no-transition.md]
+    rationale: >
+      The final transition to done is the completion signal. Without it,
+      approved and merged tasks remain in a limbo state and are never
+      cleaned up.
+    source: postmortem
+    implemented: false
+    tested: false
+    test: null

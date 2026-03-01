@@ -1,0 +1,11 @@
+title: Background agents fight against increasing complexity and regressions
+principle: >
+  Background analyst agents continuously examine the system and feed
+  improvement suggestions into the same review pipeline as human ideas.
+description: >
+  Analyst agents (codebase, testing, architecture) run on scheduled jobs,
+  using static analysis tools to gather structured data and LLMs to
+  interpret findings and propose specific improvements. Their output takes
+  the form of drafts created via the SDK, entering the standard review
+  pipeline. Each analyst run produces at most one draft — the single most
+  impactful improvement — to keep signal-to-noise high.

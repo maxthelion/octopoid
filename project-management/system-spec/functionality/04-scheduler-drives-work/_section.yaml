@@ -1,0 +1,11 @@
+title: A scheduler drives work through the system
+principle: >
+  The scheduler is the central orchestrator that exhausts all programmatic
+  checks before invoking expensive LLM agents.
+description: >
+  The scheduler runs on a tick loop, evaluating conditions, dispatching
+  jobs, and spawning agents only when mechanically necessary. Jobs are
+  defined declaratively in YAML, not hardcoded in the scheduler. Jobs
+  are system-level periodic functions (sync flows, check leases) that
+  operate on the system as a whole, distinct from flow steps that operate
+  on individual tasks.

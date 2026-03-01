@@ -1,0 +1,14 @@
+title: Failure is surfaced early and noisily and automatically heals
+principle: >
+  A diagnostic agent performs post-mortems on failures, reads previous
+  results to spot patterns, and schedules work to improve the system.
+  Humans are the last resort.
+description: >
+  Currently we babysit the failed queue ourselves and manually intervene.
+  The system should instead have a diagnostic agent that handles failed
+  tasks: performing a post-mortem on what went wrong, reading previous
+  results to see patterns, and scheduling work to improve the system.
+  It should resolve failed tasks by taking appropriate action — force
+  it through, cancel it, re-enqueue with or without worktrees. The
+  circuit breaker stops infinite loops, but what happens after a task
+  reaches failed should be agentic, not manual.

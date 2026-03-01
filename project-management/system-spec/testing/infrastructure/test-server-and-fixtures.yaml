@@ -1,0 +1,31 @@
+title: Test server and fixtures
+description: >
+  The pieces that make integration testing practical.
+
+invariants:
+  - id: test-server-is-real-server
+    description: >
+      The test server is the same Cloudflare Workers server running
+      locally via wrangler, with a separate D1 database. It runs all
+      the same code, migrations, and validation as production. Tests
+      against it are testing real behaviour.
+    rationale: >
+      A fake server that approximates the API hides bugs in the API
+      itself. The test server IS the server.
+    source: draft-032
+    implemented: true
+    tested: false
+    test: null
+
+  - id: one-script-startup
+    description: >
+      The test server starts with a single script
+      (tests/integration/bin/start-test-server.sh) that handles
+      migrations and configuration. No manual setup steps.
+    rationale: >
+      If starting the test server requires 5 manual steps, people
+      write mocked unit tests instead.
+    source: draft-054
+    implemented: true
+    tested: false
+    test: null

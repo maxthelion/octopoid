@@ -1,0 +1,39 @@
+title: Invariants
+description: >
+  Rules ensuring agents remain stateless, isolated, and free from side effects.
+invariants:
+  - id: agents-write-result-json
+    description: >
+      Every agent writes result.json with an outcome field; this is the only communication
+      channel from agent to orchestrator.
+    rationale: >
+      A single, structured output format makes agent results predictable and parseable.
+      The scheduler knows exactly where to look and what to expect.
+    source: core-architecture
+    implemented: true
+    tested: false
+    test: null
+
+  - id: agents-never-call-server
+    description: >
+      Agents do not import the SDK, call the server API, or modify system state. They operate
+      only within their worktree — reading task content, writing code, producing result.json.
+    rationale: >
+      If agents could mutate server state, you'd have distributed state management with race
+      conditions. Keeping agents pure makes them replaceable and testable.
+    source: core-architecture
+    implemented: true
+    tested: false
+    test: null
+
+  - id: orchestrator-handles-mechanics
+    description: >
+      All mechanical operations (push, PR, rebase, merge, state transitions) are performed by
+      the scheduler after reading agent result. Agents never push, create PRs, or move tasks.
+    rationale: >
+      Agents that push their own code or create PRs create ordering problems and race
+      conditions. The scheduler serialises these operations.
+    source: core-architecture
+    implemented: true
+    tested: false
+    test: null

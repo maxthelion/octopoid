@@ -1,0 +1,50 @@
+title: Issues log and postmortems build institutional memory
+description: >
+  The system accumulates knowledge about what goes wrong and how
+  to fix it. This knowledge is accessible to both humans and agents.
+
+invariants:
+  - id: issues-log-captures-fixes
+    description: >
+      The issues log (project-management/issues-log.md) records
+      symptoms, root causes, and fixes for recurring problems.
+      When investigating a new problem, the issues log is checked
+      first.
+    rationale: >
+      Without an issues log, the same problem gets investigated
+      from scratch every time. The fix for "tasks stuck in claimed
+      with no-pid" should be findable in seconds, not require 30
+      minutes of log archaeology.
+    source: CLAUDE.md, draft-170
+    implemented: true
+    tested: false
+    test: null
+
+  - id: postmortems-for-significant-incidents
+    description: >
+      Non-trivial incidents (data loss, stuck tasks, multi-hour
+      outages) get postmortems in project-management/postmortems/.
+      The postmortem records timeline, root cause, fix, and
+      prevention measures.
+    rationale: >
+      Postmortems prevent the same incident from recurring. They
+      also surface systemic issues that individual bug fixes don't
+      address.
+    source: CLAUDE.md
+    implemented: true
+    tested: false
+    test: null
+
+  - id: unified-activity-log
+    description: >
+      All system activity (scheduler ticks, agent spawns, task
+      transitions, job executions) is logged to a unified log file.
+      The log is the forensic record for debugging and postmortems.
+    rationale: >
+      Scattered logging across scheduler stderr, agent stdout, and
+      server logs makes it impossible to reconstruct what happened.
+      A single chronological log is essential.
+    source: draft-053
+    implemented: true
+    tested: false
+    test: null

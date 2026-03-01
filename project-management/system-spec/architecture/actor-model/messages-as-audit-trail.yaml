@@ -1,0 +1,35 @@
+title: All communication is persisted and queryable
+description: >
+  Every message between actors (instructions, results, rejections,
+  feedback) is stored in the server's messages table. The complete
+  history of a task is queryable from one source.
+
+invariants:
+  - id: messages-as-audit-trail
+    description: >
+      All agent-orchestrator communication for a task is persisted as
+      messages in the server's messages table. The complete history
+      (instructions given, results returned, rejections, test feedback)
+      is queryable from one source of truth.
+    rationale: >
+      Before messages, communication was scattered across result.json
+      files (ephemeral), PR comments (GitHub), task file rewrites
+      (lossy), and stderr logs. Five places to look, none complete.
+    source: draft-034
+    implemented: false
+    tested: false
+    test: null
+
+  - id: actors-communicate-via-messages
+    description: >
+      Agents communicate their completion state to the orchestrator
+      via messages (or stdout-captured result), not by writing files
+      to disk. The scheduler does not need to poll the filesystem to
+      detect agent results.
+    rationale: >
+      File-based communication is fragile — stale files cause bugs,
+      deleted files lose data, and there's no ordering guarantee.
+    source: draft-034, draft-171
+    implemented: false
+    tested: false
+    test: null

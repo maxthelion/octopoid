@@ -1,0 +1,12 @@
+title: The spec drives the test backlog
+principle: >
+  Invariants in the spec define what should be tested. The gap between
+  spec and tests IS the work to do. Tests don't exist in isolation —
+  they verify specific invariants.
+description: >
+  Each invariant in the spec has a status: enforced (has a passing
+  test) or aspirational (no test). The coverage audit walks the spec
+  and checks which invariants are verified. The gap — aspirational
+  invariants that are testable — becomes the test-writing backlog.
+  This is how the spec, tests, and tasks connect: spec defines
+  expectations, tests verify them, gaps become tasks.

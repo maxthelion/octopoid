@@ -1,0 +1,12 @@
+title: Problems are surfaced proactively, not discovered by humans
+principle: >
+  The system tells you what's wrong. Stuck tasks, failing agents,
+  looping retries — these are detected automatically and surfaced
+  to the dashboard and human inbox. The human doesn't discover
+  problems by running /queue-status and noticing something looks off.
+description: >
+  The core issue is not that errors happen — it's that without a
+  feedback loop between errors and human attention, the system quietly
+  retries forever and the only signal is "that task has been running
+  a long time." Task health annotations, circuit breakers, and queue
+  diagnostics close this loop.

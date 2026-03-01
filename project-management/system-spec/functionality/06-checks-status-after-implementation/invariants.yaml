@@ -1,0 +1,46 @@
+title: Post-implementation check invariants
+description: >
+  Invariants governing how the scheduler processes agent results and
+  prepares tasks for review.
+invariants:
+  - id: result-collection-after-agent
+    description: >
+      When an agent process exits, the scheduler reads its result.json
+      to determine the outcome (done, failed, error). The result drives
+      the next flow transition.
+    rationale: >
+      A structured result file decouples the agent process from the
+      scheduler. The agent writes its outcome; the scheduler reads it
+      on its own tick cycle.
+    source: core-architecture
+    implemented: true
+    tested: false
+    test: null
+
+  - id: submit-moves-to-provisional
+    description: >
+      An implementer reporting outcome=done triggers the submit
+      transition, moving the task from claimed to provisional. The
+      scheduler then runs pre-review steps (push branch, create PR).
+    rationale: >
+      Separating implementation from review with an explicit provisional
+      state lets the scheduler run preparatory steps (branch push, PR
+      creation) before involving a reviewer.
+    source: flow-definition
+    implemented: true
+    tested: false
+    test: null
+
+  - id: conditions-gate-transitions
+    description: >
+      Flow conditions (like CI checks passing) are evaluated as pure
+      functions on every tick. A transition only fires when all its
+      conditions are satisfied.
+    rationale: >
+      Conditions prevent premature transitions. Evaluating them as pure
+      functions on every tick means no callbacks or webhooks are needed —
+      the scheduler converges to the correct state by polling.
+    source: draft-condition-system
+    implemented: false
+    tested: false
+    test: null

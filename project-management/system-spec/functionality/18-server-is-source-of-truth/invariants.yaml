@@ -1,0 +1,51 @@
+title: Invariants
+description: >
+  Rules ensuring the server is the authoritative source for all system state.
+invariants:
+  - id: server-is-source-of-truth
+    description: >
+      All durable state lives in the server's D1 database. The scheduler reads all state
+      from the server on every tick and does not cache task state locally between ticks.
+      The server's response is the ground truth.
+    rationale: >
+      Multiple schedulers may run on different machines. If any scheduler cached state,
+      they'd diverge. The server provides a consistent view.
+    source: draft-059
+    implemented: true
+    tested: false
+    test: null
+
+  - id: server-enforces-state-machine
+    description: >
+      The server validates state transitions and rejects invalid ones. You cannot move a
+      task directly from incoming to done — it must follow the defined transitions.
+    rationale: >
+      Client-side validation is insufficient because multiple clients exist. Server-side
+      enforcement is the only way to guarantee the state machine is respected.
+    source: core-architecture
+    implemented: true
+    tested: false
+    test: null
+
+  - id: lease-based-locking
+    description: >
+      Task claims use leases with expiry times. If an agent crashes, its lease expires and
+      the task becomes available for another agent to claim. No manual intervention needed
+      for crashed agents.
+    rationale: >
+      Without leases, a crashed agent's task would be stuck in claimed forever.
+    source: core-architecture
+    implemented: true
+    tested: false
+    test: null
+
+  - id: all-access-through-sdk
+    description: >
+      All programmatic server access goes through the octopoid_sdk Python package. No raw
+      HTTP calls in production code.
+    rationale: >
+      A single SDK client ensures consistent error handling, auth, and API versioning.
+    source: CLAUDE.md
+    implemented: true
+    tested: false
+    test: null

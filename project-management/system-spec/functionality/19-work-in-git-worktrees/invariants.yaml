@@ -1,0 +1,39 @@
+title: Invariants
+description: >
+  Rules governing how git worktrees are created, managed, and preserved for task isolation.
+invariants:
+  - id: one-worktree-per-task
+    description: >
+      Each task gets its own git worktree under .octopoid/runtime/tasks/<id>/worktree.
+      No two agents share a worktree.
+    rationale: >
+      Shared worktrees would create git conflicts between agents. Isolation means agents
+      can't interfere with each other.
+    source: core-architecture
+    implemented: true
+    tested: false
+    test: null
+
+  - id: detached-head-always
+    description: >
+      Worktrees are always on detached HEAD. Named branches are created only when the
+      scheduler runs push_branch, just before PR creation.
+    rationale: >
+      Git refuses to checkout a branch that's already checked out in another worktree.
+      Detached HEAD avoids this entirely.
+    source: CLAUDE.md
+    implemented: true
+    tested: false
+    test: null
+
+  - id: preserve-worktrees-on-requeue
+    description: >
+      When a task is requeued (rejection or retry), its worktree is preserved so the next
+      agent picks up where the previous one left off rather than re-implementing from scratch.
+    rationale: >
+      Deleting the worktree on rejection would throw away the agent's work. Preserving it
+      means fixes are incremental.
+    source: core-architecture
+    implemented: true
+    tested: false
+    test: null

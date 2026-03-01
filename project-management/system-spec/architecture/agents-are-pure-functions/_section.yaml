@@ -1,0 +1,13 @@
+title: Agents are pure functions
+principle: >
+  An agent receives a task and a worktree. It does its work. It writes
+  a result. It does nothing else. No API calls, no state transitions,
+  no side effects. The orchestrator handles everything mechanical.
+description: >
+  This is the architectural decision everything else follows from. An
+  agent's only job is the creative work — writing code, reviewing a
+  diff, analysing a codebase. Everything mechanical (creating PRs,
+  pushing branches, merging, rebasing, transitioning state) happens
+  in the orchestrator as deterministic steps. This eliminates an
+  entire class of bugs where agents silently fail at lifecycle
+  management.

@@ -1,0 +1,9 @@
+title: "Work is specified and broken down by higher classes of LLM"
+principle: >
+  Architectural decisions and task specifications come from opus-class models; implementation comes from cheaper sonnet-class models.
+description: >
+  The system uses a tiered LLM strategy. The human-interactive Claude session (opus-class) writes
+  task content, acceptance criteria, and architectural decisions. Implementing agents are
+  sonnet-class models — cheaper and faster — that follow specific instructions rather than making
+  design choices. The quality of the specification determines the quality of the output, so task
+  content must be complete enough for the implementer to work without asking questions.

@@ -1,0 +1,10 @@
+title: Drafts describe changes to the system
+principle: >
+  All changes to the system begin as drafts that capture intent, invariants,
+  and status before any implementation work starts.
+description: >
+  Drafts are the entry point for all system changes. A draft captures what
+  should change and why, along with testable invariants that define success.
+  Both humans and background agents can author drafts. Once a draft is
+  approved, it is processed into concrete tasks whose acceptance criteria
+  derive from the draft's invariants.

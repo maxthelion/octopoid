@@ -1,0 +1,10 @@
+title: "Work is pull-based — guards stop agents creating too much"
+principle: >
+  Guards and concurrency limits ensure agents only produce work when there is capacity to absorb it.
+description: >
+  The system is pull-based: agents check for existing pending work before producing more, and the
+  scheduler limits concurrent agents per pool. Analyst agents check for pending drafts before
+  running and exit immediately if one already exists, preventing suggestion pileup. Short scheduling
+  intervals ensure responsiveness without flooding — the guard controls volume while the interval
+  controls latency. The scheduler only claims new tasks when there is capacity, preventing
+  resource exhaustion.

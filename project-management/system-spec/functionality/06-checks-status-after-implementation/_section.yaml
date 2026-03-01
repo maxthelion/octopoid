@@ -1,0 +1,10 @@
+title: After implementation, the scheduler checks status and prepares for review
+principle: >
+  The scheduler reads agent results, evaluates conditions, and drives
+  tasks through post-implementation transitions toward review.
+description: >
+  When an agent process exits, the scheduler reads its result.json to
+  determine the outcome. A successful implementation triggers the submit
+  transition, moving the task to provisional and running pre-review steps
+  like pushing the branch and creating a PR. Flow conditions gate
+  transitions so they only fire when all prerequisites are satisfied.

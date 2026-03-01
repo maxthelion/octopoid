@@ -1,0 +1,12 @@
+title: Actor model — message-based communication
+principle: >
+  Components communicate via messages, not shared state. The server's
+  messages table is the communication channel. Agents, the scheduler,
+  the dashboard, and the human are all actors with inboxes.
+description: >
+  The actor model means no component reaches into another's internals.
+  The scheduler doesn't read agent memory. Agents don't call the
+  server. The dashboard doesn't modify task state directly. Everyone
+  communicates via messages stored in the server's messages table.
+  This gives a complete audit trail and makes the system's
+  communication visible and queryable.

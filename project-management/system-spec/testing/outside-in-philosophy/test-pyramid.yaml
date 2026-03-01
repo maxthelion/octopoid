@@ -1,0 +1,47 @@
+title: The test pyramid favours integration over unit tests
+description: >
+  The priority order is: end-to-end (scheduler + real server + real
+  SDK), then integration (real server, mocked spawn), then unit
+  (mocked dependencies, only for pure logic).
+
+invariants:
+  - id: integration-tests-use-local-server
+    description: >
+      Integration tests always run against the local test server
+      (port 9787), never against production. The conftest.py fixture
+      enforces this — tests that would hit production fail fast.
+    rationale: >
+      Tests against production corrupt real data and are
+      non-deterministic. A local server gives full control.
+    source: draft-002, draft-028
+    implemented: true
+    tested: false
+    test: null
+
+  - id: mock-agents-not-infrastructure
+    description: >
+      Tests mock the LLM agent (using mock-agent.sh) and the GitHub
+      API (using fake gh). Everything else — scheduler, flow engine,
+      steps, SDK, server — runs for real. This catches integration
+      bugs that unit tests with mocked SDKs miss.
+    rationale: >
+      A unit test that mocks get_sdk() doesn't test whether the
+      scheduler actually talks to the server correctly. The mock
+      hides the exact bug you need to catch.
+    source: draft-028, draft-054
+    implemented: true
+    tested: false
+    test: null
+
+  - id: scoped-sdk-for-isolation
+    description: >
+      Each test gets a scoped_sdk fixture that creates an isolated
+      scope on the test server. Tests cannot see or interfere with
+      each other's data. Cleanup happens automatically.
+    rationale: >
+      Shared test state causes flaky tests. Scoped isolation means
+      tests run in parallel without conflicts.
+    source: draft-032
+    implemented: true
+    tested: false
+    test: null

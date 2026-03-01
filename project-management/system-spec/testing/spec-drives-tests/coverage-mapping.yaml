@@ -1,0 +1,48 @@
+title: Every invariant maps to a test status
+description: >
+  The spec is the source of truth about what the system should do.
+  The test suite is the verification that it actually does it. The
+  mapping between them is explicit.
+
+invariants:
+  - id: invariant-has-status
+    description: >
+      Every invariant in the spec has a status field set to either
+      enforced (verified by a passing test) or aspirational (not yet
+      tested). There is no ambiguity about which invariants are
+      covered.
+    rationale: >
+      Without status tracking, you don't know which parts of the
+      system are verified and which are just hopes.
+    source: draft-204
+    implemented: false
+    tested: false
+    test: null
+
+  - id: enforced-has-test
+    description: >
+      Every invariant with status:enforced has a non-null test field
+      pointing to a passing test. The status is not set optimistically
+      — it means a specific test exists and passes.
+    rationale: >
+      Marking an invariant as enforced without a test is lying.
+      The test field creates accountability.
+    source: draft-204
+    implemented: false
+    tested: false
+    test: null
+
+  - id: coverage-gaps-become-tasks
+    description: >
+      The coverage audit identifies aspirational invariants that are
+      testable. These gaps become tasks for the test-writing backlog.
+      The analyst agents can also identify gaps and propose tests
+      as drafts.
+    rationale: >
+      Without a systematic way to find untested invariants, test
+      coverage grows haphazardly rather than toward full spec
+      coverage.
+    source: draft-204, draft-087
+    implemented: false
+    tested: false
+    test: null

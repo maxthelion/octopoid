@@ -1,0 +1,45 @@
+title: Flow-driven lifecycle invariants
+description: >
+  Invariants governing how tasks progress through their lifecycle via
+  declarative flows.
+invariants:
+  - id: flow-is-source-of-truth
+    description: >
+      The flow YAML is the single source of truth for what happens to a
+      task between creation and completion. When the scheduler syncs flow
+      definitions to the server, it includes the full transition data —
+      runs, conditions, checks, agent — not just from/to states.
+    rationale: >
+      Stripped transitions cause steps to be skipped silently, leading to
+      ghost completions (tasks in done with no PR). This was the root
+      cause of a multi-hour outage.
+    source: draft-010, postmortem-2026-02-28-ghost-completion
+    implemented: true
+    tested: false
+    test: null
+
+  - id: no-parallel-hook-system
+    description: >
+      There is no hook manager or imperative hook system running alongside
+      flows. Flows are the only transition path. All lifecycle behaviour
+      is expressed as flow transitions, conditions, and steps.
+    rationale: >
+      Two parallel systems (flows + hooks) make it impossible to reason
+      about what happens to a task by reading one place.
+    source: draft-041
+    implemented: true
+    tested: false
+    test: null
+
+  - id: terminal-steps-auto-injected
+    description: >
+      Terminal steps (rebase_on_base, merge_pr) are automatically injected
+      for any transition targeting done. Flow YAMLs don't need to include
+      them — they are appended if missing.
+    rationale: >
+      Forgetting terminal steps causes PRs to never merge despite tasks
+      reaching done.
+    source: flow.py
+    implemented: true
+    tested: false
+    test: null

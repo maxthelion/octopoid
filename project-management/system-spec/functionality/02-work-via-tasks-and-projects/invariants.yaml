@@ -1,0 +1,42 @@
+title: Task and project invariants
+description: >
+  Invariants governing how tasks and projects are created and structured.
+invariants:
+  - id: tasks-are-unit-of-work
+    description: >
+      Tasks are the atomic unit of work. Each has an ID, title, content
+      with acceptance criteria, a role (implement/review), and a flow that
+      defines its lifecycle.
+    rationale: >
+      A uniform task structure lets the scheduler, agents, and humans all
+      reason about work the same way. Without it, different parts of the
+      system would need special-case logic for different work types.
+    source: core-architecture
+    implemented: true
+    tested: false
+    test: null
+
+  - id: tasks-created-through-api
+    description: >
+      Tasks are always created through create_task() which stores content
+      on the server and handles branch defaulting. Never raw SDK or API
+      calls.
+    rationale: >
+      Bypassing create_task() causes task content to be missing from the
+      server, which makes agents fail when they try to read the task.
+    source: CLAUDE.md
+    implemented: true
+    tested: false
+    test: null
+
+  - id: projects-group-related-tasks
+    description: >
+      Projects group related tasks that share a base branch. Tasks within
+      a project are worked on sequentially against the project branch.
+    rationale: >
+      Related changes that target the same branch need to be sequenced to
+      avoid merge conflicts. Projects enforce this ordering.
+    source: draft-089
+    implemented: true
+    tested: false
+    test: null

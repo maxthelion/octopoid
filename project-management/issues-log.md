@@ -2,6 +2,14 @@
 
 Known symptoms and their root causes. **Consult this first when diagnosing a problem** — many issues recur.
 
+## Fixer agent: broken tooling when worktree is deleted
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| Fixer agent crashes with empty stdout | Fixer session CWD is the task worktree, which was deleted before the fixer ran. Bash/Glob/Grep tools all fail. | Edit/Read/Write tools still work via absolute paths. Use those to make file changes. Cannot commit — human must `git add` + `git commit` manually in the main repo. |
+| Gatekeeper says files were "deleted" but they don't exist | Agent renamed files (e.g. 183-... → 0183-...) in a prior commit; gatekeeper referenced old unpadded names that never existed in that form on main. | Verify with `git log --all -- path/to/file`. If file truly never existed by that name, the gatekeeper was wrong — no action needed. |
+| `if rejected:` NameError in queue-status.md | Out-of-scope change added a `rejected_by_gatekeeper` problem type but never populated the `rejected` list. | Remove the `if rejected:` block (lines 113-119). Fixed in task 72ff0d4e. |
+
 ## Scheduler not processing tasks
 
 | Symptom | Likely cause | See |
@@ -10,6 +18,13 @@ Known symptoms and their root causes. **Consult this first when diagnosing a pro
 | Scheduler ticks but does nothing | Syntax error in scheduler.py (stale `__pycache__` masking it) | [2026-02-21 postmortem](postmortems/2026-02-21-scheduler-crash-orphaned-tasks.md) |
 | Tasks stuck in `claimed` with empty `running_pids.json` | Orphaned tasks — result collection failed, lease expiry requeue loop | [2026-02-21 postmortem](postmortems/2026-02-21-scheduler-crash-orphaned-tasks.md) |
 | Tasks cycling between `incoming` and `claimed` repeatedly | Lease expiry requeue fighting with failed result collection | [2026-02-21 postmortem](postmortems/2026-02-21-scheduler-crash-orphaned-tasks.md) |
+
+## Gatekeeper approve completes steps but task never reaches done
+
+| Symptom | Likely cause | See |
+|---|---|---|
+| Task stuck after gatekeeper approves — PR merged but task not in `done` | `_handle_approve_and_run_steps` in result_handler.py never calls `_perform_transition()` after executing steps | [2026-03-01 postmortem](postmortems/2026-03-01-gatekeeper-approve-no-transition.md) |
+| Fixer loops 3x saying "already complete" then circuit breaker moves to failed | Same root cause — steps ran (PR merged) but queue never updated, lease expires, fixer can't resume correct transition | [2026-03-01 postmortem](postmortems/2026-03-01-gatekeeper-approve-no-transition.md) |
 
 ## Agent worktree issues
 

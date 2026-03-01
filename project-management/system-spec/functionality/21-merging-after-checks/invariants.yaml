@@ -1,0 +1,39 @@
+title: Invariants
+description: >
+  Rules governing how and when the scheduler merges PRs.
+invariants:
+  - id: merge-is-terminal-step
+    description: >
+      merge_pr is an auto-injected terminal step that runs after all other steps in a
+      transition targeting done. The scheduler performs the merge via the GitHub API.
+    rationale: >
+      Auto-injection ensures merge is never accidentally omitted from a flow definition.
+      Making it terminal guarantees all preceding steps (rebase, CI, gatekeeper) complete first.
+    source: flow.py
+    implemented: true
+    tested: false
+    test: null
+
+  - id: ci-gates-merge
+    description: >
+      CI checks are evaluated as conditions before the merge transition fires. A failing
+      CI check blocks the gatekeeper dispatch and therefore the merge.
+    rationale: >
+      Merging code that fails CI would break main. Gating on CI ensures only passing
+      code reaches the main branch.
+    source: draft-condition-system
+    implemented: false
+    tested: false
+    test: null
+
+  - id: merge-uses-github-api
+    description: >
+      The scheduler merges PRs via the GitHub API (gh pr merge), not by pushing to main
+      directly. This preserves the PR audit trail.
+    rationale: >
+      Direct pushes to main bypass the PR record — reviews, comments, and check results
+      would be disconnected from the merge. API-based merges keep everything linked.
+    source: core-architecture
+    implemented: true
+    tested: false
+    test: null

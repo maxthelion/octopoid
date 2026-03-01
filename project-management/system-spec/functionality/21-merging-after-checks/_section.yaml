@@ -1,0 +1,9 @@
+title: "Merging is handled by the scheduler after checks such as CI"
+principle: >
+  The scheduler performs merges via the GitHub API only after all required checks pass, preserving the PR audit trail.
+description: >
+  Merging is an auto-injected terminal step (merge_pr) that runs after all other steps in any
+  transition targeting done. CI checks are evaluated as conditions before the merge transition
+  fires, so a failing check blocks the merge. The scheduler merges via the GitHub API rather
+  than pushing to main directly, preserving the full PR audit trail of reviews, comments, and
+  check results.

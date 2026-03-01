@@ -1,0 +1,10 @@
+title: Successfully completed work is merged into the codebase
+principle: >
+  Approved tasks are automatically rebased and merged via terminal flow
+  steps, with failures routed back for resolution rather than dropped.
+description: >
+  When a gatekeeper approves work, the flow engine's auto-injected
+  terminal steps rebase the task branch onto the base branch and merge
+  the PR. If rebase or merge fails due to conflicts, the task is rejected
+  back to incoming with conflict details so the next agent can resolve
+  them. After all terminal steps succeed, the task transitions to done.

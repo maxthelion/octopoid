@@ -1,0 +1,49 @@
+title: Automatic detection of stuck, failing, and looping tasks
+description: >
+  The scheduler detects problems mechanically — no human needs to
+  notice. Tasks carry their own error history so problems are visible
+  everywhere.
+
+invariants:
+  - id: task-health-annotations
+    description: >
+      Tasks carry health metadata: last_error, error_count,
+      requeue_count, last_flow_step. The scheduler writes these
+      on every error or requeue. The dashboard, /queue-status, and
+      any alert mechanism can read them without parsing logs.
+    rationale: >
+      Without task-level health data, the only way to know why a
+      task is stuck is to dig through scheduler logs. Task health
+      annotations make the diagnostic self-contained.
+    source: draft-053
+    implemented: false
+    tested: false
+    test: null
+
+  - id: circuit-breaker-stops-loops
+    description: >
+      A circuit breaker detects tasks caught in retry loops (same
+      step failing repeatedly) and stops them from cycling
+      indefinitely. The task is escalated to requires-intervention
+      instead of being silently requeued forever.
+    rationale: >
+      Three tasks were stuck in infinite requeue loops — each failing
+      at the same step, being requeued, reclaimed, and failing again.
+      Nobody noticed for hours.
+    source: draft-053, draft-170
+    implemented: true
+    tested: false
+    test: null
+
+  - id: orphaned-tasks-detected
+    description: >
+      The lease monitor detects tasks in claimed with no running
+      agent process (expired lease). These are automatically requeued
+      or escalated, not left stuck.
+    rationale: >
+      Agent crashes leave tasks permanently in claimed without lease
+      recovery. The server's cron trigger handles this.
+    source: draft-041
+    implemented: true
+    tested: false
+    test: null

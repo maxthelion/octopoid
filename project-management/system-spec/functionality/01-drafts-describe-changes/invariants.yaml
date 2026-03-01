@@ -1,0 +1,54 @@
+title: Draft lifecycle invariants
+description: >
+  Invariants governing how drafts are created, tracked, and processed into
+  actionable work.
+invariants:
+  - id: drafts-carry-invariants
+    description: >
+      Every draft has an invariants section stating testable behavioural
+      guarantees about what should be true after the work is complete.
+    rationale: >
+      Without testable invariants, there is no objective way to verify that
+      a draft's intent was achieved. Invariants turn vague goals into
+      verifiable outcomes.
+    source: draft-182
+    implemented: true
+    tested: false
+    test: null
+
+  - id: drafts-have-statuses
+    description: >
+      Every draft has a status field (idea, in_progress, complete) tracked
+      on the server.
+    rationale: >
+      Status tracking lets the scheduler and humans see where each draft
+      sits in the pipeline without reading its full content.
+    source: draft-016
+    implemented: true
+    tested: false
+    test: null
+
+  - id: agents-can-author-drafts
+    description: >
+      Background agents can create drafts via the SDK; the author field
+      distinguishes human from agent drafts.
+    rationale: >
+      Agents discover improvement opportunities continuously. Letting them
+      author drafts feeds those discoveries into the same review pipeline
+      as human ideas.
+    source: draft-016
+    implemented: true
+    tested: false
+    test: null
+
+  - id: drafts-are-processed-into-tasks
+    description: >
+      A draft can be processed into tasks via /process-draft, with
+      acceptance criteria derived from the draft's invariants.
+    rationale: >
+      The draft-to-task pipeline ensures that every task traces back to a
+      stated intent and has measurable acceptance criteria.
+    source: draft-182
+    implemented: true
+    tested: false
+    test: null

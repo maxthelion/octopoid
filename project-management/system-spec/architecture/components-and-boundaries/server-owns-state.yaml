@@ -1,0 +1,48 @@
+title: The server owns all state
+description: >
+  The server is the single source of truth for tasks, projects, drafts,
+  messages, and orchestrator registrations. No other component persists
+  state authoritatively. The scheduler reads from the server on every
+  tick and writes back through the API.
+
+invariants:
+  - id: server-is-source-of-truth
+    description: >
+      All durable state (task queues, project membership, draft status,
+      agent registrations) lives in the server's D1 database. The
+      scheduler does not maintain its own copy of task state between
+      ticks. The server's response is always authoritative.
+    rationale: >
+      Multiple schedulers on different machines need a consistent view.
+      The server provides it. Local state caches diverge.
+    source: draft-059
+    implemented: true
+    tested: false
+    test: null
+
+  - id: server-enforces-state-machine
+    description: >
+      The server validates state transitions. A task cannot move from
+      incoming to done without going through the intermediate states.
+      The server rejects invalid transitions.
+    rationale: >
+      Without server-side validation, a buggy scheduler could
+      corrupt task state by skipping transitions.
+    source: draft-059
+    implemented: true
+    tested: false
+    test: null
+
+  - id: lease-based-locking
+    description: >
+      Task claims use leases with expiry times. If a scheduler
+      crashes or an agent hangs, the lease expires and the task
+      becomes available again. The server's cron trigger monitors
+      lease expiry.
+    rationale: >
+      Without lease expiry, crashed agents leave tasks permanently
+      stuck in claimed with no recovery path.
+    source: draft-059
+    implemented: true
+    tested: false
+    test: null

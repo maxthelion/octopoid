@@ -1,0 +1,47 @@
+title: Scheduler operation invariants
+description: >
+  Invariants governing how the scheduler drives work through the system.
+invariants:
+  - id: programmatic-before-llm
+    description: >
+      The scheduler exhausts all programmatic checks before invoking an
+      LLM. Guard chains, condition evaluation, job dispatch — all run as
+      pure Python. Agents (LLM processes) are only spawned when the
+      scheduler has mechanically confirmed they're needed.
+    rationale: >
+      LLM calls are expensive and slow. Programmatic checks are free and
+      instant. The scheduler should do everything it can without an LLM
+      before spending tokens.
+    source: draft-009, draft-205
+    implemented: true
+    tested: false
+    test: null
+
+  - id: jobs-in-yaml
+    description: >
+      Scheduler jobs are defined in .octopoid/jobs.yaml with an interval,
+      type (script or agent), and a reference to the function or prompt
+      that runs them. Adding a new job means adding a YAML entry, not
+      modifying scheduler.py.
+    rationale: >
+      Hardcoded jobs in a 2300-line scheduler file meant touching 4 places
+      to add a new job. Declarative config makes jobs visible and
+      extensible.
+    source: draft-060, draft-061
+    implemented: true
+    tested: false
+    test: null
+
+  - id: jobs-are-not-flow-steps
+    description: >
+      Jobs are system-level periodic functions, not task transitions. They
+      don't operate on a specific task — they operate on the system (check
+      leases, sync flows, register the orchestrator). They share the
+      declarative pattern but have a separate registry.
+    rationale: >
+      Conflating jobs with task steps would overload the flow system with
+      concerns that have nothing to do with task lifecycle.
+    source: draft-061
+    implemented: true
+    tested: false
+    test: null

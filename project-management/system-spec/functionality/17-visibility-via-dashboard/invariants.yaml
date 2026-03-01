@@ -1,0 +1,50 @@
+title: Invariants
+description: >
+  Rules ensuring the system's state is visible and controllable by the human operator.
+invariants:
+  - id: tasks-visible-by-queue
+    description: >
+      The dashboard shows tasks grouped by queue state (incoming, claimed, provisional, done,
+      failed) so the human can see at a glance where work is and what's stuck.
+    rationale: >
+      Without visibility, you don't know if the system is working or silently stuck.
+    source: draft-dashboard
+    implemented: true
+    tested: false
+    test: null
+
+  - id: agents-visible
+    description: >
+      The dashboard shows flow agents and job agents with their running/idle/errored status
+      and last action, so you can see what's actively working.
+    rationale: >
+      Knowing which agents are running and their status is essential for diagnosing
+      slowdowns, stuck tasks, and resource usage.
+    source: draft-dashboard
+    implemented: false
+    tested: false
+    test: null
+
+  - id: drafts-visible-with-status
+    description: >
+      The dashboard shows all drafts with their current status and author, live-updating
+      so new agent suggestions appear without refresh.
+    rationale: >
+      Drafts are the primary output of analyst agents. Making them visible with status
+      ensures the human sees new suggestions promptly and can act on them.
+    source: draft-dashboard
+    implemented: true
+    tested: false
+    test: null
+
+  - id: skills-are-human-interface
+    description: >
+      Skills are markdown files instructing Claude Code to perform operations using the SDK.
+      They are the human's primary interface for ad-hoc operations (enqueue, approve, pause).
+    rationale: >
+      A skill-based interface means operations are documented, repeatable, and don't require
+      the human to remember API calls or SDK methods.
+    source: core-workflow
+    implemented: true
+    tested: false
+    test: null

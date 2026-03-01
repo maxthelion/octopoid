@@ -1,17 +1,28 @@
 # system-spec/_meta.yaml
-# Metadata for the Octopoid system invariant specification.
+# Metadata for the Octopoid system invariant specification (v2).
 
-format_version: 2
+format_version: 3
 last_updated: 2026-03-01
 description: >
-  Behavioural invariants for the Octopoid orchestrator, organised as a
-  hierarchical directory tree. Each top-level directory represents a
-  subsystem. _section.yaml files state the governing principle. Leaf
-  YAML files contain verifiable invariants.
+  Behavioural invariants for the Octopoid orchestrator, organised as an
+  identity-oriented tree. Top-level directories are categories of knowledge
+  (functionality, architecture, testing, observability). Sections within
+  each category are identity statements — what the system IS — that resolve
+  into increasingly specific invariants.
 
-  Invariants enter the spec when a draft's invariant has been verified
-  as met in the code. See draft #182 for the lifecycle.
+  This is a narrative, not a reference manual. Read top-down to understand
+  the system's nature, then drill into specifics.
 
-invariant_statuses:
-  aspirational: Intent is agreed; code does not yet fully satisfy it.
-  enforced: Code satisfies it AND a test verifies it.
+invariant_fields:
+  implemented: "Boolean. True if the code currently satisfies this invariant."
+  tested: "Boolean. True if a test exists that verifies this invariant."
+  # The combination gives three meaningful states:
+  #   implemented: false, tested: false → aspirational (intent agreed, not yet built)
+  #   implemented: true,  tested: false → implemented (code does it, no proof)
+  #   implemented: true,  tested: true  → tested (code does it, test proves it)
+
+categories:
+  functionality: What the system is designed to do.
+  architecture: How the code is built to meet the functional need.
+  testing: How we verify the system matches its description.
+  observability: How we keep it running and surface problems.

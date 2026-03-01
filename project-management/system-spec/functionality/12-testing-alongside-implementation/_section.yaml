@@ -1,0 +1,13 @@
+title: Testing is done alongside implementation, particularly against intent
+principle: >
+  If invariants are changing, start with a failing integration test and
+  then build the functionality to make it pass. Test-driven, but against
+  the spec's own invariants.
+description: >
+  We currently test as and when we remember. Instead, when work is
+  enqueued it should either add new invariants to the spec tree,
+  replace existing invariants, or be a solution to an existing
+  invariant. If the invariants are changing, the implementer starts
+  with a failing integration test derived from the invariant and then
+  builds the functionality to make it pass. A single implementer does
+  both — it's part of their instructions, not a separate task.

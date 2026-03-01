@@ -1,0 +1,45 @@
+title: Rejection handling invariants
+description: >
+  Invariants governing how rejected tasks are recycled back through the
+  implementation pipeline.
+invariants:
+  - id: rejection-requeues-task
+    description: >
+      When a gatekeeper rejects work, the task is moved back to incoming
+      (or a configured on_fail target). The rejection count is
+      incremented.
+    rationale: >
+      Tracking rejection count enables the scheduler to apply escalation
+      policies (e.g. flag for human review after N rejections) and
+      prevents infinite loops.
+    source: flow-definition
+    implemented: true
+    tested: false
+    test: null
+
+  - id: rejection-feedback-preserved
+    description: >
+      Rejection feedback is posted as a PR comment and stored as a
+      message, so the next implementer knows exactly what to fix.
+    rationale: >
+      Without preserved feedback, the next agent would repeat the same
+      mistakes. PR comments make feedback visible to both agents and
+      humans.
+    source: draft-051
+    implemented: true
+    tested: false
+    test: null
+
+  - id: rejection-preserves-worktree
+    description: >
+      On rejection, the existing worktree is preserved. The next agent
+      picks up where the previous one left off rather than starting
+      from scratch.
+    rationale: >
+      Destroying the worktree on rejection wastes all prior work. The
+      fix is usually small relative to the total implementation, so
+      preserving state is far more efficient.
+    source: draft-051
+    implemented: true
+    tested: false
+    test: null

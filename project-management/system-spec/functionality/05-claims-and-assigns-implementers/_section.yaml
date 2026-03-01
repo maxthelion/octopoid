@@ -1,0 +1,10 @@
+title: It makes claims on available work and assigns implementers
+principle: >
+  The scheduler atomically claims tasks from the server and spawns the
+  appropriate agent process for each claimed task.
+description: >
+  When tasks arrive in the incoming queue, the scheduler claims them using
+  the server's atomic claim API, which prevents two schedulers from
+  claiming the same task. Once claimed, the scheduler determines the
+  correct agent type from the task's role and flow transition, then spawns
+  the agent in the task's worktree.
