@@ -297,3 +297,190 @@ class TestGuardClaimTaskDedup:
         assert proceed is True
         mock_claim.assert_not_called()
         mock_active.assert_not_called()
+
+
+# =============================================================================
+# guard_claim_task circuit breaker: intervention fixer deduplication
+# =============================================================================
+
+
+def _make_intervention_ctx() -> AgentContext:
+    """Build a minimal AgentContext for a fixer/intervention agent."""
+    return AgentContext(
+        agent_config={
+            "spawn_mode": "scripts",
+            "claim_from": "intervention",
+            "blueprint_name": "fixer",
+        },
+        agent_name="fixer",
+        role="fix",
+        interval=60,
+        state=AgentState(),
+        state_path=Path("/tmp/fake_state.json"),
+    )
+
+
+def _make_sdk(
+    tasks: list[dict],
+    messages_by_task: dict[str, list[dict]] | None = None,
+) -> MagicMock:
+    """Build a mock SDK with canned task list and message responses."""
+    mock_sdk = MagicMock()
+    mock_sdk.tasks.list.return_value = tasks
+
+    messages_by_task = messages_by_task or {}
+
+    def fake_request(method: str, path: str) -> dict:
+        for task_id, msgs in messages_by_task.items():
+            if task_id in path:
+                return {"messages": msgs}
+        return {"messages": []}
+
+    mock_sdk._request.side_effect = fake_request
+    return mock_sdk
+
+
+class TestGuardClaimTaskCircuitBreaker:
+    """Circuit breaker in guard_claim_task (intervention fixer path)."""
+
+    def test_skips_task_already_in_failed_queue(self):
+        """Tasks already in failed queue are skipped without re-firing the circuit breaker."""
+        candidate = {"id": "TASK-cb-1", "queue": "failed", "needs_intervention": True}
+        mock_sdk = _make_sdk([candidate])
+        ctx = _make_intervention_ctx()
+
+        with (
+            patch("octopoid.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("octopoid.scheduler.get_active_task_ids", return_value=set()),
+            patch("octopoid.scheduler.get_agents_runtime_dir", return_value=Path("/tmp/fake_agents")),
+        ):
+            proceed, reason = guard_claim_task(ctx)
+
+        assert proceed is False
+        assert reason == "no_task_to_claim"
+        # Must not attempt to update or post messages for an already-failed task
+        mock_sdk.tasks.update.assert_not_called()
+        mock_sdk.messages.create.assert_not_called()
+
+    def test_skips_task_with_existing_circuit_breaker_message(self):
+        """If a circuit_breaker message already exists, skip the task — no duplicate fires."""
+        candidate = {"id": "TASK-cb-2", "queue": "intervention", "needs_intervention": True}
+        mock_sdk = _make_sdk(
+            [candidate],
+            messages_by_task={
+                "TASK-cb-2": [
+                    {"type": "intervention_reply"},
+                    {"type": "intervention_reply"},
+                    {"type": "intervention_reply"},
+                    {"type": "circuit_breaker"},  # already fired
+                ]
+            },
+        )
+        ctx = _make_intervention_ctx()
+
+        with (
+            patch("octopoid.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("octopoid.scheduler.get_active_task_ids", return_value=set()),
+            patch("octopoid.scheduler.get_agents_runtime_dir", return_value=Path("/tmp/fake_agents")),
+        ):
+            proceed, reason = guard_claim_task(ctx)
+
+        assert proceed is False
+        assert reason == "no_task_to_claim"
+        # Must not call update or create another message
+        mock_sdk.tasks.update.assert_not_called()
+        mock_sdk.messages.create.assert_not_called()
+
+    def test_fires_circuit_breaker_exactly_once(self):
+        """First time a task exceeds MAX_FIXER_ATTEMPTS, the circuit breaker fires once."""
+        candidate = {"id": "TASK-cb-3", "queue": "intervention", "needs_intervention": True}
+        mock_sdk = _make_sdk(
+            [candidate],
+            messages_by_task={
+                "TASK-cb-3": [
+                    {"type": "intervention_reply"},
+                    {"type": "intervention_reply"},
+                    {"type": "intervention_reply"},
+                    # No circuit_breaker message yet — should fire now
+                ]
+            },
+        )
+        ctx = _make_intervention_ctx()
+
+        with (
+            patch("octopoid.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("octopoid.scheduler.get_active_task_ids", return_value=set()),
+            patch("octopoid.scheduler.get_agents_runtime_dir", return_value=Path("/tmp/fake_agents")),
+        ):
+            proceed, reason = guard_claim_task(ctx)
+
+        assert proceed is False
+        assert reason == "no_task_to_claim"
+        mock_sdk.tasks.update.assert_called_once_with(
+            "TASK-cb-3",
+            queue="failed",
+            needs_intervention=False,
+            execution_notes=pytest.approx("Fixer circuit breaker: 3 attempts exhausted", abs=None),
+        )
+        mock_sdk.messages.create.assert_called_once()
+        call_kwargs = mock_sdk.messages.create.call_args.kwargs
+        assert call_kwargs["type"] == "circuit_breaker"
+        assert call_kwargs["task_id"] == "TASK-cb-3"
+
+    def test_update_failure_still_posts_message(self):
+        """If sdk.tasks.update raises, the circuit_breaker message is still posted."""
+        candidate = {"id": "TASK-cb-4", "queue": "intervention", "needs_intervention": True}
+        mock_sdk = _make_sdk(
+            [candidate],
+            messages_by_task={
+                "TASK-cb-4": [
+                    {"type": "intervention_reply"},
+                    {"type": "intervention_reply"},
+                    {"type": "intervention_reply"},
+                ]
+            },
+        )
+        mock_sdk.tasks.update.side_effect = RuntimeError("server error")
+        ctx = _make_intervention_ctx()
+
+        with (
+            patch("octopoid.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("octopoid.scheduler.get_active_task_ids", return_value=set()),
+            patch("octopoid.scheduler.get_agents_runtime_dir", return_value=Path("/tmp/fake_agents")),
+            patch("octopoid.scheduler.logger"),
+        ):
+            # Must not raise even if update fails
+            proceed, reason = guard_claim_task(ctx)
+
+        assert proceed is False
+        # Message should still be attempted
+        mock_sdk.messages.create.assert_called_once()
+
+    def test_below_threshold_task_is_claimed(self):
+        """A task with fewer than MAX_FIXER_ATTEMPTS should be claimed normally."""
+        candidate = {"id": "TASK-cb-5", "queue": "intervention", "needs_intervention": True}
+        mock_sdk = _make_sdk(
+            [candidate],
+            messages_by_task={
+                "TASK-cb-5": [
+                    {"type": "intervention_reply"},
+                    {"type": "intervention_reply"},
+                    # Only 2 attempts — below threshold of 3
+                ]
+            },
+        )
+        ctx = _make_intervention_ctx()
+
+        with (
+            patch("octopoid.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("octopoid.scheduler.get_active_task_ids", return_value=set()),
+            patch("octopoid.scheduler.get_agents_runtime_dir") as mock_agents_dir,
+        ):
+            mock_agents_dir.return_value = Path("/tmp/fake_agents")
+            # Prevent file I/O
+            with patch("pathlib.Path.mkdir"), patch("pathlib.Path.write_text"):
+                proceed, reason = guard_claim_task(ctx)
+
+        assert proceed is True
+        mock_sdk.tasks.update.assert_not_called()
+        mock_sdk.messages.create.assert_not_called()
