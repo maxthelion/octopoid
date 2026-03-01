@@ -1,0 +1,39 @@
+title: Health Scores
+description: >
+  Background analysts produce numeric health scores for their domain.
+  Scores are logged in append-only files with justifications, providing
+  a longitudinal signal of whether the codebase is improving.
+
+invariants:
+  - id: health-score-logged
+    description: >
+      Every analyst draft includes a numeric health score (1-10) for the
+      analyst's domain.
+    rationale: >
+      A single numeric score provides a longitudinal signal — is the
+      codebase getting better or worse over time?
+    source: draft-191
+    status: aspirational
+    test: null
+
+  - id: health-log-append-only
+    description: >
+      Each analyst has a persistent log file that grows monotonically.
+      Entries are never deleted or modified.
+    rationale: >
+      Append-only ensures the historical trend is preserved. If entries
+      could be modified, the trend becomes unreliable.
+    source: draft-191
+    status: aspirational
+    test: null
+
+  - id: score-has-justification
+    description: >
+      Every health score entry includes a brief text summary explaining
+      the rating.
+    rationale: >
+      A bare number without context is useless. The justification explains
+      what changed since the last score and why the rating went up or down.
+    source: draft-191
+    status: aspirational
+    test: null

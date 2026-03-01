@@ -1,0 +1,32 @@
+title: Completion Announcements
+description: >
+  When a task transitions to done, the scheduler posts a completion
+  announcement message. Announcements are self-contained — they include
+  enough context for follow-up agents to act without re-fetching task
+  data.
+
+invariants:
+  - id: completion-announced
+    description: >
+      Every task that transitions to done has a corresponding
+      task_completed message posted by the scheduler.
+    rationale: >
+      Without completion announcements, follow-up work relies on a human
+      noticing and running commands manually. Announcements enable automated
+      post-completion workflows.
+    source: draft-192
+    status: aspirational
+    test: null
+
+  - id: announcement-has-context
+    description: >
+      The completion announcement message includes the task ID, title,
+      linked draft ID (if any), and PR number (if any) — enough for
+      follow-up agents to act without re-fetching.
+    rationale: >
+      Follow-up agents that receive an announcement should not need
+      additional API calls to determine basic task metadata. The
+      announcement should be self-contained.
+    source: draft-192
+    status: aspirational
+    test: null

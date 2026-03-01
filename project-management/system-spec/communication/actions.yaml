@@ -1,0 +1,7 @@
+title: Agent Actions
+description: >
+  Agents can propose actions (e.g. run a command, create a task) that
+  require human approval before execution. The action system separates
+  proposal from execution, keeping humans in control of side effects.
+
+invariants: []

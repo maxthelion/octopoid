@@ -1,0 +1,44 @@
+title: Task Claiming
+description: >
+  How the scheduler claims tasks from the server. Claims are atomic
+  and lease-based. The server is the source of truth for what is claimed.
+  Claim results distinguish between "no tasks", "at capacity", and
+  "claimed successfully".
+
+invariants:
+  - id: expired-lease-cleared
+    description: >
+      Tasks with expired leases are detected and their lease state is
+      cleared by the scheduler's housekeeping job within one cycle. A task
+      cannot remain indefinitely blocked by a stale lease_expires_at value.
+    rationale: >
+      Stale leases block tasks from being reclaimed. If lease recovery
+      misses a task, that task is stuck forever with no agent working on
+      it and no way to reclaim it.
+    source: draft-145
+    status: aspirational
+    test: null
+
+  - id: claim-limit
+    description: >
+      The scheduler never claims more tasks than max_claimed allows
+      for any agent blueprint.
+    rationale: >
+      Overclaiming wastes resources and can cause contention. Each
+      blueprint defines its capacity and the scheduler respects it.
+    source: bootstrap
+    status: aspirational
+    test: null
+
+  - id: claim-returns-typed-result
+    description: >
+      tasks.claim() returns an explicit typed result that distinguishes
+      between: task claimed successfully, queue empty, and at-capacity.
+      Callers can determine the specific reason without interpreting None.
+    rationale: >
+      The current claim() returns None for both "no tasks" and "at capacity",
+      making it impossible to distinguish. This causes the scheduler to
+      silently stop claiming with no log entry explaining why.
+    source: draft-156
+    status: aspirational
+    test: null

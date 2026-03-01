@@ -1,0 +1,8 @@
+title: Actor Model
+description: >
+  Components communicate through messages, not shared state or file
+  conventions. The message system is the backbone of coordination:
+  agents signal outcomes, humans send instructions, the scheduler
+  broadcasts completions.
+
+invariants: []

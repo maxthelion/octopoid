@@ -1,0 +1,9 @@
+title: Agents
+principle: "Agents are stateless workers spawned by the scheduler"
+description: >
+  Agents are Claude AI processes spawned by the scheduler to work on
+  tasks. They are pure functions: given a task context, they produce
+  commits and stdout. They do not retain state between runs. The
+  scheduler controls when they run, how many run in parallel, and what
+  they work on. Agent roles are flow-driven: implementer, gatekeeper,
+  fixer, and background analysts.

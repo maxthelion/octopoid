@@ -1,0 +1,6 @@
+title: Project Lifecycle
+description: >
+  Projects move through states: draft → active → provisional → done.
+  A project transitions to done when all child tasks complete.
+
+invariants: []

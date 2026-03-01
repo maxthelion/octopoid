@@ -1,0 +1,6 @@
+title: Draft Lifecycle
+description: >
+  Drafts move from idea to discussion to processing to enqueued work.
+  Drafts are archived once their invariants are verified as met in code.
+
+invariants: []

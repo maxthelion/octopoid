@@ -1,0 +1,7 @@
+title: Project Completion
+description: >
+  When all child tasks in a project are done, the project transitions.
+  Changelogs are aggregated across all child tasks. The project's PR is
+  the single delivery point.
+
+invariants: []

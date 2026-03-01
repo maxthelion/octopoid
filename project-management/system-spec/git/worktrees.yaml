@@ -1,0 +1,45 @@
+title: Git Worktrees
+description: >
+  Each task gets its own git worktree. Worktrees stay on detached HEAD
+  until branch creation at push time. Existing worktrees are reused on
+  requeue — never destroyed. Failed worktrees are retained for post-mortem
+  investigation.
+
+invariants:
+  - id: worktree-preservation
+    description: >
+      When a task is requeued after an agent has worked on it, the
+      existing worktree and commits are preserved. The agent resumes
+      from existing work, not from scratch.
+    rationale: >
+      Destroying completed work wastes agent turns and creates loops
+      where agents redo work that was already done.
+    source: draft-175
+    status: aspirational
+    test: null
+
+  - id: worktree-reuse-over-recreate
+    description: >
+      A fresh worktree is only created when no previous worktree exists for
+      the task. Infrastructure failures, gatekeeper rejection, and manual
+      requeue must all attempt to reuse the existing worktree.
+    rationale: >
+      Creating a fresh worktree when one already exists destroys completed
+      work. Agents then redo work that was already committed, wasting turns
+      and resources.
+    source: draft-175
+    status: aspirational
+    test: null
+
+  - id: failed-worktree-retention
+    description: >
+      Failed task worktrees are retained for at least 24 hours after the
+      task enters the failed queue, giving humans time to investigate
+      before cleanup. Done task worktrees may be cleaned up after 1 hour.
+    rationale: >
+      Premature cleanup of failed worktrees destroys evidence needed for
+      debugging. A grace period ensures humans can inspect git state, logs,
+      and partial work before the worktree is swept.
+    source: draft-134
+    status: aspirational
+    test: null

@@ -1,0 +1,18 @@
+title: Single Source of Truth for Configuration
+description: >
+  Agent configuration exists in exactly one place. All tools, dashboards,
+  and scheduler logic read from that single source.
+
+invariants:
+  - id: single-agent-config
+    description: >
+      An agent's configuration exists in exactly one place. All tools,
+      dashboards, and scheduler logic that need agent information read
+      from that single source.
+    rationale: >
+      Agent config currently exists in multiple places (per-agent dirs,
+      agents.yaml, jobs.yaml). Duplicated config leads to contradictions
+      and makes it impossible to know which source is authoritative.
+    source: draft-184
+    status: aspirational
+    test: null

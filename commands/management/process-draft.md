@@ -84,7 +84,7 @@ For each invariant:
 4. Report the result: **met**, **partially met** (explain the gap), or **not met**
 
 **If all invariants are met:**
-- Check whether they've been added to `project-management/system-spec.yaml` with `status: enforced` and a test path
+- Check whether they've been added to `project-management/system-spec/` with `status: enforced` and a test path
 - If not, add them (or flag for the user to add in automated mode)
 - The draft can be archived
 
@@ -104,7 +104,7 @@ For each invariant:
 **Archive the draft if:**
 - All proposed work is complete (tasks done, changes merged, decisions implemented)
 - All invariants are met in the code (checked in step 4)
-- Invariants have been added to `project-management/system-spec.yaml`
+- Invariants have been added to `project-management/system-spec/`
 - No outstanding work remains to be scheduled
 - The draft served its purpose and is now historical reference
 

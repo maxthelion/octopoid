@@ -1,0 +1,7 @@
+title: Drafts View
+description: >
+  The dashboard shows draft statuses and linked work (tasks created from
+  each draft). Humans can see which drafts are waiting for processing and
+  which have already become tasks.
+
+invariants: []

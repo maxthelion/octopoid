@@ -1,0 +1,127 @@
+title: Task Resilience
+description: >
+  How the system handles task failures, intervention, and recovery.
+  Every failure goes through intervention before reaching the failed
+  queue. The fixer agent handles most failures autonomously.
+
+invariants:
+  - id: self-correcting-failure
+    description: >
+      Every task failure goes through intervention before reaching the
+      failed queue. A task only reaches failed after at least one
+      intervention attempt. Direct routing to failed without intervention
+      is a bug.
+    rationale: >
+      The fixer agent can handle many failures autonomously (retry with
+      more turns, identify missing prerequisites, fix git conflicts,
+      simplify scope). failed should mean "the system tried to
+      self-correct and couldn't", not "the first attempt didn't work".
+    source: draft-181
+    status: enforced
+    test: tests/test_requires_intervention.py::TestHandleFailOutcomeRouting::test_agent_failure_routes_to_requires_intervention
+
+  - id: fail-task-single-path
+    description: >
+      All code paths that move a task to the failed queue must go through
+      fail_task(). No code should call sdk.tasks.update(queue='failed')
+      directly except fail_task() itself.
+    rationale: >
+      fail_task() implements the intervention-first logic. Bypassing it
+      creates paths where tasks skip intervention, violating
+      self-correcting-failure.
+    source: draft-181
+    status: enforced
+    test: tests/test_requires_intervention.py::TestNoDirectFailedCalls
+
+  - id: fixer-agent-handles-failures
+    description: >
+      When a task has needs_intervention set, the scheduler spawns a fixer
+      agent. The fixer diagnoses the problem, applies a fix, and resumes
+      the task flow from where it failed. Direct human intervention is not
+      the first resort.
+    rationale: >
+      Most task failures are mundane (git conflicts, stale state, transient
+      errors) and can be resolved automatically. The fixer agent handles
+      these, reserving human attention for genuinely stuck tasks.
+    source: draft-170
+    status: aspirational
+    test: null
+
+  - id: fixer-circuit-breaker
+    description: >
+      The fixer is limited to a maximum number of attempts per task (currently
+      3). After exhausting attempts, the task moves to terminal failed and a
+      message is posted to the human inbox. The fixer never loops indefinitely.
+    rationale: >
+      Without a circuit breaker, a fixer that reports "fixed" but whose
+      resume always fails will cycle indefinitely, wasting agent resources.
+      A cap ensures stuck tasks reach human attention in bounded time.
+    source: postmortem-2026-02-28-fixer-loop
+    status: enforced
+    test: null  # needs test
+
+  - id: requires-intervention-not-terminal
+    description: >
+      The requires-intervention state is not a graveyard. Tasks in it have
+      an associated fixer agent attempt. Only if the fixer also fails does
+      the task move to failed and need human attention.
+    rationale: >
+      Without this guarantee, requires-intervention becomes a second failed
+      queue. The point is that intervention is active and time-bounded, not
+      passive accumulation.
+    source: draft-170
+    status: aspirational
+    test: null
+
+  - id: unknown-outcome-routes-to-intervention
+    description: >
+      When a task's outcome cannot be determined (inference failure, empty
+      stdout, unrecognized response), the task routes to intervention for
+      review — not automatically to failed. An unknown outcome is ambiguous,
+      not an automatic failure.
+    rationale: >
+      A task with unknown outcome may be perfectly fine (e.g. agent completed
+      work but inference failed). Routing to failed discards potentially
+      completed work. Routing to intervention preserves it for review.
+    source: draft-174
+    status: aspirational
+    test: null
+
+  - id: failure-reason-always-recorded
+    description: >
+      Every path that moves a task to failed records the reason in
+      execution_notes and appends a FAILED entry to the task log. It is
+      always possible to answer "why did this task fail?" without forensic
+      investigation.
+    rationale: >
+      Without recorded reasons, diagnosing failures requires reading
+      scheduler logs, agent stdout, and git state. A recorded reason makes
+      triage instant.
+    source: draft-164
+    status: aspirational
+    test: null
+
+  - id: failed-task-has-recovery-path
+    description: >
+      Every task in the failed queue can be moved to an actionable state
+      (e.g. incoming for retry) without bypassing the state machine. There
+      is a defined flow transition or API action that handles recovery.
+    rationale: >
+      Without a recovery path, tasks in failed require manual hacks to
+      recover. This is fragile, error-prone, and undocumented.
+    source: draft-169
+    status: aspirational
+    test: null
+
+  - id: intervention-no-queue-transition
+    description: >
+      Requesting intervention for a task never requires a queue transition.
+      The task stays in its current queue. Intervention is a flag plus a
+      message, not a state change.
+    rationale: >
+      Queue transitions for intervention get blocked by the server's state
+      machine validation. A task can need intervention from any queue.
+      Making intervention a flag avoids whack-a-mole transition additions.
+    source: draft-176
+    status: aspirational
+    test: null

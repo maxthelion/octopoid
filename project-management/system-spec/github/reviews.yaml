@@ -1,0 +1,7 @@
+title: PR Reviews
+description: >
+  The gatekeeper posts its review as a PR comment. Rejection feedback is
+  on the PR (visible to the next implementer). Approval includes a summary
+  comment before merge.
+
+invariants: []

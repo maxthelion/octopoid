@@ -1,0 +1,8 @@
+title: Projects
+principle: "Projects group related tasks under a shared branch"
+description: >
+  A project is a collection of related tasks that share a branch and
+  lifecycle. Projects have their own state machine (draft → active →
+  provisional → done), child tasks that don't create individual PRs,
+  and aggregate changelogs. Projects are the mechanism for coordinating
+  multi-task features.

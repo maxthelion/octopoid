@@ -1,0 +1,31 @@
+title: Background Agents
+description: >
+  Background agents (analysts) run on a schedule without backpressure.
+  They observe the system and suggest improvements via drafts, but do not
+  block task processing. Manual triggers bypass the interval guard for
+  development and debugging.
+
+invariants:
+  - id: manual-trigger-bypasses-guard
+    description: >
+      A manual trigger command can force a background agent to run
+      immediately, regardless of its interval timer or pending work.
+    rationale: >
+      During development and debugging, waiting for the next scheduled
+      interval is too slow. A manual trigger enables rapid iteration.
+    source: draft-183
+    status: aspirational
+    test: null
+
+  - id: analyst-uses-quantitative-tools
+    description: >
+      The codebase analyst runs code quality measurement tools (pytest-cov,
+      vulture, wily) before proposing drafts. Proposals include quantitative
+      data supporting the recommendation.
+    rationale: >
+      Without quantitative data, analyst recommendations are subjective
+      and hard to prioritise. Tools provide objective signals that make
+      the case for each recommendation.
+    source: draft-178
+    status: aspirational
+    test: null

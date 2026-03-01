@@ -1,0 +1,8 @@
+title: Agents as Pure Functions
+description: >
+  Agents have no persistent state between runs. Given the same task
+  context, they produce the same outputs. The scheduler owns all mechanics
+  (spawning, monitoring, result processing). Agents are workers, not
+  coordinators.
+
+invariants: []

@@ -1,0 +1,8 @@
+title: Observability
+principle: "The system surfaces problems proactively"
+description: >
+  The system logs all activity to a single unified log file. Background
+  analysts measure health and post scores with justifications. Agent runs
+  are visible in the dashboard. Queue health is monitored for stuck tasks.
+  The goal is that any problem can be diagnosed from logs and metrics
+  without forensic investigation.

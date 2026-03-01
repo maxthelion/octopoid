@@ -1,0 +1,7 @@
+title: Orchestrator Scoping
+description: >
+  Each orchestrator registers with a scope. Tasks, queues, and messages
+  are isolated by scope. Orchestrators cannot access data outside their
+  scope.
+
+invariants: []

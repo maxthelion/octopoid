@@ -1,0 +1,8 @@
+title: Server
+principle: "The server is the single source of truth"
+description: >
+  The Octopoid server (Cloudflare Workers + D1) owns all persistent
+  state: tasks, queues, projects, messages, flows, orchestrator
+  registrations. No component caches state locally. If the server says
+  a task is in a queue, it is in that queue. All mutations go through
+  the server API.

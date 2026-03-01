@@ -1,0 +1,19 @@
+title: Task Flows
+description: >
+  Declarative state machine transitions that govern how tasks move
+  through the system. Flows define the steps run during each transition,
+  the conditions that trigger them, and the agents that execute them.
+
+invariants:
+  - id: flow-sync-preserves-steps
+    description: >
+      When the scheduler syncs flow definitions to the server, it includes
+      the full transition data (runs, conditions, checks, agent) — not just
+      from/to states. Steps like create_pr are never silently dropped.
+    rationale: >
+      Stripped transitions cause steps to be skipped silently, leading to
+      ghost completions (tasks in done with no PR), missing PR numbers,
+      and unmerged work. This was the root cause of a multi-hour outage.
+    source: postmortem-2026-02-28-ghost-completion
+    status: enforced
+    test: null  # needs test

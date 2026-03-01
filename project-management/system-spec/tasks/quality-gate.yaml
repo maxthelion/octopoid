@@ -1,0 +1,7 @@
+title: Quality Gate
+description: >
+  The gatekeeper agent reviews submitted work before it transitions to done.
+  CI must pass before gatekeeper review. Rejection includes actionable
+  feedback posted to the PR.
+
+invariants: []

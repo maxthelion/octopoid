@@ -1,0 +1,17 @@
+title: Agent Visibility
+description: >
+  Background agent runs are visible in the dashboard. Every run produces
+  a log entry showing what was processed and the outcome.
+
+invariants:
+  - id: background-agent-run-visibility
+    description: >
+      Every background agent run produces a log entry visible in the
+      dashboard agents tab, including what was processed and the outcome.
+    rationale: >
+      Background agents are currently opaque — you cannot tell from the
+      dashboard what they did or whether they are silently failing.
+      Visibility enables monitoring and debugging.
+    source: draft-183
+    status: aspirational
+    test: null

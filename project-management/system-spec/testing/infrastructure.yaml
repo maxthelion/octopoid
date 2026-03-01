@@ -1,0 +1,7 @@
+title: Test Infrastructure
+description: >
+  Integration tests run against a local server on port 9787. The
+  scoped_sdk fixture provides test isolation. Each test gets its own
+  scope. The test server is started via bin/start-test-server.sh.
+
+invariants: []

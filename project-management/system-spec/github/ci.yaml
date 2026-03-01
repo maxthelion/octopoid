@@ -1,0 +1,31 @@
+title: Continuous Integration
+description: >
+  CI runs before gatekeeper review. CI failures are handled
+  programmatically — no LLM involvement needed to process a binary
+  pass/fail signal.
+
+invariants:
+  - id: ci-before-gatekeeper
+    description: >
+      The gatekeeper never reviews a task whose CI has not passed. CI is a
+      prerequisite for gatekeeper review, not a parallel or post-review check.
+    rationale: >
+      Running CI after gatekeeper approval wastes gatekeeper turns on code
+      that may not even build. CI failures should bounce back to the
+      implementer directly, without LLM involvement.
+    source: draft-185
+    status: aspirational
+    test: null
+
+  - id: ci-failure-is-programmatic
+    description: >
+      When CI fails, the task is returned to the implementer without LLM
+      gatekeeper involvement. The failure context (which tests failed,
+      output) is included in the requeued task.
+    rationale: >
+      CI failures are mechanical — the code doesn't compile or tests fail.
+      The implementer can fix these without gatekeeper review. Involving
+      the gatekeeper wastes an expensive LLM call on a binary signal.
+    source: draft-185
+    status: aspirational
+    test: null

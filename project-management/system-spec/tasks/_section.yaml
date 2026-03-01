@@ -1,0 +1,7 @@
+title: Tasks
+principle: "Tasks are the unit of work"
+description: >
+  A task is an atomic piece of work with a clear lifecycle. Tasks flow
+  through declarative state machines (flows), are worked on by agents,
+  reviewed by gatekeepers, and either completed or surfaced for human
+  attention. Everything the system does is organised around tasks.

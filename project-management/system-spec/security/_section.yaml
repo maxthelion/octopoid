@@ -1,0 +1,7 @@
+title: Security
+principle: "Secrets are never committed, access is scoped"
+description: >
+  API keys are stored in gitignored files (.octopoid/.api_key) or
+  environment variables, never in tracked files. Orchestrators register
+  with a scope that isolates their data from other orchestrators. Key
+  rotation is possible without code changes.

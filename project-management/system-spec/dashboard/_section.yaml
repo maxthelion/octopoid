@@ -1,0 +1,8 @@
+title: Dashboard
+principle: "The dashboard shows work moving through the system"
+description: >
+  The dashboard is the human window into the orchestrator. It shows
+  tasks in every queue, agent activity, background analyst runs, draft
+  statuses, and problems requiring attention. Humans interact with the
+  system primarily through the dashboard: approving tasks, sending
+  messages, and triggering actions.

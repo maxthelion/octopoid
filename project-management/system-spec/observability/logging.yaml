@@ -1,0 +1,19 @@
+title: Logging
+description: >
+  All system activity is written to a single unified log file. Structured
+  entries allow grep-based investigation without knowing which component
+  logged what.
+
+invariants:
+  - id: unified-log-file
+    description: >
+      All scheduler, agent, and hook activity is written to a single log
+      file at .octopoid/runtime/logs/octopoid.log. Diagnosing any issue
+      requires checking only one file.
+    rationale: >
+      Scattered log files make diagnosis slow. A single log file with
+      structured entries enables grep-based investigation without knowing
+      which component logged what where.
+    source: draft-168
+    status: aspirational
+    test: null

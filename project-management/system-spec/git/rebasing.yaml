@@ -1,0 +1,8 @@
+title: Git Rebasing
+description: >
+  Rebasing happens at specific points in the task lifecycle: just before
+  merge (rebase_on_base, auto-injected terminal step) and before child
+  task submission. Rebase conflicts abort cleanly without leaving dirty
+  state.
+
+invariants: []

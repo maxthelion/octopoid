@@ -1,0 +1,7 @@
+title: Configuration
+principle: "Configuration is declarative and lives in .octopoid/"
+description: >
+  All system configuration — agents, flows, jobs, server URL — lives
+  in .octopoid/config.yaml as a single source of truth. No configuration
+  is duplicated between files. Flows are defined as YAML, not code.
+  Agent definitions are authoritative in one place.

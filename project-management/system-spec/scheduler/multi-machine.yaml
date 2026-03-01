@@ -1,0 +1,7 @@
+title: Multi-Machine Scheduling
+description: >
+  Multiple schedulers can run simultaneously on different machines.
+  Scope-based isolation ensures they don't interfere. The server's
+  atomic claim prevents duplicate task assignment.
+
+invariants: []

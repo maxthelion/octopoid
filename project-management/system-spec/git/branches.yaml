@@ -1,0 +1,7 @@
+title: Git Branches
+description: >
+  Task branches are created at push time, not claim time. Worktrees stay
+  on detached HEAD until a branch is needed. Project branches are shared
+  across child tasks. Base branch is configurable per project.
+
+invariants: []

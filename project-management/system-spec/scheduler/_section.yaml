@@ -1,0 +1,8 @@
+title: Scheduler
+principle: "The scheduler is the only component that spawns agents"
+description: >
+  The scheduler is a long-running Python process that drives the entire
+  orchestration loop. It claims tasks from the server, spawns agents in
+  worktrees, monitors completion, and runs periodic background jobs.
+  Nothing else spawns agents. The scheduler's tick loop is the heartbeat
+  of the system.

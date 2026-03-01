@@ -1,0 +1,7 @@
+title: Complexity Management
+description: >
+  The system prefers simple over clever. Three similar lines of code is
+  better than a premature abstraction. Complexity is only added when the
+  current task requires it.
+
+invariants: []
