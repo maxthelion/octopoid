@@ -74,9 +74,81 @@ The key difference: the current tree is a **reference manual** (look up "schedul
 
 This matters because an agent reading the spec should be able to understand the SYSTEM, not just look up rules about a component. "Tasks are the unit of work" tells you something fundamental. "tasks/" as a directory name does not.
 
+## The missing dimension: three top-level categories
+
+The current tree is flat — 15 sections all at the same level. But the original vision had **categories** above the sections: "architecture, testing, functionality." These are fundamentally different kinds of knowledge:
+
+**Functionality** — what the system is designed to do. Tasks flow through queues. Drafts are the starting point for change. The dashboard shows work moving. Background agents observe and suggest. The scheduler spawns agents. These are the "what" — they inform integration tests, QA, and documentation.
+
+**Architecture** — how the code is built to meet the functional need. What components exist (scheduler, server, SDK, dashboard). What tech is used (Cloudflare Workers, Python, Claude CLI). Which services it interacts with (GitHub, Anthropic API). Which patterns we employ (pure functions, actor model, declarative flows, complexity reduction). These are the "how" — they inform code review, refactoring, and onboarding.
+
+**Testing** — meta-level: how we verify the system matches its description. Outside-in philosophy. Spec-to-test mapping. Coverage tracking. This is "how we know" — it's about the verification process itself.
+
+This gives us a three-tier hierarchy:
+
+```
+Functionality (what the system does)
+  ├── Tasks are the unit of work
+  │   ├── They flow through declarative flows
+  │   ├── Gatekeeper agents review before completion
+  │   ├── Problems are surfaced quickly
+  │   └── Agentic intervention preferred over manual fixing
+  ├── Drafts are the starting point for change
+  │   ├── They can be processed into tasks
+  │   ├── They have statuses and authors (including agents)
+  │   └── They carry invariants
+  ├── Background agents observe without backpressure
+  │   ├── They examine facets and suggest improvements
+  │   └── They can queue work (with approval)
+  ├── The dashboard shows work moving through the system
+  │   ├── Problems, draft statuses, agent activity
+  │   └── Lightweight user actions via messages
+  ├── The scheduler drives all activity
+  │   ├── Ticks at regular frequency
+  │   ├── Spawns agents when conditions are met
+  │   └── Programmatic checks preferred over LLM
+  └── Skills, scripts, and SDK
+      └── ...
+
+Architecture (how it's built)
+  ├── Components
+  │   ├── Server (Cloudflare Workers + D1, source of truth)
+  │   ├── Scheduler (Python, single supervisor)
+  │   ├── Agents (Claude CLI processes, stateless)
+  │   ├── Dashboard (TUI, real-time monitoring)
+  │   └── SDK (Python client for server API)
+  ├── External services
+  │   ├── GitHub (PRs, CI, issue tracking)
+  │   └── Anthropic (Claude API via CLI)
+  ├── Patterns
+  │   ├── Agents as pure functions
+  │   ├── Actor model (message-based communication)
+  │   ├── Declarative flows (YAML state machines)
+  │   └── Complexity reduction (no premature abstraction)
+  ├── Git strategy
+  │   ├── Worktrees for isolation
+  │   ├── Late rebasing (just before merge)
+  │   └── Conflict reduction mechanisms
+  └── Security
+      ├── Secrets never committed
+      └── Scope-based isolation
+
+Testing (how we verify it)
+  ├── Outside-in philosophy (real server preferred)
+  ├── Spec-to-test mapping (invariants drive test backlog)
+  ├── Infrastructure (test server, scoped_sdk)
+  └── Coverage tracking (enforced vs aspirational)
+```
+
+The current spec tree mixes these categories. `tasks/resilience` is functional (what the system does about failures). `architecture/pure-functions` is architectural (a code pattern). `testing/philosophy` is meta. They're all at the same level — 15 peer sections. The proposed hierarchy puts a category above them, which:
+
+1. **Tells you what kind of knowledge you're looking at.** A functional invariant ("tasks flow through flows") informs QA differently than an architectural invariant ("agents are pure functions") informs code review.
+2. **Helps prioritise.** Functional invariants are the ones you test. Architectural invariants are the ones you audit. Testing invariants are the ones you maintain.
+3. **Maps to different verification mechanisms.** Functional → integration tests. Architectural → analyst auditing (draft 200). Testing → meta-checks.
+
 ## Gap analysis: current vs proposed
 
-The current tree has 15 sections. The proposed vision mentions ~8 top-level categories with a different emphasis:
+The current tree has 15 sections. The proposed vision has three top-level categories with ~8 functional sections, ~5 architectural sections, and ~3 testing sections:
 
 | Proposed category | Current coverage | Gap |
 |---|---|---|
@@ -105,13 +177,14 @@ The current tree has 15 sections. The proposed vision mentions ~8 top-level cate
 
 ## Open Questions
 
-- Is this a restructure of the existing tree, or a parallel "narrative view" of the same invariants?
-- Should the top-level identity statements BE the section principles (the `_section.yaml` descriptions), just rewritten to be more assertive? That might be the minimal change.
-- Is the skills/SDK section about invariants or about documentation? What's the invariant — "skills exist" or "skills do X correctly"?
-- Do git/github/communication/security/observability keep their own sections or fold into the narratives they support?
+- Does the three-category split (functionality/architecture/testing) need to be reflected in the directory structure, or can it be metadata on each section (`category: functionality`)?
+- Some invariants straddle categories. "Rebase before merge" is functional (when it happens in the lifecycle) AND architectural (git strategy). Where does it live?
+- Is the skills/SDK section functional ("you can pause the system") or architectural ("the SDK wraps the REST API")? Probably both — which category owns it?
+- Should the spec viewer show the three-tier hierarchy, or flatten to the current two-tier (section → leaf) with a category filter?
+- Do git/github stay as architectural sections, or do parts fold into the functional "tasks" narrative (since git is HOW tasks deliver work)?
 
 ## Possible Next Steps
 
-- Option A (minimal): Rewrite `_section.yaml` principles as identity statements. Restructure a few sections (promote background agents, add skills/SDK, merge git into tasks). Keep the YAML structure.
-- Option B (moderate): Restructure the tree to match the proposed categories. Move invariants between sections. This is a bigger change but produces the intended narrative.
-- Option C (parallel view): Keep the current component tree as-is. Add a second "narrative" view in the spec viewer that groups invariants by identity statements. Same data, different presentation.
+- Option A (metadata): Add a `category: functionality|architecture|testing` field to each `_section.yaml`. Rewrite principles as identity statements. Update the viewer to group by category. Minimal file restructuring.
+- Option B (restructure): Create three top-level directories (`functionality/`, `architecture/`, `testing/`). Move existing sections underneath. Rewrite principles. Update build.py and viewer.
+- Option C (parallel view): Keep the current structure. Add a "narrative view" to the spec viewer that reorganises the same invariants into the three-category hierarchy. Same data, different lens.
