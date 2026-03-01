@@ -10,9 +10,7 @@ Run with a local test server on port 9787:
 
 from pathlib import Path
 
-import pytest
-
-from tests.integration.flow_helpers import create_provisional, make_task_id
+from tests.integration.flow_helpers import create_provisional
 
 
 class TestGatekeeperApproveLifecycle:
