@@ -10,6 +10,7 @@ Usage:
 
 Idempotent: running multiple times produces the same output.
 """
+import datetime
 import json
 import re
 import sys
@@ -24,16 +25,22 @@ except ImportError:
 SPEC_DIR = Path(__file__).parent
 INDEX_HTML = SPEC_DIR / "index.html"
 
-# Sections rendered in this order in the sidebar
+# Sections rendered in this order in the sidebar; any extras appear alphabetically after
 SECTION_ORDER = [
+    "architecture",
     "tasks",
-    "git",
     "scheduler",
     "agents",
-    "communication",
+    "git",
     "github",
+    "communication",
     "observability",
+    "server",
+    "security",
     "configuration",
+    "projects",
+    "dashboard",
+    "testing",
     "drafts",
 ]
 
@@ -116,7 +123,12 @@ def inject_into_html(spec: dict) -> None:
         print(f"Error: {INDEX_HTML} not found", file=sys.stderr)
         sys.exit(1)
 
-    spec_json = json.dumps(spec, separators=(",", ":"), ensure_ascii=False)
+    def _default(obj: object) -> str:
+        if isinstance(obj, (datetime.date, datetime.datetime)):
+            return obj.isoformat()
+        raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+    spec_json = json.dumps(spec, separators=(",", ":"), ensure_ascii=False, default=_default)
     data_block = (
         f"<!-- SPEC_DATA_START -->\n"
         f"<script>const SPEC_DATA = {spec_json};</script>\n"
