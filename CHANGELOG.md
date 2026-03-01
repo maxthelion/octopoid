@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Circuit breaker in `guard_claim_task` no longer fires multiple times for the same task. It now checks for an existing `circuit_breaker` message before posting a new one, skips tasks already moved to the `failed` queue, and uses separate try/except blocks for `sdk.tasks.update` and `sdk.messages.create` so failures are visible (logged at ERROR level) rather than silently swallowed.
 ### Added
 - Comprehensive test coverage for `octopoid/tasks.py` and `octopoid/steps.py`
 
