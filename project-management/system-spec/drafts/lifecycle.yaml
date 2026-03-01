@@ -1,6 +1,24 @@
 title: Draft Lifecycle
-description: >
-  Drafts move from idea to discussion to processing to enqueued work.
+description: 'Drafts move from idea to discussion to processing to enqueued work.
   Drafts are archived once their invariants are verified as met in code.
 
-invariants: []
+  '
+invariants:
+- id: draft-status-on-server
+  description: Draft status (idea, in_progress, complete, superseded) is stored
+    on the server, not in the local markdown file. The server is the source of truth
+    for draft status.
+  rationale: Local file edits can diverge from the server. A single source of truth
+    prevents status contradictions.
+  source: bootstrap
+  status: aspirational
+  test: null
+- id: draft-to-task-traceability
+  description: 'When a draft becomes a task, the draft''s linked_task_id is set
+    on the server. The chain from idea to implementation is traceable: draft → task
+    → PR → merge.'
+  rationale: Without traceability, you can't answer 'why did we do this work?' or
+    'what happened to that idea?' The link preserves the decision chain.
+  source: draft-182
+  status: aspirational
+  test: null

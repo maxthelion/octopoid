@@ -1,8 +1,26 @@
 title: Scheduler Jobs
-description: >
-  Background jobs registered with the scheduler. Jobs run at intervals,
-  are idempotent, and don't pile up (if a job is already running, the
-  next trigger is skipped). Jobs are distinct from agents — they are
-  programmatic, not LLM-driven.
+description: 'Background jobs registered with the scheduler. Jobs run at intervals,
+  are idempotent, and don''t pile up (if a job is already running, the next trigger
+  is skipped). Jobs are distinct from agents — they are programmatic, not LLM-driven.
 
-invariants: []
+  '
+invariants:
+- id: jobs-declared-in-yaml
+  description: Scheduler background jobs are declared in jobs.yaml and dispatched
+    by a generic runner. Adding a new job means adding a YAML entry and a registered
+    Python function, not modifying the scheduler's core loop.
+  rationale: Hardcoded job dispatch creates coupling between the scheduler and every
+    background task. Declarative YAML makes jobs discoverable and configurable without
+    code changes.
+  source: draft-061
+  status: enforced
+  test: null
+- id: jobs-are-idempotent
+  description: Background jobs are idempotent — running them twice produces the
+    same result. If a job is already running when the next trigger fires, the trigger
+    is skipped.
+  rationale: Jobs run at intervals and the scheduler may restart mid-job. Idempotency
+    ensures partial runs don't corrupt state, and skip-if-running prevents pile-up.
+  source: draft-061
+  status: aspirational
+  test: null

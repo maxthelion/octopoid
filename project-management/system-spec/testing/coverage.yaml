@@ -1,7 +1,17 @@
 title: Test Coverage
-description: >
-  Each invariant in the system spec should have a corresponding test.
-  Invariants with test: null are gaps to be filled. The analyst tracks
-  coverage as a health metric.
+description: 'Each invariant in the system spec should have a corresponding test.
+  Invariants with test: null are gaps to be filled. The analyst tracks coverage
+  as a health metric.
 
-invariants: []
+  '
+invariants:
+- id: invariants-drive-test-backlog
+  description: 'Each invariant in the system spec should have a corresponding test.
+    Invariants with test: null are gaps. The coverage report (aspirational vs enforced)
+    is the test-writing backlog.'
+  rationale: Without linking invariants to tests, there's no systematic way to know
+    what's verified and what's assumed. The spec-to-test mapping makes coverage
+    visible.
+  source: draft-204
+  status: aspirational
+  test: null

@@ -1,7 +1,23 @@
 title: Test Infrastructure
-description: >
-  Integration tests run against a local server on port 9787. The
-  scoped_sdk fixture provides test isolation. Each test gets its own
-  scope. The test server is started via bin/start-test-server.sh.
+description: 'Integration tests run against a local server on port 9787. The scoped_sdk
+  fixture provides test isolation. Each test gets its own scope. The test server
+  is started via bin/start-test-server.sh.
 
-invariants: []
+  '
+invariants:
+- id: test-server-on-dedicated-port
+  description: Integration tests run against a local server on port 9787, separate
+    from the dev server (8787). Tests never hit production.
+  rationale: Hitting production from tests creates real state and wastes API quota.
+    A dedicated test port ensures isolation.
+  source: draft-028
+  status: enforced
+  test: null
+- id: scoped-sdk-for-isolation
+  description: Each test gets its own scope via the scoped_sdk fixture. Tests do
+    not share state. Parallel test runs cannot interfere with each other.
+  rationale: Shared test state causes flaky tests and ordering dependencies. Scoped
+    isolation makes each test independent.
+  source: draft-028
+  status: enforced
+  test: null

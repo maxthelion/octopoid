@@ -1,7 +1,16 @@
 title: API Key Management
-description: >
-  API keys are stored in .octopoid/.api_key (gitignored), not in tracked
-  files. The env var OCTOPOID_API_KEY overrides the file. Key rotation
-  is possible without code changes.
+description: 'API keys are stored in .octopoid/.api_key (gitignored), not in tracked
+  files. The env var OCTOPOID_API_KEY overrides the file. Key rotation is possible
+  without code changes.
 
-invariants: []
+  '
+invariants:
+- id: keys-never-in-tracked-files
+  description: API keys and secrets are stored in .octopoid/.api_key (gitignored)
+    or environment variables, never in tracked files. .octopoid/config.yaml is tracked
+    — no secrets there.
+  rationale: A committed secret is a leaked secret. The gitignored file plus env
+    var override provides secure storage with easy rotation.
+  source: bootstrap
+  status: enforced
+  test: null

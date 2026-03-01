@@ -1,3 +1,11 @@
+---
+**Processed:** 2026-03-01
+**Mode:** human-guided
+**Actions taken:**
+- Enqueued as task `2b09a4db` (P2, implement): "Add integration test for run_due_jobs dispatch cycle"
+**Outstanding items:** none — draft fully captured in task
+---
+
 # Add integration tests for jobs.py: run_due_jobs dispatch cycle with real server
 
 **Author:** testing-analyst

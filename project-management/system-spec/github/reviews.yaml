@@ -1,7 +1,25 @@
 title: PR Reviews
-description: >
-  The gatekeeper posts its review as a PR comment. Rejection feedback is
-  on the PR (visible to the next implementer). Approval includes a summary
-  comment before merge.
+description: 'The gatekeeper posts its review as a PR comment. Rejection feedback
+  is on the PR (visible to the next implementer). Approval includes a summary comment
+  before merge.
 
-invariants: []
+  '
+invariants:
+- id: rejection-feedback-on-pr
+  description: When rejecting a task, the gatekeeper posts rejection feedback as
+    a comment on the PR. The feedback is visible to the next implementer who picks
+    up the task.
+  rationale: Feedback buried in task bodies or server messages is invisible to the
+    agent working in the worktree. PR comments are visible alongside the code diff.
+  source: bootstrap
+  status: aspirational
+  test: null
+- id: approval-comment-before-merge
+  description: When approving a task, a review summary comment is posted on the
+    PR before merging. This creates an audit trail of what was reviewed and why
+    it was approved.
+  rationale: Without an approval comment, merged PRs have no record of what the
+    gatekeeper checked. The comment is the audit trail.
+  source: bootstrap
+  status: aspirational
+  test: null

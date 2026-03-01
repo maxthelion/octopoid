@@ -1,7 +1,23 @@
 title: Quality Gate
-description: >
-  The gatekeeper agent reviews submitted work before it transitions to done.
-  CI must pass before gatekeeper review. Rejection includes actionable
+description: 'The gatekeeper agent reviews submitted work before it transitions
+  to done. CI must pass before gatekeeper review. Rejection includes actionable
   feedback posted to the PR.
 
-invariants: []
+  '
+invariants:
+- id: gatekeeper-reviews-before-done
+  description: No task reaches done without passing through gatekeeper review. The
+    gatekeeper is a mandatory quality gate in the flow from submitted to done.
+  rationale: Without a quality gate, agent work lands on main unchecked. The gatekeeper
+    catches bugs, style issues, and scope violations before merge.
+  source: draft-007
+  status: aspirational
+  test: null
+- id: ci-before-gatekeeper
+  description: CI must pass before the gatekeeper reviews. CI failure bounces the
+    task back to the implementer without wasting a gatekeeper turn.
+  rationale: Running CI after gatekeeper approval wastes expensive LLM calls on
+    code that may not even build.
+  source: draft-185
+  status: aspirational
+  test: null

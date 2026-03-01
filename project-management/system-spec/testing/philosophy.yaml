@@ -1,8 +1,17 @@
 title: Testing Philosophy
-description: >
-  Outside-in: prefer end-to-end tests with a real local server over
-  mocked unit tests. Integration tests use scoped_sdk for isolation.
-  Mocking is reserved for genuine edge cases that can't be triggered
-  end-to-end.
+description: 'Outside-in: prefer end-to-end tests with a real local server over
+  mocked unit tests. Integration tests use scoped_sdk for isolation. Mocking is
+  reserved for genuine edge cases that can''t be triggered end-to-end.
 
-invariants: []
+  '
+invariants:
+- id: outside-in-preferred
+  description: 'End-to-end tests with a real local server are preferred over mocked
+    unit tests. The testing pyramid prioritises: (1) end-to-end, (2) integration,
+    (3) unit. Mocking is reserved for genuine edge cases.'
+  rationale: Mocked tests hide real bugs — server schema changes, API validation
+    changes, and lifecycle issues are invisible to mocked tests. Real server tests
+    catch what mocks miss.
+  source: draft-028
+  status: aspirational
+  test: null

@@ -13,20 +13,19 @@ Extract:
 - **Title** — a human-readable title (e.g. "Agent Progress Tracking")
 - **Idea** — the user's description, however rough
 
-### 2. Check for duplicates
+### 2. Check for related drafts
 
-Fetch existing drafts via the SDK:
+Use qmd MCP tools to search for existing drafts that cover similar ground. Run both a keyword search and a semantic search:
 
-```python
-from octopoid.queue_utils import get_sdk
-sdk = get_sdk()
-existing = sdk.drafts.list()
-```
+- `mcp__qmd__search` with key phrases from the idea, `collection: "drafts"`, `limit: 5`
+- `mcp__qmd__vector_search` with the idea description, `collection: "drafts"`, `limit: 5`
 
-Scan titles for ideas that overlap with this one. If a duplicate or near-duplicate exists:
-- Tell the user which draft already covers this idea
+Review the top results. If any are clearly duplicates or closely related:
+- Tell the user which draft(s) already cover this idea (include draft number and title)
 - Ask whether to: update the existing draft with the new details, or create a new one anyway
 - Do **not** create a file until the user confirms
+
+If no strong matches, proceed.
 
 ### 3. Register draft via SDK
 
@@ -103,6 +102,16 @@ After writing the file, update the draft record with the file path:
 sdk._request("PATCH", f"/api/v1/drafts/{draft_number}", json={"file_path": file_path})
 ```
 
-### 6. Confirm
+### 6. Update qmd index
+
+Re-index and re-embed so the new draft is searchable immediately:
+
+```bash
+qmd update && qmd embed
+```
+
+This takes ~2 seconds for a single new file.
+
+### 7. Confirm
 
 Tell the user the file was created (include the path and assigned number) and suggest committing it.

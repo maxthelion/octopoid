@@ -1,8 +1,26 @@
 title: Git Rebasing
-description: >
-  Rebasing happens at specific points in the task lifecycle: just before
-  merge (rebase_on_base, auto-injected terminal step) and before child
-  task submission. Rebase conflicts abort cleanly without leaving dirty
-  state.
+description: 'Rebasing happens at specific points in the task lifecycle: just before
+  merge (rebase_on_base, auto-injected terminal step) and before child task submission.
+  Rebase conflicts abort cleanly without leaving dirty state.
 
-invariants: []
+  '
+invariants:
+- id: rebase-before-merge
+  description: Tasks are rebased onto the base branch immediately before merge (via
+    the rebase_on_base terminal step, auto-injected by flow.py). Rebasing happens
+    late, not at claim time.
+  rationale: Early rebasing creates unnecessary conflicts as other tasks merge between
+    claim and completion. Late rebasing minimises the conflict window to the moment
+    before merge.
+  source: bootstrap
+  status: enforced
+  test: null
+- id: rebase-failure-aborts-cleanly
+  description: When a rebase fails (conflicts that can't be auto-resolved), the
+    step raises an error and the task routes to intervention. The rebase does not
+    leave dirty state in the worktree.
+  rationale: A half-applied rebase with conflict markers left in files causes the
+    next agent to see broken code. Clean abort preserves the pre-rebase state.
+  source: bootstrap
+  status: aspirational
+  test: null

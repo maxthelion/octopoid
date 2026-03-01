@@ -1,7 +1,16 @@
 title: Project Completion
-description: >
-  When all child tasks in a project are done, the project transitions.
-  Changelogs are aggregated across all child tasks. The project's PR is
-  the single delivery point.
+description: 'When all child tasks in a project are done, the project transitions.
+  Changelogs are aggregated across all child tasks. The project''s PR is the single
+  delivery point.
 
-invariants: []
+  '
+invariants:
+- id: project-completion-checks-children
+  description: The check_project_completion job verifies all child tasks are done
+    before transitioning the project. The project PR aggregates changelog entries
+    from all children.
+  rationale: A project marked done while children are still in progress creates
+    an inconsistent state. The completion check ensures all work is landed.
+  source: draft-046
+  status: aspirational
+  test: null

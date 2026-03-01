@@ -1,7 +1,16 @@
 title: Drafts View
-description: >
-  The dashboard shows draft statuses and linked work (tasks created from
-  each draft). Humans can see which drafts are waiting for processing and
-  which have already become tasks.
+description: 'The dashboard shows draft statuses and linked work (tasks created
+  from each draft). Humans can see which drafts are waiting for processing and which
+  have already become tasks.
 
-invariants: []
+  '
+invariants:
+- id: drafts-show-linked-work
+  description: The dashboard drafts view shows each draft's status and any linked
+    work (tasks created from the draft, projects it belongs to). Humans can see
+    which drafts are pending, which have become tasks, and which are archived.
+  rationale: Drafts are the starting point for all work. If you can't see whether
+    a draft has been actioned, ideas get lost or duplicated.
+  source: bootstrap
+  status: aspirational
+  test: null

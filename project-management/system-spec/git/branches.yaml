@@ -1,7 +1,24 @@
 title: Git Branches
-description: >
-  Task branches are created at push time, not claim time. Worktrees stay
-  on detached HEAD until a branch is needed. Project branches are shared
-  across child tasks. Base branch is configurable per project.
+description: 'Task branches are created at push time, not claim time. Worktrees
+  stay on detached HEAD until a branch is needed. Project branches are shared across
+  child tasks. Base branch is configurable per project.
 
-invariants: []
+  '
+invariants:
+- id: branch-created-at-push
+  description: Task branches are created at push time (in the push_branch flow step),
+    not at claim time. Worktrees stay on detached HEAD until a branch is needed.
+  rationale: Creating branches at claim time causes git to refuse checkout in other
+    worktrees (branch already checked out). Detached HEAD avoids this and defers
+    naming until the work is ready to push.
+  source: draft-022
+  status: aspirational
+  test: null
+- id: branch-never-deleted-on-merge
+  description: When merging a PR, the branch is never deleted. We may need to go
+    back and check the branch later for forensics or recovery.
+  rationale: Deleted branches destroy the ability to investigate what was merged
+    and when. Branches are cheap; forensic capability is not.
+  source: bootstrap
+  status: aspirational
+  test: null

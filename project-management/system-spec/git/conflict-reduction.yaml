@@ -1,8 +1,24 @@
 title: Conflict Reduction
-description: >
-  Strategies to minimise merge conflicts: small atomic tasks, late rebasing
-  (just before merge), no long-lived feature branches (except projects),
-  CHANGELOG via changes.md instead of direct edits, agents avoiding shared
-  files unnecessarily.
+description: 'Strategies to minimise merge conflicts: small atomic tasks, late rebasing
+  (just before merge), no long-lived feature branches (except projects), CHANGELOG
+  via changes.md instead of direct edits, agents avoiding shared files unnecessarily.
 
-invariants: []
+  '
+invariants:
+- id: changelog-via-changes-md
+  description: Agents write changelog entries to a changes.md file in the task runtime
+    directory, not directly to CHANGELOG.md. The update_changelog flow step reads
+    changes.md after merge and prepends it to CHANGELOG.md on main.
+  rationale: Direct CHANGELOG.md edits by parallel agents cause rebase conflicts
+    on every task. Writing to a per-task file eliminates the contention.
+  source: bootstrap
+  status: enforced
+  test: null
+- id: small-atomic-tasks
+  description: Tasks are scoped to be small and atomic — touching few files, completing
+    quickly. Small tasks reduce the window for conflicts and make rebasing trivial.
+  rationale: Large tasks that touch many files conflict with everything. Small tasks
+    are independently mergeable and reduce rebase failures.
+  source: bootstrap
+  status: aspirational
+  test: null

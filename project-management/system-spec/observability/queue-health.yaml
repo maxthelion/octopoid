@@ -1,7 +1,16 @@
 title: Queue Health
-description: >
-  The scheduler monitors queue health: detecting stuck tasks, tasks with
-  expired leases, and tasks that have been in the same state for too long.
+description: 'The scheduler monitors queue health: detecting stuck tasks, tasks
+  with expired leases, and tasks that have been in the same state for too long.
   Health checks are throttled to avoid excessive API calls.
 
-invariants: []
+  '
+invariants:
+- id: stuck-task-detection
+  description: The scheduler detects tasks that have been in the same state for
+    too long (e.g. claimed with expired lease, submitted but never reviewed) and
+    takes corrective action or flags them for human attention.
+  rationale: Without stuck detection, tasks can silently rot in a queue forever.
+    The system must actively monitor for stalled work.
+  source: bootstrap
+  status: aspirational
+  test: null

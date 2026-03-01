@@ -144,7 +144,7 @@ def inject_into_html(spec: dict) -> None:
         )
         sys.exit(1)
 
-    new_html = re.sub(pattern, data_block, html, flags=re.DOTALL)
+    new_html = re.sub(pattern, lambda _: data_block, html, flags=re.DOTALL)
     INDEX_HTML.write_text(new_html, encoding="utf-8")
 
 

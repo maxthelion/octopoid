@@ -1,7 +1,16 @@
 title: User Actions
-description: >
-  Humans interact with the system through lightweight actions: approving
-  tasks, sending messages to tasks or agents, and triggering manual runs.
-  The dashboard is the primary interface for these actions.
+description: 'Humans interact with the system through lightweight actions: approving
+  tasks, sending messages to tasks or agents, and triggering manual runs. The dashboard
+  is the primary interface for these actions.
 
-invariants: []
+  '
+invariants:
+- id: human-actions-via-dashboard
+  description: 'Humans interact with the system through the dashboard: approving
+    tasks, sending messages, triggering manual agent runs. The dashboard is the
+    primary interface for human intervention.'
+  rationale: Without a central interface, human intervention requires SSH, CLI commands,
+    and manual API calls. The dashboard makes intervention accessible and auditable.
+  source: draft-050
+  status: aspirational
+  test: null

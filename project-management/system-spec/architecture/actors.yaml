@@ -1,8 +1,25 @@
 title: Actor Model
-description: >
-  Components communicate through messages, not shared state or file
-  conventions. The message system is the backbone of coordination:
-  agents signal outcomes, humans send instructions, the scheduler
-  broadcasts completions.
+description: 'Components communicate through messages, not shared state or file
+  conventions. The message system is the backbone of coordination: agents signal
+  outcomes, humans send instructions, the scheduler broadcasts completions.
 
-invariants: []
+  '
+invariants:
+- id: communication-via-messages
+  description: Components communicate through the message system, not shared files,
+    environment variables, or direct function calls across boundaries. Messages
+    are typed, timestamped, and auditable.
+  rationale: Shared state creates invisible coupling. Messages create an audit trail
+    and decouple components — the sender doesn't need to know who reads the message
+    or when.
+  source: draft-031
+  status: aspirational
+  test: null
+- id: hub-and-spoke-topology
+  description: 'Communication is strictly hub-and-spoke: orchestrator-to-agent and
+    human-to-orchestrator. Agents never communicate directly with each other.'
+  rationale: Agent-to-agent messaging creates coordination complexity and race conditions.
+    Hub-and-spoke keeps the orchestrator as the single coordinator.
+  source: draft-031
+  status: aspirational
+  test: null

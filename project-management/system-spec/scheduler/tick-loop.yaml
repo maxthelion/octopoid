@@ -1,7 +1,16 @@
 title: Scheduler Tick Loop
-description: >
-  The scheduler runs a tick loop at a regular frequency. Each tick
-  processes pending jobs, claims tasks, checks on running agents, and
-  runs housekeeping. The tick loop is the heartbeat of the system.
+description: 'The scheduler runs a tick loop at a regular frequency. Each tick processes
+  pending jobs, claims tasks, checks on running agents, and runs housekeeping. The
+  tick loop is the heartbeat of the system.
 
-invariants: []
+  '
+invariants:
+- id: tick-loop-is-heartbeat
+  description: The scheduler runs a tick loop at a regular frequency. Each tick
+    runs due jobs, claims tasks, checks running agents, and sends a heartbeat to
+    the server. The tick loop is the single entry point for all scheduler activity.
+  rationale: A single loop makes the scheduler's behaviour predictable and debuggable.
+    All activity traces back to a tick.
+  source: draft-059
+  status: aspirational
+  test: null

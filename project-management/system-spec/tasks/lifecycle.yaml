@@ -1,7 +1,26 @@
 title: Task Lifecycle
-description: >
-  Task states, transitions, and terminal conditions. A task moves through
-  queues (incoming → claimed → submitted → done or failed) via declarative
-  flow transitions.
+description: 'Task states, transitions, and terminal conditions. A task moves through
+  queues (incoming → claimed → submitted → done or failed) via declarative flow
+  transitions.
 
-invariants: []
+  '
+invariants:
+- id: task-flows-through-queues
+  description: 'A task moves through queues via declarative flow transitions: incoming
+    → claimed → submitted → done (or failed). Each transition can have conditions,
+    steps, and an assigned agent. The flow YAML is the source of truth for what
+    happens at each transition.'
+  rationale: Hardcoded transition logic is scattered and hard to audit. Declarative
+    flows make the full lifecycle visible in one file and extensible via configuration.
+  source: draft-059
+  status: aspirational
+  test: null
+- id: terminal-steps-auto-injected
+  description: Terminal steps (rebase_on_base, merge_pr) are automatically injected
+    by flow.py for any transition targeting done. Flow YAMLs don't need to include
+    them explicitly.
+  rationale: Forgetting terminal steps in a flow YAML causes tasks to reach done
+    without their PR being merged. Auto-injection makes this impossible.
+  source: bootstrap
+  status: enforced
+  test: null

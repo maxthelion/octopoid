@@ -1,7 +1,18 @@
 title: State Ownership
-description: >
-  The server owns all persistent state: task queues, task data, projects,
-  messages, flow definitions, and orchestrator registrations. No component
-  maintains a local cache that could diverge from the server.
+description: 'The server owns all persistent state: task queues, task data, projects,
+  messages, flow definitions, and orchestrator registrations. No component maintains
+  a local cache that could diverge from the server.
 
-invariants: []
+  '
+invariants:
+- id: server-owns-all-state
+  description: 'The server owns all persistent state: task queues, task data, projects,
+    messages, flow definitions, and orchestrator registrations. No component maintains
+    a local cache that could diverge. If the server says a task is in a queue, it
+    is in that queue.'
+  rationale: Local state files (state.json, result.json, claimed_task.json) create
+    a distributed state problem on a single machine. The server as single source
+    eliminates divergence.
+  source: draft-030
+  status: aspirational
+  test: null

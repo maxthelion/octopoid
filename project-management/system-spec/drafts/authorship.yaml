@@ -1,7 +1,16 @@
 title: Draft Authorship
-description: >
-  Drafts can be authored by agents (via background analysts) or humans.
-  Draft statuses are tracked. Agent-authored drafts are proposals, not
-  decisions — they require human approval to proceed.
+description: 'Drafts can be authored by agents (via background analysts) or humans.
+  Draft statuses are tracked. Agent-authored drafts are proposals, not decisions
+  — they require human approval to proceed.
 
-invariants: []
+  '
+invariants:
+- id: agent-drafts-are-proposals
+  description: Drafts authored by agents (e.g. background analysts) are proposals,
+    not decisions. They require human review before becoming tasks. Agent-authored
+    drafts are clearly labelled with their source agent.
+  rationale: Agents can identify issues but shouldn't unilaterally decide what work
+    to do. Human review ensures agent proposals are relevant and correctly scoped.
+  source: draft-081
+  status: aspirational
+  test: null

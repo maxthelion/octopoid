@@ -1,8 +1,28 @@
 title: Agents as Pure Functions
-description: >
-  Agents have no persistent state between runs. Given the same task
-  context, they produce the same outputs. The scheduler owns all mechanics
-  (spawning, monitoring, result processing). Agents are workers, not
-  coordinators.
+description: 'Agents have no persistent state between runs. Given the same task
+  context, they produce the same outputs. The scheduler owns all mechanics (spawning,
+  monitoring, result processing). Agents are workers, not coordinators.
 
-invariants: []
+  '
+invariants:
+- id: agents-never-call-server
+  description: Agents do not call the server API, push branches, create PRs, or
+    transition task state. Their only output is commits in the worktree and stdout.
+    The scheduler handles all mechanics after the agent exits.
+  rationale: If agents drive their own lifecycle, any mid-flight failure leaves
+    orphaned state (pushed branch but no PR, API call but no local record). Pure
+    functions with filesystem-only output let the scheduler be the single point
+    of control.
+  source: draft-031
+  status: aspirational
+  test: null
+- id: agents-stateless-between-runs
+  description: Agents have no persistent state between invocations. They do not
+    read from previous runs, maintain caches, or depend on anything outside the
+    task context provided at spawn time.
+  rationale: Stateful agents create hidden dependencies. A stateless agent given
+    the same task context produces the same outputs, making failures reproducible
+    and retries safe.
+  source: draft-031
+  status: aspirational
+  test: null

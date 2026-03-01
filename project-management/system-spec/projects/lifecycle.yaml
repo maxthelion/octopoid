@@ -1,6 +1,15 @@
 title: Project Lifecycle
-description: >
-  Projects move through states: draft → active → provisional → done.
+description: 'Projects move through states: draft → active → provisional → done.
   A project transitions to done when all child tasks complete.
 
-invariants: []
+  '
+invariants:
+- id: project-state-machine
+  description: 'Projects move through states: draft → active → provisional → done.
+    State transitions are validated by the server. A project can only transition
+    to done when all child tasks are complete.'
+  rationale: Without a state machine, project status is informal and can be inconsistent
+    with child task status.
+  source: draft-046
+  status: aspirational
+  test: null

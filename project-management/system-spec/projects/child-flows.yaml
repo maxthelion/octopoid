@@ -1,7 +1,25 @@
 title: Child Task Flows
-description: >
-  Child tasks within a project share the project's branch. They don't
-  create individual PRs; their work is delivered together when the project
-  completes. Child flows differ from standalone task flows.
+description: 'Child tasks within a project share the project''s branch. They don''t
+  create individual PRs; their work is delivered together when the project completes.
+  Child flows differ from standalone task flows.
 
-invariants: []
+  '
+invariants:
+- id: project-uses-child-flow
+  description: Tasks with a project_id are dispatched through the project's child_flow
+    transitions (defined in project.yaml), not the default flow. Project child tasks
+    commit to the shared branch without creating individual PRs.
+  rationale: Project tasks share a branch and lifecycle. Using the default flow
+    would create individual PRs per task, defeating the purpose of project-level
+    aggregation.
+  source: draft-046
+  status: aspirational
+  test: null
+- id: project-tasks-inherit-branch
+  description: When create_task(project_id=X) is called without an explicit branch,
+    the task automatically inherits the project's branch.
+  rationale: Requiring explicit branch specification for every child task is error-prone.
+    Inheritance from the project ensures consistency.
+  source: draft-046
+  status: aspirational
+  test: null

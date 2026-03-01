@@ -1,7 +1,33 @@
 title: Core Agent Roles
-description: >
-  The three core agent roles: implementer (writes code), gatekeeper (reviews
-  PRs), and fixer (resolves failures). Roles are determined by the flow
-  transition's agent field, not by hardcoded logic.
+description: 'The three core agent roles: implementer (writes code), gatekeeper
+  (reviews PRs), and fixer (resolves failures). Roles are determined by the flow
+  transition''s agent field, not by hardcoded logic.
 
-invariants: []
+  '
+invariants:
+- id: roles-are-flow-driven
+  description: Agent roles (implementer, gatekeeper, fixer) are determined by the
+    flow transition's agent field, not by hardcoded logic in the scheduler. Adding
+    a new role means adding a flow transition, not modifying scheduler code.
+  rationale: Hardcoded role dispatch creates a coupling between the scheduler and
+    every agent type. Flow-driven roles make the system extensible via configuration.
+  source: draft-031
+  status: aspirational
+  test: null
+- id: implementer-output-is-commits
+  description: The implementer agent's output is commits on the task branch. It
+    does not create PRs, push branches, or call server APIs. Success is determined
+    by the scheduler reading the agent's stdout.
+  rationale: Keeping the implementer's scope narrow (write code, commit) makes it
+    reliable and retryable. All post-work mechanics are handled by flow steps.
+  source: draft-031
+  status: aspirational
+  test: null
+- id: gatekeeper-returns-decision
+  description: The gatekeeper agent returns an approve/reject decision with a review
+    comment. It does not merge PRs, move tasks between queues, or modify code.
+  rationale: The gatekeeper is a reviewer, not an actor. Separating the decision
+    from the action lets the orchestrator control what happens on approval or rejection.
+  source: draft-029
+  status: aspirational
+  test: null

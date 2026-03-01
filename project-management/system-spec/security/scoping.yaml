@@ -1,7 +1,14 @@
 title: Orchestrator Scoping
-description: >
-  Each orchestrator registers with a scope. Tasks, queues, and messages
-  are isolated by scope. Orchestrators cannot access data outside their
-  scope.
+description: 'Each orchestrator registers with a scope. Tasks, queues, and messages
+  are isolated by scope. Orchestrators cannot access data outside their scope.
 
-invariants: []
+  '
+invariants:
+- id: scope-isolates-data
+  description: Each orchestrator registers with a scope. All API requests are scoped.
+    Tasks, messages, and projects in one scope cannot be accessed from another scope.
+  rationale: Without scoping, a misconfigured orchestrator could read or modify
+    another orchestrator's tasks. Scope isolation prevents cross-contamination.
+  source: bootstrap
+  status: aspirational
+  test: null

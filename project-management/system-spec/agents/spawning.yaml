@@ -1,7 +1,25 @@
 title: Agent Spawning
-description: >
-  The scheduler spawns agents in isolated worktrees. Spawning is
-  conditions-based (flow conditions must be met). Maximum concurrent
-  instances are enforced per agent blueprint.
+description: 'The scheduler spawns agents in isolated worktrees. Spawning is conditions-based
+  (flow conditions must be met). Maximum concurrent instances are enforced per agent
+  blueprint.
 
-invariants: []
+  '
+invariants:
+- id: one-spawn-path
+  description: All agents are spawned through a single code path. There are no separate
+    spawn functions per agent type. Differences between agent types are expressed
+    as configuration, not code branches.
+  rationale: Multiple spawn paths (spawn_implementer, spawn_lightweight, spawn_worktree)
+    share 80% of logic and diverge in surprising ways. A single path with config-driven
+    variation eliminates this.
+  source: draft-030
+  status: aspirational
+  test: null
+- id: spawn-respects-capacity
+  description: The scheduler never spawns more agents than the configured max_concurrent
+    for a given agent blueprint. Capacity is checked before every spawn attempt.
+  rationale: Overspawning wastes resources and can cause contention for shared resources
+    (disk, API rate limits, CPU).
+  source: bootstrap
+  status: aspirational
+  test: null

@@ -1,7 +1,16 @@
 title: Multi-Tenancy
-description: >
-  Orchestrators register with a scope that isolates their data. Tasks,
-  queues, and messages in one scope are not visible to another scope.
-  Scopes enable multiple independent orchestration setups on one server.
+description: 'Orchestrators register with a scope that isolates their data. Tasks,
+  queues, and messages in one scope are not visible to another scope. Scopes enable
+  multiple independent orchestration setups on one server.
 
-invariants: []
+  '
+invariants:
+- id: orchestrator-registration-required
+  description: Orchestrators must register with the server before claiming tasks.
+    Registration establishes the scope and provides the orchestrator ID used for
+    lease tracking.
+  rationale: Without registration, the server cannot enforce scope isolation or
+    track which orchestrator holds a lease.
+  source: bootstrap
+  status: enforced
+  test: null

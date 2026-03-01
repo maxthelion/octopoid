@@ -1,7 +1,17 @@
 title: Complexity Management
-description: >
-  The system prefers simple over clever. Three similar lines of code is
-  better than a premature abstraction. Complexity is only added when the
-  current task requires it.
+description: 'The system prefers simple over clever. Three similar lines of code
+  is better than a premature abstraction. Complexity is only added when the current
+  task requires it.
 
-invariants: []
+  '
+invariants:
+- id: no-premature-abstraction
+  description: Code is not abstracted until the pattern repeats. Three similar lines
+    of code is preferred over a premature helper. Complexity is only added when
+    the current task requires it, not for hypothetical future needs.
+  rationale: Premature abstractions create indirection that makes code harder to
+    understand and change. The system grows by accretion — abstractions emerge when
+    justified by real repetition.
+  source: bootstrap
+  status: aspirational
+  test: null

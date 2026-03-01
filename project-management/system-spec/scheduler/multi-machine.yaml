@@ -1,7 +1,16 @@
 title: Multi-Machine Scheduling
-description: >
-  Multiple schedulers can run simultaneously on different machines.
-  Scope-based isolation ensures they don't interfere. The server's
-  atomic claim prevents duplicate task assignment.
+description: 'Multiple schedulers can run simultaneously on different machines.
+  Scope-based isolation ensures they don''t interfere. The server''s atomic claim
+  prevents duplicate task assignment.
 
-invariants: []
+  '
+invariants:
+- id: scope-based-isolation
+  description: Multiple schedulers can run simultaneously by registering with different
+    scopes. Tasks, queues, and messages in one scope are invisible to another. The
+    server's atomic claim prevents duplicate assignment within a scope.
+  rationale: Without scope isolation, multiple schedulers would claim each other's
+    tasks and interfere with each other's state.
+  source: bootstrap
+  status: aspirational
+  test: null

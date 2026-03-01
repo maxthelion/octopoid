@@ -1,7 +1,16 @@
 title: API Contract
-description: >
-  The server exposes a REST API. All requests are scoped and authenticated.
-  The API contract is stable: components can rely on endpoint shapes not
-  changing without a version bump.
+description: 'The server exposes a REST API. All requests are scoped and authenticated.
+  The API contract is stable: components can rely on endpoint shapes not changing
+  without a version bump.
 
-invariants: []
+  '
+invariants:
+- id: all-mutations-via-api
+  description: All state mutations go through the server's REST API. No component
+    writes directly to the database or bypasses the API. The API validates state
+    transitions before applying them.
+  rationale: Direct database writes bypass validation (state machine guards, lease
+    checks, scope isolation). The API is the enforcement layer.
+  source: draft-030
+  status: aspirational
+  test: null
