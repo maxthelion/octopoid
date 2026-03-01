@@ -1,0 +1,7 @@
+title: Test Coverage
+description: >
+  Each invariant in the system spec should have a corresponding test.
+  Invariants with test: null are gaps to be filled. The analyst tracks
+  coverage as a health metric.
+
+invariants: []

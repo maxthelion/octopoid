@@ -1,0 +1,17 @@
+# system-spec/_meta.yaml
+# Metadata for the Octopoid system invariant specification.
+
+format_version: 2
+last_updated: 2026-03-01
+description: >
+  Behavioural invariants for the Octopoid orchestrator, organised as a
+  hierarchical directory tree. Each top-level directory represents a
+  subsystem. _section.yaml files state the governing principle. Leaf
+  YAML files contain verifiable invariants.
+
+  Invariants enter the spec when a draft's invariant has been verified
+  as met in the code. See draft #182 for the lifecycle.
+
+invariant_statuses:
+  aspirational: Intent is agreed; code does not yet fully satisfy it.
+  enforced: Code satisfies it AND a test verifies it.

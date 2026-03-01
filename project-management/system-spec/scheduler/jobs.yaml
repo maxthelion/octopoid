@@ -1,0 +1,8 @@
+title: Scheduler Jobs
+description: >
+  Background jobs registered with the scheduler. Jobs run at intervals,
+  are idempotent, and don't pile up (if a job is already running, the
+  next trigger is skipped). Jobs are distinct from agents — they are
+  programmatic, not LLM-driven.
+
+invariants: []

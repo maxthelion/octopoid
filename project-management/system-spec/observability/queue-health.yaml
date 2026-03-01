@@ -1,0 +1,7 @@
+title: Queue Health
+description: >
+  The scheduler monitors queue health: detecting stuck tasks, tasks with
+  expired leases, and tasks that have been in the same state for too long.
+  Health checks are throttled to avoid excessive API calls.
+
+invariants: []

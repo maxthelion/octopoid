@@ -1,0 +1,45 @@
+title: Task Steps
+description: >
+  The step protocol for flow steps: pre_check/execute/verify pattern,
+  idempotency requirements, and error classification. Steps are the
+  atomic units of work within a flow transition.
+
+invariants:
+  - id: step-verification
+    description: >
+      Flow steps are only marked as completed in step_progress.json
+      after verification that the action durably took effect (e.g.
+      branch exists on remote after push, PR exists after create_pr).
+    rationale: >
+      Without verification, steps can ghost-complete — the function
+      returns without exception but the action didn't happen. This
+      causes tasks to be marked done when their work never landed.
+    source: draft-180
+    status: aspirational
+    test: null
+
+  - id: step-idempotency
+    description: >
+      Flow steps can be safely retried. Each step checks whether its
+      work is already done before executing, and skips if so.
+    rationale: >
+      When the fixer resumes a failed flow, it re-runs from the failed
+      step. If the step partially succeeded (e.g. branch pushed), the
+      retry must not fail because the work already exists.
+    source: draft-180
+    status: aspirational
+    test: null
+
+  - id: step-error-classification
+    description: >
+      Step failures are classified by exception type — RetryableStepError
+      (transient, retry), StepVerificationError (execute ran but verify
+      failed), PermanentStepError (intervention needed). Routing is
+      determined by exception type, not by message parsing.
+    rationale: >
+      Without typed exceptions, all step failures hit the same catch-all.
+      Transient errors are treated the same as permanent errors. Typed
+      classification enables correct routing.
+    source: draft-180
+    status: aspirational
+    test: null

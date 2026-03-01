@@ -1,0 +1,8 @@
+title: Conflict Reduction
+description: >
+  Strategies to minimise merge conflicts: small atomic tasks, late rebasing
+  (just before merge), no long-lived feature branches (except projects),
+  CHANGELOG via changes.md instead of direct edits, agents avoiding shared
+  files unnecessarily.
+
+invariants: []

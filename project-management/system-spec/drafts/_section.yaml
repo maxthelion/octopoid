@@ -1,0 +1,8 @@
+title: Drafts
+principle: "Drafts are the starting point for change"
+description: >
+  A draft is a proposal for a change to the system — an idea, a
+  problem statement, or a design sketch. Drafts are processed into
+  tasks via the draft pipeline. Every draft that proposes a behaviour
+  change has an Invariants section. Drafts are archived once their
+  invariants are verified as met.

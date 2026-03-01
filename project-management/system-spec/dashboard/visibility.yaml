@@ -1,0 +1,7 @@
+title: System Visibility
+description: >
+  The dashboard shows tasks in every queue, agent activity (active runs,
+  recent completions), and problems requiring attention (stuck tasks,
+  repeated failures).
+
+invariants: []

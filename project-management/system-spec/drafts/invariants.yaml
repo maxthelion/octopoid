@@ -1,0 +1,45 @@
+title: Draft Invariants
+description: >
+  Invariants about the system spec itself: that it exists, that drafts
+  propose invariants, and that process-draft verifies them before archiving.
+
+invariants:
+  - id: system-spec-exists
+    description: >
+      A project-management/system-spec.yaml file exists and documents the
+      system's behavioural invariants. Agents read this file before making
+      changes, so they know what guarantees to preserve.
+    rationale: >
+      Without a centralised store, invariants live scattered across drafts.
+      When a draft is archived, its invariants are archived with it. No
+      agent can answer "what does this system guarantee?"
+    source: draft-181
+    status: enforced
+    test: null  # file exists; needs structural test
+
+  - id: drafts-have-invariants
+    description: >
+      Every draft that proposes a change to system behaviour has an
+      Invariants section stating what should be true after the work
+      is complete. If a draft has no invariants, that is surfaced for
+      discussion rather than silently skipped.
+    rationale: >
+      Without explicit invariants, intent evaporates during the
+      draft-to-task translation. The implementer follows mechanical
+      acceptance criteria and the broader intent is lost.
+    source: draft-182
+    status: aspirational
+    test: null
+
+  - id: process-draft-checks-invariants
+    description: >
+      A draft cannot be archived until its invariants are verified as
+      met in the code and added to the system spec. process-draft
+      checks invariant satisfaction, not just task completion.
+    rationale: >
+      Without this check, drafts get archived when their tasks are
+      done, even if the invariant they described isn't actually met.
+      The accountability loop is broken.
+    source: draft-182
+    status: aspirational
+    test: null

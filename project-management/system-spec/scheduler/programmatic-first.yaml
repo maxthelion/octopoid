@@ -1,0 +1,8 @@
+title: Programmatic First
+description: >
+  LLM agents are only spawned when programmatic logic cannot handle the
+  task. Guard scripts run before agents. CI failure handling is
+  programmatic. The system prefers cheap deterministic logic over
+  expensive LLM calls.
+
+invariants: []

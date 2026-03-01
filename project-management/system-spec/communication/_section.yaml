@@ -1,0 +1,8 @@
+title: Communication
+principle: "Components communicate through messages, not files"
+description: >
+  The system uses an actor-model message system. Agents signal completion
+  via stdout. Results are inferred from stdout content, not from result
+  files. Messages are the communication channel for intervention,
+  announcements, and agent proposals. Communication is append-only and
+  auditable.

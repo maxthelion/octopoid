@@ -1,0 +1,7 @@
+title: Core Agent Roles
+description: >
+  The three core agent roles: implementer (writes code), gatekeeper (reviews
+  PRs), and fixer (resolves failures). Roles are determined by the flow
+  transition's agent field, not by hardcoded logic.
+
+invariants: []

@@ -1,0 +1,7 @@
+title: Task Lifecycle
+description: >
+  Task states, transitions, and terminal conditions. A task moves through
+  queues (incoming → claimed → submitted → done or failed) via declarative
+  flow transitions.
+
+invariants: []

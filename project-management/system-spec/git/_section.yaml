@@ -1,0 +1,8 @@
+title: Git
+principle: "Git isolates agent work and delivers it via PRs"
+description: >
+  Each task gets its own git worktree. Agents commit to task branches
+  without interfering with each other or with main. Work is delivered
+  via pull requests. The system has strong opinions about git hygiene:
+  worktrees stay on detached HEAD, never stash, worktrees are preserved
+  on requeue, and failed worktrees are retained for investigation.

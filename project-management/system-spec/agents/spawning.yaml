@@ -1,0 +1,7 @@
+title: Agent Spawning
+description: >
+  The scheduler spawns agents in isolated worktrees. Spawning is
+  conditions-based (flow conditions must be met). Maximum concurrent
+  instances are enforced per agent blueprint.
+
+invariants: []

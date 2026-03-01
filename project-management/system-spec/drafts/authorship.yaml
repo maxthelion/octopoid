@@ -1,0 +1,7 @@
+title: Draft Authorship
+description: >
+  Drafts can be authored by agents (via background analysts) or humans.
+  Draft statuses are tracked. Agent-authored drafts are proposals, not
+  decisions — they require human approval to proceed.
+
+invariants: []

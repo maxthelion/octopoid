@@ -1,0 +1,7 @@
+title: API Contract
+description: >
+  The server exposes a REST API. All requests are scoped and authenticated.
+  The API contract is stable: components can rely on endpoint shapes not
+  changing without a version bump.
+
+invariants: []

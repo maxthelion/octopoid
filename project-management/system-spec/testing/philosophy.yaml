@@ -1,0 +1,8 @@
+title: Testing Philosophy
+description: >
+  Outside-in: prefer end-to-end tests with a real local server over
+  mocked unit tests. Integration tests use scoped_sdk for isolation.
+  Mocking is reserved for genuine edge cases that can't be triggered
+  end-to-end.
+
+invariants: []

@@ -1,0 +1,7 @@
+title: State Ownership
+description: >
+  The server owns all persistent state: task queues, task data, projects,
+  messages, flow definitions, and orchestrator registrations. No component
+  maintains a local cache that could diverge from the server.
+
+invariants: []

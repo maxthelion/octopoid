@@ -1,0 +1,7 @@
+title: User Actions
+description: >
+  Humans interact with the system through lightweight actions: approving
+  tasks, sending messages to tasks or agents, and triggering manual runs.
+  The dashboard is the primary interface for these actions.
+
+invariants: []

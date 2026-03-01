@@ -1,0 +1,44 @@
+title: Result Inference
+description: >
+  How the scheduler determines the outcome of an agent run. Results are
+  inferred from stdout content using the claude CLI, not from structured
+  result files. Agents communicate via natural language.
+
+invariants:
+  - id: results-inferred-from-stdout
+    description: >
+      The scheduler infers the agent's outcome from its stdout rather than
+      requiring the agent to write a result.json file. Agents that complete
+      work but omit mechanical file-writing are not erroneously failed.
+    rationale: >
+      LLMs communicate through natural language. Requiring structured file
+      output after a long creative session is fighting what they're good at.
+      The system should interpret natural language output.
+    source: draft-172
+    status: aspirational
+    test: null
+
+  - id: result-inference-uses-cli-auth
+    description: >
+      The result handler infers outcomes using claude -p subprocess
+      invocation, using the same auth mechanism as spawned agents. It does
+      not require a separate ANTHROPIC_API_KEY environment variable.
+    rationale: >
+      The scheduler runs via launchd which does not have ANTHROPIC_API_KEY.
+      Using the anthropic Python SDK causes auth failures. The claude CLI
+      uses its own OAuth/session auth which is always available.
+    source: draft-174
+    status: aspirational
+    test: null
+
+  - id: result-json-references-removed
+    description: >
+      Agent prompts do not instruct agents to write result.json. Agents
+      signal completion via stdout only; the orchestrator infers the outcome
+      from stdout content.
+    rationale: >
+      Leftover result.json instructions cause confusion — agents may write
+      a file nothing reads, or stale files cause incorrect processing.
+    source: draft-174
+    status: aspirational
+    test: null

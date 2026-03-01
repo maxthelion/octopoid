@@ -61,7 +61,7 @@ After creating tasks, summarise:
 
 If important invariants are not covered, suggest additional tasks or flag them to the user. The goal is that by the time all tasks from a draft are done, the invariants should be met. If a single task can't cover an invariant, say so — don't silently drop it.
 
-Also check `project-management/system-spec.yaml` — if the draft's invariants overlap with existing spec entries, reference them. If they're new, they'll be added to the spec when `/process-draft` confirms they're met.
+Also check `project-management/system-spec/` — if the draft's invariants overlap with existing spec entries, reference them. If they're new, they'll be added to the spec when `/process-draft` confirms they're met.
 
 ## Task File Location
 

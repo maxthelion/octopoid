@@ -1,0 +1,45 @@
+title: Messages
+description: >
+  The actor-model message system used by agents, the scheduler, and humans
+  to communicate. Messages are append-only, typed, and auditable. They
+  carry intervention context, completion announcements, and human-to-agent
+  instructions.
+
+invariants:
+  - id: agents-communicate-via-messages
+    description: >
+      Agents communicate their completion state to the orchestrator via
+      messages or stdout, not by writing files to disk. The scheduler does
+      not need to poll the filesystem to detect agent results.
+    rationale: >
+      File-based result passing (result.json) is fragile — stale files can
+      be misread, there is no acknowledgement, and it couples the scheduler
+      to the agent's filesystem. Messages are timestamped and auditable.
+    source: draft-171
+    status: aspirational
+    test: null
+
+  - id: intervention-context-in-messages
+    description: >
+      All intervention context (error source, failed step, error message)
+      is communicated via task messages with to_actor=fixer, not via local
+      files. The fixer reads messages, not intervention_context.json.
+    rationale: >
+      Messages are the existing communication channel. Using a separate
+      file creates a parallel system that must be kept in sync.
+    source: draft-176
+    status: aspirational
+    test: null
+
+  - id: intervention-resolution-via-reply
+    description: >
+      Intervention is resolved when the fixer posts a reply message (via
+      parent_message_id). The scheduler processes the reply and clears the
+      flag. No separate resolved column or status field.
+    rationale: >
+      Using message replies for resolution reuses existing infrastructure
+      and creates a clear audit trail. The message thread shows the full
+      intervention lifecycle.
+    source: draft-176
+    status: aspirational
+    test: null

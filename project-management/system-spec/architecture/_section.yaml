@@ -1,0 +1,7 @@
+title: Architecture
+principle: "Architectural principles that govern all components"
+description: >
+  Cross-cutting principles that apply to every component: agents are
+  pure functions with no side-channel state, components communicate
+  through messages, complexity is kept to the minimum needed. These
+  principles guide decisions when specific rules don't apply.

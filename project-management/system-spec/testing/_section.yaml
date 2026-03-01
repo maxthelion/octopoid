@@ -1,0 +1,8 @@
+title: Testing
+principle: "Tests verify invariants against a real server"
+description: >
+  The testing philosophy is outside-in: prefer end-to-end tests with a
+  real local server over mocked unit tests. Integration tests use
+  scoped_sdk for isolation. Each invariant in the system spec should
+  have a corresponding test. Mocking is reserved for genuine edge cases
+  that can't be triggered end-to-end.

@@ -1,0 +1,7 @@
+title: Child Task Flows
+description: >
+  Child tasks within a project share the project's branch. They don't
+  create individual PRs; their work is delivered together when the project
+  completes. Child flows differ from standalone task flows.
+
+invariants: []
