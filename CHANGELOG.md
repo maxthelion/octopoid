@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`octopoid/agent_run_log.py`**: New module for reading and writing run logs for background agent jobs (`codebase_analyst`, `testing_analyst`, `architecture_analyst`). Each completed run is appended as a JSONL entry with `started_at`, `finished_at`, `outcome`, and a `summary` extracted from the agent's `stdout.log`. Logs are stored at `.octopoid/runtime/agent-run-logs/{job_name}.jsonl`.
+
+- **`octopoid trigger-agent <job_name>` CLI command**: Force-triggers a background agent job immediately, bypassing the interval guard. Works for any `type: agent` job defined in `jobs.yaml`. Usage: `octopoid trigger-agent codebase_analyst`.
+
+- **17 new tests** in `tests/test_agent_run_log.py` covering write/read/summary extraction, error handling, and JSONL trimming.
+
+### Changed
+
+- **`octopoid/scheduler.py`**: `check_and_update_finished_agents()` now writes a run log entry when a background agent (no task_id) finishes. Reads `job_dir` and `started_at` from the agent state file.
+
+- **`octopoid/reports.py`**: `_gather_jobs()` now includes a `last_run_log` field for `type: agent` jobs, containing the most recent run log entry (with summary and timestamps).
+
+- **`packages/dashboard/tabs/agents.py`**: Background agent list items now show "last run age" alongside the interval (e.g. `24h · 3m ago`). The job detail pane now has a "LAST RUN OUTPUT" section showing when the run finished and what the agent reported.
+
 ### Fixed
 
 - Circuit breaker in `guard_claim_task` no longer fires multiple times for the same task. It now checks for an existing `circuit_breaker` message before posting a new one, skips tasks already moved to the `failed` queue, and uses separate try/except blocks for `sdk.tasks.update` and `sdk.messages.create` so failures are visible (logged at ERROR level) rather than silently swallowed.
