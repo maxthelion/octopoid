@@ -138,13 +138,42 @@ Testing (how we verify it)
   ├── Spec-to-test mapping (invariants drive test backlog)
   ├── Infrastructure (test server, scoped_sdk)
   └── Coverage tracking (enforced vs aspirational)
+
+Observability & Operations (how we keep it running)
+  ├── Problems are surfaced proactively, not discovered by humans
+  │   ├── Stuck tasks detected automatically
+  │   ├── Failed tasks have recorded reasons
+  │   ├── Queue health monitored continuously
+  │   └── Agent failures visible in dashboard
+  ├── The system is self-healing where possible
+  │   ├── Fixer agent handles routine failures autonomously
+  │   ├── Expired leases are reclaimed automatically
+  │   ├── Circuit breaker prevents infinite retry loops
+  │   └── A dedicated ops agent can see problems as they occur
+  │       and take proactive action (not just react to failures)
+  ├── Human intervention is the last resort, not the first
+  │   ├── Problems are triaged by severity automatically
+  │   ├── Only genuinely stuck tasks reach the human inbox
+  │   └── The human spends time on decisions, not babysitting
+  └── Operational history is preserved
+      ├── Unified log file for all activity
+      ├── Health scores tracked over time
+      └── Postmortems for significant incidents
 ```
 
-The current spec tree mixes these categories. `tasks/resilience` is functional (what the system does about failures). `architecture/pure-functions` is architectural (a code pattern). `testing/philosophy` is meta. They're all at the same level — 15 peer sections. The proposed hierarchy puts a category above them, which:
+### Why Observability/Ops may be a fourth top-level category
 
-1. **Tells you what kind of knowledge you're looking at.** A functional invariant ("tasks flow through flows") informs QA differently than an architectural invariant ("agents are pure functions") informs code review.
-2. **Helps prioritise.** Functional invariants are the ones you test. Architectural invariants are the ones you audit. Testing invariants are the ones you maintain.
-3. **Maps to different verification mechanisms.** Functional → integration tests. Architectural → analyst auditing (draft 200). Testing → meta-checks.
+A huge amount of time is currently spent babysitting the queue and fixing issues manually. This is a cross-cutting concern — it touches functionality (what problems get surfaced), architecture (how logging and monitoring work), and testing (how we verify the self-healing works). But it may deserve top-level status because it represents a distinct *goal* of the system: **the system should run itself, and when it can't, it should tell you exactly what's wrong.**
+
+The aspiration is a system where a dedicated operations agent can see problems as they occur and take proactive action — not waiting for a human to notice a stuck task, but detecting it, diagnosing it, and either fixing it or escalating with full context. This is different from the fixer agent (which handles individual task failures) — it's about system-level health: queue throughput, agent success rates, recurring failure patterns, resource exhaustion.
+
+Current state: we have pieces of this (fixer agent, circuit breaker, lease recovery, queue health checks) but they're scattered across functionality and not cohesive. The human is still the primary ops person. The invariant tree should make this gap visible.
+
+The current spec tree mixes these categories. `tasks/resilience` is functional (what the system does about failures). `architecture/pure-functions` is architectural (a code pattern). `testing/philosophy` is meta. `observability/queue-health` is operational. They're all at the same level — 15 peer sections. The proposed hierarchy puts a category above them, which:
+
+1. **Tells you what kind of knowledge you're looking at.** A functional invariant ("tasks flow through flows") informs QA differently than an architectural invariant ("agents are pure functions") informs code review. An operational invariant ("stuck tasks are detected within one cycle") informs monitoring and alerting.
+2. **Helps prioritise.** Functional invariants are the ones you test. Architectural invariants are the ones you audit. Testing invariants are the ones you maintain. Operational invariants are the ones you monitor.
+3. **Maps to different verification mechanisms.** Functional → integration tests. Architectural → analyst auditing (draft 200). Testing → meta-checks. Operational → health dashboards and ops agent.
 
 ## Gap analysis: current vs proposed
 
