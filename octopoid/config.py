@@ -265,7 +265,11 @@ def discover_agent_config(agent_dir: Path) -> dict[str, Any] | None:
 
     Returns:
         Merged agent config dict with 'name', 'blueprint_name', 'agent_dir' injected,
-        or None if the directory has no agent.yaml or is a job-only agent.
+        or None if the directory has no agent.yaml.
+
+    The ``job_agent: true`` flag is preserved in the returned config for callers
+    that need to distinguish pool agents (claim tasks from the queue) from
+    job-scheduled agents (invoked by jobs.yaml on a fixed interval).
     """
     agent_yaml_path = agent_dir / "agent.yaml"
     if not agent_yaml_path.exists():
@@ -273,10 +277,6 @@ def discover_agent_config(agent_dir: Path) -> dict[str, Any] | None:
 
     with open(agent_yaml_path) as f:
         config = yaml.safe_load(f) or {}
-
-    # Skip job-only agents — they are invoked via jobs.yaml, not pool evaluation
-    if config.get("job_agent", False):
-        return None
 
     blueprint_name = agent_dir.name
     config.setdefault("name", blueprint_name)
@@ -289,11 +289,13 @@ def discover_agent_config(agent_dir: Path) -> dict[str, Any] | None:
 
 
 def get_agents() -> list[dict[str, Any]]:
-    """Get list of configured pool agents by scanning .octopoid/agents/*/agent.yaml.
+    """Get list of all configured agents by scanning .octopoid/agents/*/agent.yaml.
 
     Each subdirectory of .octopoid/agents/ that contains an agent.yaml is
-    treated as a pool agent. Directories whose agent.yaml has ``job_agent: true``
-    are excluded — those agents are invoked via jobs.yaml instead.
+    returned. This includes both pool agents (claim tasks from the queue) and
+    job-scheduled agents (``job_agent: true``, invoked by jobs.yaml on a fixed
+    interval). Callers that only want pool agents should filter on
+    ``not agent.get("job_agent")``.
 
     The directory name becomes the ``blueprint_name`` and ``name`` for the agent
     unless the agent.yaml explicitly sets a ``name`` field.
@@ -307,6 +309,7 @@ def get_agents() -> list[dict[str, Any]]:
         - 'blueprint_name': pool blueprint name (used for PID tracking)
         - 'agent_dir': absolute path to the agent directory
         - 'max_instances': max concurrent pool instances (default 1)
+        - 'job_agent': True if the agent is invoked via jobs.yaml (not the pool loop)
         - all fields from agent.yaml (role, model, max_turns, interval_seconds, etc.)
     """
     agents_base = get_agents_base_dir()
