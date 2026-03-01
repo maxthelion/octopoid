@@ -38,29 +38,42 @@ The test proves the invariant holds. If the test passes, the invariant is enforc
 
 **Coverage target:** Every invariant with `verification: test` should have a corresponding integration test. The viewer shows the gap.
 
-### 2. Analyst grading (architectural invariants)
+### 2. Analyst auditing (architectural invariants)
 
-Some invariants describe qualities, not behaviours: "agents are pure functions," "prefer simple over clever," "no duplicated config." These can't be tested with assertions — they require judgement.
+Some invariants describe qualities, not behaviours: "agents are pure functions," "prefer simple over clever," "no duplicated config." These can't be tested with unit assertions — but they *can* be checked by analysts that scan for violations.
 
-The analyst agents already grade facets of the codebase periodically (complexity, test coverage, copy-paste). Linking analyst scores to specific invariants creates accountability:
+The key insight: **architectural invariants should be pass/fail, not scores.** An analyst that finds a concrete violation fails the invariant with evidence, just like a test failure. The invariant is either satisfied (no violations found) or violated (here are the specific violations).
 
 ```yaml
 # architecture/complexity.yaml
 - id: reduce-code-complexity
   description: >
-    Prefer simple implementations. Cyclomatic complexity of any function
-    should not exceed 15. Duplicated code blocks should be under 3%.
+    No function exceeds cyclomatic complexity 15.
+    No duplicated code blocks over 3%.
   verification: analyst
   analyst: architecture-analyst
-  metric: complexity_score
-  threshold: 7  # minimum health score to consider "met"
+  check: complexity_audit
+  # Analyst scans for violations. If any found, invariant fails.
+  # Violations are reported with file, function, and metric value.
 ```
 
-The analyst's health score becomes the invariant's verification signal. If the score drops below the threshold, the invariant is flagged as regressing.
+When the analyst runs, it checks each invariant it's responsible for. For `reduce-code-complexity`, it runs Lizard, finds any function with complexity > 15, and reports:
 
-**What this means for the viewer:** Instead of green/red, architectural invariants show the analyst's latest score and trend (improving/declining/stable).
+```
+VIOLATION: reduce-code-complexity
+  result_handler.handle_agent_result_via_flow — complexity 28 (threshold: 15)
+  scheduler._evaluate_agent_loop — complexity 19 (threshold: 15)
+```
 
-**What this means for analysts:** Their grading criteria should reference specific invariants. When an analyst proposes a draft, it should note which invariants the proposal would improve.
+No violations = invariant passes (green). Any violation = invariant fails (red) with specific evidence. This collapses the distinction between test-verified and analyst-verified — both produce pass/fail, just through different mechanisms. One runs pytest, the other runs an analyst with a checklist of invariants to audit.
+
+**What this means for analysts:** Instead of producing a vague health score, analysts become automated auditors. Their job is: "check these specific invariants, report any violations found." Each analyst is assigned a set of invariants from the spec. Their grading criteria are the invariant definitions themselves.
+
+**What this means for the viewer:** Analyst-verified invariants show the same green/red as test-verified ones, plus the violation details when failing. The viewer can also show trend (was this invariant passing last week?).
+
+**What this means for analyst drafts:** When an analyst finds violations, it can propose a draft to fix them. The draft references the violated invariant, making the connection between "this code is bad" and "this principle is broken" explicit.
+
+**Health scores as aggregation:** Individual invariants are pass/fail, but an analyst's overall health score can still exist as an aggregate: "8/10 invariants passing = score 8." The score is derived from invariant status, not the other way around.
 
 ### 3. Observability cross-referencing (observability invariants)
 
@@ -166,17 +179,22 @@ The user identified several observability guarantees that aren't in the current 
 
 ## Verification in the viewer
 
-The viewer (from draft 199) should show verification status per invariant:
+The viewer (from draft 199) should show verification status per invariant. All verified invariants are pass/fail regardless of mechanism:
 
 | Status | Badge | Meaning |
 |--------|-------|---------|
-| Tested | Green | Has a passing integration test |
-| Analyst-graded | Blue + score | Linked to analyst, shows latest score and trend |
-| Cross-referenced | Purple | Verified via dependent invariants |
-| Untested | Amber | Invariant stated but no verification exists |
-| Failing | Red | Test exists but is currently failing |
+| Passing | Green | Verified and currently satisfied (test passes, analyst finds no violations, cross-refs all pass) |
+| Failing | Red | Verified but currently violated — shows evidence (test output, analyst violation list, failed dependency) |
+| Unverified | Amber | Invariant stated but no verification mechanism exists |
 
-The stats summary becomes: "12 tested, 3 analyst-graded, 5 cross-referenced, 20 untested, 0 failing"
+The verification mechanism is shown as a secondary label: `test`, `analyst`, `cross-ref`.
+
+The stats summary becomes: "15 passing, 2 failing, 23 unverified"
+
+For failing invariants, the viewer shows the evidence:
+- **Test failures:** test name + output excerpt
+- **Analyst violations:** file, function, metric, threshold
+- **Cross-ref failures:** which dependency invariant is failing
 
 ### Verification CI job
 
@@ -217,7 +235,7 @@ Alternatively, a simpler approach: just maintain the `test:` field in the YAML m
 
 - Should the `@pytest.mark.invariant` approach be used, or is manual `test:` field maintenance simpler and sufficient?
 - Should verification run in CI (blocking PRs) or as a background job (advisory)?
-- For analyst-graded invariants, what's the right threshold? Should it be per-invariant or per-analyst?
+- Should analysts report violations as messages on a dedicated task, or as entries in a standalone violations log?
 - Should cross-reference verification be transitive? (If A depends on B which depends on C, does A require C to be verified too?)
 - How do we handle invariants that are partially met? (e.g. step-verification is implemented for 7/12 steps)
 - Should the verification job be a new background agent, a scheduler job, or a CLI skill?
