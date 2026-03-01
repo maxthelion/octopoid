@@ -191,7 +191,9 @@ class TestGetAgentsNewFormat:
 
         assert len(agents) == 1
         agent = agents[0]
-        assert agent["blueprint_name"] == "sanity-check-gatekeeper"
+        # Directory scan takes priority over agents.yaml keys — blueprint_name
+        # is now the directory name ("gatekeeper"), not the agents.yaml key.
+        assert agent["blueprint_name"] == "gatekeeper"
         assert agent["role"] == "gatekeeper"
         assert agent["spawn_mode"] == "scripts"
         assert agent["max_instances"] == 1
