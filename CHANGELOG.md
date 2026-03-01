@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Comprehensive test coverage for `octopoid/tasks.py` and `octopoid/steps.py`
+
+**tasks.py** (56% → 83%):
+- `claim_task`: None return, claimed task, logging, role/type/queue filters
+- `submit_completion`: task not found, first-attempt zero commits, re-attempt zero commits (auto-reject), normal submission with logging
+- `request_intervention`: sets needs_intervention flag, posts intervention_request message, writes intervention_context.json, reads step_progress.json, truncates long reasons, handles message failure gracefully
+- `fail_task`: raises ValueError on done queue, terminal failure path (already needs_intervention), first-failure delegation to request_intervention, unknown previous queue handling
+- `approve_and_merge`: task not found, BEFORE_MERGE hook execution, hook failure with error message, merged flag, notes/thread cleanup
+- `cancel_task`: worktree removal path, runtime dir removal path
+
+**steps.py** (51% → 86%):
+- `Step` base class: check_done, pre_check, execute (NotImplementedError), verify (pass), `__call__`
+- `execute_steps` Step-object paths: pre_check skip, execute+verify ordering, progress file writing, failed-step progress recording, StepVerificationError propagation, old-style exception progress
+- `merge_pr`: check_done (MERGED/OPEN/no-pr/gh-failure), verify raises/passes
+- `reject_with_feedback`: SDK reject, rebase instruction appending (and non-duplication), PR comment posting (and skipping), thread message posting, graceful PR comment failure
+- `push_branch`: check_done (branch on/off remote), execute (RepoManager calls), verify raises/passes
+- `create_pr`: check_done (gh failure/success/invalid JSON), pre_check (stores pr_number+url metadata), verify (pr_number not stored, pr not on GitHub)
+- `rebase_on_base`: check_done (ancestor/not-ancestor), pre_check (fetches first), execute (fetch+rebase, abort on conflict), verify raises/passes
+- `rebase_on_project_branch`: skips without project_id, project not found, project without branch, fetch failure, rebase failure, success
+- `merge_project_pr`: no pr_number error, merge failure, success, project_dir as cwd
+- `run_tests`: FileNotFoundError graceful skip, info logging on pass
+
 ### Changed
 - `WorkTab` now renders `MatrixView` directly without a `TabbedContent` wrapper
 
