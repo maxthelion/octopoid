@@ -684,6 +684,7 @@ def _handle_approve_and_run_steps(
         logger.info(f"Task {task_id} rejected back to {on_fail} after rebase/merge failure")
         return True
 
+    _perform_transition(sdk, task_id, transition.to_state)
     logger.info(f"Agent {agent_name} completed task {task_id} (steps: {transition.runs})")
     return True
 
