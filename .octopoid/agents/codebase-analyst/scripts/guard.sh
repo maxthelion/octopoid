@@ -11,12 +11,7 @@ if [ -f "../env.sh" ]; then
 fi
 
 python3 - <<'EOF'
-import os
 import sys
-
-pythonpath = os.environ.get('ORCHESTRATOR_PYTHONPATH', '')
-if pythonpath:
-    sys.path.insert(0, str(__import__('pathlib').Path(pythonpath).parent))
 
 try:
     from octopoid.queue_utils import get_sdk

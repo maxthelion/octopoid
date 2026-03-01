@@ -15,18 +15,13 @@ fi
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 
 python3 - "$REPO_ROOT" <<'EOF'
-import os
 import sys
 import subprocess
 import json
 from pathlib import Path
 
 repo_root = Path(sys.argv[1])
-orchestrator_dir = repo_root / 'orchestrator'
-
-orchestrator_path = os.environ.get('ORCHESTRATOR_PYTHONPATH', '')
-if orchestrator_path:
-    sys.path.insert(0, str(Path(orchestrator_path).parent))
+octopoid_dir = repo_root / 'octopoid'
 
 print('=== Architecture Analysis ===')
 print(f'Repo: {repo_root}')
@@ -83,7 +78,7 @@ if ensure_lizard():
     try:
         result = subprocess.run(
             [
-                'lizard', str(orchestrator_dir),
+                'lizard', str(octopoid_dir),
                 '--json',
                 '-T', 'nloc=50',
                 '-T', 'cyclomatic_complexity=10',
@@ -146,7 +141,7 @@ if ensure_jscpd():
         result = subprocess.run(
             [
                 'jscpd',
-                str(orchestrator_dir),
+                str(octopoid_dir),
                 '--min-lines', '5',
                 '--reporters', 'json',
                 '--output', str(jscpd_report_dir),
