@@ -36,6 +36,7 @@ find orchestrator -name '__pycache__' -type d -exec rm -rf {} +
 - When approving a task, post a review summary comment on the PR before merging.
 - **Agents must not write to CHANGELOG.md directly.** Instead, write a `changes.md` file in the task runtime dir (`.octopoid/runtime/tasks/<id>/changes.md`). The `update_changelog` flow step reads this file after merge and prepends it to CHANGELOG.md on main. This eliminates rebase conflicts on CHANGELOG.md.
 - **Terminal steps (rebase_on_base, merge_pr) are auto-injected** by `_inject_terminal_steps()` in `flow.py` for any transition targeting `done`. Flow YAMLs don't need to include them explicitly — they'll be appended automatically if missing.
+- **Use DELETE for duplicates and cancelled tasks, not force-queue to failed.** Moving junk to failed just adds noise. `sdk._request('DELETE', f'/api/v1/tasks/{task_id}')` removes it entirely. Only use force-queue to failed for tasks that actually attempted work and need a record.
 
 ## Git hygiene
 
