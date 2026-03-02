@@ -27,10 +27,6 @@ from pathlib import Path
 last_run_file = Path(sys.argv[1])
 repo_root = Path(sys.argv[2])
 
-orchestrator_path = os.environ.get('ORCHESTRATOR_PYTHONPATH', '')
-if orchestrator_path:
-    sys.path.insert(0, str(Path(orchestrator_path).parent))
-
 # Read last-run timestamp (default to epoch if file missing — first run)
 if last_run_file.exists():
     since_ts = last_run_file.read_text().strip()
@@ -43,7 +39,7 @@ print(f'Scanning tasks completed after: {since_ts}')
 print()
 
 try:
-    from orchestrator.queue_utils import get_sdk
+    from octopoid.queue_utils import get_sdk
     sdk = get_sdk()
     all_done = sdk.tasks.list(queue='done')
 except Exception as e:
@@ -139,7 +135,7 @@ for task in recent_tasks:
         and not f.startswith('.octopoid/')
         and not f.startswith('project-management/')
         and not f.endswith('__init__.py')
-        and '/tests/' not in f  # skip embedded test dirs (e.g. orchestrator/tests/)
+        and '/tests/' not in f  # skip embedded test dirs (e.g. octopoid/tests/)
         and not Path(f).stem.startswith('test_')  # skip test files anywhere
         and 'CHANGELOG' not in f
         and 'README' not in f
@@ -155,12 +151,12 @@ for task in recent_tasks:
         file_name = Path(changed_file).name
 
         # Build search patterns: match the module by import or filename reference
-        # Use the full filename (e.g. "reports.py") and import pattern (e.g. "from orchestrator.reports")
+        # Use the full filename (e.g. "reports.py") and import pattern (e.g. "from octopoid.reports")
         # to avoid false matches (e.g. "reports" matching "test_reports_unrelated")
         module_path = changed_file.replace('/', '.').replace('.py', '')
         search_patterns = [file_name]  # e.g. "reports.py"
         if '.' in module_path:
-            # e.g. "from orchestrator.reports" or "import orchestrator.reports"
+            # e.g. "from octopoid.reports" or "import octopoid.reports"
             search_patterns.append(module_path.rsplit('.', 1)[0] + '.' + file_stem)
 
         # Check if any unit test exists for this file
