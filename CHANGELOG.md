@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `packages/python-sdk/octopoid_sdk/client.py`: Add `DEBUG`-level logging to `claim()` — logs the outgoing `agent_name`, `role_filter`, and `queue`, plus the response `claimed_by` and `queue`. Enables tracing claim requests without changing production behavior (logging is opt-in via `logging.DEBUG`).
+- `tests/integration/test_task_lifecycle.py`: Remove outdated comment `# This will FAIL with 500 error - exposing the bug!` — the underlying bug was fixed in server commits `61c0918` and `73d3511`.
+- `octopoid/scheduler.py`: Fix `check_and_requeue_expired_leases` to clear stale `lease_expires_at` on provisional tasks where `claimed_by` is already `None`. Previously the function skipped all provisional tasks without a `claimed_by`, leaving ghost lease timestamps behind when claim metadata was partially cleared.
+
+### Added
+
+- `project-management/tasks/octopoid-server/fix-lease-monitor-iso-comparison.md`: Server task documenting two bugs in `src/scheduled/lease-monitor.ts`:
+  1. ISO timestamp comparison bug — `lease_expires_at < datetime('now')` never fires for same-day expired leases because ISO `T`-separator is lexicographically greater than SQLite's space separator. Fix: use `datetime(lease_expires_at) < datetime('now')`.
+  2. History recording bug — the history INSERT runs after `claimed_by` is set to NULL, so the agent name is always lost. Fix: capture agent names before the UPDATE.
+- `tests/integration/test_sdk_client.py`: `test_claim_returns_task_when_available` now asserts `claimed_by` equals the requested `agent_name` and `lease_expires_at` is set after a successful claim.
+- `tests/integration/test_lease_recovery.py`: Removed `xfail` from `test_stale_lease_without_claimed_by_is_still_cleared` — the scheduler fix resolves the underlying bug.
+- `tests/test_lease_expiry.py`: Updated `test_unclaimed_provisional_task_is_skipped` to use `lease_expires_at=None` (reflecting that truly unclaimed provisional tasks have no lease at all); added `test_provisional_task_with_ghost_lease_is_cleaned_up` for the ghost-timestamp scenario.
 ### Changed
 - `prepare_task_directory()` now archives `stdout.log` as `stdout-{blueprint}-{attempt}.log` (e.g. `stdout-implementer-0.log`, `stdout-fixer-1.log`) before each agent run, preserving diagnostic output across all attempts. The `prev_stdout.log` continuation mechanism is unchanged.
 ### Fixed
