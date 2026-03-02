@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Fixer circuit breaker skips done tasks**: `guard_claim_task()` now skips tasks in the `done` queue (previously only skipped `failed`). When a done task has a stale `needs_intervention=True` flag, the flag is cleared and the task is skipped — no fixer is spawned against a correctly-completed task.
+
+- **Circuit breaker distinguishes outcome types**: The fixer circuit breaker now treats outcome types differently:
+  - `intervention_reply` (fixer-failed): counts toward the `MAX_FIXER_ATTEMPTS` limit as before
+  - `already_resolved` outcome: `handle_fixer_result()` clears `needs_intervention` and returns without posting an `intervention_reply`, so the circuit breaker never counts it
+  - `intervention_systemic` (new message type for systemic escalation): circuit breaker fails the task immediately via `fail_task()` without waiting for 3 attempts
+
+- **Systemic escalation uses distinct message type**: `handle_fixer_result()` now posts `type="intervention_systemic"` instead of `"intervention_reply"` for systemic escalations, allowing the circuit breaker to detect them and fail immediately.
+
+- **`_perform_transition()` clears `needs_intervention` on done**: When the flow engine transitions a task to `done` via `sdk.tasks.accept()`, it now also clears `needs_intervention=False`, preventing stale flags from triggering the fixer against already-completed tasks.
+
+- **Circuit breaker uses `fail_task()`**: Both circuit breaker paths (threshold exhausted, systemic escalation) now call `fail_task()` instead of direct `sdk.tasks.update(queue="failed")`, preserving the structural invariant that only `fail_task()` may directly move tasks to failed.
 ### Added
 - `/queue-status` now shows a `--- SYSTEM HEALTH ---` section before queue counts, displaying: pause state (with reason/timestamp if auto-paused), consecutive systemic failure count, last tick, and orphan PID count
 - New problem types: `system_paused` (inserted at front as highest priority), `systemic_failures`, and `orphan_pids`
