@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `/queue-status` now shows a `--- SYSTEM HEALTH ---` section before queue counts, displaying: pause state (with reason/timestamp if auto-paused), consecutive systemic failure count, last tick, and orphan PID count
+- New problem types: `system_paused` (inserted at front as highest priority), `systemic_failures`, and `orphan_pids`
+- Step 2 guidance updated with per-problem descriptions for the three new problem types
+
+### Fixed
+- Removed undefined `rejected` variable reference that would cause a `NameError` when diagnosing failed tasks
+### Added
 - New `continuer` agent (`.octopoid/agents/continuer/`) that claims tasks from the `needs_continuation` queue and re-spawns with the same worktree and a continuation prompt
 - `_get_continuation_count` / `_increment_continuation_count` helpers in `result_handler.py` for tracking per-task continuation cycles via a `continuation_count` file in the task directory
 - `_load_continuation_section` in `scheduler.py` that builds a context block for continuer agents from the previous agent's stdout tail (`prev_stdout.log`)
