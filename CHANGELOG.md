@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `request_intervention()` in `octopoid/tasks.py` now sets `queue="requires-intervention"` on the server so failing tasks are visible in the fixer queue (previously only set `needs_intervention=True` without moving the task)
+- `octopoid/flow.py`: added `"requires-intervention"` to `get_all_states()` builtin states and `validate()` builtin_states so the server accepts queue transitions to this state and doesn't flag it as unreachable
+- `tests/integration/conftest.py`: fixed keyword precedence in `mock_infer_result_from_stdout` — now checks `continuation`/`partial progress` before `done`/`complete`, preventing "could not complete" from matching the "complete" substring and returning the wrong outcome
+- `tests/integration/test_sdk_client.py`: `_register_orchestrator` now accepts `scope` parameter; `test_claim_returns_task_when_available` registers orchestrator with `scoped_sdk.scope` before claiming (required for FK constraint); `test_claim_returns_none_at_max_claimed_limit` rewritten to mock 429 response (server doesn't enforce max_claimed server-side)
+- `tests/integration/test_git_failure_scenarios.py`: updated for auto-injected terminal steps — push failure raises `CalledProcessError` not `RuntimeError`; fake gh state includes required `status`/`branch` fields; create_pr failure test uses stateful gh state so `pre_check()` returns False
+- Updated test assertions in `test_intervention_lifecycle.py`, `test_lease_recovery.py`, `test_pid_recovery.py`, `test_scheduler_mock.py` to expect `requires-intervention` queue for first failures (not `failed`)
+- Updated unit tests in `test_requires_intervention.py` and `test_flow.py` to match the new `requires-intervention`-as-builtin-state design
+### Fixed
+
 - Fixed `tests/integration/test_sdk_client.py` to pass against the current server:
   - Added `scope` parameter to `_register_orchestrator()` — server now requires scope on all orchestrator registrations
   - Registered orchestrator before claiming in `test_claim_returns_task_when_available` — claim endpoint enforces FK constraint on `orchestrator_id`
