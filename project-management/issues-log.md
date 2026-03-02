@@ -13,7 +13,22 @@ Known symptoms and their root causes. **Consult this first when diagnosing a pro
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| Task enters `requires-intervention` with "Empty stdout — agent may have crashed" but implementation commit exists in worktree | Agent hit max_turns (or API error) after committing but before printing a final text response to stdout. Orchestrator saw empty stdout → classified as `unknown` → triggered fixer. | In the task worktree: rebase detached HEAD onto origin/main, create `agent/<task-id>` branch. The scheduler will push and create a PR. The root fix is switching to `--output-format json` (this task). |
+| Task enters `requires-intervention` with "Empty stdout — agent may have crashed" but implementation commit exists in worktree | Agent hit max_turns (or API error) after committing but before printing a final text response to stdout. Orchestrator saw empty stdout → classified as `unknown` → triggered fixer. | In the task worktree: rebase detached HEAD onto origin/main, create `agent/<task-id>` branch. The scheduler will push and create a PR. The root fix is switching to `--output-format json` but the first attempt (PR #299) was reverted due to wrong subtype string. See [postmortem](postmortems/2026-03-02-output-format-json-breaks-inference.md). |
+| All agent outcomes classified as "unknown" after enabling `--output-format json` | result_handler.py checks for subtype `"error_max_turns_exceeded"` but Claude CLI outputs `"error_max_turns"`. String mismatch causes max_turns detection to fail, falls through to empty text extraction. | Fix the subtype string in result_handler.py line 244. Also handle empty `result` field by classifying from `subtype` + `is_error` fields. See [postmortem](postmortems/2026-03-02-output-format-json-breaks-inference.md). |
+
+## claimed_by leak / laptop sleep issues
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| Claimed tasks show `claimed_by: None` on server | Lease expiry during laptop sleep clears claim metadata while task stays in `claimed` queue. Or: server not storing `body.agent_name` correctly in claim endpoint. | Needs investigation — add logging to SDK claim(), check server-side lease expiry behaviour. |
+| Agent uses 51 turns but max_turns is 200, exits with `error_max_turns` | Laptop sleep suspends Claude CLI process. On wake, session may timeout or API connection drops, causing early exit. | No fix yet. Consider lease renewal or sleep detection. |
+| Task submit fails with 409 after agent completes work | Lease expired during laptop sleep. Agent finishes on wake but server rejects submit because lease is invalid. | Requeue task, re-claim, then submit. Root fix: lease renewal mechanism. |
+
+## Fixer agent overwrites original stdout
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| Failed task's stdout.log contains fixer output, not the original agent's | `prepare_task_directory()` deletes stdout.log before each run. Fixer overwrites implementer output. Second fixer overwrites first fixer's prev_stdout.log. Original diagnostic output is destroyed. | Preserve stdout per-attempt (e.g. `stdout-attempt-0.log`, `stdout-fixer-1.log`). See [postmortem](postmortems/2026-03-02-output-format-json-breaks-inference.md). |
 
 ## Fixer agent: broken tooling when worktree is deleted
 
