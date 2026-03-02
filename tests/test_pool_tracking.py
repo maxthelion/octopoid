@@ -10,9 +10,11 @@ import pytest
 from octopoid.pool import (
     cleanup_dead_pids,
     count_running_instances,
+    find_pid_for_task,
     get_blueprint_pids_path,
     load_blueprint_pids,
     register_instance_pid,
+    remove_pid_from_blueprint,
     save_blueprint_pids,
 )
 
@@ -294,3 +296,84 @@ class TestCleanupDeadPids:
 
         assert removed == 2
         assert load_blueprint_pids("implementer") == {}
+
+
+# ---------------------------------------------------------------------------
+# find_pid_for_task
+# ---------------------------------------------------------------------------
+
+
+class TestFindPidForTask:
+    def test_returns_none_when_no_agents_dir(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("octopoid.pool.get_agents_runtime_dir", lambda: tmp_path / "nonexistent")
+        result = find_pid_for_task("TASK-abc")
+        assert result is None
+
+    def test_returns_none_when_task_not_found(self, agents_runtime_dir):
+        save_blueprint_pids(
+            "implementer",
+            {1234: {"task_id": "TASK-other", "started_at": "t", "instance_name": "i-1"}},
+        )
+        with patch("octopoid.pool.os.kill", return_value=None):  # pid 1234 alive
+            result = find_pid_for_task("TASK-abc")
+        assert result is None
+
+    def test_returns_pid_and_blueprint_when_found_alive(self, agents_runtime_dir):
+        save_blueprint_pids(
+            "implementer",
+            {5678: {"task_id": "TASK-target", "started_at": "t", "instance_name": "i-1"}},
+        )
+        with patch("octopoid.pool.os.kill", return_value=None):  # pid alive
+            result = find_pid_for_task("TASK-target")
+        assert result == (5678, "implementer")
+
+    def test_returns_none_when_process_is_dead(self, agents_runtime_dir):
+        save_blueprint_pids(
+            "implementer",
+            {9999: {"task_id": "TASK-dead", "started_at": "t", "instance_name": "i-1"}},
+        )
+        with patch("octopoid.pool.os.kill", side_effect=ProcessLookupError):
+            result = find_pid_for_task("TASK-dead")
+        assert result is None
+
+    def test_searches_multiple_blueprints(self, agents_runtime_dir):
+        save_blueprint_pids(
+            "implementer",
+            {1111: {"task_id": "TASK-impl", "started_at": "t", "instance_name": "i-1"}},
+        )
+        save_blueprint_pids(
+            "gatekeeper",
+            {2222: {"task_id": "TASK-gate", "started_at": "t", "instance_name": "g-1"}},
+        )
+        with patch("octopoid.pool.os.kill", return_value=None):
+            result = find_pid_for_task("TASK-gate")
+        assert result == (2222, "gatekeeper")
+
+
+# ---------------------------------------------------------------------------
+# remove_pid_from_blueprint
+# ---------------------------------------------------------------------------
+
+
+class TestRemovePidFromBlueprint:
+    def test_removes_existing_pid(self, agents_runtime_dir):
+        save_blueprint_pids(
+            "implementer",
+            {
+                1234: {"task_id": "TASK-a", "started_at": "t", "instance_name": "i-1"},
+                5678: {"task_id": "TASK-b", "started_at": "t", "instance_name": "i-2"},
+            },
+        )
+        remove_pid_from_blueprint("implementer", 1234, reason="test")
+        remaining = load_blueprint_pids("implementer")
+        assert 1234 not in remaining
+        assert 5678 in remaining
+
+    def test_noop_when_pid_not_present(self, agents_runtime_dir):
+        save_blueprint_pids(
+            "implementer",
+            {5678: {"task_id": "TASK-b", "started_at": "t", "instance_name": "i-2"}},
+        )
+        remove_pid_from_blueprint("implementer", 9999, reason="test")
+        remaining = load_blueprint_pids("implementer")
+        assert 5678 in remaining
