@@ -45,6 +45,12 @@ Known symptoms and their root causes. **Consult this first when diagnosing a pro
 |---|---|---|
 | `create_pr` step fails: "No commits between main and agent/XXXXX" | Duplicate task — another task did the same work and was merged first. When this task's agent ran `rebase_on_base`, the rebase incorporated all its changes (they were already in main), leaving zero unique commits. The branch tip equals main's tip. | The task's acceptance criteria are already satisfied — no code change needed. Mark the task done manually: `sdk._request('POST', f'/api/v1/tasks/{task_id}/force-queue', json={'queue': 'done', 'reason': 'duplicate — work already merged by another task'})`. Long-term fix: analyst should check if the target symbols are still present before creating a task. |
 
+## Fixer-intervention loop on duplicate task
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| Task cycles: `claimed` → `requires-intervention` → `claimed` → `requires-intervention` indefinitely. Fixer stdouts say "already done, should be deleted." `needs_intervention` keeps being re-set. | The work was already on main when the task was created (duplicate). The original agent ran but found nothing to do and produced empty/minimal stdout → classified as unknown → intervention triggered. Fixer correctly diagnosed "already done" but used language like "this task should be deleted" or "requires human intervention" — the Haiku classifier read that as `"failed"` (matching `"failed": The agent could not fix the issue or needs human intervention`), triggering another fixer loop. | Use `sdk._request('DELETE', f'/api/v1/tasks/{task_id}')` to delete the task — it has no associated work. As a fixer, avoid "deletion" or "human intervention" language; instead make a small meaningful commit (e.g. issues-log update) and report "Fixed:" so the flow can proceed to create a PR. Long-term fix: Haiku classifier should have a `no_op` outcome for tasks that were already done on main. | Task b21ac000, 2026-03-02 |
+
 ## Rebase conflict: parallel systemic-failure work in scheduler.py
 
 | Symptom | Likely cause | Fix |
