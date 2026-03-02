@@ -321,28 +321,22 @@ class TestLeaseRecoveryProvisional:
             f"lease_expires_at should be cleared, got {task.get('lease_expires_at')}"
         )
 
-    @pytest.mark.xfail(
-        reason="Known bug: PATCH /tasks/:id doesn't accept lease_expires_at. "
-               "See project-management/tasks/octopoid-server/fix-patch-lease-expires-at.md",
-        strict=True,
-    )
     def test_stale_lease_without_claimed_by_is_still_cleared(
         self,
         scoped_sdk,
         orchestrator_id: str,
         clean_tasks,
     ) -> None:
-        """BUG: claimed_by cleared but lease_expires_at left behind.
+        """Stale lease_expires_at is cleared even when claimed_by is already None.
 
         This reproduces the scenario where check_and_update_finished_agents
         (or some other code path) clears claimed_by on a provisional task
         but does NOT clear lease_expires_at. The task ends up with:
           claimed_by=None, lease_expires_at=<expired timestamp>
 
-        check_and_requeue_expired_leases skips provisional tasks where
-        claimed_by is falsy (line 1768), so the stale lease is never cleaned.
-
-        This test should FAIL until the bug is fixed.
+        check_and_requeue_expired_leases previously skipped provisional tasks
+        where claimed_by was falsy, leaving the stale lease. Fixed by changing
+        the skip condition to only skip tasks with neither claimer nor lease.
         """
         task_id = _make_task_id()
         self._create_provisional_task(scoped_sdk, orchestrator_id, task_id)
@@ -372,11 +366,9 @@ class TestLeaseRecoveryProvisional:
         with _advance_time_to_future():
             check_and_requeue_expired_leases()
 
-        # BUG: the function skips provisional tasks where claimed_by is None
-        # (line 1768), so lease_expires_at is never cleared.
         task = scoped_sdk.tasks.get(task_id)
         assert task["queue"] == "provisional"
         assert task.get("lease_expires_at") is None, (
-            f"BUG: lease_expires_at should be cleared even when claimed_by is None, "
+            f"lease_expires_at should be cleared even when claimed_by is None, "
             f"but got {task.get('lease_expires_at')}"
         )
