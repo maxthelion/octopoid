@@ -2693,6 +2693,12 @@ def _run_agent_evaluation_loop(queue_counts: dict | None) -> None:
             logger.debug(f"Skipping job agent {agent_name} (managed by jobs.yaml)")
             continue
 
+        # Skip on-demand agents — spawned directly by the scheduler when needed
+        # (e.g. diagnostic agent on auto-pause), not by pool evaluation.
+        if agent_config.get("on_demand"):
+            logger.debug(f"Skipping on-demand agent {agent_name}")
+            continue
+
         if not agent_name or not role:
             missing = []
             if not agent_name:
