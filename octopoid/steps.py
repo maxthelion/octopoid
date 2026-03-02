@@ -646,9 +646,9 @@ class _RebaseOnBaseStep(Step):
         )
         if rebase.returncode != 0:
             subprocess.run(["git", "rebase", "--abort"], cwd=worktree, capture_output=True, text=True)
-            raise RuntimeError(
-                f"rebase_on_base: git rebase onto origin/{base_branch} failed:\n"
-                f"{rebase.stdout}\n{rebase.stderr}"
+            raise PermanentStepError(
+                f"rebase_on_base: merge conflict rebasing onto origin/{base_branch} — "
+                f"requires human resolution:\n{rebase.stdout}\n{rebase.stderr}"
             )
 
         logger.info(f"rebase_on_base: rebased onto origin/{base_branch}")

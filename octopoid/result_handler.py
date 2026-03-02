@@ -776,7 +776,7 @@ def handle_agent_result_via_flow(task_id: str, agent_name: str, task_dir: Path, 
             If set and the task has moved to a different queue, the result is
             discarded as stale to prevent running wrong transition steps.
     """
-    from .steps import RetryableStepError  # noqa: PLC0415
+    from .steps import PermanentStepError, RetryableStepError  # noqa: PLC0415
 
     result = infer_result_from_stdout(task_dir / "stdout.log", "gatekeeper")
 
@@ -800,6 +800,19 @@ def handle_agent_result_via_flow(task_id: str, agent_name: str, task_dir: Path, 
     except RetryableStepError as e:
         logger.info(f"check_ci pending for {task_id}: {e}, leaving in {current_queue}")
         return False  # Don't remove PID — scheduler will retry on next tick
+
+    except PermanentStepError as e:
+        logger.warning(f"Permanent step error for {task_id}: {e}, routing to intervention")
+        try:
+            request_intervention(
+                task_id,
+                reason=str(e),
+                source="merge-conflict",
+                previous_queue=current_queue,
+            )
+        except Exception as inner_e:
+            logger.error(f"request_intervention failed for {task_id}: {inner_e}")
+        return True
 
     except Exception as e:
         logger.error(f"handle_agent_result_via_flow failed for {task_id}: {e}", exc_info=True)
@@ -853,7 +866,7 @@ def handle_agent_result(task_id: str, agent_name: str, task_dir: Path) -> bool:
         agent_name: Name of the agent
         task_dir: Path to the task directory
     """
-    from .steps import RetryableStepError  # noqa: PLC0415
+    from .steps import PermanentStepError, RetryableStepError  # noqa: PLC0415
 
     result = infer_result_from_stdout(task_dir / "stdout.log", "implement")
     outcome = result.get("outcome", "error")
@@ -887,6 +900,18 @@ def handle_agent_result(task_id: str, agent_name: str, task_dir: Path) -> bool:
     except RetryableStepError as e:
         logger.info(f"Retryable step error for task {task_id}: {e}, will retry")
         return False  # Don't remove PID — scheduler will retry on next tick
+    except PermanentStepError as e:
+        logger.warning(f"Permanent step error for task {task_id}: {e}, routing to intervention")
+        try:
+            request_intervention(
+                task_id,
+                reason=str(e),
+                source="merge-conflict",
+                previous_queue=current_queue,
+            )
+        except Exception as inner_e:
+            logger.error(f"request_intervention failed for {task_id}: {inner_e}")
+        return True
     except Exception as e:
         failure_count = _increment_step_failure_count(task_dir)
         logger.error(
