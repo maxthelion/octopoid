@@ -168,12 +168,40 @@ def _infer_fixer(tail: str) -> dict:
         return {"outcome": "unknown", "reason": f"Inference error: {e}"}
 
 
+def _parse_json_stdout(stdout: str) -> tuple[dict | None, str]:
+    """Try to parse stdout as Claude JSON output format.
+
+    When claude is invoked with --output-format json it emits a single JSON
+    object on stdout instead of plain text.  This helper attempts to parse it
+    and returns (parsed_object, text_for_inference) where text_for_inference is
+    the `result` field extracted from the JSON (i.e. the agent's final text
+    response).
+
+    If the stdout is not valid JSON, or doesn't look like a Claude result
+    object, returns (None, stdout) so the caller falls back to plain-text
+    inference.
+    """
+    stripped = stdout.strip()
+    if not stripped.startswith("{"):
+        return None, stdout
+    try:
+        parsed = json.loads(stripped)
+    except (json.JSONDecodeError, ValueError):
+        return None, stdout
+    if not isinstance(parsed, dict) or parsed.get("type") != "result":
+        return None, stdout
+    # Extract the agent's text result for further inference
+    text = parsed.get("result") or ""
+    return parsed, text
+
+
 def infer_result_from_stdout(stdout_path: Path, agent_role: str) -> dict:
     """Infer agent outcome from stdout.log using a role-specific haiku call.
 
-    Reads the last 2000 characters of stdout.log and uses a role-specific
-    prompt to classify the agent's outcome. This replaces result.json as the
-    mechanism for agents to communicate their outcome to the scheduler.
+    Reads stdout.log and uses a role-specific prompt to classify the agent's
+    outcome.  When claude is spawned with --output-format json the stdout is a
+    JSON object; this function parses it and handles the subtype directly
+    before falling back to haiku inference on the text payload.
 
     Args:
         stdout_path: Path to the stdout.log file
@@ -208,7 +236,27 @@ def infer_result_from_stdout(stdout_path: Path, agent_role: str) -> dict:
             return {"status": "failure", "message": "Empty stdout — agent may have crashed"}
         return {"outcome": "unknown", "reason": "Empty stdout — agent may have crashed"}
 
-    tail = stdout[-2000:]
+    # Try to parse structured JSON output (--output-format json)
+    parsed_json, text = _parse_json_stdout(stdout)
+    if parsed_json is not None:
+        subtype = parsed_json.get("subtype", "")
+        logger.debug(f"infer_result_from_stdout: JSON stdout detected, subtype={subtype!r}")
+        if subtype == "error_max_turns_exceeded":
+            if agent_role in ("gatekeeper", "sanity-check-gatekeeper"):
+                return {"status": "failure", "message": "Agent hit max turns limit"}
+            return {"outcome": "max_turns_exceeded", "reason": "Agent hit max turns limit"}
+        # For other subtypes (success, other errors) use the extracted text
+        # as the inference payload.  If text is empty, fall through to the
+        # empty-stdout path handled below.
+        if not text.strip():
+            if agent_role in ("gatekeeper", "sanity-check-gatekeeper"):
+                return {"status": "failure", "message": "Empty result in JSON stdout"}
+            return {"outcome": "unknown", "reason": "Empty result in JSON stdout"}
+    else:
+        # Plain-text stdout (pre-json agents or plain text format) — backwards compat
+        text = stdout
+
+    tail = text[-2000:]
 
     if agent_role in ("gatekeeper", "sanity-check-gatekeeper"):
         result = _infer_gatekeeper(tail)
@@ -952,7 +1000,7 @@ def handle_agent_result(task_id: str, agent_name: str, task_dir: Path) -> bool:
             return _handle_done_outcome(sdk, task_id, task, result, task_dir)
         elif outcome in ("failed", "error"):
             return _handle_fail_outcome(sdk, task_id, task, result.get("reason", "Agent reported failure"), current_queue)
-        elif outcome == "needs_continuation":
+        elif outcome in ("needs_continuation", "max_turns_exceeded"):
             return _handle_continuation_outcome(sdk, task_id, task, agent_name, current_queue)
         else:
             # Unknown outcome (e.g. haiku auth failure) — we cannot determine what
