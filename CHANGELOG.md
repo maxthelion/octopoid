@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `rebase_on_base` step now raises `PermanentStepError` on merge conflict instead of `RuntimeError`, routing directly to `requires-intervention` without wasting 3 retries. Merge conflicts will never self-resolve.
+- Both `handle_agent_result` and `handle_agent_result_via_flow` in `result_handler.py` now catch `PermanentStepError` and call `request_intervention()` immediately with `source="merge-conflict"`.
+- Fixed `_handle_approve_and_run_steps` absorbing `PermanentStepError` as a generic `RuntimeError` — now re-raises it so it reaches the outer `except PermanentStepError` handler and routes to intervention instead of rejecting the task.
+- Added unit test verifying `PermanentStepError` from `execute_steps` causes `request_intervention()` to be called with `source="merge-conflict"` (no retries, no `sdk.tasks.reject`).
 ### Changed
 - `get_agents()` now scans `.octopoid/agents/*/agent.yaml` as the primary source of agent config. Each subdirectory with an `agent.yaml` is discovered as an agent; the directory name becomes the `blueprint_name` unless `blueprint_name` is set explicitly in the yaml.
 - Fallback to `agents.yaml` `agents:`/`fleet:` dict still works for backward compatibility (used by tests).
