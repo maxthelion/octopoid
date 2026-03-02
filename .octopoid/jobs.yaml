@@ -132,3 +132,15 @@ jobs:
     type: agent
     group: remote
     max_instances: 1
+
+  # Periodic design patterns analyst: reads actual source code and proposes where
+  # established design patterns (Strategy, Pipeline, Repository, Observer, etc.) would
+  # improve clarity, testability, or extensibility. Rotates through modules across runs
+  # using a state file. Less frequent than mechanical analysts (1 hour interval) since
+  # each run requires reading and reasoning about real code. Guard skips if a proposal
+  # already exists. Agent config loaded from .octopoid/agents/design-patterns-analyst/agent.yaml.
+  - name: design_patterns_analyst
+    interval: 3600
+    type: agent
+    group: remote
+    max_instances: 1

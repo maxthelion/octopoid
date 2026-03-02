@@ -272,6 +272,21 @@ def init_orchestrator(
     else:
         print(f"  Exists:  {architecture_analyst_dir.relative_to(parent)}/")
 
+    # Scaffold design-patterns-analyst agent directory
+    design_patterns_analyst_dir = octopoid_dir / "agents" / "design-patterns-analyst"
+    if not design_patterns_analyst_dir.exists():
+        builtin_design_patterns_analyst = pkg_data / "agents" / "design-patterns-analyst"
+        if not builtin_design_patterns_analyst.exists():
+            builtin_design_patterns_analyst = submodule / ".octopoid" / "agents" / "design-patterns-analyst"
+        if builtin_design_patterns_analyst.exists():
+            shutil.copytree(builtin_design_patterns_analyst, design_patterns_analyst_dir)
+            print(f"  Created: {design_patterns_analyst_dir.relative_to(parent)}/ (from template)")
+        else:
+            design_patterns_analyst_dir.mkdir(parents=True)
+            print(f"  Created: {design_patterns_analyst_dir.relative_to(parent)}/ (empty scaffold)")
+    else:
+        print(f"  Exists:  {design_patterns_analyst_dir.relative_to(parent)}/")
+
     # Create jobs.yaml only if it does not already exist
     jobs_yaml = octopoid_dir / "jobs.yaml"
     jobs_yaml_created = False
@@ -618,6 +633,21 @@ jobs:
       spawn_mode: scripts
       lightweight: true
       agent_dir: .octopoid/agents/architecture-analyst
+
+  # Periodic design patterns analyst: reads actual code and proposes where a specific
+  # named design pattern would improve clarity, testability, or extensibility.
+  # Rotates through modules across runs via a state file. Subjective, LLM-native
+  # analysis — no static tools. Guard skips if a proposal already exists.
+  - name: design_patterns_analyst
+    interval: 3600
+    type: agent
+    group: remote
+    max_instances: 1
+    agent_config:
+      role: analyse
+      spawn_mode: scripts
+      lightweight: true
+      agent_dir: .octopoid/agents/design-patterns-analyst
 """
 
 DASHBOARD_WRAPPER = """#!/usr/bin/env bash

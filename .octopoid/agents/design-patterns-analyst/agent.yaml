@@ -1,0 +1,12 @@
+role: analyse
+model: sonnet
+max_turns: 40
+interval_seconds: 600
+spawn_mode: scripts
+lightweight: true
+job_agent: true
+allowed_tools:
+  - Read
+  - Glob
+  - Grep
+  - Bash

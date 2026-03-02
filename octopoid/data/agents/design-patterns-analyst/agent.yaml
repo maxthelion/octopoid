@@ -1,0 +1,13 @@
+role: analyse
+model: sonnet
+max_turns: 40
+interval_seconds: 3600
+spawn_mode: scripts
+lightweight: true
+pre_check: bash octopoid/data/agents/design-patterns-analyst/scripts/guard.sh
+pre_check_trigger: exit_zero
+allowed_tools:
+  - Read
+  - Glob
+  - Grep
+  - Bash
