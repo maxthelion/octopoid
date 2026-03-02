@@ -18,6 +18,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .result_handler import extract_stdout_text
+
 
 # Max JSONL entries to keep per job (older entries are trimmed on write)
 _MAX_LOG_ENTRIES = 20
@@ -141,6 +143,7 @@ def _extract_summary(job_dir: Path | str) -> str | None:
 
     try:
         content = stdout_log.read_text(errors="replace")
+        content = extract_stdout_text(content)
         if not content.strip():
             return None
 

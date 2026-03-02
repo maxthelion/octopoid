@@ -53,6 +53,7 @@ from .pool import (
 )
 from .result_handler import (
     _get_circuit_breaker_threshold,
+    extract_stdout_text,
     handle_agent_result,
     handle_agent_result_via_flow,
     handle_fixer_result,
@@ -1167,6 +1168,7 @@ def prepare_task_directory(
     if stdout_path.exists():
         try:
             prev_content = stdout_path.read_text(errors="replace")
+            prev_content = extract_stdout_text(prev_content)
             tail = prev_content[-3000:]
             (task_dir / "prev_stdout.log").write_text(tail)
             # Archive as stdout-{blueprint}-{attempt}.log to preserve per-attempt output

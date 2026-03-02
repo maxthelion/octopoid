@@ -195,6 +195,16 @@ def _parse_json_stdout(stdout: str) -> tuple[dict | None, str]:
     return parsed, text
 
 
+def extract_stdout_text(raw_stdout: str) -> str:
+    """Extract human-readable text from stdout content.
+
+    If stdout is Claude JSON format (--output-format json), returns the
+    ``result`` field.  Otherwise returns the original text unchanged.
+    """
+    _, text = _parse_json_stdout(raw_stdout)
+    return text
+
+
 def infer_result_from_stdout(stdout_path: Path, agent_role: str) -> dict:
     """Infer agent outcome from stdout.log using a role-specific haiku call.
 
