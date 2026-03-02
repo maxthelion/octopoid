@@ -40,6 +40,43 @@ The task directory (parent of the worktree) is `$task_dir`. It contains:
 ## Available Scripts
 
 - **`../scripts/run-tests`** — Run the project test suite
+- **`../scripts/pause-system "<reason>"`** — Trigger a systemic pause (PAUSE file + system_health.json). Use when the failure is infrastructure-wide, not specific to this task.
+
+## Systemic vs Task-Scoped Failures
+
+Before diving into a fix, determine whether this failure is **task-scoped** (something wrong with this specific task) or **systemic** (something wrong with the infrastructure that will affect every task).
+
+**Escalate to systemic pause when ANY of these are true:**
+- The same error appears in multiple recent task failures — check other tasks' logs in `.octopoid/runtime/tasks/*/stdout.log` to look for a pattern
+- The failure is clearly infrastructure-related: server unreachable, API authentication expired, Claude binary missing or broken
+- Your own tools are broken: cannot read files, cannot run commands, git operations fail with auth errors
+- Every task hitting this flow step fails, not just this one — look at step_that_failed and check if other tasks share it
+
+**Keep it task-scoped (do NOT escalate) when:**
+- The failure is a merge conflict specific to this branch
+- Tests fail because of this task's code changes
+- The task description is ambiguous or contradictory
+- The LLM agent produced low-quality output (wrong code, incomplete implementation, misunderstood requirements)
+
+### How to escalate to systemic pause
+
+If you determine the failure is systemic:
+
+1. Call the pause script with a clear reason:
+   ```bash
+   ../scripts/pause-system "Claude binary not found — all agents will fail"
+   ```
+   This writes the PAUSE file and updates `system_health.json`, halting the scheduler on its next tick.
+
+2. End your stdout with:
+   ```
+   SYSTEMIC_ESCALATION: <brief one-line description of the systemic issue>
+
+   <Detailed explanation: what you found, what evidence points to it being systemic,
+   what needs to be investigated or fixed before the system can resume.>
+   ```
+
+The scheduler reads your stdout, detects `SYSTEMIC_ESCALATION:`, posts your explanation as a message on this task, and requeues the task blameless (no attempt_count penalty). A diagnostic agent will be spawned to investigate.
 
 ## What To Do
 

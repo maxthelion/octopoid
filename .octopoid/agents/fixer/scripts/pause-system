@@ -1,0 +1,84 @@
+#!/bin/bash
+# pause-system: Trigger a systemic pause from within the fixer agent.
+#
+# Writes the PAUSE file and updates system_health.json to signal a systemic
+# issue to the scheduler. Call this when the failure is infrastructure-wide,
+# not specific to this task.
+#
+# Usage: ../scripts/pause-system "Brief description of the systemic issue"
+#
+# Called from inside the worktree as ../scripts/pause-system.
+# Sources env.sh from the task directory to get WORKTREE and other vars.
+
+set -e
+
+source "$(dirname "$0")/../env.sh" 2>/dev/null || true
+
+REASON="${1:-fixer agent detected systemic issue}"
+
+# Find project root by walking up from WORKTREE to find dir with .octopoid/ and .git
+find_project_root() {
+    local current="${WORKTREE:-$(pwd)}"
+    while [ "$current" != "/" ]; do
+        if [ -d "$current/.octopoid" ] && [ -d "$current/.git" ]; then
+            echo "$current"
+            return 0
+        fi
+        current="$(dirname "$current")"
+    done
+    echo "ERROR: Could not find project root with .octopoid/ and .git" >&2
+    exit 1
+}
+
+PROJECT_ROOT="$(find_project_root)"
+OCTOPOID_DIR="$PROJECT_ROOT/.octopoid"
+PAUSE_FILE="$OCTOPOID_DIR/PAUSE"
+HEALTH_FILE="$OCTOPOID_DIR/runtime/system_health.json"
+NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+# Write PAUSE file — same mechanism as /pause-system
+touch "$PAUSE_FILE"
+echo "PAUSE file written: $PAUSE_FILE"
+
+# Update system_health.json with the systemic failure reason
+mkdir -p "$(dirname "$HEALTH_FILE")"
+
+python3 - <<EOF
+import json, sys
+
+health_path = "$HEALTH_FILE"
+reason = """$REASON"""
+now = "$NOW"
+task_id = "${TASK_ID:-unknown}"
+
+try:
+    with open(health_path) as f:
+        health = json.load(f)
+except Exception:
+    health = {
+        "consecutive_systemic_failures": 0,
+        "last_systemic_failure": None,
+        "auto_paused": False,
+        "auto_paused_at": None,
+        "auto_pause_reason": None,
+    }
+
+# Increment counter to register this as a systemic failure
+health["consecutive_systemic_failures"] = health.get("consecutive_systemic_failures", 0) + 1
+health["last_systemic_failure"] = now
+health["auto_paused"] = True
+health["auto_paused_at"] = now
+health["auto_paused_by"] = "fixer"
+health["auto_pause_reason"] = f"Fixer agent escalated to systemic pause (task {task_id}): {reason}"
+
+with open(health_path, "w") as f:
+    json.dump(health, f, indent=2)
+
+print(f"system_health.json updated: {health_path}")
+print(f"Reason: {health['auto_pause_reason']}")
+EOF
+
+echo ""
+echo "System paused. The scheduler will stop on its next tick."
+echo "The diagnostic agent will be spawned to investigate the systemic issue."
+echo "Reason: $REASON"

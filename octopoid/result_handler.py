@@ -72,11 +72,13 @@ The agent output below is the last 2000 characters of the agent's session. \
 Classify it as:
 - "fixed": The agent successfully diagnosed and applied a fix.
 - "failed": The agent could not fix the issue or needs human intervention.
+- "systemic": The agent determined the failure is infrastructure-wide (not \
+task-specific) and escalated to a systemic pause. Look for "SYSTEMIC_ESCALATION".
 
 AGENT OUTPUT:
 {tail}
 
-Respond with exactly one word: fixed or failed"""
+Respond with exactly one word: fixed, failed, or systemic"""
 
 
 def _call_haiku(prompt: str) -> str:
@@ -130,10 +132,25 @@ def _infer_gatekeeper(tail: str) -> dict:
 
 
 def _infer_fixer(tail: str) -> dict:
-    """Infer fixer outcome from stdout tail using haiku."""
+    """Infer fixer outcome from stdout tail using haiku.
+
+    Checks for a SYSTEMIC_ESCALATION marker first (fast path, no haiku cost).
+    Falls back to haiku for fixed/failed classification.
+    """
+    # Fast path: fixer explicitly signalled systemic escalation
+    if "SYSTEMIC_ESCALATION:" in tail:
+        # Extract the reason from the first SYSTEMIC_ESCALATION: line
+        for line in tail.splitlines():
+            if line.startswith("SYSTEMIC_ESCALATION:"):
+                reason = line[len("SYSTEMIC_ESCALATION:"):].strip()
+                return {"outcome": "systemic_escalation", "reason": reason, "diagnosis": tail[:1000]}
+        return {"outcome": "systemic_escalation", "reason": "Systemic issue detected", "diagnosis": tail[:1000]}
+
     try:
         word = _call_haiku(_FIXER_PROMPT.format(tail=tail))
-        if "fix" in word:
+        if "systemic" in word:
+            return {"outcome": "systemic_escalation", "reason": "Inferred from stdout: systemic issue", "diagnosis": tail[:1000]}
+        elif "fix" in word:
             return {"outcome": "fixed", "diagnosis": "Inferred from stdout", "fix_applied": tail[:500]}
         elif "fail" in word:
             return {"outcome": "failed", "diagnosis": "Inferred from stdout: could not fix"}
@@ -1000,9 +1017,11 @@ def handle_fixer_result(task_id: str, agent_name: str, task_dir: Path) -> bool:
     """Handle the result of a fixer agent run.
 
     Infers the fixer outcome from stdout.log and takes the appropriate action:
-    - outcome=fixed  → clear needs_intervention, resume interrupted flow,
-                        skip already-completed steps, post a reply message.
-    - anything else  → move to TRUE failed (terminal), post a failure message.
+    - outcome=fixed               → clear needs_intervention, resume interrupted flow,
+                                    skip already-completed steps, post a reply message.
+    - outcome=systemic_escalation → requeue task blameless to source queue, post a
+                                    message explaining the systemic pause escalation.
+    - anything else               → move to TRUE failed (terminal), post a failure message.
 
     The fixer communicates through stdout — the scheduler infers the outcome.
 
@@ -1031,6 +1050,42 @@ def handle_fixer_result(task_id: str, agent_name: str, task_dir: Path) -> bool:
     task = sdk.tasks.get(task_id)
     if not task:
         logger.debug(f"Fixer result: task {task_id} not found on server, removing stale PID")
+        return True
+
+    if outcome == "systemic_escalation":
+        systemic_reason = result.get("reason", "Systemic issue detected by fixer agent")
+
+        # Post a message on the task explaining the escalation
+        try:
+            content = (
+                "## Fixer escalated to systemic pause\n\n"
+                f"**Reason:** {systemic_reason}\n\n"
+                "The fixer determined this failure is not task-specific but affects the "
+                "entire pipeline. The system has been paused. A diagnostic agent will "
+                "investigate the systemic issue.\n\n"
+                "This task has been returned to its source queue blameless — no attempt "
+                "count was incremented. It will resume once the systemic issue is resolved."
+            )
+            sdk.messages.create(
+                task_id=task_id,
+                from_actor="fixer",
+                to_actor="scheduler",
+                type="intervention_reply",
+                content=content,
+                parent_message_id=request_message_id,
+            )
+        except Exception as msg_e:
+            print(f"[{datetime.now().isoformat()}] WARN: Failed to post systemic escalation message for {task_id}: {msg_e}")
+
+        # Requeue blameless — the task is not at fault, return it to its source queue
+        try:
+            sdk.tasks.update(task_id, queue=previous_queue, claimed_by=None, lease_expires_at=None, needs_intervention=False)
+            logger.debug(f"Systemic escalation: task {task_id} requeued blameless to {previous_queue}")
+            print(f"[{datetime.now().isoformat()}] SYSTEMIC task={task_id}: {systemic_reason[:200]}")
+        except Exception as requeue_e:
+            logger.error(f"Failed to requeue task {task_id} after systemic escalation: {requeue_e}")
+            print(f"[{datetime.now().isoformat()}] ERROR: Failed to requeue {task_id} after systemic escalation: {requeue_e}")
+
         return True
 
     if outcome == "fixed":
