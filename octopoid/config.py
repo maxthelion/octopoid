@@ -278,6 +278,11 @@ def discover_agent_config(agent_dir: Path) -> dict[str, Any] | None:
     if config.get("job_agent", False):
         return None
 
+    # Skip on-demand agents — they are spawned directly by the scheduler when needed,
+    # not by the normal pool evaluation loop (e.g. diagnostic agent on auto-pause)
+    if config.get("on_demand", False):
+        return None
+
     blueprint_name = agent_dir.name
     config.setdefault("name", blueprint_name)
     config.setdefault("blueprint_name", blueprint_name)

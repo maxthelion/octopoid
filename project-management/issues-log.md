@@ -10,6 +10,12 @@ Known symptoms and their root causes. **Consult this first when diagnosing a pro
 | Gatekeeper says files were "deleted" but they don't exist | Agent renamed files (e.g. 183-... → 0183-...) in a prior commit; gatekeeper referenced old unpadded names that never existed in that form on main. | Verify with `git log --all -- path/to/file`. If file truly never existed by that name, the gatekeeper was wrong — no action needed. |
 | `if rejected:` NameError in queue-status.md | Out-of-scope change added a `rejected_by_gatekeeper` problem type but never populated the `rejected` list. | Remove the `if rejected:` block (lines 113-119). Fixed in task 72ff0d4e. |
 
+## Rebase conflict: parallel systemic-failure work in scheduler.py
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| Rebase fails with conflict in `octopoid/scheduler.py` around spawn failure handler | Two PRs modified the same spawn-failure path: one added `_requeue_task_blameless` + simple `_record_systemic_failure`, the other added `_handle_systemic_failure` + diagnostic agent spawn | Use `_requeue_task_blameless` (blameless requeue) + `_handle_systemic_failure` (triggers diagnostic). Remove the duplicate `_record_systemic_failure` (returning None) and `_SYSTEMIC_FAILURE_THRESHOLD` constant that HEAD added, since our new version at earlier line returns int and is used by `_handle_systemic_failure`. |
+
 ## Scheduler not processing tasks
 
 | Symptom | Likely cause | See |

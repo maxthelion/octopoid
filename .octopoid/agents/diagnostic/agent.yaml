@@ -1,0 +1,12 @@
+role: diagnose
+model: sonnet
+max_turns: 30
+spawn_mode: scripts
+lightweight: true
+max_instances: 1
+on_demand: true
+allowed_tools:
+  - Read
+  - Glob
+  - Grep
+  - Bash

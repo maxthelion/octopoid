@@ -19,6 +19,7 @@ from pathlib import Path
 from .config import (
     find_parent_project,
     get_agents,
+    get_agents_base_dir,
     get_agents_runtime_dir,
     get_global_instructions_path,
     get_jobs_dir,
@@ -2225,6 +2226,189 @@ def run_housekeeping() -> None:
 
 
 # =============================================================================
+# System Health and Auto-Pause
+# =============================================================================
+
+SYSTEMIC_FAILURE_THRESHOLD = 2
+
+
+def _get_system_health_path() -> Path:
+    """Get path to the system health tracking file."""
+    from .config import get_runtime_dir
+    return get_runtime_dir() / "system_health.json"
+
+
+def _load_system_health() -> dict:
+    """Load system health state from disk.
+
+    Returns:
+        Dict with consecutive_systemic_failures, last_failure_time,
+        last_failure_reason, last_diagnostic_spawned.
+    """
+    path = _get_system_health_path()
+    if path.exists():
+        try:
+            return json.loads(path.read_text())
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {
+        "consecutive_systemic_failures": 0,
+        "last_failure_time": None,
+        "last_failure_reason": None,
+        "last_diagnostic_spawned": None,
+    }
+
+
+def _save_system_health(health: dict) -> None:
+    """Persist system health state to disk."""
+    path = _get_system_health_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(health, indent=2))
+
+
+def _record_systemic_failure(reason: str) -> int:
+    """Increment the consecutive systemic failure counter.
+
+    Args:
+        reason: Human-readable description of the failure.
+
+    Returns:
+        The new consecutive failure count.
+    """
+    health = _load_system_health()
+    health["consecutive_systemic_failures"] = health.get("consecutive_systemic_failures", 0) + 1
+    health["last_failure_time"] = datetime.now(tz=timezone.utc).isoformat()
+    health["last_failure_reason"] = reason
+    _save_system_health(health)
+    count = health["consecutive_systemic_failures"]
+    logger.warning(f"Systemic failure #{count}: {reason}")
+    return count
+
+
+def reset_systemic_failures() -> None:
+    """Reset the systemic failure counter (called by the diagnostic agent after fixing)."""
+    health = _load_system_health()
+    health["consecutive_systemic_failures"] = 0
+    health["last_failure_time"] = None
+    health["last_failure_reason"] = None
+    _save_system_health(health)
+    logger.info("Systemic failure counter reset")
+
+
+def _spawn_diagnostic_agent(reason: str) -> None:
+    """Spawn the diagnostic agent to investigate a systemic pause.
+
+    Prepares a job directory for the diagnostic agent with the failure
+    context written to context.json, then invokes claude directly.
+
+    Args:
+        reason: The failure reason that triggered the auto-pause.
+    """
+    import yaml as _yaml
+
+    agents_base = get_agents_base_dir()
+    diag_agent_dir = agents_base / "diagnostic"
+    agent_yaml = diag_agent_dir / "agent.yaml"
+
+    if not agent_yaml.exists():
+        logger.error("Diagnostic agent config not found at %s, cannot spawn", agent_yaml)
+        return
+
+    with open(agent_yaml) as f:
+        agent_config = _yaml.safe_load(f) or {}
+
+    agent_config["agent_dir"] = str(diag_agent_dir)
+    agent_config.setdefault("name", "diagnostic")
+    agent_config.setdefault("blueprint_name", "diagnostic")
+
+    # Don't spawn if already running
+    if count_running_instances("diagnostic") > 0:
+        logger.info("Diagnostic agent already running, skipping spawn")
+        return
+
+    try:
+        job_dir = prepare_job_directory("diagnostic", agent_config)
+    except Exception as e:
+        logger.error(f"Failed to prepare diagnostic job directory: {e}")
+        return
+
+    # Read last N lines of scheduler log for context
+    log_tail_lines: list[str] = []
+    log_file = get_logs_dir() / "octopoid.log"
+    if log_file.exists():
+        try:
+            lines = log_file.read_text().splitlines()
+            log_tail_lines = lines[-100:]
+        except OSError:
+            pass
+
+    # Write diagnostic context to job_dir/context.json
+    health = _load_system_health()
+    context = {
+        "trigger_reason": reason,
+        "consecutive_failures": health.get("consecutive_systemic_failures", 0),
+        "last_failure_time": health.get("last_failure_time"),
+        "orchestrator_dir": str(get_orchestrator_dir()),
+        "pause_file": str(get_orchestrator_dir() / "PAUSE"),
+        "health_file": str(_get_system_health_path()),
+        "log_file": str(log_file),
+        "log_tail": log_tail_lines,
+        "queue_counts": None,
+    }
+
+    # Try to get queue counts from the server
+    try:
+        orch_id = queue_utils.get_orchestrator_id()
+        sdk = queue_utils.get_sdk()
+        poll_data = sdk.poll(orch_id)
+        context["queue_counts"] = poll_data.get("queue_counts")
+    except Exception:
+        pass  # Server may be unreachable — that could be the problem
+
+    (job_dir / "context.json").write_text(json.dumps(context, indent=2))
+
+    try:
+        pid = invoke_claude(job_dir, agent_config)
+        register_instance_pid("diagnostic", pid, "", "diagnostic-1")
+        health["last_diagnostic_spawned"] = datetime.now(tz=timezone.utc).isoformat()
+        _save_system_health(health)
+        logger.info(f"Diagnostic agent spawned with PID {pid}")
+    except Exception as e:
+        logger.error(f"Failed to spawn diagnostic agent: {e}")
+
+
+def _auto_pause_and_diagnose(reason: str) -> None:
+    """Write the PAUSE file and spawn the diagnostic agent.
+
+    Called when the systemic failure counter reaches the threshold.
+
+    Args:
+        reason: The failure reason that triggered the auto-pause.
+    """
+    pause_file = get_orchestrator_dir() / "PAUSE"
+    pause_file.write_text(f"Auto-paused: {reason}\n")
+    logger.warning(
+        "System auto-paused due to %d consecutive systemic failures. "
+        "Remove .octopoid/PAUSE when resolved.",
+        SYSTEMIC_FAILURE_THRESHOLD,
+    )
+    _spawn_diagnostic_agent(reason)
+
+
+def _handle_systemic_failure(reason: str) -> None:
+    """Record a systemic failure and auto-pause if the threshold is reached.
+
+    Called from spawn failure handlers and other systemic error paths.
+
+    Args:
+        reason: Human-readable description of what failed.
+    """
+    count = _record_systemic_failure(reason)
+    if count >= SYSTEMIC_FAILURE_THRESHOLD:
+        _auto_pause_and_diagnose(reason)
+
+
+# =============================================================================
 # Spawn Strategies
 # =============================================================================
 
@@ -2340,35 +2524,6 @@ def _requeue_task_blameless(task_id: str, source_queue: str = "incoming") -> Non
         logger.debug(f"Blameless requeue of task {task_id} back to {source_queue} (no attempt_count increment)")
     except Exception as e:
         logger.error(f"Blameless requeue failed for {task_id}: {e}")
-
-
-_SYSTEMIC_FAILURE_THRESHOLD = 2
-
-
-def _record_systemic_failure(reason: str) -> None:
-    """Increment systemic failure counter and auto-pause if threshold reached.
-
-    Args:
-        reason: Description of the failure for logging and storage.
-    """
-    health = _load_system_health()
-    health["consecutive_systemic_failures"] = health.get("consecutive_systemic_failures", 0) + 1
-    health["last_systemic_failure"] = datetime.now(timezone.utc).isoformat()
-    count = health["consecutive_systemic_failures"]
-
-    if count >= _SYSTEMIC_FAILURE_THRESHOLD:
-        pause_reason = f"System auto-paused: {count} consecutive systemic failures. Last error: {reason}"
-        logger.error(pause_reason)
-        # Write PAUSE file — same mechanism as /pause-system
-        pause_file = get_orchestrator_dir() / "PAUSE"
-        pause_file.touch()
-        health["auto_paused"] = True
-        health["auto_paused_at"] = datetime.now(timezone.utc).isoformat()
-        health["auto_pause_reason"] = pause_reason
-    else:
-        logger.warning(f"Systemic failure #{count}/{_SYSTEMIC_FAILURE_THRESHOLD}: {reason}")
-
-    _save_system_health(health)
 
 
 def _reset_systemic_failure_counter() -> None:
@@ -2535,7 +2690,7 @@ def _run_agent_evaluation_loop(queue_counts: dict | None) -> None:
                 if ctx.claimed_task:
                     source_queue = ctx.agent_config.get("claim_from", "incoming")
                     _requeue_task_blameless(ctx.claimed_task["id"], source_queue=source_queue)
-                _record_systemic_failure(str(e))
+                _handle_systemic_failure(f"Spawn failure for {agent_name}: {e}")
 
 
 def run_scheduler() -> None:
@@ -2561,7 +2716,23 @@ def run_scheduler() -> None:
 
     # Check global pause flag
     if is_system_paused():
-        logger.info("System is paused (rm .octopoid/PAUSE or set 'paused: false' in agents.yaml)")
+        pause_file = get_orchestrator_dir() / "PAUSE"
+        health = _load_system_health()
+        is_auto_paused = (
+            pause_file.exists()
+            and health.get("consecutive_systemic_failures", 0) > 0
+        )
+        if is_auto_paused:
+            # Auto-pause: ensure the diagnostic agent is running
+            # (it may have been killed or the scheduler restarted while paused)
+            if count_running_instances("diagnostic") == 0:
+                reason = health.get("last_failure_reason") or "System was auto-paused"
+                logger.info("System is auto-paused and no diagnostic agent running — re-spawning diagnostic")
+                _spawn_diagnostic_agent(reason)
+            else:
+                logger.info("System is auto-paused, diagnostic agent is running")
+        else:
+            logger.info("System is paused (rm .octopoid/PAUSE or set 'paused: false' in agents.yaml)")
         return
 
     # Load per-job scheduler state (persists last_run across launchd invocations)
