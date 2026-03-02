@@ -975,6 +975,63 @@ def _load_intervention_context_for_prompt(task_id: str) -> str:
     return "{}"
 
 
+def _build_retry_section(rejection_count: int, task_content: str, review_section: str) -> str:
+    """Build a retry-awareness section for re-spawned implementer agents.
+
+    When rejection_count > 0, returns a prominent section that:
+    - States explicitly this is a retry attempt
+    - Instructs the agent to check existing commits with git log
+    - Foregrounds the rejection feedback as the primary instruction
+
+    Args:
+        rejection_count: Number of times the task has been rejected.
+        task_content: Original task description (used for de-emphasis on retry).
+        review_section: Formatted review/rejection feedback from the task thread.
+
+    Returns:
+        Formatted markdown retry section, or empty string for first attempts.
+    """
+    if not rejection_count:
+        return ""
+
+    attempt_number = rejection_count + 1
+    lines = [
+        f"## RETRY ATTEMPT {attempt_number}",
+        "",
+        f"> **This is attempt {attempt_number}** — this task was previously rejected by the gatekeeper.",
+        "> Do NOT reimplement from scratch. Previous commits are already on the branch.",
+        ">",
+        "> **Start by running:**",
+        "> ```",
+        "> git log --oneline -10",
+        "> ```",
+        "> to see what was already implemented. Then run tests to see the current state.",
+        "",
+        "### What to fix",
+        "",
+        "The gatekeeper's rejection feedback is your **primary instruction**.",
+        "Focus on addressing the specific issues raised — do not redo work that passed review.",
+        "",
+    ]
+    if review_section:
+        lines += [
+            review_section.strip(),
+            "",
+        ]
+    lines += [
+        "### Original task description (for context only)",
+        "",
+        "<details>",
+        "<summary>Click to expand original task description</summary>",
+        "",
+        task_content.strip(),
+        "",
+        "</details>",
+        "",
+    ]
+    return "\n".join(lines)
+
+
 def _render_prompt(task: dict, agent_config: dict) -> str:
     """Build the rendered prompt string from template, instructions, hooks, and thread.
 
@@ -1009,22 +1066,31 @@ def _render_prompt(task: dict, agent_config: dict) -> str:
     continuation_section = _load_continuation_section(task.get("id", ""), agent_config)
 
     task_dir = get_tasks_dir() / task.get("id", "")
+    rejection_count = task.get("rejection_count", 0) or 0
+    retry_section = _build_retry_section(rejection_count, task.get("content", ""), review_section)
+
+    # On retry, task_content and review_section are folded into retry_section to
+    # avoid duplication — the retry section renders them in collapsed / de-emphasised form.
+    displayed_task_content = "" if retry_section else task.get("content", "")
+    displayed_review_section = "" if retry_section else review_section
 
     return Template(prompt_template).safe_substitute(
         task_id=task.get("id", "unknown"),
         task_title=task.get("title", "Untitled"),
-        task_content=task.get("content", ""),
+        task_content=displayed_task_content,
         task_priority=task.get("priority", "P2"),
         task_branch=task.get("branch") or get_base_branch(),
         task_type=task.get("type", ""),
         scripts_dir="../scripts",
         global_instructions=global_instructions,
         required_steps=required_steps,
-        review_section=review_section,
+        review_section=displayed_review_section,
         continuation_section=continuation_section,
         intervention_context=intervention_context,
         task_dir=str(task_dir),
         worktree=str(task_dir / "worktree"),
+        rejection_count=rejection_count,
+        retry_section=retry_section,
     )
 
 

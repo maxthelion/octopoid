@@ -3,6 +3,8 @@
 **Priority:** $task_priority
 **Branch:** $task_branch
 
+$retry_section
+
 ## Task Description
 
 $task_content
