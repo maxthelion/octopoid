@@ -1,5 +1,6 @@
 """Tests for check_and_requeue_expired_leases and _requeue_task."""
 
+import signal
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, call, patch
 
@@ -43,6 +44,7 @@ class TestCheckAndRequeueExpiredLeases:
         claimed_tasks: list[dict],
         provisional_tasks: list[dict] | None = None,
         threshold: int = 3,
+        find_pid_result: tuple | None = None,
     ) -> MagicMock:
         """Run the function with a mocked SDK and return the mock SDK.
 
@@ -51,6 +53,7 @@ class TestCheckAndRequeueExpiredLeases:
             provisional_tasks: Tasks returned for sdk.tasks.list(queue="provisional").
                 Defaults to [] (no provisional tasks with active claims).
             threshold: Circuit breaker threshold (default 3).
+            find_pid_result: Return value for find_pid_for_task (default None = no orphan).
         """
         mock_sdk = MagicMock()
         # Ensure fail_task() sees needs_intervention=False so it takes the first-failure
@@ -73,6 +76,8 @@ class TestCheckAndRequeueExpiredLeases:
             patch("octopoid.scheduler._get_circuit_breaker_threshold", return_value=threshold),
             # Prevent request_intervention from creating real dirs
             patch("octopoid.config.get_tasks_dir"),
+            patch("octopoid.scheduler.find_pid_for_task", return_value=find_pid_result),
+            patch("octopoid.scheduler.remove_pid_from_blueprint"),
         ):
             check_and_requeue_expired_leases()
 
@@ -89,6 +94,7 @@ class TestCheckAndRequeueExpiredLeases:
             claimed_by=None,
             lease_expires_at=None,
             attempt_count=1,
+            needs_intervention=False,
         )
 
     def test_valid_lease_task_is_not_requeued(self) -> None:
@@ -172,6 +178,7 @@ class TestCheckAndRequeueExpiredLeases:
             claimed_by=None,
             lease_expires_at=None,
             attempt_count=1,
+            needs_intervention=False,
         )
 
     def test_both_queues_are_queried(self) -> None:
@@ -289,6 +296,83 @@ class TestCheckAndRequeueExpiredLeases:
 
         sdk.tasks.update.assert_called_once()
         assert sdk.tasks.update.call_args.kwargs.get("needs_intervention") is True
+
+    # ------------------------------------------------------------------
+    # Orphan PID kill tests
+    # ------------------------------------------------------------------
+
+    def test_orphan_pid_is_killed_on_lease_expiry(self) -> None:
+        """When an expired lease has a live orphan PID, it is sent SIGTERM."""
+        task = _make_task("TASK-orphan", _expired(), attempt_count=0)
+        mock_sdk = MagicMock()
+        mock_sdk.tasks.get.return_value = {"queue": "claimed", "needs_intervention": False}
+        mock_sdk.tasks.list.side_effect = lambda queue=None: (
+            [task] if queue == "claimed" else []
+        )
+
+        mock_remove = MagicMock()
+        with (
+            patch("octopoid.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("octopoid.tasks.get_sdk", return_value=mock_sdk),
+            patch("octopoid.tasks.get_task_logger"),
+            patch("octopoid.scheduler._get_circuit_breaker_threshold", return_value=3),
+            patch("octopoid.config.get_tasks_dir"),
+            patch("octopoid.scheduler.find_pid_for_task", return_value=(12345, "implementer")),
+            patch("octopoid.scheduler.remove_pid_from_blueprint", mock_remove),
+            patch("octopoid.scheduler.os.kill") as mock_kill,
+        ):
+            check_and_requeue_expired_leases()
+
+        mock_kill.assert_called_once_with(12345, signal.SIGTERM)
+        mock_remove.assert_called_once_with("implementer", 12345, reason="lease_expiry_kill")
+
+    def test_no_orphan_pid_skips_kill(self) -> None:
+        """When no orphan PID is found, os.kill is not called."""
+        task = _make_task("TASK-no-orphan", _expired(), attempt_count=0)
+        mock_sdk = MagicMock()
+        mock_sdk.tasks.get.return_value = {"queue": "claimed", "needs_intervention": False}
+        mock_sdk.tasks.list.side_effect = lambda queue=None: (
+            [task] if queue == "claimed" else []
+        )
+
+        with (
+            patch("octopoid.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("octopoid.tasks.get_sdk", return_value=mock_sdk),
+            patch("octopoid.tasks.get_task_logger"),
+            patch("octopoid.scheduler._get_circuit_breaker_threshold", return_value=3),
+            patch("octopoid.config.get_tasks_dir"),
+            patch("octopoid.scheduler.find_pid_for_task", return_value=None),
+            patch("octopoid.scheduler.remove_pid_from_blueprint") as mock_remove,
+            patch("octopoid.scheduler.os.kill") as mock_kill,
+        ):
+            check_and_requeue_expired_leases()
+
+        mock_kill.assert_not_called()
+        mock_remove.assert_not_called()
+
+    def test_already_dead_process_still_removes_pid_record(self) -> None:
+        """If os.kill raises (process already gone), PID is still removed from tracking."""
+        task = _make_task("TASK-already-dead", _expired(), attempt_count=0)
+        mock_sdk = MagicMock()
+        mock_sdk.tasks.get.return_value = {"queue": "claimed", "needs_intervention": False}
+        mock_sdk.tasks.list.side_effect = lambda queue=None: (
+            [task] if queue == "claimed" else []
+        )
+
+        mock_remove = MagicMock()
+        with (
+            patch("octopoid.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("octopoid.tasks.get_sdk", return_value=mock_sdk),
+            patch("octopoid.tasks.get_task_logger"),
+            patch("octopoid.scheduler._get_circuit_breaker_threshold", return_value=3),
+            patch("octopoid.config.get_tasks_dir"),
+            patch("octopoid.scheduler.find_pid_for_task", return_value=(99999, "implementer")),
+            patch("octopoid.scheduler.remove_pid_from_blueprint", mock_remove),
+            patch("octopoid.scheduler.os.kill", side_effect=ProcessLookupError),
+        ):
+            check_and_requeue_expired_leases()  # must not raise
+
+        mock_remove.assert_called_once_with("implementer", 99999, reason="lease_expiry_already_dead")
 
 
 # ===========================================================================

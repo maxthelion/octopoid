@@ -180,6 +180,54 @@ def register_instance_pid(
     )
 
 
+def find_pid_for_task(task_id: str) -> tuple[int, str] | None:
+    """Search all blueprint directories for a PID tracking the given task_id.
+
+    Args:
+        task_id: The task ID to search for.
+
+    Returns:
+        (pid, blueprint_name) if found and the process is alive, else None.
+    """
+    agents_dir = get_agents_runtime_dir()
+    if not agents_dir.exists():
+        return None
+
+    for blueprint_dir in agents_dir.iterdir():
+        if not blueprint_dir.is_dir():
+            continue
+        blueprint_name = blueprint_dir.name
+        pids = load_blueprint_pids(blueprint_name)
+        for pid, info in pids.items():
+            if info.get("task_id") == task_id and _is_pid_alive(pid):
+                return (pid, blueprint_name)
+
+    return None
+
+
+def remove_pid_from_blueprint(blueprint_name: str, pid: int, *, reason: str = "") -> None:
+    """Remove a specific PID from a blueprint's tracking file.
+
+    Args:
+        blueprint_name: Name of the blueprint (e.g. "implementer").
+        pid: Process ID to remove.
+        reason: Reason for removal (for audit log).
+    """
+    pids = load_blueprint_pids(blueprint_name)
+    if pid not in pids:
+        return
+    pids_before = dict(pids)
+    info = pids.pop(pid)
+    save_blueprint_pids(blueprint_name, pids)
+    _pid_audit(
+        "remove", blueprint_name, pid,
+        task_id=info.get("task_id", ""),
+        instance_name=info.get("instance_name", ""),
+        reason=reason,
+        pids_before=pids_before, pids_after=pids,
+    )
+
+
 def get_active_task_ids(blueprint_name: str) -> set[str]:
     """Return the set of task IDs currently being worked on by running instances.
 

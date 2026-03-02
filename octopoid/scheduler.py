@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import shutil
+import signal
 import subprocess
 import sys
 from collections.abc import Callable
@@ -42,9 +43,11 @@ from .state_utils import (
 )
 from .pool import (
     count_running_instances,
+    find_pid_for_task,
     get_active_task_ids,
     load_blueprint_pids,
     register_instance_pid,
+    remove_pid_from_blueprint,
     save_blueprint_pids,
 )
 from .result_handler import (
@@ -1817,6 +1820,18 @@ def check_and_requeue_expired_leases() -> None:
                     expires_at = datetime.fromisoformat(lease_expires.replace('Z', '+00:00'))
                     if expires_at < now:
                         task_id = task["id"]
+
+                        # Kill orphan agent process if still running
+                        pid_result = find_pid_for_task(task_id)
+                        if pid_result is not None:
+                            orphan_pid, blueprint_name = pid_result
+                            try:
+                                os.kill(orphan_pid, signal.SIGTERM)
+                                remove_pid_from_blueprint(blueprint_name, orphan_pid, reason="lease_expiry_kill")
+                                logger.info(f"Killed orphan PID {orphan_pid} for task {task_id} on lease expiry")
+                            except (OSError, ProcessLookupError):
+                                # Process already gone; still clean up the PID record
+                                remove_pid_from_blueprint(blueprint_name, orphan_pid, reason="lease_expiry_already_dead")
 
                         # Circuit breaker: only apply to claimed→incoming transitions,
                         # not provisional→provisional (which just clears the claim).
