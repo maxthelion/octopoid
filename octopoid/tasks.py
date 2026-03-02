@@ -56,7 +56,8 @@ def claim_task(
     orchestrator_id = get_orchestrator_id()
     limits = get_queue_limits()
 
-    # 1-hour lease (agents take 5-30 min, no renewal mechanism yet)
+    # 1-hour lease (agents take 5-30 min). The scheduler's renew_active_leases()
+    # job extends this automatically for tasks with live agent processes.
     claim_kwargs: dict[str, Any] = dict(
         orchestrator_id=orchestrator_id,
         agent_name=agent_name or "unknown",

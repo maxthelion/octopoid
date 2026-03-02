@@ -1961,6 +1961,63 @@ def check_project_completion() -> None:
         logger.debug(f"check_project_completion failed: {e}")
 
 
+def renew_active_leases() -> None:
+    """Extend leases for tasks whose agent processes are still running.
+
+    Must run BEFORE check_and_requeue_expired_leases. When a laptop wakes from
+    sleep, this function identifies tasks with live agent processes and extends
+    their leases so that the expiry check doesn't kill and requeue work-in-progress.
+
+    Renews any claimed task whose lease expires within the next 30 minutes (or is
+    already past). Tasks with plenty of lease time remaining are skipped.
+    """
+    from datetime import timedelta
+
+    try:
+        sdk = queue_utils.get_sdk()
+        tasks = sdk.tasks.list(queue="claimed")
+        if not tasks:
+            return
+
+        now = datetime.now(timezone.utc)
+        renewal_threshold = timedelta(minutes=30)
+        new_lease_duration = timedelta(hours=1)
+
+        for task in tasks:
+            task_id = task.get("id")
+            if not task_id:
+                continue
+
+            lease_expires = task.get("lease_expires_at")
+            if not lease_expires:
+                continue
+
+            try:
+                expires_at = datetime.fromisoformat(lease_expires.replace('Z', '+00:00'))
+            except (ValueError, TypeError):
+                continue
+
+            # Skip tasks with plenty of lease time remaining
+            if expires_at > now + renewal_threshold:
+                continue
+
+            # Only renew if the agent process is still alive
+            pid_result = find_pid_for_task(task_id)
+            if pid_result is None:
+                continue  # No running process — let the expiry check handle it
+
+            new_expiry = (now + new_lease_duration).isoformat()
+            try:
+                sdk.tasks.update(task_id, lease_expires_at=new_expiry)
+                status = "expired" if expires_at < now else "expiring soon"
+                logger.info(f"Renewed lease for {task_id} (was {status}, extended 1h from now)")
+            except Exception as update_err:
+                logger.debug(f"Failed to renew lease for {task_id}: {update_err}")
+
+    except Exception as e:
+        logger.debug(f"Lease renewal check failed: {e}")
+
+
 def check_and_requeue_expired_leases() -> None:
     """Requeue tasks whose lease has expired (orchestrator-side fallback).
 
@@ -2329,6 +2386,7 @@ def check_and_evaluate_checks() -> None:
 
 HOUSEKEEPING_JOBS = [
     _register_orchestrator,
+    renew_active_leases,  # Must run before check_and_requeue_expired_leases
     check_and_requeue_expired_leases,
     check_and_update_finished_agents,
     _check_queue_health_throttled,
