@@ -2,6 +2,13 @@
 
 Known symptoms and their root causes. **Consult this first when diagnosing a problem** — many issues recur.
 
+## CI red on main but PRs keep merging
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| Main branch CI failing for days, no alerts, PRs still merge | `check_ci` only checks PR branch CI, not main. `merge_pr` runs without verifying main is green. | Needs structural fix: add main-CI gate before merge_pr step. See [postmortem](postmortems/2026-03-02-ci-red-on-main-4-days.md). |
+| Tests assert `queue="failed"` but get `"claimed"` or `"provisional"` | `fail_task()` / `request_intervention()` sets `needs_intervention=True` flag but doesn't change queue. Tests expect queue transition. | `request_intervention()` in tasks.py should also set `queue="requires-intervention"`. Task 570d1d48. |
+
 ## Agent completes work but stdout empty → false fixer trigger
 
 | Symptom | Likely cause | Fix |
