@@ -4,6 +4,8 @@ max_turns: 30
 interval_seconds: 86400
 spawn_mode: scripts
 lightweight: true
+pre_check: bash octopoid/data/agents/codebase-analyst/scripts/guard.sh
+pre_check_trigger: exit_zero
 allowed_tools:
   - Read
   - Glob
