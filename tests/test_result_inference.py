@@ -334,3 +334,178 @@ class TestInferResultFromStdoutDispatch:
             infer_result_from_stdout(tmp_path / "stdout.log", "implement")
 
         assert captured[0] == short_text
+
+
+# =============================================================================
+# JSON stdout parsing (--output-format json)
+# =============================================================================
+
+
+class TestJsonStdoutParsing:
+    """infer_result_from_stdout handles JSON-format stdout from --output-format json."""
+
+    def _json_stdout(self, subtype: str, result_text: str = "Agent finished.") -> str:
+        import json
+        return json.dumps({
+            "type": "result",
+            "subtype": subtype,
+            "is_error": subtype != "success",
+            "result": result_text,
+            "session_id": "sess_test",
+            "total_cost_usd": 0.01,
+        })
+
+    def test_json_success_subtype_uses_haiku_on_result_text(self, tmp_path):
+        """JSON stdout with subtype='success' extracts result text and passes to haiku."""
+        from octopoid.result_handler import infer_result_from_stdout
+
+        result_text = "Task complete — all tests pass."
+        (tmp_path / "stdout.log").write_text(self._json_stdout("success", result_text))
+
+        captured: list[str] = []
+
+        def fake_infer_implementer(tail: str) -> dict:
+            captured.append(tail)
+            return {"outcome": "done"}
+
+        with patch("octopoid.result_handler._infer_implementer", side_effect=fake_infer_implementer):
+            result = infer_result_from_stdout(tmp_path / "stdout.log", "implement")
+
+        assert result["outcome"] == "done"
+        assert len(captured) == 1
+        assert captured[0] == result_text
+
+    def test_json_max_turns_exceeded_returns_max_turns_outcome(self, tmp_path):
+        """JSON stdout with subtype='error_max_turns_exceeded' returns max_turns_exceeded outcome."""
+        from octopoid.result_handler import infer_result_from_stdout
+
+        (tmp_path / "stdout.log").write_text(
+            self._json_stdout("error_max_turns_exceeded", "Partial work done.")
+        )
+
+        result = infer_result_from_stdout(tmp_path / "stdout.log", "implement")
+
+        assert result["outcome"] == "max_turns_exceeded"
+        assert result["outcome"] != "unknown"
+
+    def test_json_max_turns_gatekeeper_returns_failure(self, tmp_path):
+        """JSON max_turns_exceeded for gatekeeper role returns status=failure."""
+        from octopoid.result_handler import infer_result_from_stdout
+
+        (tmp_path / "stdout.log").write_text(
+            self._json_stdout("error_max_turns_exceeded")
+        )
+
+        result = infer_result_from_stdout(tmp_path / "stdout.log", "gatekeeper")
+
+        assert result["status"] == "failure"
+        assert "max turns" in result.get("message", "").lower()
+
+    def test_plain_text_stdout_still_works(self, tmp_path):
+        """Plain-text stdout (pre-json agents) still classifies correctly (backwards compat)."""
+        from octopoid.result_handler import infer_result_from_stdout
+
+        plain_text = "Implemented the feature. Fixed: the bug is gone."
+        (tmp_path / "stdout.log").write_text(plain_text)
+
+        captured: list[str] = []
+
+        def fake_infer_implementer(tail: str) -> dict:
+            captured.append(tail)
+            return {"outcome": "done"}
+
+        with patch("octopoid.result_handler._infer_implementer", side_effect=fake_infer_implementer):
+            result = infer_result_from_stdout(tmp_path / "stdout.log", "implement")
+
+        assert result["outcome"] == "done"
+        assert len(captured) == 1
+        assert captured[0] == plain_text
+
+    def test_json_success_with_long_result_truncates_to_2000(self, tmp_path):
+        """Result text longer than 2000 chars is truncated to the last 2000 chars."""
+        from octopoid.result_handler import infer_result_from_stdout
+
+        result_text = "A" * 5000 + "TAIL_MARKER"
+        (tmp_path / "stdout.log").write_text(self._json_stdout("success", result_text))
+
+        captured: list[str] = []
+
+        def fake_infer_implementer(tail: str) -> dict:
+            captured.append(tail)
+            return {"outcome": "done"}
+
+        with patch("octopoid.result_handler._infer_implementer", side_effect=fake_infer_implementer):
+            infer_result_from_stdout(tmp_path / "stdout.log", "implement")
+
+        assert len(captured) == 1
+        assert len(captured[0]) == 2000
+        assert "TAIL_MARKER" in captured[0]
+
+
+# =============================================================================
+# _parse_json_stdout — unit tests
+# =============================================================================
+
+
+class TestParseJsonStdout:
+    """_parse_json_stdout correctly identifies and parses Claude JSON output."""
+
+    def test_valid_json_result_object_parsed(self):
+        """Valid Claude JSON result object returns (parsed, result_text)."""
+        import json
+        from octopoid.result_handler import _parse_json_stdout
+
+        payload = json.dumps({
+            "type": "result",
+            "subtype": "success",
+            "is_error": False,
+            "result": "All done!",
+        })
+
+        parsed, text = _parse_json_stdout(payload)
+
+        assert parsed is not None
+        assert parsed["subtype"] == "success"
+        assert text == "All done!"
+
+    def test_plain_text_returns_none(self):
+        """Plain-text stdout returns (None, original_text)."""
+        from octopoid.result_handler import _parse_json_stdout
+
+        plain = "Finished the task."
+        parsed, text = _parse_json_stdout(plain)
+
+        assert parsed is None
+        assert text == plain
+
+    def test_invalid_json_returns_none(self):
+        """Malformed JSON returns (None, original_text)."""
+        from octopoid.result_handler import _parse_json_stdout
+
+        bad = '{"type": "result", broken'
+        parsed, text = _parse_json_stdout(bad)
+
+        assert parsed is None
+        assert text == bad
+
+    def test_json_without_type_result_returns_none(self):
+        """JSON that is not a Claude result object returns (None, original_text)."""
+        import json
+        from octopoid.result_handler import _parse_json_stdout
+
+        other_json = json.dumps({"foo": "bar"})
+        parsed, text = _parse_json_stdout(other_json)
+
+        assert parsed is None
+        assert text == other_json
+
+    def test_empty_result_field_returns_empty_string(self):
+        """JSON with missing result field yields empty string for text."""
+        import json
+        from octopoid.result_handler import _parse_json_stdout
+
+        payload = json.dumps({"type": "result", "subtype": "error_max_turns_exceeded"})
+        parsed, text = _parse_json_stdout(payload)
+
+        assert parsed is not None
+        assert text == ""

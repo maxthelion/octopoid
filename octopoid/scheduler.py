@@ -1202,6 +1202,7 @@ def invoke_claude(task_dir: Path, agent_config: dict) -> int:
         "--allowedTools", "Read,Write,Edit,Glob,Grep,Bash,Skill",
         "--max-turns", str(max_turns),
         "--model", model,
+        "--output-format", "json",
     ]
 
     # Write PostToolUse hook into worktree so the agent tracks turn counts.
