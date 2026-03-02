@@ -1846,6 +1846,7 @@ def check_and_requeue_expired_leases() -> None:
                                 claimed_by=None,
                                 lease_expires_at=None,
                                 attempt_count=new_attempt_count,
+                                needs_intervention=False,
                             )
                         else:
                             # Provisional: just clear the claim, no attempt_count increment
