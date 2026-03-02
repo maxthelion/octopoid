@@ -2199,6 +2199,84 @@ def send_heartbeat() -> None:
         logger.debug(f"Heartbeat failed (non-fatal): {e}")
 
 
+_DONE_GRACE_SECONDS = 3600    # 1 hour — work is merged, safe to clean
+_FAILED_GRACE_SECONDS = 86400  # 24 hours — need time to investigate
+
+
+def _task_past_grace(task: dict, now: datetime) -> bool:
+    """Return True if task has exceeded its queue-dependent grace period."""
+    ts_str = task.get("updated_at") or task.get("completed_at")
+    if not ts_str:
+        return False
+    try:
+        ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        elapsed = (now - ts).total_seconds()
+    except (ValueError, TypeError):
+        return False
+    grace = _FAILED_GRACE_SECONDS if task.get("queue") == "failed" else _DONE_GRACE_SECONDS
+    return elapsed >= grace
+
+
+def _sweep_task_resources(
+    task: dict,
+    tasks_dir: Path,
+    logs_dir: Path,
+    parent_repo: Path,
+) -> bool:
+    """Archive logs and remove worktree for one task. Return True if worktree was removed."""
+    task_id = task["id"]
+    queue = task.get("queue", "")
+    task_dir = tasks_dir / task_id
+    worktree_path = task_dir / "worktree"
+    swept = False
+
+    if worktree_path.exists():
+        try:
+            archive_dir = logs_dir / task_id
+            archive_dir.mkdir(parents=True, exist_ok=True)
+            for filename in ("stdout.log", "stderr.log", "prompt.md"):
+                src = task_dir / filename
+                if src.exists():
+                    shutil.copy2(src, archive_dir / filename)
+        except Exception as e:
+            logger.debug(f"sweep_stale_resources: failed to archive logs for {task_id}: {e}")
+
+        try:
+            run_git(
+                ["worktree", "remove", "--force", str(worktree_path)],
+                cwd=parent_repo,
+                check=False,
+            )
+            if worktree_path.exists():
+                shutil.rmtree(worktree_path)
+            swept = True
+            logger.info(f"Swept worktree for task {task_id} ({queue})")
+        except Exception as e:
+            logger.debug(f"sweep_stale_resources: failed to delete worktree for {task_id}: {e}")
+
+    if queue == "done":
+        branch = f"agent/{task_id}"
+        try:
+            result = run_git(
+                ["push", "origin", "--delete", branch],
+                cwd=parent_repo,
+                check=False,
+            )
+            if result.returncode == 0:
+                logger.info(f"Deleted remote branch {branch}")
+            else:
+                logger.debug(
+                    f"sweep_stale_resources: remote branch {branch} deletion skipped: "
+                    f"{result.stderr.strip()}"
+                )
+        except Exception as e:
+            logger.debug(f"sweep_stale_resources: failed to delete remote branch {branch}: {e}")
+
+    return swept
+
+
 def sweep_stale_resources() -> None:
     """Archive logs and delete worktrees for old done/failed tasks.
 
@@ -2213,15 +2291,9 @@ def sweep_stale_resources() -> None:
     Idempotent: safe to run multiple times.
     Failed individual cleanups are logged but do not abort the sweep.
     """
-    import shutil
-
-    DONE_GRACE_SECONDS = 3600       # 1 hour — work is merged, safe to clean
-    FAILED_GRACE_SECONDS = 86400    # 24 hours — need time to investigate
-
     try:
         sdk = queue_utils.get_sdk()
-        done_tasks = sdk.tasks.list(queue="done") or []
-        failed_tasks = sdk.tasks.list(queue="failed") or []
+        all_tasks = (sdk.tasks.list(queue="done") or []) + (sdk.tasks.list(queue="failed") or [])
     except Exception as e:
         logger.debug(f"sweep_stale_resources: failed to fetch tasks: {e}")
         return
@@ -2235,82 +2307,10 @@ def sweep_stale_resources() -> None:
     tasks_dir = get_tasks_dir()
     logs_dir = get_logs_dir()
     now = datetime.now(timezone.utc)
-    pruned_any = False
 
-    for task in done_tasks + failed_tasks:
-        task_id = task.get("id")
-        queue = task.get("queue", "")
-        if not task_id:
-            continue
+    candidates = [t for t in all_tasks if t.get("id") and _task_past_grace(t, now)]
+    pruned_any = any(_sweep_task_resources(t, tasks_dir, logs_dir, parent_repo) for t in candidates)
 
-        # Check age: skip if within grace period
-        ts_str = task.get("updated_at") or task.get("completed_at")
-        if not ts_str:
-            continue
-        try:
-            ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
-            if ts.tzinfo is None:
-                ts = ts.replace(tzinfo=timezone.utc)
-            elapsed = (now - ts).total_seconds()
-        except (ValueError, TypeError) as e:
-            logger.debug(f"sweep_stale_resources: could not parse timestamp {ts_str!r} for task {task_id}: {e}")
-            continue
-
-        grace = FAILED_GRACE_SECONDS if queue == "failed" else DONE_GRACE_SECONDS
-        if elapsed < grace:
-            continue
-
-        task_dir = tasks_dir / task_id
-        worktree_path = task_dir / "worktree"
-
-        # Archive logs and delete worktree if it exists
-        if worktree_path.exists():
-            # Archive log files before deleting
-            try:
-                archive_dir = logs_dir / task_id
-                archive_dir.mkdir(parents=True, exist_ok=True)
-                for filename in ("stdout.log", "stderr.log", "prompt.md"):
-                    src = task_dir / filename
-                    if src.exists():
-                        shutil.copy2(src, archive_dir / filename)
-            except Exception as e:
-                logger.debug(f"sweep_stale_resources: failed to archive logs for {task_id}: {e}")
-
-            # Remove worktree from git tracking and filesystem
-            try:
-                run_git(
-                    ["worktree", "remove", "--force", str(worktree_path)],
-                    cwd=parent_repo,
-                    check=False,
-                )
-                if worktree_path.exists():
-                    shutil.rmtree(worktree_path)
-                pruned_any = True
-                logger.info(f"Swept worktree for task {task_id} ({queue})")
-            except Exception as e:
-                logger.debug(f"sweep_stale_resources: failed to delete worktree for {task_id}: {e}")
-
-        # Delete remote branch for done (merged) tasks only — not failed
-        if queue == "done":
-            branch = f"agent/{task_id}"
-            try:
-                result = run_git(
-                    ["push", "origin", "--delete", branch],
-                    cwd=parent_repo,
-                    check=False,
-                )
-                if result.returncode == 0:
-                    logger.info(f"Deleted remote branch {branch}")
-                else:
-                    # Already gone or no permissions — non-fatal
-                    logger.debug(
-                        f"sweep_stale_resources: remote branch {branch} deletion skipped: "
-                        f"{result.stderr.strip()}"
-                    )
-            except Exception as e:
-                logger.debug(f"sweep_stale_resources: failed to delete remote branch {branch}: {e}")
-
-    # Run git worktree prune once after all deletions
     if pruned_any:
         try:
             run_git(["worktree", "prune"], cwd=parent_repo, check=False)
