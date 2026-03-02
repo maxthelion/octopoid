@@ -29,12 +29,13 @@ class TestBackpressureBlocksAtCapacity:
         in a different scope — so we mock count_queue to return the values
         that match the actual server state.
         """
+        scope = scoped_sdk.scope
         with patch("octopoid.backpressure.get_queue_limits", return_value=_TEST_LIMITS):
             # ── Setup: 3 incoming tasks ────────────────────────────────────
             for i in range(3):
                 scoped_sdk.tasks.create(
-                    id=f"bp-cap-{i}",
-                    file_path=f"/tmp/bp-cap-{i}.md",
+                    id=f"bp-cap-{scope}-{i}",
+                    file_path=f"/tmp/bp-cap-{scope}-{i}.md",
                     title=f"Backpressure capacity test {i}",
                     role="implement",
                     branch="main",
