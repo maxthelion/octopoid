@@ -19,40 +19,33 @@ from pathlib import Path
 from .config import (
     find_parent_project,
     get_agents,
-    get_agents_base_dir,
     get_agents_runtime_dir,
     get_global_instructions_path,
     get_jobs_dir,
-    get_logs_dir,
     get_base_branch,
     get_orchestrator_dir,
     get_scope,
     get_tasks_dir,
     is_system_paused,
 )
-from .git_utils import get_task_branch, get_worktree_path, run_git
+from .git_utils import get_task_branch, get_worktree_path
 from .lock_utils import locked_or_skip
 from .port_utils import get_port_env_vars
 from . import queue_utils
 from .state_utils import (
     AgentState,
     is_overdue,
-    is_process_running,
     load_state,
     mark_started,
     save_state,
 )
 from .pool import (
     count_running_instances,
-    find_pid_for_task,
     get_active_task_ids,
     load_blueprint_pids,
     register_instance_pid,
-    remove_pid_from_blueprint,
-    save_blueprint_pids,
 )
 from .result_handler import (
-    _get_circuit_breaker_threshold,
     extract_stdout_text,
     handle_agent_result,
     handle_agent_result_via_flow,
@@ -80,6 +73,23 @@ from .system_health import (
     _requeue_task,
     _requeue_task_blameless,
     _reset_systemic_failure_counter,
+)
+from .housekeeping import (
+    HOUSEKEEPING_JOBS,
+    QUEUE_HEALTH_CHECK_INTERVAL_SECONDS,
+    _check_queue_health_throttled,
+    _evaluate_project_script_condition,
+    _execute_project_flow_transition,
+    _log_pid_snapshot,
+    _register_orchestrator,
+    check_and_evaluate_checks,
+    check_and_requeue_expired_leases,
+    check_and_update_finished_agents,
+    check_project_completion,
+    check_queue_health,
+    run_housekeeping,
+    send_heartbeat,
+    sweep_stale_resources,
 )
 
 logger = logging.getLogger("octopoid.scheduler")
@@ -865,8 +875,7 @@ def _get_server_url_from_config() -> str:
     return ""
 
 
-# Prompt rendering functions live in prompt_renderer.py
-# (imported at the top of this module)
+# Prompt rendering functions live in prompt_renderer.py (imported at the top of this module)
 
 
 def prepare_task_directory(
@@ -2136,8 +2145,8 @@ def run_housekeeping() -> None:
             logger.debug(f"Housekeeping job {job.__name__} failed: {e}")
 
 
-# System health, auto-pause, and requeue functions live in system_health.py
-# (imported at the top of this module)
+# Housekeeping functions live in housekeeping.py (imported at the top of this module)
+# System health functions live in system_health.py (imported at the top of this module)
 
 
 def _init_submodule(agent_name: str) -> None:
