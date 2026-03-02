@@ -142,3 +142,15 @@ Known symptoms and their root causes. **Consult this first when diagnosing a pro
 | Multiple duplicate codebase-analyst drafts created in same day | `guard.sh` crashing with `No module named orchestrator` — guard silently fails, agent runs without skipping | Task 6693d4d5 |
 | `pytest --cov=orchestrator` shows "no data collected" | `run-quality-checks.sh` targeting wrong package name; fix: `--cov=octopoid` | Task 6693d4d5 |
 | `vulture` or `wily` failing to find files | Scripts target `orchestrator/` path which doesn't exist; fix: use `octopoid/` | Task 6693d4d5 |
+
+## Fixer agent fails with "could not fix" but the fix was already applied
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `error_source: fixer-failed`, `error_message: "could not fix"`, working tree has correct changes but they're uncommitted | Fixer agent applied the code change but didn't commit it; the scheduler then inferred "could not fix" from stdout and re-queued for intervention | Check `git diff` in the worktree — if the fix is present but uncommitted, just commit it and push |
+
+## `test_scheduler_has_no_direct_failed_update` fails in CI
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| CI `unit-tests` job fails with `scheduler.py contains a direct sdk.tasks.update(queue='failed') call outside fail_task()` | A new callsite was added to `scheduler.py` that bypasses `fail_task()` | Replace direct `sdk.tasks.update(queue="failed")` with `queue_utils.fail_task()` | Task 61cc36d6 |
