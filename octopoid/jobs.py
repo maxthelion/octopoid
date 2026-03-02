@@ -333,6 +333,13 @@ def _register_orchestrator(ctx: JobContext) -> None:
 
 
 @register_job
+def renew_active_leases(ctx: JobContext) -> None:
+    """Extend leases for claimed tasks with live agent processes (sleep resilience)."""
+    from .scheduler import renew_active_leases as _impl
+    _impl()
+
+
+@register_job
 def check_and_requeue_expired_leases(ctx: JobContext) -> None:
     """Requeue tasks whose claim lease has expired."""
     from .scheduler import check_and_requeue_expired_leases as _impl

@@ -252,6 +252,7 @@ class TestJobIntervalManagement:
             "dispatch_action_messages",
             "testing_analyst",
             "architecture_analyst",
+            "renew_active_leases",
         }
         intervals = _get_job_intervals()
         assert expected == set(intervals.keys())

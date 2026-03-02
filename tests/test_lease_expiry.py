@@ -1,4 +1,4 @@
-"""Tests for check_and_requeue_expired_leases and _requeue_task."""
+"""Tests for renew_active_leases, check_and_requeue_expired_leases, and _requeue_task."""
 
 import signal
 from datetime import datetime, timedelta, timezone
@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 
-from octopoid.scheduler import _requeue_task, check_and_requeue_expired_leases
+from octopoid.scheduler import _requeue_task, check_and_requeue_expired_leases, renew_active_leases
 
 
 def _make_task(
@@ -541,3 +541,124 @@ class TestRequeuTask:
             claimed_by=None,
             lease_expires_at=None,
         )
+
+
+# ===========================================================================
+# renew_active_leases unit tests
+# ===========================================================================
+
+
+class TestRenewActiveLeases:
+    """renew_active_leases must extend leases for tasks with live agent processes."""
+
+    def _run(
+        self,
+        claimed_tasks: list[dict],
+        find_pid_result: tuple | None = None,
+    ) -> MagicMock:
+        """Run renew_active_leases with a mocked SDK and return the mock SDK."""
+        mock_sdk = MagicMock()
+
+        mock_sdk.tasks.list.side_effect = lambda queue=None: (
+            claimed_tasks if queue == "claimed" else []
+        )
+
+        with (
+            patch("octopoid.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("octopoid.scheduler.find_pid_for_task", return_value=find_pid_result),
+        ):
+            renew_active_leases()
+
+        return mock_sdk
+
+    def test_expired_task_with_live_process_is_renewed(self) -> None:
+        """An expired-lease task with a live agent process gets its lease extended."""
+        task = _make_task("TASK-sleep-renewed", _expired(minutes_ago=5))
+        sdk = self._run([task], find_pid_result=(12345, "implementer"))
+
+        sdk.tasks.update.assert_called_once()
+        args = sdk.tasks.update.call_args
+        assert args.args[0] == "TASK-sleep-renewed"
+        # Only lease_expires_at is updated — no queue change, no claimed_by clear
+        assert "lease_expires_at" in args.kwargs
+        assert "queue" not in args.kwargs
+        assert "claimed_by" not in args.kwargs
+
+    def test_expired_task_without_live_process_is_not_renewed(self) -> None:
+        """An expired-lease task with no running process is left alone (expiry check will handle it)."""
+        task = _make_task("TASK-dead", _expired(minutes_ago=5))
+        sdk = self._run([task], find_pid_result=None)
+
+        sdk.tasks.update.assert_not_called()
+
+    def test_task_with_plenty_of_lease_is_skipped(self) -> None:
+        """A task whose lease is not expiring soon is skipped even if process is alive."""
+        task = _make_task("TASK-fresh", _future(minutes_ahead=60))
+        sdk = self._run([task], find_pid_result=(12345, "implementer"))
+
+        sdk.tasks.update.assert_not_called()
+
+    def test_task_expiring_soon_with_live_process_is_renewed(self) -> None:
+        """A task whose lease expires within the renewal threshold is extended."""
+        task = _make_task("TASK-expiring", _future(minutes_ahead=15))  # < 30min threshold
+        sdk = self._run([task], find_pid_result=(12345, "implementer"))
+
+        sdk.tasks.update.assert_called_once()
+        assert sdk.tasks.update.call_args.args[0] == "TASK-expiring"
+
+    def test_empty_claimed_queue_does_nothing(self) -> None:
+        """When there are no claimed tasks, no updates are made."""
+        sdk = self._run([])
+
+        sdk.tasks.update.assert_not_called()
+
+    def test_task_without_lease_is_skipped(self) -> None:
+        """A task with no lease_expires_at is skipped."""
+        task = _make_task("TASK-no-lease", None)
+        sdk = self._run([task], find_pid_result=(12345, "implementer"))
+
+        sdk.tasks.update.assert_not_called()
+
+    def test_sdk_exception_does_not_propagate(self) -> None:
+        """If the SDK raises, the function must swallow the exception."""
+        mock_sdk = MagicMock()
+        mock_sdk.tasks.list.side_effect = RuntimeError("network error")
+
+        with (
+            patch("octopoid.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("octopoid.scheduler.find_pid_for_task", return_value=None),
+        ):
+            renew_active_leases()  # must not raise
+
+    def test_renewed_expiry_is_approximately_one_hour_ahead(self) -> None:
+        """The new lease_expires_at should be approximately 1 hour from now."""
+        task = _make_task("TASK-renewal-time", _expired(minutes_ago=5))
+        sdk = self._run([task], find_pid_result=(12345, "implementer"))
+
+        sdk.tasks.update.assert_called_once()
+        new_expiry_str = sdk.tasks.update.call_args.kwargs["lease_expires_at"]
+        new_expiry = datetime.fromisoformat(new_expiry_str)
+        now = datetime.now(timezone.utc)
+        delta = new_expiry - now
+        assert timedelta(minutes=55) < delta < timedelta(minutes=65), (
+            f"Expected ~1h lease renewal, got {delta}"
+        )
+
+    def test_update_failure_does_not_abort_other_renewals(self) -> None:
+        """If updating one task's lease fails, other tasks are still processed."""
+        tasks = [
+            _make_task("TASK-fail-update", _expired(minutes_ago=5)),
+            _make_task("TASK-ok-update", _expired(minutes_ago=5)),
+        ]
+        mock_sdk = MagicMock()
+        mock_sdk.tasks.list.side_effect = lambda queue=None: (tasks if queue == "claimed" else [])
+        # First update fails, second should still proceed
+        mock_sdk.tasks.update.side_effect = [RuntimeError("timeout"), None]
+
+        with (
+            patch("octopoid.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("octopoid.scheduler.find_pid_for_task", return_value=(12345, "implementer")),
+        ):
+            renew_active_leases()  # must not raise
+
+        assert mock_sdk.tasks.update.call_count == 2
