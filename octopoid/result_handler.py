@@ -37,6 +37,10 @@ Classify it as one of:
 "outcome: done", work summary, tests passing.
 - "failed": The agent could not complete the task. Look for: explicit failure, \
 unresolved errors, "cannot complete", very short output with only an error.
+- "needs_continuation": The agent ran out of turns before completing the task. \
+Look for: "ran out of turns", "needs continuation", "outcome: needs_continuation", \
+"hit the turn limit", "more turns needed", output that cuts off mid-task without \
+a clear success or failure statement.
 
 Note: Agents are verbose. They describe obstacles they overcame. This does NOT \
 mean they failed. Short output that says "Done." is sufficient for "done". \
@@ -45,7 +49,7 @@ mean they failed. Short output that says "Done." is sufficient for "done". \
 AGENT OUTPUT:
 {tail}
 
-Respond with exactly one word: done or failed"""
+Respond with exactly one word: done, failed, or needs_continuation"""
 
 _GATEKEEPER_PROMPT = """\
 You are classifying the decision of an AI code review agent (gatekeeper). \
@@ -101,7 +105,9 @@ def _infer_implementer(tail: str) -> dict:
     """Infer implementer outcome from stdout tail using haiku."""
     try:
         word = _call_haiku(_IMPLEMENTER_PROMPT.format(tail=tail))
-        if "done" in word:
+        if "needs_continuation" in word or word == "continuation":
+            return {"outcome": "needs_continuation"}
+        elif "done" in word:
             return {"outcome": "done"}
         elif "fail" in word:
             return {"outcome": "failed", "reason": "Inferred from stdout: agent did not complete task"}
@@ -308,6 +314,31 @@ def _reset_step_failure_count(task_dir: Path) -> None:
 # Default number of requeue cycles before the circuit breaker trips
 _DEFAULT_CIRCUIT_BREAKER_THRESHOLD = 3
 
+# Maximum number of continuation cycles before escalating to intervention
+_MAX_CONTINUATION_CYCLES = 3
+
+
+def _get_continuation_count(task_dir: Path) -> int:
+    """Return the number of continuation cycles completed for a task."""
+    counter_file = task_dir / "continuation_count"
+    if counter_file.exists():
+        try:
+            return int(counter_file.read_text().strip())
+        except (ValueError, OSError):
+            pass
+    return 0
+
+
+def _increment_continuation_count(task_dir: Path) -> int:
+    """Increment and return the continuation cycle count for a task."""
+    count = _get_continuation_count(task_dir) + 1
+    try:
+        task_dir.mkdir(parents=True, exist_ok=True)
+        (task_dir / "continuation_count").write_text(str(count))
+    except OSError:
+        pass
+    return count
+
 
 def _get_circuit_breaker_threshold() -> int:
     """Return the configured requeue threshold before circuit breaker trips.
@@ -478,14 +509,41 @@ def _handle_continuation_outcome(sdk: object, task_id: str, task: dict, agent_na
     falls back to "needs_continuation". When flows gain on_continuation
     support, _get_continuation_target_from_flow will return that target.
 
+    Enforces a maximum of _MAX_CONTINUATION_CYCLES cycles. If the limit is
+    reached, the task is escalated to intervention instead of re-queued.
+
     Returns:
         True if the task was transitioned (PID safe to remove).
         False if the task was not transitioned and the PID should be kept for retry.
     """
+    from .config import get_tasks_dir  # noqa: PLC0415
+
     if current_queue == "claimed":
+        task_dir = get_tasks_dir() / task_id
+        continuation_count = _increment_continuation_count(task_dir)
+
+        if continuation_count >= _MAX_CONTINUATION_CYCLES:
+            # Too many continuation cycles — escalate to human intervention.
+            reason = (
+                f"Task exceeded maximum continuation cycles "
+                f"({continuation_count}/{_MAX_CONTINUATION_CYCLES}) — "
+                f"may need to be scoped smaller or broken into subtasks"
+            )
+            logger.warning(f"Task {task_id}: {reason}")
+            request_intervention(
+                task_id,
+                reason=reason,
+                source="continuation-cycle-limit",
+                previous_queue=current_queue,
+            )
+            return True
+
         continuation_target = _get_continuation_target_from_flow(task, current_queue)
         sdk.tasks.update(task_id, queue=continuation_target)
-        logger.debug(f"Task {task_id}: needs continuation by {agent_name} (→ {continuation_target})")
+        logger.debug(
+            f"Task {task_id}: needs continuation by {agent_name} "
+            f"(cycle {continuation_count}/{_MAX_CONTINUATION_CYCLES} → {continuation_target})"
+        )
         return True
     else:
         _TERMINAL_QUEUES = {"done", "failed"}
