@@ -861,8 +861,8 @@ class TestRebaseOnBaseExecute:
                 step.execute(ctx)
 
     def test_execute_raises_when_rebase_fails(self, tmp_path):
-        """execute() raises RuntimeError and aborts rebase when git rebase fails."""
-        from octopoid.steps import STEP_REGISTRY
+        """execute() raises PermanentStepError and aborts rebase when git rebase fails."""
+        from octopoid.steps import STEP_REGISTRY, PermanentStepError
         step = STEP_REGISTRY["rebase_on_base"]
         ctx = self._make_ctx(tmp_path)
 
@@ -879,7 +879,7 @@ class TestRebaseOnBaseExecute:
 
         with patch("octopoid.steps.subprocess.run", side_effect=mock_run), \
              patch("octopoid.config.get_base_branch", return_value="main"):
-            with pytest.raises(RuntimeError, match="git rebase"):
+            with pytest.raises(PermanentStepError, match="merge conflict"):
                 step.execute(ctx)
 
         # Verify that git rebase --abort was called after failure
