@@ -271,20 +271,23 @@ class TestHandleAgentResultFailed:
     """Verify failed outcome transitions task to failed queue."""
 
     def test_failed_outcome_moves_to_failed(self, tmp_task_dir, mock_sdk, sample_task):
-        """When outcome is 'failed', task should move to failed queue."""
+        """When outcome is 'failed', fail_task should be called to route the task."""
         mock_sdk.tasks.get.return_value = sample_task
 
         with patch("octopoid.result_handler.queue_utils") as mock_qu, \
              patch("octopoid.result_handler.infer_result_from_stdout", return_value={
                  "outcome": "failed",
                  "reason": "Tests don't pass",
-             }):
+             }), \
+             patch("octopoid.tasks.fail_task") as mock_fail_task:
             mock_qu.get_sdk.return_value = mock_sdk
 
             from octopoid.scheduler import handle_agent_result
             handle_agent_result("test123", "agent-1", tmp_task_dir)
 
-            mock_sdk.tasks.update.assert_called_once_with("test123", queue="failed")
+            mock_fail_task.assert_called_once_with(
+                "test123", reason="Tests don't pass", source="agent-outcome-failed"
+            )
 
     def test_unknown_outcome_routes_to_requires_intervention(self, tmp_task_dir, mock_sdk, sample_task):
         """When outcome is 'unknown' (e.g. haiku unavailable), task routes to requires-intervention."""
@@ -767,7 +770,7 @@ class TestSystemicFailureCounter:
     def test_load_system_health_returns_defaults_when_missing(self, tmp_path):
         """_load_system_health returns zero-state when file doesn't exist."""
         from octopoid.scheduler import _load_system_health
-        with patch("octopoid.scheduler._get_system_health_path", return_value=tmp_path / "system_health.json"):
+        with patch("octopoid.system_health._get_system_health_path", return_value=tmp_path / "system_health.json"):
             health = _load_system_health()
         assert health["consecutive_systemic_failures"] == 0
         assert health["auto_paused"] is False
@@ -777,26 +780,27 @@ class TestSystemicFailureCounter:
         from octopoid.scheduler import _record_systemic_failure, _load_system_health
 
         health_path = tmp_path / "system_health.json"
-        with patch("octopoid.scheduler._get_system_health_path", return_value=health_path), \
-             patch("octopoid.scheduler.get_orchestrator_dir", return_value=tmp_path):
+        with patch("octopoid.system_health._get_system_health_path", return_value=health_path), \
+             patch("octopoid.system_health.get_orchestrator_dir", return_value=tmp_path):
             _record_systemic_failure("docker daemon not running")
 
         health = json.loads(health_path.read_text())
         assert health["consecutive_systemic_failures"] == 1
         assert health["auto_paused"] is False
-        assert health["last_systemic_failure"] is not None
+        assert health["last_failure_time"] is not None
 
     def test_two_consecutive_failures_trigger_auto_pause(self, tmp_path):
         """Two consecutive spawn failures write PAUSE file and update system_health.json."""
-        from octopoid.scheduler import _record_systemic_failure
+        from octopoid.scheduler import _handle_systemic_failure
 
         health_path = tmp_path / "system_health.json"
         pause_file = tmp_path / "PAUSE"
 
-        with patch("octopoid.scheduler._get_system_health_path", return_value=health_path), \
-             patch("octopoid.scheduler.get_orchestrator_dir", return_value=tmp_path):
-            _record_systemic_failure("worktree creation failed")
-            _record_systemic_failure("git clone failed")
+        with patch("octopoid.system_health._get_system_health_path", return_value=health_path), \
+             patch("octopoid.system_health.get_orchestrator_dir", return_value=tmp_path), \
+             patch("octopoid.system_health._spawn_diagnostic_agent"):
+            _handle_systemic_failure("worktree creation failed")
+            _handle_systemic_failure("git clone failed")
 
         assert pause_file.exists(), "PAUSE file should be written after 2 failures"
         health = json.loads(health_path.read_text())
@@ -814,7 +818,7 @@ class TestSystemicFailureCounter:
         # Pre-seed with 1 failure
         health_path.write_text(json.dumps({"consecutive_systemic_failures": 1}))
 
-        with patch("octopoid.scheduler._get_system_health_path", return_value=health_path):
+        with patch("octopoid.system_health._get_system_health_path", return_value=health_path):
             _reset_systemic_failure_counter()
 
         health = json.loads(health_path.read_text())
@@ -862,7 +866,7 @@ class TestSystemicFailureCounter:
              patch("octopoid.scheduler.evaluate_agent", return_value=True), \
              patch("octopoid.scheduler.get_spawn_strategy") as mock_strategy, \
              patch("octopoid.scheduler._requeue_task_blameless") as mock_blameless_requeue, \
-             patch("octopoid.scheduler._record_systemic_failure") as mock_record, \
+             patch("octopoid.system_health._record_systemic_failure", return_value=0) as mock_record, \
              patch("octopoid.scheduler._reset_systemic_failure_counter") as mock_reset:
 
             # Attach the claimed task to context via evaluate_agent side effect

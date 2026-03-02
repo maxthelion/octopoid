@@ -73,11 +73,11 @@ class TestCheckAndRequeueExpiredLeases:
             patch("octopoid.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
             patch("octopoid.tasks.get_sdk", return_value=mock_sdk),
             patch("octopoid.tasks.get_task_logger"),
-            patch("octopoid.scheduler._get_circuit_breaker_threshold", return_value=threshold),
+            patch("octopoid.housekeeping._get_circuit_breaker_threshold", return_value=threshold),
             # Prevent request_intervention from creating real dirs
             patch("octopoid.config.get_tasks_dir"),
-            patch("octopoid.scheduler.find_pid_for_task", return_value=find_pid_result),
-            patch("octopoid.scheduler.remove_pid_from_blueprint"),
+            patch("octopoid.housekeeping.find_pid_for_task", return_value=find_pid_result),
+            patch("octopoid.housekeeping.remove_pid_from_blueprint"),
         ):
             check_and_requeue_expired_leases()
 
@@ -138,7 +138,7 @@ class TestCheckAndRequeueExpiredLeases:
 
         with (
             patch("octopoid.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
-            patch("octopoid.scheduler._get_circuit_breaker_threshold", return_value=3),
+            patch("octopoid.housekeeping._get_circuit_breaker_threshold", return_value=3),
         ):
             check_and_requeue_expired_leases()  # must not raise
 
@@ -158,7 +158,7 @@ class TestCheckAndRequeueExpiredLeases:
 
         with (
             patch("octopoid.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
-            patch("octopoid.scheduler._get_circuit_breaker_threshold", return_value=3),
+            patch("octopoid.housekeeping._get_circuit_breaker_threshold", return_value=3),
         ):
             check_and_requeue_expired_leases()  # must not raise
 
@@ -332,11 +332,11 @@ class TestCheckAndRequeueExpiredLeases:
             patch("octopoid.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
             patch("octopoid.tasks.get_sdk", return_value=mock_sdk),
             patch("octopoid.tasks.get_task_logger"),
-            patch("octopoid.scheduler._get_circuit_breaker_threshold", return_value=3),
+            patch("octopoid.housekeeping._get_circuit_breaker_threshold", return_value=3),
             patch("octopoid.config.get_tasks_dir"),
-            patch("octopoid.scheduler.find_pid_for_task", return_value=(12345, "implementer")),
-            patch("octopoid.scheduler.remove_pid_from_blueprint", mock_remove),
-            patch("octopoid.scheduler.os.kill") as mock_kill,
+            patch("octopoid.housekeeping.find_pid_for_task", return_value=(12345, "implementer")),
+            patch("octopoid.housekeeping.remove_pid_from_blueprint", mock_remove),
+            patch("octopoid.housekeeping.os.kill") as mock_kill,
         ):
             check_and_requeue_expired_leases()
 
@@ -356,11 +356,11 @@ class TestCheckAndRequeueExpiredLeases:
             patch("octopoid.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
             patch("octopoid.tasks.get_sdk", return_value=mock_sdk),
             patch("octopoid.tasks.get_task_logger"),
-            patch("octopoid.scheduler._get_circuit_breaker_threshold", return_value=3),
+            patch("octopoid.housekeeping._get_circuit_breaker_threshold", return_value=3),
             patch("octopoid.config.get_tasks_dir"),
-            patch("octopoid.scheduler.find_pid_for_task", return_value=None),
-            patch("octopoid.scheduler.remove_pid_from_blueprint") as mock_remove,
-            patch("octopoid.scheduler.os.kill") as mock_kill,
+            patch("octopoid.housekeeping.find_pid_for_task", return_value=None),
+            patch("octopoid.housekeeping.remove_pid_from_blueprint") as mock_remove,
+            patch("octopoid.housekeeping.os.kill") as mock_kill,
         ):
             check_and_requeue_expired_leases()
 
@@ -381,11 +381,11 @@ class TestCheckAndRequeueExpiredLeases:
             patch("octopoid.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
             patch("octopoid.tasks.get_sdk", return_value=mock_sdk),
             patch("octopoid.tasks.get_task_logger"),
-            patch("octopoid.scheduler._get_circuit_breaker_threshold", return_value=3),
+            patch("octopoid.housekeeping._get_circuit_breaker_threshold", return_value=3),
             patch("octopoid.config.get_tasks_dir"),
-            patch("octopoid.scheduler.find_pid_for_task", return_value=(99999, "implementer")),
-            patch("octopoid.scheduler.remove_pid_from_blueprint", mock_remove),
-            patch("octopoid.scheduler.os.kill", side_effect=ProcessLookupError),
+            patch("octopoid.housekeeping.find_pid_for_task", return_value=(99999, "implementer")),
+            patch("octopoid.housekeeping.remove_pid_from_blueprint", mock_remove),
+            patch("octopoid.housekeeping.os.kill", side_effect=ProcessLookupError),
         ):
             check_and_requeue_expired_leases()  # must not raise
 
@@ -415,7 +415,7 @@ class TestRequeuTask:
             patch("octopoid.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
             patch("octopoid.tasks.get_sdk", return_value=mock_sdk),
             patch("octopoid.tasks.get_task_logger"),
-            patch("octopoid.scheduler._get_circuit_breaker_threshold", return_value=threshold),
+            patch("octopoid.system_health._get_circuit_breaker_threshold", return_value=threshold),
             # Prevent request_intervention from creating real dirs / posting messages
             patch("octopoid.config.get_tasks_dir"),
             patch("octopoid.task_thread.post_message"),
@@ -431,7 +431,7 @@ class TestRequeuTask:
 
         with (
             patch("octopoid.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
-            patch("octopoid.scheduler._get_circuit_breaker_threshold", return_value=3),
+            patch("octopoid.system_health._get_circuit_breaker_threshold", return_value=3),
         ):
             _requeue_task("TASK-abc", task={"attempt_count": 0})
 
@@ -474,7 +474,7 @@ class TestRequeuTask:
 
         with (
             patch("octopoid.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
-            patch("octopoid.scheduler._get_circuit_breaker_threshold", return_value=3),
+            patch("octopoid.system_health._get_circuit_breaker_threshold", return_value=3),
         ):
             _requeue_task("TASK-fail", task={"attempt_count": 0})  # must not raise
 
@@ -518,7 +518,7 @@ class TestRequeuTask:
 
         with (
             patch("octopoid.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
-            patch("octopoid.scheduler._get_circuit_breaker_threshold", return_value=3),
+            patch("octopoid.system_health._get_circuit_breaker_threshold", return_value=3),
         ):
             _requeue_task("TASK-fetch", source_queue="incoming")
 
@@ -564,8 +564,8 @@ class TestRenewActiveLeases:
         )
 
         with (
-            patch("octopoid.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
-            patch("octopoid.scheduler.find_pid_for_task", return_value=find_pid_result),
+            patch("octopoid.housekeeping.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("octopoid.housekeeping.find_pid_for_task", return_value=find_pid_result),
         ):
             renew_active_leases()
 
@@ -625,8 +625,8 @@ class TestRenewActiveLeases:
         mock_sdk.tasks.list.side_effect = RuntimeError("network error")
 
         with (
-            patch("octopoid.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
-            patch("octopoid.scheduler.find_pid_for_task", return_value=None),
+            patch("octopoid.housekeeping.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("octopoid.housekeeping.find_pid_for_task", return_value=None),
         ):
             renew_active_leases()  # must not raise
 
@@ -656,8 +656,8 @@ class TestRenewActiveLeases:
         mock_sdk.tasks.update.side_effect = [RuntimeError("timeout"), None]
 
         with (
-            patch("octopoid.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
-            patch("octopoid.scheduler.find_pid_for_task", return_value=(12345, "implementer")),
+            patch("octopoid.housekeeping.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("octopoid.housekeeping.find_pid_for_task", return_value=(12345, "implementer")),
         ):
             renew_active_leases()  # must not raise
 

@@ -609,7 +609,7 @@ class TestRunHousekeeping:
         # Mock all jobs in the list
         mock_jobs = [Mock() for _ in HOUSEKEEPING_JOBS]
 
-        with patch("octopoid.scheduler.HOUSEKEEPING_JOBS", mock_jobs):
+        with patch("octopoid.housekeeping.HOUSEKEEPING_JOBS", mock_jobs):
             run_housekeeping()
 
         # Verify each job was called
@@ -627,7 +627,7 @@ class TestRunHousekeeping:
 
         mock_jobs = [failing_job, succeeding_job]
 
-        with patch("octopoid.scheduler.HOUSEKEEPING_JOBS", mock_jobs):
+        with patch("octopoid.housekeeping.HOUSEKEEPING_JOBS", mock_jobs):
             # Should not raise exception
             run_housekeeping()
 
@@ -640,8 +640,8 @@ class TestRunHousekeeping:
         failing_job = Mock(side_effect=ValueError("Test error"))
         failing_job.__name__ = "test_failing_job"
 
-        with patch("octopoid.scheduler.HOUSEKEEPING_JOBS", [failing_job]):
-            with patch("octopoid.scheduler.logger") as mock_log:
+        with patch("octopoid.housekeeping.HOUSEKEEPING_JOBS", [failing_job]):
+            with patch("octopoid.housekeeping.logger") as mock_log:
                 run_housekeeping()
 
                 # Verify error was logged
@@ -1455,7 +1455,7 @@ class TestSweepTaskResources:
         mock_result.returncode = 0
         mock_result.stderr = ""
 
-        with patch("octopoid.scheduler.run_git", return_value=mock_result) as mock_git:
+        with patch("octopoid.housekeeping.run_git", return_value=mock_result) as mock_git:
             result = _sweep_task_resources(task, tasks_dir, logs_dir, parent_repo)
 
         assert result is True
@@ -1481,7 +1481,7 @@ class TestSweepTaskResources:
         mock_result.returncode = 0
         mock_result.stderr = ""
 
-        with patch("octopoid.scheduler.run_git", return_value=mock_result):
+        with patch("octopoid.housekeeping.run_git", return_value=mock_result):
             result = _sweep_task_resources(task, tasks_dir, logs_dir, parent_repo)
 
         assert result is False
@@ -1500,7 +1500,7 @@ class TestSweepTaskResources:
         mock_result.returncode = 0
         mock_result.stderr = ""
 
-        with patch("octopoid.scheduler.run_git", return_value=mock_result) as mock_git:
+        with patch("octopoid.housekeeping.run_git", return_value=mock_result) as mock_git:
             _sweep_task_resources(task, tasks_dir, logs_dir, parent_repo)
 
         branch_delete_call = mock_call(
@@ -1523,7 +1523,7 @@ class TestSweepTaskResources:
         mock_result.returncode = 0
         mock_result.stderr = ""
 
-        with patch("octopoid.scheduler.run_git", return_value=mock_result) as mock_git:
+        with patch("octopoid.housekeeping.run_git", return_value=mock_result) as mock_git:
             _sweep_task_resources(task, tasks_dir, logs_dir, parent_repo)
 
         # No git push --delete call

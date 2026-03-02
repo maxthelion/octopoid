@@ -230,34 +230,34 @@ class TestLoadContinuationSection:
 
     def test_non_continuation_agent_returns_empty_string(self, tmp_path):
         """For implementer (claim_from=incoming), returns empty string."""
-        from octopoid.scheduler import _load_continuation_section
+        from octopoid.prompt_renderer import _load_continuation_section
 
         agent_config = {"claim_from": "incoming"}
-        with patch("octopoid.scheduler.get_tasks_dir", return_value=tmp_path):
+        with patch("octopoid.prompt_renderer.get_tasks_dir", return_value=tmp_path):
             result = _load_continuation_section("task-abc", agent_config)
 
         assert result == ""
 
     def test_missing_prev_stdout_returns_empty_string(self, tmp_path):
         """When prev_stdout.log doesn't exist, returns empty string."""
-        from octopoid.scheduler import _load_continuation_section
+        from octopoid.prompt_renderer import _load_continuation_section
 
         agent_config = {"claim_from": "needs_continuation"}
-        with patch("octopoid.scheduler.get_tasks_dir", return_value=tmp_path):
+        with patch("octopoid.prompt_renderer.get_tasks_dir", return_value=tmp_path):
             result = _load_continuation_section("task-abc", agent_config)
 
         assert result == ""
 
     def test_with_prev_stdout_returns_continuation_section(self, tmp_path):
         """When prev_stdout.log exists, returns a populated continuation section."""
-        from octopoid.scheduler import _load_continuation_section
+        from octopoid.prompt_renderer import _load_continuation_section
 
         task_dir = tmp_path / "task-abc"
         task_dir.mkdir()
         (task_dir / "prev_stdout.log").write_text("I made progress but ran out of turns.")
 
         agent_config = {"claim_from": "needs_continuation"}
-        with patch("octopoid.scheduler.get_tasks_dir", return_value=tmp_path):
+        with patch("octopoid.prompt_renderer.get_tasks_dir", return_value=tmp_path):
             result = _load_continuation_section("task-abc", agent_config)
 
         assert "Continuation Context" in result
@@ -265,24 +265,24 @@ class TestLoadContinuationSection:
 
     def test_empty_prev_stdout_returns_empty_string(self, tmp_path):
         """When prev_stdout.log is empty/whitespace, returns empty string."""
-        from octopoid.scheduler import _load_continuation_section
+        from octopoid.prompt_renderer import _load_continuation_section
 
         task_dir = tmp_path / "task-abc"
         task_dir.mkdir()
         (task_dir / "prev_stdout.log").write_text("   ")
 
         agent_config = {"claim_from": "needs_continuation"}
-        with patch("octopoid.scheduler.get_tasks_dir", return_value=tmp_path):
+        with patch("octopoid.prompt_renderer.get_tasks_dir", return_value=tmp_path):
             result = _load_continuation_section("task-abc", agent_config)
 
         assert result == ""
 
     def test_empty_task_id_returns_empty_string(self, tmp_path):
         """Empty task_id returns empty string without error."""
-        from octopoid.scheduler import _load_continuation_section
+        from octopoid.prompt_renderer import _load_continuation_section
 
         agent_config = {"claim_from": "needs_continuation"}
-        with patch("octopoid.scheduler.get_tasks_dir", return_value=tmp_path):
+        with patch("octopoid.prompt_renderer.get_tasks_dir", return_value=tmp_path):
             result = _load_continuation_section("", agent_config)
 
         assert result == ""

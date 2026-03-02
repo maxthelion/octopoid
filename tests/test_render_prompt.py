@@ -28,7 +28,7 @@ class TestLoadGlobalInstructions:
     def test_returns_empty_when_no_files(self, tmp_path):
         agent_dir = str(tmp_path / "agent")
         Path(agent_dir).mkdir()
-        with patch("octopoid.scheduler.get_global_instructions_path", return_value=tmp_path / "nonexistent.md"):
+        with patch("octopoid.prompt_renderer.get_global_instructions_path", return_value=tmp_path / "nonexistent.md"):
             result = _load_global_instructions(agent_dir)
         assert result == ""
 
@@ -37,7 +37,7 @@ class TestLoadGlobalInstructions:
         gi_path.write_text("Global instructions here.")
         agent_dir = str(tmp_path / "agent")
         Path(agent_dir).mkdir()
-        with patch("octopoid.scheduler.get_global_instructions_path", return_value=gi_path):
+        with patch("octopoid.prompt_renderer.get_global_instructions_path", return_value=gi_path):
             result = _load_global_instructions(agent_dir)
         assert result == "Global instructions here."
 
@@ -47,7 +47,7 @@ class TestLoadGlobalInstructions:
         agent_dir = tmp_path / "agent"
         agent_dir.mkdir()
         (agent_dir / "instructions.md").write_text("Agent specific.")
-        with patch("octopoid.scheduler.get_global_instructions_path", return_value=gi_path):
+        with patch("octopoid.prompt_renderer.get_global_instructions_path", return_value=gi_path):
             result = _load_global_instructions(str(agent_dir))
         assert result == "Global.\n\nAgent specific."
 
@@ -55,7 +55,7 @@ class TestLoadGlobalInstructions:
         agent_dir = tmp_path / "agent"
         agent_dir.mkdir()
         (agent_dir / "instructions.md").write_text("Only agent.")
-        with patch("octopoid.scheduler.get_global_instructions_path", return_value=tmp_path / "nonexistent.md"):
+        with patch("octopoid.prompt_renderer.get_global_instructions_path", return_value=tmp_path / "nonexistent.md"):
             result = _load_global_instructions(str(agent_dir))
         assert result == "\n\nOnly agent."
 
@@ -187,7 +187,7 @@ class TestLoadReviewSection:
         assert _load_review_section("") == ""
 
     def test_no_thread_returns_empty(self):
-        with patch("octopoid.scheduler._load_review_section") as mock:
+        with patch("octopoid.prompt_renderer._load_review_section") as mock:
             # Test via actual function with mocked get_thread
             pass
 
@@ -241,9 +241,9 @@ class TestRenderPrompt:
             "type": "feature",
         }
         with (
-            patch("octopoid.scheduler.get_global_instructions_path", return_value=tmp_path / "none.md"),
-            patch("octopoid.scheduler._load_review_section", return_value=""),
-            patch("octopoid.scheduler.get_base_branch", return_value="main"),
+            patch("octopoid.prompt_renderer.get_global_instructions_path", return_value=tmp_path / "none.md"),
+            patch("octopoid.prompt_renderer._load_review_section", return_value=""),
+            patch("octopoid.prompt_renderer.get_base_branch", return_value="main"),
         ):
             result = _render_prompt(task, {"agent_dir": str(agent_dir)})
 
@@ -257,9 +257,9 @@ class TestRenderPrompt:
         task = {"id": "t1", "hooks": [{"type": "agent", "name": "run_tests"}]}
 
         with (
-            patch("octopoid.scheduler.get_global_instructions_path", return_value=tmp_path / "gi.md"),
-            patch("octopoid.scheduler._load_review_section", return_value="REVIEW"),
-            patch("octopoid.scheduler.get_base_branch", return_value="main"),
+            patch("octopoid.prompt_renderer.get_global_instructions_path", return_value=tmp_path / "gi.md"),
+            patch("octopoid.prompt_renderer._load_review_section", return_value="REVIEW"),
+            patch("octopoid.prompt_renderer.get_base_branch", return_value="main"),
         ):
             result = _render_prompt(task, {"agent_dir": str(agent_dir)})
 
@@ -272,9 +272,9 @@ class TestRenderPrompt:
         (agent_dir / "prompt.md").write_text("id=$task_id title=$task_title priority=$task_priority")
 
         with (
-            patch("octopoid.scheduler.get_global_instructions_path", return_value=tmp_path / "none.md"),
-            patch("octopoid.scheduler._load_review_section", return_value=""),
-            patch("octopoid.scheduler.get_base_branch", return_value="main"),
+            patch("octopoid.prompt_renderer.get_global_instructions_path", return_value=tmp_path / "none.md"),
+            patch("octopoid.prompt_renderer._load_review_section", return_value=""),
+            patch("octopoid.prompt_renderer.get_base_branch", return_value="main"),
         ):
             result = _render_prompt({}, {"agent_dir": str(agent_dir)})
 
