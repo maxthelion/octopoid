@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `renew_active_leases()` in `octopoid/scheduler.py`: proactively extends leases for claimed tasks
+  with live agent processes. Renews when lease is within 30 minutes of expiry or already expired.
+  Handles laptop sleep: agent process survives OS sleep, resumes on wake, lease was expired —
+  renewal runs first and extends the lease before the expiry check can kill the process.
+- `renew_active_leases` job registered in `octopoid/jobs.py` and `.octopoid/jobs.yaml`, placed
+  before `check_and_requeue_expired_leases` (ordering is critical for post-sleep correctness).
+- Sleep detection logging in `run_scheduler()`: tracks `last_tick` in scheduler state; logs a
+  "wake-from-sleep detected" info message when the gap exceeds 5 minutes.
+- 8 unit tests for `renew_active_leases` in `tests/test_lease_expiry.py` (all passing).
+- Draft `project-management/drafts/0224-2026-03-02-laptop-sleep-resilience.md` with analysis of
+  four approaches (lease renewal, sleep detection, longer default lease, graceful submit retry).
+
+### Changed
+- Default task lease duration increased from 1 hour to 4 hours in `octopoid/tasks.py`
+  (`lease_duration_seconds: 3600 → 14400`).
+- `tests/test_scheduler_poll.py`: added `renew_active_leases` to the expected jobs list.
 ### Fixed
 
 - `packages/python-sdk/octopoid_sdk/client.py`: Add `DEBUG`-level logging to `claim()` — logs the outgoing `agent_name`, `role_filter`, and `queue`, plus the response `claimed_by` and `queue`. Enables tracing claim requests without changing production behavior (logging is opt-in via `logging.DEBUG`).
