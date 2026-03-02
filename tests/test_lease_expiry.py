@@ -6,7 +6,8 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 
-from octopoid.scheduler import _requeue_task, check_and_requeue_expired_leases, renew_active_leases
+from octopoid.system_health import _requeue_task
+from octopoid.housekeeping import check_and_requeue_expired_leases, renew_active_leases
 
 
 def _make_task(

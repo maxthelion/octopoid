@@ -19,6 +19,7 @@ from unittest.mock import MagicMock, Mock, patch, call
 
 import pytest
 
+from octopoid.housekeeping import run_housekeeping
 from octopoid.scheduler import (
     AGENT_GUARDS,
     HOUSEKEEPING_JOBS,
@@ -31,7 +32,6 @@ from octopoid.scheduler import (
     guard_pool_capacity,
     guard_pre_check,
     handle_agent_result_via_flow,
-    run_housekeeping,
     spawn_implementer,
     spawn_job_agent,
 )
