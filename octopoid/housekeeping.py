@@ -6,7 +6,7 @@ import shutil
 import signal
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .config import (
@@ -552,9 +552,13 @@ def check_and_requeue_expired_leases() -> None:
         for queue_name, target_queue in queues_to_check.items():
             tasks = sdk.tasks.list(queue=queue_name)
             for task in tasks or []:
-                # For provisional queue, only process tasks actively claimed
-                # (claimed_by set) — unclaimed provisional tasks need no action.
-                if queue_name == "provisional" and not task.get("claimed_by"):
+                # For provisional queue, skip tasks with neither a claimer nor a
+                # stale lease — these are normal un-reviewed tasks needing no action.
+                # If claimed_by is None but lease_expires_at is set, the claim
+                # metadata was partially cleared (e.g. by check_and_update_finished_agents
+                # before the server PATCH lease_expires_at fix). Still clean up the
+                # stale lease_expires_at so it doesn't confuse other logic.
+                if queue_name == "provisional" and not task.get("claimed_by") and not task.get("lease_expires_at"):
                     continue
 
                 lease_expires = task.get("lease_expires_at")
@@ -703,27 +707,144 @@ def send_heartbeat() -> None:
         logger.debug(f"Heartbeat failed (non-fatal): {e}")
 
 
-def sweep_stale_resources() -> None:
-    """Archive logs and delete worktrees for old done/failed tasks.
+def renew_active_leases() -> None:
+    """Extend leases for tasks whose agent processes are still running.
 
-    For each task in the 'done' queue (1 hour grace) or 'failed' queue
-    (24 hour grace — longer to allow investigation):
-    - Archives stdout.log, stderr.log, prompt.md to
-      .octopoid/runtime/logs/<task-id>/
-    - Deletes the worktree at .octopoid/runtime/tasks/<task-id>/worktree
-    - Deletes the remote branch agent/<task-id> for done tasks only
-    - Runs git worktree prune after deletions
+    Must run BEFORE check_and_requeue_expired_leases. When a laptop wakes from
+    sleep, this function identifies tasks with live agent processes and extends
+    their leases so that the expiry check doesn't kill and requeue work-in-progress.
 
-    Idempotent: safe to run multiple times.
-    Failed individual cleanups are logged but do not abort the sweep.
+    Renews any claimed task whose lease expires within the next 30 minutes (or is
+    already past). Tasks with plenty of lease time remaining are skipped.
     """
-    DONE_GRACE_SECONDS = 3600       # 1 hour — work is merged, safe to clean
-    FAILED_GRACE_SECONDS = 86400    # 24 hours — need time to investigate
-
     try:
         sdk = queue_utils.get_sdk()
-        done_tasks = sdk.tasks.list(queue="done") or []
-        failed_tasks = sdk.tasks.list(queue="failed") or []
+        tasks = sdk.tasks.list(queue="claimed")
+        if not tasks:
+            return
+
+        now = datetime.now(timezone.utc)
+        renewal_threshold = timedelta(minutes=30)
+        new_lease_duration = timedelta(hours=1)
+
+        for task in tasks:
+            task_id = task.get("id")
+            if not task_id:
+                continue
+
+            lease_expires = task.get("lease_expires_at")
+            if not lease_expires:
+                continue
+
+            try:
+                expires_at = datetime.fromisoformat(lease_expires.replace('Z', '+00:00'))
+            except (ValueError, TypeError):
+                continue
+
+            # Skip tasks with plenty of lease time remaining
+            if expires_at > now + renewal_threshold:
+                continue
+
+            # Only renew if the agent process is still alive
+            pid_result = find_pid_for_task(task_id)
+            if pid_result is None:
+                continue  # No running process — let the expiry check handle it
+
+            new_expiry = (now + new_lease_duration).isoformat()
+            try:
+                sdk.tasks.update(task_id, lease_expires_at=new_expiry)
+                status = "expired" if expires_at < now else "expiring soon"
+                logger.info(f"Renewed lease for {task_id} (was {status}, extended 1h from now)")
+            except Exception as update_err:
+                logger.debug(f"Failed to renew lease for {task_id}: {update_err}")
+
+    except Exception as e:
+        logger.debug(f"Lease renewal check failed: {e}")
+
+
+_DONE_GRACE_SECONDS = 3600    # 1 hour — work is merged, safe to clean
+_FAILED_GRACE_SECONDS = 86400  # 24 hours — need time to investigate
+
+
+def _task_past_grace(task: dict, now: datetime) -> bool:
+    """Return True if task has exceeded its queue-dependent grace period."""
+    ts_str = task.get("updated_at") or task.get("completed_at")
+    if not ts_str:
+        return False
+    try:
+        ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        elapsed = (now - ts).total_seconds()
+    except (ValueError, TypeError):
+        return False
+    grace = _FAILED_GRACE_SECONDS if task.get("queue") == "failed" else _DONE_GRACE_SECONDS
+    return elapsed >= grace
+
+
+def _sweep_task_resources(
+    task: dict,
+    tasks_dir: Path,
+    logs_dir: Path,
+    parent_repo: Path,
+) -> bool:
+    """Archive logs and remove worktree for one task. Return True if worktree was removed."""
+    task_id = task["id"]
+    queue = task.get("queue", "")
+    task_dir = tasks_dir / task_id
+    worktree_path = task_dir / "worktree"
+    swept = False
+
+    if worktree_path.exists():
+        try:
+            archive_dir = logs_dir / task_id
+            archive_dir.mkdir(parents=True, exist_ok=True)
+            for filename in ("stdout.log", "stderr.log", "prompt.md"):
+                src = task_dir / filename
+                if src.exists():
+                    shutil.copy2(src, archive_dir / filename)
+        except Exception as e:
+            logger.debug(f"sweep_stale_resources: failed to archive logs for {task_id}: {e}")
+
+        try:
+            run_git(
+                ["worktree", "remove", "--force", str(worktree_path)],
+                cwd=parent_repo,
+                check=False,
+            )
+            if worktree_path.exists():
+                shutil.rmtree(worktree_path)
+            swept = True
+            logger.info(f"Swept worktree for task {task_id} ({queue})")
+        except Exception as e:
+            logger.debug(f"sweep_stale_resources: failed to delete worktree for {task_id}: {e}")
+
+    if queue == "done":
+        branch = f"agent/{task_id}"
+        try:
+            result = run_git(
+                ["push", "origin", "--delete", branch],
+                cwd=parent_repo,
+                check=False,
+            )
+            if result.returncode == 0:
+                logger.info(f"Deleted remote branch {branch}")
+            else:
+                logger.debug(
+                    f"sweep_stale_resources: remote branch {branch} deletion skipped: "
+                    f"{result.stderr.strip()}"
+                )
+        except Exception as e:
+            logger.debug(f"sweep_stale_resources: failed to delete remote branch {branch}: {e}")
+
+    return swept
+
+
+def sweep_stale_resources() -> None:
+    """Archive logs and delete worktrees for old done/failed tasks."""
+    try:
+        sdk = queue_utils.get_sdk()
+        all_tasks = (sdk.tasks.list(queue="done") or []) + (sdk.tasks.list(queue="failed") or [])
     except Exception as e:
         logger.debug(f"sweep_stale_resources: failed to fetch tasks: {e}")
         return
@@ -737,82 +858,10 @@ def sweep_stale_resources() -> None:
     tasks_dir = get_tasks_dir()
     logs_dir = get_logs_dir()
     now = datetime.now(timezone.utc)
-    pruned_any = False
 
-    for task in done_tasks + failed_tasks:
-        task_id = task.get("id")
-        queue = task.get("queue", "")
-        if not task_id:
-            continue
+    candidates = [t for t in all_tasks if t.get("id") and _task_past_grace(t, now)]
+    pruned_any = any(_sweep_task_resources(t, tasks_dir, logs_dir, parent_repo) for t in candidates)
 
-        # Check age: skip if within grace period
-        ts_str = task.get("updated_at") or task.get("completed_at")
-        if not ts_str:
-            continue
-        try:
-            ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
-            if ts.tzinfo is None:
-                ts = ts.replace(tzinfo=timezone.utc)
-            elapsed = (now - ts).total_seconds()
-        except (ValueError, TypeError) as e:
-            logger.debug(f"sweep_stale_resources: could not parse timestamp {ts_str!r} for task {task_id}: {e}")
-            continue
-
-        grace = FAILED_GRACE_SECONDS if queue == "failed" else DONE_GRACE_SECONDS
-        if elapsed < grace:
-            continue
-
-        task_dir = tasks_dir / task_id
-        worktree_path = task_dir / "worktree"
-
-        # Archive logs and delete worktree if it exists
-        if worktree_path.exists():
-            # Archive log files before deleting
-            try:
-                archive_dir = logs_dir / task_id
-                archive_dir.mkdir(parents=True, exist_ok=True)
-                for filename in ("stdout.log", "stderr.log", "prompt.md"):
-                    src = task_dir / filename
-                    if src.exists():
-                        shutil.copy2(src, archive_dir / filename)
-            except Exception as e:
-                logger.debug(f"sweep_stale_resources: failed to archive logs for {task_id}: {e}")
-
-            # Remove worktree from git tracking and filesystem
-            try:
-                run_git(
-                    ["worktree", "remove", "--force", str(worktree_path)],
-                    cwd=parent_repo,
-                    check=False,
-                )
-                if worktree_path.exists():
-                    shutil.rmtree(worktree_path)
-                pruned_any = True
-                logger.info(f"Swept worktree for task {task_id} ({queue})")
-            except Exception as e:
-                logger.debug(f"sweep_stale_resources: failed to delete worktree for {task_id}: {e}")
-
-        # Delete remote branch for done (merged) tasks only — not failed
-        if queue == "done":
-            branch = f"agent/{task_id}"
-            try:
-                result = run_git(
-                    ["push", "origin", "--delete", branch],
-                    cwd=parent_repo,
-                    check=False,
-                )
-                if result.returncode == 0:
-                    logger.info(f"Deleted remote branch {branch}")
-                else:
-                    # Already gone or no permissions — non-fatal
-                    logger.debug(
-                        f"sweep_stale_resources: remote branch {branch} deletion skipped: "
-                        f"{result.stderr.strip()}"
-                    )
-            except Exception as e:
-                logger.debug(f"sweep_stale_resources: failed to delete remote branch {branch}: {e}")
-
-    # Run git worktree prune once after all deletions
     if pruned_any:
         try:
             run_git(["worktree", "prune"], cwd=parent_repo, check=False)
@@ -896,6 +945,7 @@ def check_and_evaluate_checks() -> None:
 
 HOUSEKEEPING_JOBS = [
     _register_orchestrator,
+    renew_active_leases,  # Must run before check_and_requeue_expired_leases
     check_and_requeue_expired_leases,
     check_and_update_finished_agents,
     _check_queue_health_throttled,

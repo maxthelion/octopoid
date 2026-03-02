@@ -564,8 +564,8 @@ class TestRenewActiveLeases:
         )
 
         with (
-            patch("octopoid.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
-            patch("octopoid.scheduler.find_pid_for_task", return_value=find_pid_result),
+            patch("octopoid.housekeeping.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("octopoid.housekeeping.find_pid_for_task", return_value=find_pid_result),
         ):
             renew_active_leases()
 
@@ -625,8 +625,8 @@ class TestRenewActiveLeases:
         mock_sdk.tasks.list.side_effect = RuntimeError("network error")
 
         with (
-            patch("octopoid.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
-            patch("octopoid.scheduler.find_pid_for_task", return_value=None),
+            patch("octopoid.housekeeping.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("octopoid.housekeeping.find_pid_for_task", return_value=None),
         ):
             renew_active_leases()  # must not raise
 
@@ -656,8 +656,8 @@ class TestRenewActiveLeases:
         mock_sdk.tasks.update.side_effect = [RuntimeError("timeout"), None]
 
         with (
-            patch("octopoid.scheduler.queue_utils.get_sdk", return_value=mock_sdk),
-            patch("octopoid.scheduler.find_pid_for_task", return_value=(12345, "implementer")),
+            patch("octopoid.housekeeping.queue_utils.get_sdk", return_value=mock_sdk),
+            patch("octopoid.housekeeping.find_pid_for_task", return_value=(12345, "implementer")),
         ):
             renew_active_leases()  # must not raise
 
