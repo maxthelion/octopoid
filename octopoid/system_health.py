@@ -173,13 +173,22 @@ def _spawn_diagnostic_agent(reason: str) -> None:
 
 
 def _auto_pause_and_diagnose(reason: str) -> None:
-    """Write the PAUSE file and spawn the diagnostic agent.
+    """Write the PAUSE file, update health state, and spawn the diagnostic agent.
 
     Called when the systemic failure counter reaches the threshold.
 
     Args:
         reason: The failure reason that triggered the auto-pause.
     """
+    health = _load_system_health()
+    pause_reason = (
+        f"System auto-paused: {SYSTEMIC_FAILURE_THRESHOLD} consecutive systemic failures. "
+        f"Last error: {reason}"
+    )
+    health["auto_paused"] = True
+    health["auto_paused_at"] = datetime.now(tz=timezone.utc).isoformat()
+    health["auto_pause_reason"] = pause_reason
+    _save_system_health(health)
     pause_file = get_orchestrator_dir() / "PAUSE"
     pause_file.write_text(f"Auto-paused: {reason}\n")
     logger.warning(
