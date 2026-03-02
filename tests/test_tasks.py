@@ -891,3 +891,274 @@ class TestCancelTaskEdgePaths:
         assert "server_deleted" in result
         assert "errors" in result
         assert result["task_id"] == "abc"
+
+# =============================================================================
+# TaskSpec dataclass
+# =============================================================================
+
+
+class TestTaskSpec:
+    """Tests for the TaskSpec dataclass."""
+
+    def test_taskspec_required_fields(self):
+        """TaskSpec requires title, role, context, and acceptance_criteria."""
+        from octopoid.tasks import TaskSpec
+
+        spec = TaskSpec(
+            title="Test",
+            role="implement",
+            context="Do something",
+            acceptance_criteria=["- [ ] Done"],
+        )
+        assert spec.title == "Test"
+        assert spec.role == "implement"
+        assert spec.priority == "P1"
+        assert spec.queue == "incoming"
+        assert spec.created_by == "human"
+        assert spec.blocked_by is None
+        assert spec.project_id is None
+        assert spec.breakdown_depth == 0
+
+    def test_taskspec_optional_fields(self):
+        """TaskSpec accepts all optional fields."""
+        from octopoid.tasks import TaskSpec
+
+        spec = TaskSpec(
+            title="Test",
+            role="implement",
+            context="Context",
+            acceptance_criteria=["- [ ] Done"],
+            priority="P2",
+            branch="feature/x",
+            flow="custom",
+            created_by="agent",
+            blocked_by="abc123",
+            project_id="proj-1",
+            queue="provisional",
+            checks=["ci"],
+            breakdown_depth=2,
+        )
+        assert spec.priority == "P2"
+        assert spec.branch == "feature/x"
+        assert spec.blocked_by == "abc123"
+        assert spec.checks == ["ci"]
+        assert spec.breakdown_depth == 2
+
+
+# =============================================================================
+# _resolve_branch helper
+# =============================================================================
+
+
+class TestResolveBranch:
+    """Tests for the _resolve_branch helper."""
+
+    def test_uses_spec_branch_when_set(self):
+        """_resolve_branch returns spec.branch directly when set."""
+        from octopoid.tasks import TaskSpec, _resolve_branch
+
+        spec = TaskSpec(
+            title="T", role="r", context="c",
+            acceptance_criteria=[], branch="feature/my-branch"
+        )
+        result = _resolve_branch(spec)
+        assert result == "feature/my-branch"
+
+    def test_fetches_project_branch_when_no_branch(self, mock_sdk_for_unit_tests):
+        """_resolve_branch fetches project branch when spec.branch is None and project_id is set."""
+        from octopoid.tasks import TaskSpec, _resolve_branch
+
+        mock_sdk_for_unit_tests.projects = MagicMock()
+        mock_sdk_for_unit_tests.projects.get.return_value = {"branch": "feature/project"}
+
+        spec = TaskSpec(
+            title="T", role="r", context="c",
+            acceptance_criteria=[], project_id="proj-1"
+        )
+        result = _resolve_branch(spec)
+        assert result == "feature/project"
+
+    def test_falls_back_to_base_when_project_has_no_branch(
+        self, mock_sdk_for_unit_tests, capsys
+    ):
+        """_resolve_branch falls back to base branch and warns when project has no branch."""
+        from octopoid.tasks import TaskSpec, _resolve_branch
+
+        mock_sdk_for_unit_tests.projects = MagicMock()
+        mock_sdk_for_unit_tests.projects.get.return_value = {"branch": None}
+
+        spec = TaskSpec(
+            title="T", role="r", context="c",
+            acceptance_criteria=[], project_id="proj-no-branch"
+        )
+        with patch("octopoid.tasks.get_base_branch", return_value="main"):
+            result = _resolve_branch(spec)
+
+        assert result == "main"
+        captured = capsys.readouterr()
+        assert "no branch" in captured.err.lower() or "WARNING" in captured.err
+
+    def test_falls_back_to_base_when_project_fetch_raises(self, mock_sdk_for_unit_tests):
+        """_resolve_branch falls back to base branch when project fetch raises."""
+        from octopoid.tasks import TaskSpec, _resolve_branch
+
+        mock_sdk_for_unit_tests.projects = MagicMock()
+        mock_sdk_for_unit_tests.projects.get.side_effect = Exception("network error")
+
+        spec = TaskSpec(
+            title="T", role="r", context="c",
+            acceptance_criteria=[], project_id="proj-broken"
+        )
+        with patch("octopoid.tasks.get_base_branch", return_value="main"):
+            result = _resolve_branch(spec)
+
+        assert result == "main"
+
+    def test_falls_back_to_base_when_no_project(self):
+        """_resolve_branch falls back to get_base_branch when no branch and no project_id."""
+        from octopoid.tasks import TaskSpec, _resolve_branch
+
+        spec = TaskSpec(title="T", role="r", context="c", acceptance_criteria=[])
+        with patch("octopoid.tasks.get_base_branch", return_value="main"):
+            result = _resolve_branch(spec)
+
+        assert result == "main"
+
+
+# =============================================================================
+# _normalize_criteria helper
+# =============================================================================
+
+
+class TestNormalizeCriteria:
+    """Tests for the _normalize_criteria helper."""
+
+    def test_list_with_checkbox_lines_unchanged(self):
+        """_normalize_criteria preserves lines that already start with '- [ ]' or '- [x]'."""
+        from octopoid.tasks import _normalize_criteria
+
+        criteria = ["- [ ] First", "- [x] Already done"]
+        result = _normalize_criteria(criteria)
+        assert result == ["- [ ] First", "- [x] Already done"]
+
+    def test_plain_strings_get_checkbox_prefix(self):
+        """_normalize_criteria adds '- [ ] ' prefix to plain strings."""
+        from octopoid.tasks import _normalize_criteria
+
+        result = _normalize_criteria(["Do something", "And another thing"])
+        assert result == ["- [ ] Do something", "- [ ] And another thing"]
+
+    def test_string_input_split_by_lines(self):
+        """_normalize_criteria splits a string input into lines."""
+        from octopoid.tasks import _normalize_criteria
+
+        result = _normalize_criteria("First item\nSecond item\n")
+        assert result == ["- [ ] First item", "- [ ] Second item"]
+
+    def test_string_input_empty_lines_skipped(self):
+        """_normalize_criteria skips blank lines when splitting a string."""
+        from octopoid.tasks import _normalize_criteria
+
+        result = _normalize_criteria("First\n\nSecond\n   \nThird")
+        assert result == ["- [ ] First", "- [ ] Second", "- [ ] Third"]
+
+    def test_mixed_checkbox_and_plain(self):
+        """_normalize_criteria handles a mix of already-prefixed and plain lines."""
+        from octopoid.tasks import _normalize_criteria
+
+        result = _normalize_criteria(["- [ ] Already set", "Plain line"])
+        assert result == ["- [ ] Already set", "- [ ] Plain line"]
+
+    def test_empty_list(self):
+        """_normalize_criteria returns empty list for empty input."""
+        from octopoid.tasks import _normalize_criteria
+
+        assert _normalize_criteria([]) == []
+
+
+# =============================================================================
+# _build_task_content helper
+# =============================================================================
+
+
+class TestBuildTaskContent:
+    """Tests for the _build_task_content helper."""
+
+    def test_contains_task_id_and_title(self):
+        """_build_task_content embeds task_id and title in the header."""
+        from octopoid.tasks import TaskSpec, _build_task_content
+
+        spec = TaskSpec(title="My Task", role="implement", context="ctx", acceptance_criteria=[])
+        content = _build_task_content(spec, "abc123", "main", ["- [ ] Done"])
+        assert "# [TASK-abc123] My Task" in content
+
+    def test_contains_role_priority_branch(self):
+        """_build_task_content includes ROLE, PRIORITY, and BRANCH metadata."""
+        from octopoid.tasks import TaskSpec, _build_task_content
+
+        spec = TaskSpec(
+            title="T", role="review", context="ctx",
+            acceptance_criteria=[], priority="P0"
+        )
+        content = _build_task_content(spec, "id1", "feature/x", [])
+        assert "ROLE: review" in content
+        assert "PRIORITY: P0" in content
+        assert "BRANCH: feature/x" in content
+
+    def test_blocked_by_line_present_when_set(self):
+        """_build_task_content includes BLOCKED_BY when spec.blocked_by is set."""
+        from octopoid.tasks import TaskSpec, _build_task_content
+
+        spec = TaskSpec(
+            title="T", role="r", context="ctx",
+            acceptance_criteria=[], blocked_by="dep123"
+        )
+        content = _build_task_content(spec, "id1", "main", [])
+        assert "BLOCKED_BY: dep123" in content
+
+    def test_blocked_by_line_absent_when_not_set(self):
+        """_build_task_content omits BLOCKED_BY when spec.blocked_by is None."""
+        from octopoid.tasks import TaskSpec, _build_task_content
+
+        spec = TaskSpec(title="T", role="r", context="ctx", acceptance_criteria=[])
+        content = _build_task_content(spec, "id1", "main", [])
+        assert "BLOCKED_BY" not in content
+
+    def test_checks_line_present_when_set(self):
+        """_build_task_content includes CHECKS when spec.checks is set."""
+        from octopoid.tasks import TaskSpec, _build_task_content
+
+        spec = TaskSpec(
+            title="T", role="r", context="ctx",
+            acceptance_criteria=[], checks=["ci", "lint"]
+        )
+        content = _build_task_content(spec, "id1", "main", [])
+        assert "CHECKS: ci,lint" in content
+
+    def test_breakdown_depth_line_present_when_positive(self):
+        """_build_task_content includes BREAKDOWN_DEPTH when > 0."""
+        from octopoid.tasks import TaskSpec, _build_task_content
+
+        spec = TaskSpec(
+            title="T", role="r", context="ctx",
+            acceptance_criteria=[], breakdown_depth=2
+        )
+        content = _build_task_content(spec, "id1", "main", [])
+        assert "BREAKDOWN_DEPTH: 2" in content
+
+    def test_breakdown_depth_line_absent_when_zero(self):
+        """_build_task_content omits BREAKDOWN_DEPTH when == 0."""
+        from octopoid.tasks import TaskSpec, _build_task_content
+
+        spec = TaskSpec(title="T", role="r", context="ctx", acceptance_criteria=[])
+        content = _build_task_content(spec, "id1", "main", [])
+        assert "BREAKDOWN_DEPTH" not in content
+
+    def test_criteria_included_in_content(self):
+        """_build_task_content includes acceptance criteria lines."""
+        from octopoid.tasks import TaskSpec, _build_task_content
+
+        spec = TaskSpec(title="T", role="r", context="ctx", acceptance_criteria=[])
+        content = _build_task_content(spec, "id1", "main", ["- [ ] Step A", "- [ ] Step B"])
+        assert "- [ ] Step A" in content
+        assert "- [ ] Step B" in content

@@ -101,6 +101,18 @@ Known symptoms and their root causes. **Consult this first when diagnosing a pro
 | 409 on submit after lease expires | Agent finished and wrote `result.json` but scheduler didn't process the result before the lease expired. Server rejects `submit` because lease is invalid. Fix: requeue task, re-claim, then submit. Root cause: scheduler was down (see stale state section). | Task 543cd9d7 |
 | 409 on reject/requeue/accept | Server's `canTransition()` checks registered flow transitions. Reverse transitions (reject back to incoming, requeue) must be explicitly registered. Fixed by `_implicit_reverse_transitions()` in `flow.py`. | Commit e210766 |
 
+## Intervention triggered on never-started blocked tasks
+
+| Symptom | Likely cause | See |
+|---|---|---|
+| Task has `needs_intervention=true` but empty logs, empty context, `attempt_count=0` | False alarm — intervention flag set on a task that was never started; blocker task still in flight | Task 326df326, 2026-02-28 |
+
+## Fixer classifier crashes with "Inference error"
+
+| Symptom | Likely cause | See |
+|---|---|---|
+| `error_source: "fixer-failed"`, `error_message: "Inference error: Command ['claude', '-p', ...]"` in intervention context | Fixer agent ran to completion but the classifier subprocess failed (timeout, context truncation, or LLM error). The task cycles back into intervention. Fix: run a new fixer agent — it will diagnose correctly and the task can proceed normally. | Task 326df326, 2026-03-01 |
+
 ## Fixer agents reporting "could not fix" despite fix being applied
 
 | Symptom | Likely cause | See |

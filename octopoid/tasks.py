@@ -7,6 +7,7 @@ The server is the single source of truth for task content.
 import os
 import re
 import sys
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -620,6 +621,86 @@ def get_continuation_tasks(agent_name: str | None = None) -> list[dict[str, Any]
 
     return tasks
 
+@dataclass
+class TaskSpec:
+    """All inputs needed to create a task."""
+
+    title: str
+    role: str
+    context: str
+    acceptance_criteria: list[str] | str
+    priority: str = "P1"
+    branch: str | None = None
+    flow: str | None = None
+    created_by: str = "human"
+    blocked_by: str | None = None
+    project_id: str | None = None
+    queue: str = "incoming"
+    checks: list[str] | None = None
+    breakdown_depth: int = 0
+
+
+def _resolve_branch(spec: TaskSpec) -> str:
+    """Resolve branch: use spec.branch, fetch from project, or fall back to base."""
+    if spec.branch:
+        return spec.branch
+    if spec.project_id:
+        try:
+            sdk = get_sdk()
+            project = sdk.projects.get(spec.project_id)
+            if project and project.get("branch"):
+                return project["branch"]
+            elif project and not project.get("branch"):
+                print(
+                    f"WARNING: Project {spec.project_id} has no branch set. "
+                    f"Task will fall back to base branch.",
+                    file=sys.stderr,
+                )
+        except Exception as e:
+            print(f"Warning: Failed to fetch project {spec.project_id} for branch: {e}")
+    return get_base_branch()
+
+
+def _normalize_criteria(criteria: list[str] | str) -> list[str]:
+    """Return criteria as a list of '- [ ] ...' checkbox lines."""
+    if isinstance(criteria, str):
+        criteria = [line for line in criteria.splitlines() if line.strip()]
+    result = []
+    for c in criteria:
+        stripped = c.strip()
+        result.append(
+            stripped if stripped.startswith(("- [ ]", "- [x]")) else f"- [ ] {stripped}"
+        )
+    return result
+
+
+def _build_task_content(
+    spec: TaskSpec, task_id: str, branch: str, criteria: list[str]
+) -> str:
+    """Build the markdown content for a task."""
+    blocked_by_line = f"BLOCKED_BY: {spec.blocked_by}\n" if spec.blocked_by else ""
+    project_line = f"PROJECT: {spec.project_id}\n" if spec.project_id else ""
+    checks_line = f"CHECKS: {','.join(spec.checks)}\n" if spec.checks else ""
+    breakdown_depth_line = (
+        f"BREAKDOWN_DEPTH: {spec.breakdown_depth}\n" if spec.breakdown_depth > 0 else ""
+    )
+    criteria_md = "\n".join(criteria)
+    return f"""# [TASK-{task_id}] {spec.title}
+
+ROLE: {spec.role}
+PRIORITY: {spec.priority}
+BRANCH: {branch}
+CREATED: {datetime.now().isoformat()}
+CREATED_BY: {spec.created_by}
+{project_line}{blocked_by_line}{checks_line}{breakdown_depth_line}
+## Context
+{spec.context}
+
+## Acceptance Criteria
+{criteria_md}
+"""
+
+
 def create_task(
     title: str,
     role: str,
@@ -640,62 +721,30 @@ def create_task(
     Returns the bare task ID (e.g. "47766b7e"), not "TASK-47766b7e".
     Callers that need the filename can construct it themselves (e.g. f"TASK-{task_id}.md").
     """
-    if not branch:
-        if project_id:
-            try:
-                sdk = get_sdk()
-                project = sdk.projects.get(project_id)
-                if project and project.get("branch"):
-                    branch = project["branch"]
-                elif project and not project.get("branch"):
-                    print(
-                        f"WARNING: Project {project_id} has no branch set. "
-                        f"Task will fall back to base branch.",
-                        file=sys.stderr,
-                    )
-            except Exception as e:
-                print(f"Warning: Failed to fetch project {project_id} for branch: {e}")
-        if not branch:
-            branch = get_base_branch()
-    task_id = uuid4().hex[:8]
-    filename = f"TASK-{task_id}.md"
-
     if not blocked_by or blocked_by == "None":
         blocked_by = None
 
-    if isinstance(acceptance_criteria, str):
-        acceptance_criteria = [
-            line for line in acceptance_criteria.splitlines() if line.strip()
-        ]
+    spec = TaskSpec(
+        title=title,
+        role=role,
+        context=context,
+        acceptance_criteria=acceptance_criteria,
+        priority=priority,
+        branch=branch,
+        flow=flow,
+        created_by=created_by,
+        blocked_by=blocked_by,
+        project_id=project_id,
+        queue=queue,
+        checks=checks,
+        breakdown_depth=breakdown_depth,
+    )
 
-    criteria_lines = []
-    for c in acceptance_criteria:
-        stripped = c.strip()
-        if stripped.startswith("- [ ]") or stripped.startswith("- [x]"):
-            criteria_lines.append(stripped)
-        else:
-            criteria_lines.append(f"- [ ] {stripped}")
-    criteria_md = "\n".join(criteria_lines)
-
-    blocked_by_line = f"BLOCKED_BY: {blocked_by}\n" if blocked_by else ""
-    project_line = f"PROJECT: {project_id}\n" if project_id else ""
-    checks_line = f"CHECKS: {','.join(checks)}\n" if checks else ""
-    breakdown_depth_line = f"BREAKDOWN_DEPTH: {breakdown_depth}\n" if breakdown_depth > 0 else ""
-
-    content = f"""# [TASK-{task_id}] {title}
-
-ROLE: {role}
-PRIORITY: {priority}
-BRANCH: {branch}
-CREATED: {datetime.now().isoformat()}
-CREATED_BY: {created_by}
-{project_line}{blocked_by_line}{checks_line}{breakdown_depth_line}
-## Context
-{context}
-
-## Acceptance Criteria
-{criteria_md}
-"""
+    resolved_branch = _resolve_branch(spec)
+    task_id = uuid4().hex[:8]
+    filename = f"TASK-{task_id}.md"
+    criteria = _normalize_criteria(spec.acceptance_criteria)
+    content = _build_task_content(spec, task_id, resolved_branch, criteria)
 
     try:
         sdk = get_sdk()
@@ -706,7 +755,7 @@ CREATED_BY: {created_by}
             role=role,
             priority=priority,
             queue=queue,
-            branch=branch,
+            branch=resolved_branch,
             content=content,
             flow=flow if flow is not None else ("project" if project_id else "default"),
             metadata={
