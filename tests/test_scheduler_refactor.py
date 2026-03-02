@@ -1138,6 +1138,156 @@ class TestPrepareTaskDirectoryDetachedHead:
             prepare_task_directory(task, "implementer-1", {"agent_dir": str(agent_dir)})
 
 
+class TestPrepareTaskDirectoryStdoutArchiving:
+    """prepare_task_directory must archive stdout.log as stdout-{role}-{attempt}.log."""
+
+    def _make_task(self, attempt_count: int = 0) -> dict:
+        return {
+            "id": "TASK-abc123",
+            "title": "Test task",
+            "content": "Do something",
+            "branch": None,
+            "project_id": None,
+            "breakdown_id": None,
+            "role": "implement",
+            "attempt_count": attempt_count,
+            "hooks": None,
+        }
+
+    def _make_agent_dir(self, tmp_path: Path) -> Path:
+        agent_dir = tmp_path / "agent"
+        (agent_dir / "scripts").mkdir(parents=True)
+        (agent_dir / "prompt.md").write_text("Task: $task_content")
+        return agent_dir
+
+    def _patches(self, tmp_path: Path, worktree_path: Path, agent_dir: Path):
+        return (
+            patch("octopoid.git_utils.create_task_worktree", return_value=worktree_path),
+            patch("octopoid.scheduler.get_task_branch", return_value="agent/TASK-abc123"),
+            patch("octopoid.scheduler.get_tasks_dir", return_value=tmp_path / "tasks"),
+            patch("octopoid.scheduler.get_base_branch", return_value="main"),
+            patch("octopoid.scheduler.get_global_instructions_path", return_value=tmp_path / "gi.md"),
+            patch("octopoid.scheduler.find_parent_project", return_value=tmp_path),
+            patch("octopoid.scheduler._get_server_url_from_config", return_value="http://localhost"),
+        )
+
+    def test_stdout_archived_with_role_and_attempt(self, tmp_path: Path) -> None:
+        """stdout.log is renamed to stdout-{blueprint}-{attempt}.log before deletion."""
+        from octopoid.scheduler import prepare_task_directory
+
+        worktree_path = tmp_path / "worktree"
+        worktree_path.mkdir()
+        agent_dir = self._make_agent_dir(tmp_path)
+        task = self._make_task(attempt_count=0)
+
+        # Pre-create a stdout.log in the task dir to simulate a previous run
+        task_dir = tmp_path / "tasks" / "TASK-abc123"
+        task_dir.mkdir(parents=True)
+        (task_dir / "stdout.log").write_text("Previous run output line 1\nline 2\n")
+
+        with (
+            patch("octopoid.git_utils.create_task_worktree", return_value=worktree_path),
+            patch("octopoid.scheduler.get_task_branch", return_value="agent/TASK-abc123"),
+            patch("octopoid.scheduler.get_tasks_dir", return_value=tmp_path / "tasks"),
+            patch("octopoid.scheduler.get_base_branch", return_value="main"),
+            patch("octopoid.scheduler.get_global_instructions_path", return_value=tmp_path / "gi.md"),
+            patch("octopoid.scheduler.find_parent_project", return_value=tmp_path),
+            patch("octopoid.scheduler._get_server_url_from_config", return_value="http://localhost"),
+        ):
+            prepare_task_directory(task, "implementer-1", {"agent_dir": str(agent_dir), "blueprint_name": "implementer"})
+
+        # Original stdout.log must be gone (renamed away)
+        assert not (task_dir / "stdout.log").exists()
+        # Archived file must exist with the expected name
+        archived = task_dir / "stdout-implementer-0.log"
+        assert archived.exists()
+        assert "Previous run output" in archived.read_text()
+        # prev_stdout.log must contain the tail for continuation context
+        assert (task_dir / "prev_stdout.log").exists()
+        assert "Previous run output" in (task_dir / "prev_stdout.log").read_text()
+
+    def test_stdout_archived_uses_attempt_count(self, tmp_path: Path) -> None:
+        """The archived filename uses task attempt_count to distinguish attempts."""
+        from octopoid.scheduler import prepare_task_directory
+
+        worktree_path = tmp_path / "worktree"
+        worktree_path.mkdir()
+        agent_dir = self._make_agent_dir(tmp_path)
+        task = self._make_task(attempt_count=1)
+
+        task_dir = tmp_path / "tasks" / "TASK-abc123"
+        task_dir.mkdir(parents=True)
+        (task_dir / "stdout.log").write_text("Fixer run output\n")
+
+        with (
+            patch("octopoid.git_utils.create_task_worktree", return_value=worktree_path),
+            patch("octopoid.scheduler.get_task_branch", return_value="agent/TASK-abc123"),
+            patch("octopoid.scheduler.get_tasks_dir", return_value=tmp_path / "tasks"),
+            patch("octopoid.scheduler.get_base_branch", return_value="main"),
+            patch("octopoid.scheduler.get_global_instructions_path", return_value=tmp_path / "gi.md"),
+            patch("octopoid.scheduler.find_parent_project", return_value=tmp_path),
+            patch("octopoid.scheduler._get_server_url_from_config", return_value="http://localhost"),
+        ):
+            prepare_task_directory(task, "fixer-1", {"agent_dir": str(agent_dir), "blueprint_name": "fixer"})
+
+        archived = task_dir / "stdout-fixer-1.log"
+        assert archived.exists(), f"Expected {archived} to exist"
+        assert not (task_dir / "stdout.log").exists()
+
+    def test_no_stdout_log_is_a_no_op(self, tmp_path: Path) -> None:
+        """When there is no previous stdout.log, no archive file is created."""
+        from octopoid.scheduler import prepare_task_directory
+
+        worktree_path = tmp_path / "worktree"
+        worktree_path.mkdir()
+        agent_dir = self._make_agent_dir(tmp_path)
+        task = self._make_task(attempt_count=0)
+
+        with (
+            patch("octopoid.git_utils.create_task_worktree", return_value=worktree_path),
+            patch("octopoid.scheduler.get_task_branch", return_value="agent/TASK-abc123"),
+            patch("octopoid.scheduler.get_tasks_dir", return_value=tmp_path / "tasks"),
+            patch("octopoid.scheduler.get_base_branch", return_value="main"),
+            patch("octopoid.scheduler.get_global_instructions_path", return_value=tmp_path / "gi.md"),
+            patch("octopoid.scheduler.find_parent_project", return_value=tmp_path),
+            patch("octopoid.scheduler._get_server_url_from_config", return_value="http://localhost"),
+        ):
+            result_dir = prepare_task_directory(task, "implementer-1", {"agent_dir": str(agent_dir), "blueprint_name": "implementer"})
+
+        # No archive files should exist (nothing to archive)
+        archived_files = list(result_dir.glob("stdout-*.log"))
+        assert archived_files == []
+        assert not (result_dir / "prev_stdout.log").exists()
+
+    def test_fallback_to_agent_name_when_no_blueprint_name(self, tmp_path: Path) -> None:
+        """Falls back to agent_name when blueprint_name is not in agent_config."""
+        from octopoid.scheduler import prepare_task_directory
+
+        worktree_path = tmp_path / "worktree"
+        worktree_path.mkdir()
+        agent_dir = self._make_agent_dir(tmp_path)
+        task = self._make_task(attempt_count=2)
+
+        task_dir = tmp_path / "tasks" / "TASK-abc123"
+        task_dir.mkdir(parents=True)
+        (task_dir / "stdout.log").write_text("Some output\n")
+
+        with (
+            patch("octopoid.git_utils.create_task_worktree", return_value=worktree_path),
+            patch("octopoid.scheduler.get_task_branch", return_value="agent/TASK-abc123"),
+            patch("octopoid.scheduler.get_tasks_dir", return_value=tmp_path / "tasks"),
+            patch("octopoid.scheduler.get_base_branch", return_value="main"),
+            patch("octopoid.scheduler.get_global_instructions_path", return_value=tmp_path / "gi.md"),
+            patch("octopoid.scheduler.find_parent_project", return_value=tmp_path),
+            patch("octopoid.scheduler._get_server_url_from_config", return_value="http://localhost"),
+        ):
+            # No blueprint_name in agent_config — falls back to agent_name "implementer-1"
+            prepare_task_directory(task, "implementer-1", {"agent_dir": str(agent_dir)})
+
+        archived = task_dir / "stdout-implementer-1-2.log"
+        assert archived.exists(), f"Expected {archived} to exist"
+
+
 class TestCreateTaskWorktreeDetachedHead:
     """create_task_worktree must always return a worktree on detached HEAD."""
 
