@@ -39,6 +39,12 @@ Known symptoms and their root causes. **Consult this first when diagnosing a pro
 | Gatekeeper says files were "deleted" but they don't exist | Agent renamed files (e.g. 183-... → 0183-...) in a prior commit; gatekeeper referenced old unpadded names that never existed in that form on main. | Verify with `git log --all -- path/to/file`. If file truly never existed by that name, the gatekeeper was wrong — no action needed. |
 | `if rejected:` NameError in queue-status.md | Out-of-scope change added a `rejected_by_gatekeeper` problem type but never populated the `rejected` list. | Remove the `if rejected:` block (lines 113-119). Fixed in tasks 72ff0d4e and 7818ecfa. |
 
+## Duplicate task: PR creation fails with "No commits between main and branch"
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `create_pr` step fails: "No commits between main and agent/XXXXX" | Duplicate task — another task did the same work and was merged first. When this task's agent ran `rebase_on_base`, the rebase incorporated all its changes (they were already in main), leaving zero unique commits. The branch tip equals main's tip. | The task's acceptance criteria are already satisfied — no code change needed. Mark the task done manually: `sdk._request('POST', f'/api/v1/tasks/{task_id}/force-queue', json={'queue': 'done', 'reason': 'duplicate — work already merged by another task'})`. Long-term fix: analyst should check if the target symbols are still present before creating a task. |
+
 ## Rebase conflict: parallel systemic-failure work in scheduler.py
 
 | Symptom | Likely cause | Fix |
