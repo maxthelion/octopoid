@@ -1159,15 +1159,21 @@ def prepare_task_directory(
     task_dir = get_tasks_dir() / task_id
     task_dir.mkdir(parents=True, exist_ok=True)
 
-    # Save previous stdout tail for continuation context before cleaning.
-    # The continuer agent's _render_prompt will read prev_stdout.log to build
-    # the continuation section so the agent knows where the previous run left off.
+    # Archive previous stdout for debugging and save tail for continuation context.
+    # The archived file (stdout-{role}-{attempt}.log) preserves each agent run's
+    # full output. The continuer agent's _render_prompt reads prev_stdout.log to
+    # build the continuation section so the agent knows where the previous run left off.
     stdout_path = task_dir / "stdout.log"
     if stdout_path.exists():
         try:
             prev_content = stdout_path.read_text(errors="replace")
             tail = prev_content[-3000:]
             (task_dir / "prev_stdout.log").write_text(tail)
+            # Archive as stdout-{blueprint}-{attempt}.log to preserve per-attempt output
+            blueprint_name = agent_config.get("blueprint_name", agent_name)
+            attempt = task.get("attempt_count", 0)
+            archived_path = task_dir / f"stdout-{blueprint_name}-{attempt}.log"
+            stdout_path.rename(archived_path)
         except OSError:
             pass
 
