@@ -2210,6 +2210,100 @@ def _requeue_task(task_id: str, source_queue: str = "incoming", task: dict | Non
         logger.error(f"Requeue failed for {task_id}: {e}")
 
 
+def _get_system_health_path() -> Path:
+    """Get path to system_health.json in the runtime directory."""
+    from .config import get_runtime_dir
+    return get_runtime_dir() / "system_health.json"
+
+
+def _load_system_health() -> dict:
+    """Load system health state, returning defaults if file doesn't exist."""
+    path = _get_system_health_path()
+    if not path.exists():
+        return {
+            "consecutive_systemic_failures": 0,
+            "last_systemic_failure": None,
+            "auto_paused": False,
+            "auto_paused_at": None,
+            "auto_pause_reason": None,
+        }
+    try:
+        return json.loads(path.read_text())
+    except Exception:
+        return {
+            "consecutive_systemic_failures": 0,
+            "last_systemic_failure": None,
+            "auto_paused": False,
+            "auto_paused_at": None,
+            "auto_pause_reason": None,
+        }
+
+
+def _save_system_health(data: dict) -> None:
+    """Persist system health state to disk."""
+    path = _get_system_health_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2))
+
+
+def _requeue_task_blameless(task_id: str, source_queue: str = "incoming") -> None:
+    """Requeue a task without incrementing attempt_count.
+
+    Used for systemic failures (spawn failure, infrastructure error) where the
+    task itself is not at fault. The task is returned to its source queue with
+    no penalty.
+
+    Args:
+        task_id: Task to requeue.
+        source_queue: Queue the task should return to.
+    """
+    try:
+        from .queue_utils import get_sdk
+        sdk = get_sdk()
+        sdk.tasks.update(task_id, queue=source_queue, claimed_by=None, lease_expires_at=None)
+        logger.debug(f"Blameless requeue of task {task_id} back to {source_queue} (no attempt_count increment)")
+    except Exception as e:
+        logger.error(f"Blameless requeue failed for {task_id}: {e}")
+
+
+_SYSTEMIC_FAILURE_THRESHOLD = 2
+
+
+def _record_systemic_failure(reason: str) -> None:
+    """Increment systemic failure counter and auto-pause if threshold reached.
+
+    Args:
+        reason: Description of the failure for logging and storage.
+    """
+    health = _load_system_health()
+    health["consecutive_systemic_failures"] = health.get("consecutive_systemic_failures", 0) + 1
+    health["last_systemic_failure"] = datetime.now(timezone.utc).isoformat()
+    count = health["consecutive_systemic_failures"]
+
+    if count >= _SYSTEMIC_FAILURE_THRESHOLD:
+        pause_reason = f"System auto-paused: {count} consecutive systemic failures. Last error: {reason}"
+        logger.error(pause_reason)
+        # Write PAUSE file — same mechanism as /pause-system
+        pause_file = get_orchestrator_dir() / "PAUSE"
+        pause_file.touch()
+        health["auto_paused"] = True
+        health["auto_paused_at"] = datetime.now(timezone.utc).isoformat()
+        health["auto_pause_reason"] = pause_reason
+    else:
+        logger.warning(f"Systemic failure #{count}/{_SYSTEMIC_FAILURE_THRESHOLD}: {reason}")
+
+    _save_system_health(health)
+
+
+def _reset_systemic_failure_counter() -> None:
+    """Reset the systemic failure counter after a successful spawn."""
+    health = _load_system_health()
+    if health.get("consecutive_systemic_failures", 0) > 0:
+        health["consecutive_systemic_failures"] = 0
+        _save_system_health(health)
+        logger.debug("Systemic failure counter reset after successful spawn")
+
+
 def _init_submodule(agent_name: str) -> None:
     """Initialize the orchestrator submodule in an agent's worktree."""
     worktree_path = get_worktree_path(agent_name)
@@ -2359,11 +2453,13 @@ def _run_agent_evaluation_loop(queue_counts: dict | None) -> None:
             try:
                 pid = strategy(ctx)
                 logger.info(f"Agent {agent_name} started with PID {pid}")
+                _reset_systemic_failure_counter()
             except Exception as e:
                 logger.error(f"Spawn failed for {agent_name}: {e}")
                 if ctx.claimed_task:
                     source_queue = ctx.agent_config.get("claim_from", "incoming")
-                    _requeue_task(ctx.claimed_task["id"], source_queue=source_queue, task=ctx.claimed_task)
+                    _requeue_task_blameless(ctx.claimed_task["id"], source_queue=source_queue)
+                _record_systemic_failure(str(e))
 
 
 def run_scheduler() -> None:
