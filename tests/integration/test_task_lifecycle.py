@@ -28,7 +28,6 @@ class TestBasicLifecycle:
             agent_name="test-agent",
             role_filter="implement"
         )
-        # This will FAIL with 500 error - exposing the bug!
         assert claimed is not None
         assert claimed['id'] == "lifecycle-001"
         assert claimed['queue'] == 'claimed'
