@@ -855,7 +855,7 @@ class TestStoreStagingUrl:
 
     def test_noop_without_db(self):
         # Should not raise - DB mode is always off now
-        _store_staging_url(55, "https://preview.pages.dev")
+        _store_staging_url(55)
 
 
 class TestFormatTaskStagingUrl:
