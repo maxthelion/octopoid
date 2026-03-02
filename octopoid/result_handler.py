@@ -238,6 +238,12 @@ def _perform_transition(sdk: object, task_id: str, to_state: str) -> None:
         sdk.tasks.submit(task_id=task_id, commits_count=0, turns_used=0)
     elif to_state == "done":
         sdk.tasks.accept(task_id=task_id, accepted_by="flow-engine")
+        # Clear needs_intervention so a stale flag doesn't cause the fixer to
+        # be spawned against a task that has already completed successfully.
+        try:
+            sdk.tasks.update(task_id, needs_intervention=False)
+        except Exception as clear_e:
+            logger.debug(f"Task {task_id}: failed to clear needs_intervention after done transition: {clear_e}")
     else:
         sdk.tasks.update(task_id, queue=to_state)
     logger.debug(f"Task {task_id}: engine performed transition to {to_state}")
@@ -1135,10 +1141,24 @@ def handle_fixer_result(task_id: str, agent_name: str, task_dir: Path) -> bool:
         logger.debug(f"Fixer result: task {task_id} not found on server, removing stale PID")
         return True
 
+    if outcome == "already_resolved":
+        # Task was already in a resolved/done state — the needs_intervention flag was stale.
+        # Just clear the flag; no fixer attempt should be counted.
+        logger.debug(f"Fixer result: task {task_id} already resolved, clearing stale needs_intervention")
+        try:
+            sdk.tasks.update(task_id, needs_intervention=False, claimed_by=None, lease_expires_at=None)
+        except Exception as clear_e:
+            logger.error(f"Failed to clear needs_intervention for already-resolved task {task_id}: {clear_e}")
+        print(f"[{datetime.now().isoformat()}] SKIPPED task={task_id} (already resolved — cleared stale needs_intervention)")
+        return True
+
     if outcome == "systemic_escalation":
         systemic_reason = result.get("reason", "Systemic issue detected by fixer agent")
 
-        # Post a message on the task explaining the escalation
+        # Post a message on the task explaining the escalation.
+        # Use type="intervention_systemic" (not "intervention_reply") so the circuit
+        # breaker can detect it and fail immediately on the next pick — without burning
+        # remaining fixer attempts.
         try:
             content = (
                 "## Fixer escalated to systemic pause\n\n"
@@ -1153,7 +1173,7 @@ def handle_fixer_result(task_id: str, agent_name: str, task_dir: Path) -> bool:
                 task_id=task_id,
                 from_actor="fixer",
                 to_actor="scheduler",
-                type="intervention_reply",
+                type="intervention_systemic",
                 content=content,
                 parent_message_id=request_message_id,
             )
