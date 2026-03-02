@@ -67,11 +67,9 @@ from .system_health import (
     _load_system_health,
     _save_system_health,
     _record_systemic_failure,
-    reset_systemic_failures,
     _spawn_diagnostic_agent,
     _auto_pause_and_diagnose,
     _handle_systemic_failure,
-    _requeue_task,
     _requeue_task_blameless,
     _reset_systemic_failure_counter,
 )
@@ -91,7 +89,6 @@ from .housekeeping import (
     check_project_completion,
     check_queue_health,
     renew_active_leases,
-    run_housekeeping,
     send_heartbeat,
     sweep_stale_resources,
 )
