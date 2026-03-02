@@ -2,6 +2,12 @@
 
 Known symptoms and their root causes. **Consult this first when diagnosing a problem** — many issues recur.
 
+## Agent completes work but stdout empty → false fixer trigger
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| Task enters `requires-intervention` with "Empty stdout — agent may have crashed" but implementation commit exists in worktree | Agent hit max_turns (or API error) after committing but before printing a final text response to stdout. Orchestrator saw empty stdout → classified as `unknown` → triggered fixer. | In the task worktree: rebase detached HEAD onto origin/main, create `agent/<task-id>` branch. The scheduler will push and create a PR. The root fix is switching to `--output-format json` (this task). |
+
 ## Fixer agent: broken tooling when worktree is deleted
 
 | Symptom | Likely cause | Fix |
