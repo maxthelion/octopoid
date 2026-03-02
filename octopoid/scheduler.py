@@ -248,6 +248,16 @@ def guard_claim_task(ctx: AgentContext) -> tuple[bool, str]:
             if candidate.get("queue") == "failed":
                 continue
 
+            # Skip done tasks — needs_intervention=True on a done task is stale.
+            # Clear the flag so the task is not picked up again.
+            if candidate.get("queue") == "done":
+                try:
+                    sdk.tasks.update(cid, needs_intervention=False)
+                    logger.debug(f"Fixer circuit breaker: cleared stale needs_intervention for done task {cid}")
+                except Exception as clear_e:
+                    logger.debug(f"Fixer circuit breaker: failed to clear needs_intervention for done task {cid}: {clear_e}")
+                continue
+
             try:
                 msgs = sdk._request("GET", f"/api/v1/tasks/{cid}/messages")
                 fixer_replies = [
@@ -263,9 +273,41 @@ def guard_claim_task(ctx: AgentContext) -> tuple[bool, str]:
                 ]
                 if circuit_breaker_msgs:
                     continue
+                # Fail immediately on systemic escalation — if the fixer already
+                # identified a systemic issue, another fixer run won't help.
+                systemic_msgs = [
+                    m for m in msgs.get("messages", [])
+                    if m.get("type") == "intervention_systemic"
+                ]
             except Exception as msg_e:
                 logger.debug(f"Fixer circuit breaker: failed to check messages for {cid}: {msg_e}")
                 fixer_replies = []
+                systemic_msgs = []
+
+            if systemic_msgs:
+                logger.warning(
+                    f"Fixer circuit breaker: task {cid} has systemic escalation, moving to failed immediately"
+                )
+                try:
+                    from .tasks import fail_task  # noqa: PLC0415
+                    fail_task(cid, reason="Fixer circuit breaker: systemic escalation — task cannot be auto-fixed",
+                              source="fixer-circuit-breaker-systemic")
+                except Exception as update_e:
+                    logger.error(f"Fixer circuit breaker: failed to move task {cid} to failed (systemic): {update_e}")
+                try:
+                    sdk.messages.create(
+                        task_id=cid,
+                        from_actor="scheduler",
+                        to_actor="human",
+                        type="circuit_breaker",
+                        content=(
+                            f"Task {cid} had a systemic escalation and has been moved to failed. "
+                            f"The fixer identified a systemic infrastructure issue. Please investigate manually."
+                        ),
+                    )
+                except Exception as msg_post_e:
+                    logger.error(f"Fixer circuit breaker: failed to post circuit_breaker message for {cid} (systemic): {msg_post_e}")
+                continue  # Skip this candidate, try the next one
 
             if len(fixer_replies) >= MAX_FIXER_ATTEMPTS:
                 logger.warning(
@@ -273,8 +315,9 @@ def guard_claim_task(ctx: AgentContext) -> tuple[bool, str]:
                     f"fixer attempts (max {MAX_FIXER_ATTEMPTS}), moving to failed"
                 )
                 try:
-                    sdk.tasks.update(cid, queue="failed", needs_intervention=False,
-                                     execution_notes=f"Fixer circuit breaker: {len(fixer_replies)} attempts exhausted")
+                    from .tasks import fail_task  # noqa: PLC0415
+                    fail_task(cid, reason=f"Fixer circuit breaker: {len(fixer_replies)} attempts exhausted",
+                              source="fixer-circuit-breaker")
                 except Exception as update_e:
                     logger.error(f"Fixer circuit breaker: failed to move task {cid} to failed: {update_e}")
                 try:
