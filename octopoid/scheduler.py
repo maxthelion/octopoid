@@ -892,6 +892,49 @@ def _load_review_section(task_id: str) -> str:
         return ""
 
 
+def _load_continuation_section(task_id: str, agent_config: dict) -> str:
+    """Build the continuation context section for continuer agents.
+
+    Reads the previous agent's stdout tail from prev_stdout.log (written by
+    prepare_task_directory before cleaning stdout.log). Returns an empty string
+    for non-continuation agents.
+
+    Args:
+        task_id: Task identifier
+        agent_config: Agent configuration dict (checked for claim_from)
+
+    Returns:
+        Markdown continuation section, or empty string for non-continuation agents.
+    """
+    if agent_config.get("claim_from") != "needs_continuation":
+        return ""
+
+    if not task_id:
+        return ""
+
+    prev_stdout_path = get_tasks_dir() / task_id / "prev_stdout.log"
+    if not prev_stdout_path.exists():
+        return ""
+
+    try:
+        prev_stdout = prev_stdout_path.read_text(errors="replace").strip()
+    except OSError:
+        return ""
+
+    if not prev_stdout:
+        return ""
+
+    return (
+        "## Continuation Context\n\n"
+        "You are continuing work on a task that a previous agent started. "
+        "Review the existing commits in the worktree and the previous agent's "
+        "output below to understand what was done, then continue from where "
+        "they left off.\n\n"
+        "**Previous agent's output (last 3000 characters):**\n\n"
+        f"```\n{prev_stdout}\n```\n"
+    )
+
+
 def _load_intervention_context_for_prompt(task_id: str) -> str:
     """Load intervention context for a task as a formatted JSON string.
 
@@ -958,6 +1001,9 @@ def _render_prompt(task: dict, agent_config: dict) -> str:
     # Load intervention context for fixer agents (if available in the task dir)
     intervention_context = _load_intervention_context_for_prompt(task.get("id", ""))
 
+    # Load continuation context for continuer agents (prev_stdout.log written before cleanup)
+    continuation_section = _load_continuation_section(task.get("id", ""), agent_config)
+
     task_dir = get_tasks_dir() / task.get("id", "")
 
     return Template(prompt_template).safe_substitute(
@@ -971,7 +1017,7 @@ def _render_prompt(task: dict, agent_config: dict) -> str:
         global_instructions=global_instructions,
         required_steps=required_steps,
         review_section=review_section,
-        continuation_section="",
+        continuation_section=continuation_section,
         intervention_context=intervention_context,
         task_dir=str(task_dir),
         worktree=str(task_dir / "worktree"),
@@ -999,6 +1045,18 @@ def prepare_task_directory(
     task_id = task["id"]
     task_dir = get_tasks_dir() / task_id
     task_dir.mkdir(parents=True, exist_ok=True)
+
+    # Save previous stdout tail for continuation context before cleaning.
+    # The continuer agent's _render_prompt will read prev_stdout.log to build
+    # the continuation section so the agent knows where the previous run left off.
+    stdout_path = task_dir / "stdout.log"
+    if stdout_path.exists():
+        try:
+            prev_content = stdout_path.read_text(errors="replace")
+            tail = prev_content[-3000:]
+            (task_dir / "prev_stdout.log").write_text(tail)
+        except OSError:
+            pass
 
     # Clean stale artifacts from previous runs
     for stale_file in ['stdout.log', 'notes.md']:
@@ -1409,6 +1467,9 @@ def check_and_update_finished_agents() -> None:
                         if blueprint_name == "fixer" or claim_from == "intervention":
                             # Fixer agents use dedicated result handler
                             transitioned = handle_fixer_result(task_id, instance_name, task_dir)
+                        elif claim_from == "needs_continuation":
+                            # Continuation agents use the same outcome dispatch as implementers
+                            transitioned = handle_agent_result(task_id, instance_name, task_dir)
                         elif claim_from != "incoming":
                             # Review agents (claim from provisional, etc.) use flow dispatch
                             transitioned = handle_agent_result_via_flow(task_id, instance_name, task_dir, expected_queue=claim_from)
