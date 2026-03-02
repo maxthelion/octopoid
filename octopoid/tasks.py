@@ -370,9 +370,11 @@ def request_intervention(
     except OSError as write_err:
         print(f"[{datetime.now().isoformat()}] WARN: Failed to write intervention_context for {task_id}: {write_err}")
 
-    # Set needs_intervention=True — task stays in its current queue
+    # Set needs_intervention=True and move to the requires-intervention queue
+    # so the fixer agent can claim and process it.
     result = sdk.tasks.update(
         task_id,
+        queue="requires-intervention",
         needs_intervention=True,
         execution_notes=f"needs-intervention: {reason_truncated}",
         **sdk_kwargs,

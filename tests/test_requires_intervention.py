@@ -61,8 +61,8 @@ class TestFailTaskRouting:
         assert call_kwargs[1].get("needs_intervention") is True
         assert "queue" not in call_kwargs[1] or call_kwargs[1].get("queue") != "failed"
 
-    def test_first_failure_does_not_change_queue(self, tmp_path):
-        """First failure must NOT transition the task to a different queue."""
+    def test_first_failure_transitions_to_requires_intervention(self, tmp_path):
+        """First failure must transition the task to requires-intervention queue."""
         sdk = self._make_sdk(needs_intervention=False, current_queue="claimed")
         task_dir = tmp_path / "TASK-1"
         task_dir.mkdir()
@@ -75,10 +75,10 @@ class TestFailTaskRouting:
             from octopoid.tasks import fail_task
             fail_task("TASK-1", reason="something broke", source="test-source")
 
-        # The update must NOT include queue="requires-intervention"
+        # The update must include queue="requires-intervention"
         call_kwargs = sdk.tasks.update.call_args
-        assert call_kwargs[1].get("queue") != "requires-intervention", (
-            "fail_task must not transition to requires-intervention queue"
+        assert call_kwargs[1].get("queue") == "requires-intervention", (
+            "fail_task must transition to requires-intervention queue on first failure"
         )
 
     def test_second_failure_routes_to_true_failed(self):
@@ -123,7 +123,7 @@ class TestRequestIntervention:
     """request_intervention() sets needs_intervention=True and posts an intervention_request message."""
 
     def test_sets_needs_intervention_flag(self, tmp_path):
-        """needs_intervention=True is set on the task (no queue transition)."""
+        """needs_intervention=True is set and queue transitions to requires-intervention."""
         task_id = "TASK-ctx"
         task_dir = tmp_path / task_id
         task_dir.mkdir()
@@ -149,7 +149,7 @@ class TestRequestIntervention:
         call_kwargs = sdk.tasks.update.call_args
         assert call_kwargs[0][0] == task_id
         assert call_kwargs[1].get("needs_intervention") is True
-        assert "queue" not in call_kwargs[1] or call_kwargs[1].get("queue") != "requires-intervention"
+        assert call_kwargs[1].get("queue") == "requires-intervention"
 
     def test_posts_intervention_request_message(self, tmp_path):
         """An intervention_request message is posted to_actor=fixer."""
@@ -604,11 +604,15 @@ class TestHandleFixerResultFailed:
 # =============================================================================
 
 
-class TestFlowNoRequiresIntervention:
-    """requires-intervention is NOT registered as a builtin state in the flow system."""
+class TestFlowRequiresIntervention:
+    """requires-intervention IS registered as a builtin state in the flow system.
 
-    def test_requires_intervention_not_in_all_states(self):
-        """get_all_states() does NOT include requires-intervention."""
+    This allows the server to accept queue transitions to requires-intervention
+    when fail_task() routes a first failure to the fixer agent.
+    """
+
+    def test_requires_intervention_in_all_states(self):
+        """get_all_states() includes requires-intervention as a builtin state."""
         from octopoid.flow import Flow, Transition
 
         flow = Flow(
@@ -619,9 +623,9 @@ class TestFlowNoRequiresIntervention:
             ],
         )
         all_states = flow.get_all_states()
-        assert "requires-intervention" not in all_states, (
-            "requires-intervention must not be a builtin flow state — "
-            "intervention is now signaled via needs_intervention flag"
+        assert "requires-intervention" in all_states, (
+            "requires-intervention must be a builtin flow state so the server "
+            "accepts queue transitions to it from fail_task()"
         )
 
     def test_implicit_transitions_no_requires_intervention(self):
@@ -658,7 +662,7 @@ class TestHandleFailOutcomeRouting:
         return sdk
 
     def test_agent_failure_sets_needs_intervention(self, tmp_path):
-        """Agent outcome=failed causes needs_intervention=True, not a direct queue transition."""
+        """Agent outcome=failed causes needs_intervention=True and queue=requires-intervention."""
         task_id = "TASK-fail"
         task_dir = tmp_path / task_id
         task_dir.mkdir()
@@ -675,11 +679,11 @@ class TestHandleFailOutcomeRouting:
             result = _handle_fail_outcome(sdk, task_id, task, "agent reported failure", "claimed")
 
         assert result is True
-        # Must set needs_intervention, NOT transition to requires-intervention queue
+        # Must set needs_intervention=True and transition to requires-intervention queue
         sdk.tasks.update.assert_called_once()
         call_args = sdk.tasks.update.call_args
         assert call_args[1].get("needs_intervention") is True
-        assert call_args[1].get("queue") != "requires-intervention"
+        assert call_args[1].get("queue") == "requires-intervention"
 
     def test_agent_failure_does_not_call_failed_directly(self, tmp_path):
         """_handle_fail_outcome never calls sdk.tasks.update(queue='failed') directly."""

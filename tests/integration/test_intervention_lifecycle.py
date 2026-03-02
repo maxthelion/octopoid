@@ -88,29 +88,30 @@ class TestFailTaskFirstFailure:
         # Server stores booleans as integers (SQLite) — use truthiness check
         assert task.get("needs_intervention"), "needs_intervention must be truthy after first failure"
 
-    def test_task_stays_in_claimed_queue(self, scoped_sdk, orchestrator_id):
-        """First failure: task remains in claimed queue (no queue transition)."""
-        task_id = _create_claimed_task(scoped_sdk, orchestrator_id, "Queue-stay test")
+    def test_task_moves_to_requires_intervention_queue(self, scoped_sdk, orchestrator_id):
+        """First failure: task moves to requires-intervention queue for fixer agent."""
+        task_id = _create_claimed_task(scoped_sdk, orchestrator_id, "Queue-move test")
 
         from octopoid.tasks import fail_task
         fail_task(task_id, reason="push failed", source="push-error")
 
         task = scoped_sdk.tasks.get(task_id)
         assert task is not None
-        # Task must NOT have moved to requires-intervention or any other queue
-        assert task["queue"] == "claimed"
+        assert task["queue"] == "requires-intervention", (
+            "fail_task must move the task to requires-intervention on first failure"
+        )
 
-    def test_does_not_transition_to_requires_intervention_queue(self, scoped_sdk, orchestrator_id):
-        """First failure: task must not be moved to the deprecated requires-intervention queue."""
-        task_id = _create_claimed_task(scoped_sdk, orchestrator_id, "No-queue-move test")
+    def test_does_not_stay_in_claimed_queue(self, scoped_sdk, orchestrator_id):
+        """First failure: task must not remain in claimed queue."""
+        task_id = _create_claimed_task(scoped_sdk, orchestrator_id, "No-queue-stay test")
 
         from octopoid.tasks import fail_task
         fail_task(task_id, reason="rebase failed", source="rebase-error")
 
         task = scoped_sdk.tasks.get(task_id)
         assert task is not None
-        assert task["queue"] != "requires-intervention", (
-            "fail_task must not transition to the deprecated requires-intervention queue"
+        assert task["queue"] != "claimed", (
+            "fail_task must not leave the task in the claimed queue after first failure"
         )
 
     def test_posts_intervention_request_message(self, scoped_sdk, orchestrator_id):
@@ -227,7 +228,7 @@ class TestRequestIntervention:
         assert msg["from_actor"] == "scheduler"
 
     def test_sets_needs_intervention_true(self, scoped_sdk, orchestrator_id):
-        """request_intervention() sets needs_intervention=True without moving the task."""
+        """request_intervention() sets needs_intervention=True and moves to requires-intervention."""
         task_id = _create_claimed_task(scoped_sdk, orchestrator_id, "request_intervention flag test")
 
         from octopoid.tasks import request_intervention
@@ -240,7 +241,9 @@ class TestRequestIntervention:
 
         task = scoped_sdk.tasks.get(task_id)
         assert task.get("needs_intervention"), "needs_intervention must be truthy after request_intervention"
-        assert task["queue"] != "requires-intervention"
+        assert task["queue"] == "requires-intervention", (
+            "request_intervention must move the task to requires-intervention"
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -225,13 +225,14 @@ class TestLeaseExpiry:
         )
         assert result.returncode == 0, f"Mock agent failed: {result.stderr}"
 
-        # Process result — transitions task from 'claimed' to 'failed'.
+        # Process result — transitions task from 'claimed' to 'requires-intervention'
+        # (first failure routes through request_intervention, not directly to failed).
         handle_agent_result(task_id, "mock-implementer", task_dir)
 
         task = scoped_sdk.tasks.get(task_id)
         assert task is not None
-        assert task["queue"] == "failed", (
-            f"Precondition: expected failed after agent result, got {task['queue']!r}"
+        assert task["queue"] == "requires-intervention", (
+            f"Precondition: expected requires-intervention after agent result, got {task['queue']!r}"
         )
 
         # Run lease monitor with real time — task is not in 'claimed', must be a no-op.
@@ -241,8 +242,8 @@ class TestLeaseExpiry:
 
         task = scoped_sdk.tasks.get(task_id)
         assert task is not None
-        assert task["queue"] == "failed", (
-            f"Expected task to remain in 'failed' after lease monitor, "
+        assert task["queue"] == "requires-intervention", (
+            f"Expected task to remain in 'requires-intervention' after lease monitor, "
             f"got {task['queue']!r}"
         )
         assert task["queue"] != "incoming", (
