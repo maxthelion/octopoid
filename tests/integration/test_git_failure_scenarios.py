@@ -227,8 +227,8 @@ class TestMergeConflictScenarios:
         assert task["queue"] != "done", (
             "Task must NOT reach done when gh pr merge fails"
         )
-        assert task["queue"] == "failed", (
-            f"Expected failed after merge error, got {task['queue']}"
+        assert task["queue"] == "requires-intervention", (
+            f"Expected requires-intervention after merge error (first failure routes to fixer), got {task['queue']}"
         )
 
 
@@ -281,11 +281,12 @@ class TestPushFailureScenarios:
         remote = _remote_path(impl_worktree)
         shutil.rmtree(remote)
 
-        # handle_agent_result tries rebase_on_base (first step) → RuntimeError
-        # because git fetch fails. Re-raised on first attempt (retry mechanism:
-        # attempt 1/3). The task stays in claimed because the step failure
-        # prevents the transition.
-        with pytest.raises(RuntimeError):
+        # handle_agent_result runs rebase_on_base (pre_check skips it — stale
+        # origin/main ref shows HEAD is already up-to-date), then push_branch
+        # calls git push → subprocess.CalledProcessError. Re-raised on first
+        # attempt (retry mechanism: attempt 1/3). The task stays in claimed
+        # because the step failure prevents the transition.
+        with pytest.raises(subprocess.CalledProcessError):
             handle_agent_result(task_id, "mock-implementer", impl_task_dir)
 
         task = scoped_sdk.tasks.get(task_id)
@@ -487,7 +488,7 @@ class TestCreatePrFailureRecovery:
         state_file = tmp_path / "gh_state.json"
         state_file.write_text(json.dumps({
             "prs": {
-                task_branch: {"url": pr_url, "number": 42},
+                task_branch: {"url": pr_url, "number": 42, "status": "CLEAN", "branch": task_branch},
             }
         }))
         monkeypatch.setenv("GH_STATE_FILE", str(state_file))
@@ -541,6 +542,14 @@ class TestCreatePrFailureRecovery:
 
         # Detach HEAD so push_branch step can create the task-specific branch
         _git(["checkout", "--detach", "HEAD"], cwd=impl_worktree)
+
+        # Use stateful mode with empty state so pre_check() returns False
+        # (no PR found for this branch → execute() runs and hits the failure).
+        # Without a GH_STATE_FILE, stateless mode always returns PR #99 on
+        # gh pr view, making pre_check() return True and skip execute() entirely.
+        state_file = tmp_path / "gh_state_fail.json"
+        state_file.write_text(json.dumps({"prs": {}}))
+        monkeypatch.setenv("GH_STATE_FILE", str(state_file))
 
         # Force gh pr create to fail with a generic (non-"already exists") error
         monkeypatch.setenv("GH_MOCK_CREATE_FAIL", "true")

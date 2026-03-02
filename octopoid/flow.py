@@ -380,11 +380,11 @@ class Flow:
     def get_all_states(self) -> set[str]:
         """Get all states referenced in this flow.
 
-        Always includes built-in states (failed, needs_continuation)
-        that the server requires even if no flow transition references
-        them directly.
+        Always includes built-in states (failed, needs_continuation,
+        requires-intervention) that the server requires even if no flow
+        transition references them directly.
         """
-        states = {"failed", "needs_continuation"}
+        states = {"failed", "needs_continuation", "requires-intervention"}
         for trans in self.transitions:
             states.add(trans.from_state)
             states.add(trans.to_state)
@@ -428,7 +428,7 @@ class Flow:
         unreachable = valid_states - reachable
         # Filter out terminal/built-in states that may not be explicitly targeted
         # by transitions but are valid implicit destinations
-        builtin_states = {"done", "failed", "rejected", "needs_continuation"}
+        builtin_states = {"done", "failed", "rejected", "needs_continuation", "requires-intervention"}
         unreachable = unreachable - builtin_states
 
         if unreachable:

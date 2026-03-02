@@ -323,14 +323,14 @@ class TestHappyPath:
 class TestFailureScenarios:
     """Tests for failure and crash paths."""
 
-    def test_agent_failure_goes_to_failed(
+    def test_agent_failure_goes_to_requires_intervention(
         self,
         scoped_sdk,
         orchestrator_id: str,
         tmp_path: Path,
         clean_tasks,
     ) -> None:
-        """Mock agent returns outcome=failure → task moves to failed queue."""
+        """Mock agent returns outcome=failure → first failure routes to requires-intervention."""
         task_id = _make_task_id()
         scoped_sdk.tasks.create(
             id=task_id,
@@ -359,8 +359,8 @@ class TestFailureScenarios:
 
         task = scoped_sdk.tasks.get(task_id)
         assert task is not None
-        assert task["queue"] == "failed", (
-            f"Expected failed queue, got {task['queue']}"
+        assert task["queue"] == "requires-intervention", (
+            f"Expected requires-intervention queue (first failure routes to fixer), got {task['queue']}"
         )
 
     def test_agent_crash_goes_to_failed(
@@ -370,7 +370,7 @@ class TestFailureScenarios:
         tmp_path: Path,
         clean_tasks,
     ) -> None:
-        """Mock agent crashes (no stdout.log) → task moves to failed (not stuck in claimed)."""
+        """Mock agent crashes (no stdout.log) → task moves to requires-intervention (not stuck in claimed)."""
         task_id = _make_task_id()
         scoped_sdk.tasks.create(
             id=task_id,
@@ -395,14 +395,14 @@ class TestFailureScenarios:
         assert result.returncode != 0, "Mock agent should exit non-zero in crash mode"
         assert not (task_dir / "stdout.log").exists()
 
-        # No stdout.log → outcome=unknown → task moves to failed
+        # No stdout.log → outcome=unknown → task routes to requires-intervention for fixer
         handle_agent_result(task_id, "mock-implementer", task_dir)
 
         task = scoped_sdk.tasks.get(task_id)
         assert task is not None
         assert task["queue"] != "claimed", "Task must not remain stuck in claimed after crash"
-        assert task["queue"] == "failed", (
-            f"Expected failed after crash, got {task['queue']}"
+        assert task["queue"] == "requires-intervention", (
+            f"Expected requires-intervention after crash (first failure routes to fixer), got {task['queue']}"
         )
 
 
