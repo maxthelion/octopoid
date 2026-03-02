@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- New `continuer` agent (`.octopoid/agents/continuer/`) that claims tasks from the `needs_continuation` queue and re-spawns with the same worktree and a continuation prompt
+- `_get_continuation_count` / `_increment_continuation_count` helpers in `result_handler.py` for tracking per-task continuation cycles via a `continuation_count` file in the task directory
+- `_load_continuation_section` in `scheduler.py` that builds a context block for continuer agents from the previous agent's stdout tail (`prev_stdout.log`)
+- 20 new unit tests in `tests/test_continuation_consumer.py` covering: haiku `needs_continuation` inference, cycle count helpers, cycle limit escalation to intervention, and prompt section generation
+
+### Changed
+- `_IMPLEMENTER_PROMPT` updated to include `needs_continuation` as a third classification option (in addition to `done` / `failed`)
+- `_infer_implementer` now returns `{"outcome": "needs_continuation"}` when haiku classifies the output as hitting the turn limit
+- `_handle_continuation_outcome` now tracks continuation cycles and escalates to `request_intervention` after 3 cycles with the message "Task exceeded maximum continuation cycles — may need to be scoped smaller or broken into subtasks"
+- `prepare_task_directory` now saves the last 3000 characters of the previous `stdout.log` to `prev_stdout.log` before cleaning stale artifacts, so the continuer agent can see context from the previous run
+- `_render_prompt` now calls `_load_continuation_section` to populate `$continuation_section` in the continuer's prompt template instead of always substituting an empty string
+- `check_and_update_finished_agents` now routes `claim_from=needs_continuation` blueprints through `handle_agent_result` (same outcome dispatch as implementers) instead of `handle_agent_result_via_flow`
 ### Fixed
 
 - `rebase_on_base` step now raises `PermanentStepError` on merge conflict instead of `RuntimeError`, routing directly to `requires-intervention` without wasting 3 retries. Merge conflicts will never self-resolve.
