@@ -92,6 +92,12 @@ class TestClaimContract:
         assert claimed is not None, "Expected a task, got None"
         assert claimed["id"] == task_id
         assert claimed["queue"] == "claimed"
+        assert claimed.get("claimed_by") == "test-agent", (
+            f"claimed_by should be set to agent_name after claim, got {claimed.get('claimed_by')!r}"
+        )
+        assert claimed.get("lease_expires_at") is not None, (
+            "lease_expires_at should be set after claim"
+        )
 
     def test_claim_returns_none_at_max_claimed_limit(self, scoped_sdk):
         """claim() returns None when the server returns 429 (max_claimed limit).

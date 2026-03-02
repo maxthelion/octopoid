@@ -1984,9 +1984,13 @@ def check_and_requeue_expired_leases() -> None:
         for queue_name, target_queue in queues_to_check.items():
             tasks = sdk.tasks.list(queue=queue_name)
             for task in tasks or []:
-                # For provisional queue, only process tasks actively claimed
-                # (claimed_by set) — unclaimed provisional tasks need no action.
-                if queue_name == "provisional" and not task.get("claimed_by"):
+                # For provisional queue, skip tasks with neither a claimer nor a
+                # stale lease — these are normal un-reviewed tasks needing no action.
+                # If claimed_by is None but lease_expires_at is set, the claim
+                # metadata was partially cleared (e.g. by check_and_update_finished_agents
+                # before the server PATCH lease_expires_at fix). Still clean up the
+                # stale lease_expires_at so it doesn't confuse other logic.
+                if queue_name == "provisional" and not task.get("claimed_by") and not task.get("lease_expires_at"):
                     continue
 
                 lease_expires = task.get("lease_expires_at")

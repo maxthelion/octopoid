@@ -3,8 +3,11 @@ Octopoid SDK Client
 Main API client for interacting with Octopoid v2.0 server
 """
 
+import logging
 import requests
 from typing import Optional, Dict, List, Any
+
+logger = logging.getLogger(__name__)
 
 
 class TasksAPI:
@@ -129,11 +132,25 @@ class TasksAPI:
         if queue is not None:
             data['queue'] = queue
 
+        logger.debug(
+            'claim() request: orchestrator_id=%r agent_name=%r role_filter=%r queue=%r',
+            orchestrator_id, agent_name, role_filter, queue,
+        )
+
         try:
-            return self.client._request('POST', '/api/v1/tasks/claim', json=data)
+            result = self.client._request('POST', '/api/v1/tasks/claim', json=data)
+            logger.debug(
+                'claim() response: task_id=%r claimed_by=%r queue=%r',
+                result.get('id') if result else None,
+                result.get('claimed_by') if result else None,
+                result.get('queue') if result else None,
+            )
+            return result
         except requests.HTTPError as e:
             if e.response.status_code in (404, 429):
+                logger.debug('claim() returned %d (no tasks available)', e.response.status_code)
                 return None
+            logger.debug('claim() HTTP error: %d %s', e.response.status_code, e.response.text[:200])
             raise
 
     def submit(

@@ -210,15 +210,32 @@ class TestCheckAndRequeueExpiredLeases:
         )
 
     def test_unclaimed_provisional_task_is_skipped(self) -> None:
-        """A provisional task with no claimed_by must not be touched.
+        """A provisional task with no claimed_by and no lease must not be touched.
 
         Unclaimed provisional tasks (waiting for reviewer) have no active claim
         and therefore no lease to expire.
         """
-        task = _make_task("TASK-prov-unclaimed", _expired(), claimed_by=None)
+        task = _make_task("TASK-prov-unclaimed", lease_expires_at=None, claimed_by=None)
         sdk = self._run(claimed_tasks=[], provisional_tasks=[task])
 
         sdk.tasks.update.assert_not_called()
+
+    def test_provisional_task_with_ghost_lease_is_cleaned_up(self) -> None:
+        """A provisional task with no claimed_by but a stale lease_expires_at is cleaned.
+
+        This can happen when claimed_by was cleared by one code path but
+        lease_expires_at was not (partial clear). The stale timestamp must be
+        removed so it doesn't confuse other logic.
+        """
+        task = _make_task("TASK-prov-ghost-lease", _expired(), claimed_by=None)
+        sdk = self._run(claimed_tasks=[], provisional_tasks=[task])
+
+        sdk.tasks.update.assert_called_once_with(
+            "TASK-prov-ghost-lease",
+            queue="provisional",
+            claimed_by=None,
+            lease_expires_at=None,
+        )
 
     def test_provisional_task_valid_lease_not_requeued(self) -> None:
         """A claimed provisional task with a valid lease must not be touched."""
