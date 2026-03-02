@@ -9,7 +9,7 @@ The new implementation routes project completion through the flow engine:
 Patch targets:
 - Flow loading: orchestrator.flow.load_flow (local import inside functions)
 - Step execution: orchestrator.steps.execute_steps (local import inside functions)
-- Parent project dir in scheduler: orchestrator.scheduler.find_parent_project
+- Parent project dir in housekeeping: octopoid.housekeeping.find_parent_project
 - Parent project dir in projects: orchestrator.config.find_parent_project
 - SDK in projects: orchestrator.projects.get_sdk
 """
@@ -113,7 +113,7 @@ class TestCheckProjectCompletion:
 
         with (
             patch("octopoid.scheduler.queue_utils.get_sdk", return_value=sdk),
-            patch("octopoid.scheduler.find_parent_project", return_value=Path("/fake/project")),
+            patch("octopoid.housekeeping.find_parent_project", return_value=Path("/fake/project")),
             patch("octopoid.flow.load_flow", return_value=mock_flow),
             patch("octopoid.steps.execute_steps") as mock_execute_steps,
         ):
@@ -205,7 +205,7 @@ class TestCheckProjectCompletion:
 
         with (
             patch("octopoid.scheduler.queue_utils.get_sdk", return_value=sdk),
-            patch("octopoid.scheduler.find_parent_project", return_value=Path("/fake")),
+            patch("octopoid.housekeeping.find_parent_project", return_value=Path("/fake")),
             patch("octopoid.flow.load_flow", side_effect=FileNotFoundError("not found")),
         ):
             from octopoid.scheduler import check_project_completion
@@ -236,9 +236,9 @@ class TestCheckProjectCompletion:
 
         with (
             patch("octopoid.scheduler.queue_utils.get_sdk", return_value=sdk),
-            patch("octopoid.scheduler.find_parent_project", return_value=Path("/fake")),
+            patch("octopoid.housekeeping.find_parent_project", return_value=Path("/fake")),
             patch("octopoid.flow.load_flow", return_value=mock_flow),
-            patch("octopoid.scheduler._evaluate_project_script_condition", return_value=False),
+            patch("octopoid.housekeeping._evaluate_project_script_condition", return_value=False),
             patch("octopoid.steps.execute_steps") as mock_execute_steps,
         ):
             from octopoid.scheduler import check_project_completion
@@ -271,9 +271,9 @@ class TestCheckProjectCompletion:
 
         with (
             patch("octopoid.scheduler.queue_utils.get_sdk", return_value=sdk),
-            patch("octopoid.scheduler.find_parent_project", return_value=Path("/fake")),
+            patch("octopoid.housekeeping.find_parent_project", return_value=Path("/fake")),
             patch("octopoid.flow.load_flow", return_value=mock_flow),
-            patch("octopoid.scheduler._evaluate_project_script_condition", return_value=True),
+            patch("octopoid.housekeeping._evaluate_project_script_condition", return_value=True),
             patch("octopoid.steps.execute_steps"),
         ):
             from octopoid.scheduler import check_project_completion
@@ -301,7 +301,7 @@ class TestCheckProjectCompletion:
 
         with (
             patch("octopoid.scheduler.queue_utils.get_sdk", return_value=sdk),
-            patch("octopoid.scheduler.find_parent_project", return_value=Path("/fake")),
+            patch("octopoid.housekeeping.find_parent_project", return_value=Path("/fake")),
             patch("octopoid.flow.load_flow", return_value=mock_flow),
             patch("octopoid.steps.execute_steps"),
         ):
@@ -333,7 +333,7 @@ class TestCheckProjectCompletion:
 
         with (
             patch("octopoid.scheduler.queue_utils.get_sdk", return_value=sdk),
-            patch("octopoid.scheduler.find_parent_project", return_value=Path("/fake")),
+            patch("octopoid.housekeeping.find_parent_project", return_value=Path("/fake")),
             patch("octopoid.flow.load_flow", return_value=mock_flow),
             patch("octopoid.steps.execute_steps") as mock_execute_steps,
         ):
@@ -349,7 +349,7 @@ class TestEvaluateProjectScriptCondition:
 
     def test_condition_without_script_passes(self):
         """A condition with no script name passes by default."""
-        from octopoid.scheduler import _evaluate_project_script_condition
+        from octopoid.housekeeping import _evaluate_project_script_condition
 
         condition = MagicMock()
         condition.name = "empty_condition"
@@ -360,7 +360,7 @@ class TestEvaluateProjectScriptCondition:
 
     def test_run_tests_with_no_test_runner_passes(self, tmp_path):
         """run-tests condition passes when no test runner is detected."""
-        from octopoid.scheduler import _evaluate_project_script_condition
+        from octopoid.housekeeping import _evaluate_project_script_condition
 
         condition = MagicMock()
         condition.name = "all_tests_pass"
@@ -372,7 +372,7 @@ class TestEvaluateProjectScriptCondition:
 
     def test_run_tests_passes_on_success(self, tmp_path):
         """run-tests condition passes when the test command exits 0."""
-        from octopoid.scheduler import _evaluate_project_script_condition
+        from octopoid.housekeeping import _evaluate_project_script_condition
 
         (tmp_path / "pyproject.toml").write_text("[tool.pytest.ini_options]\n")
 
@@ -383,14 +383,14 @@ class TestEvaluateProjectScriptCondition:
         mock_result = MagicMock()
         mock_result.returncode = 0
 
-        with patch("octopoid.scheduler.subprocess.run", return_value=mock_result):
+        with patch("octopoid.housekeeping.subprocess.run", return_value=mock_result):
             result = _evaluate_project_script_condition(condition, tmp_path, "PROJ-1")
 
         assert result is True
 
     def test_run_tests_fails_on_nonzero_exit(self, tmp_path):
         """run-tests condition fails when the test command exits non-zero."""
-        from octopoid.scheduler import _evaluate_project_script_condition
+        from octopoid.housekeeping import _evaluate_project_script_condition
 
         (tmp_path / "pyproject.toml").write_text("[tool.pytest.ini_options]\n")
 
@@ -403,7 +403,7 @@ class TestEvaluateProjectScriptCondition:
         mock_result.stdout = "FAILED test_foo"
         mock_result.stderr = ""
 
-        with patch("octopoid.scheduler.subprocess.run", return_value=mock_result):
+        with patch("octopoid.housekeeping.subprocess.run", return_value=mock_result):
             result = _evaluate_project_script_condition(condition, tmp_path, "PROJ-1")
 
         assert result is False
@@ -411,7 +411,7 @@ class TestEvaluateProjectScriptCondition:
     def test_timeout_returns_false(self, tmp_path):
         """run-tests condition fails gracefully on timeout."""
         import subprocess as subprocess_mod
-        from octopoid.scheduler import _evaluate_project_script_condition
+        from octopoid.housekeeping import _evaluate_project_script_condition
 
         (tmp_path / "pyproject.toml").write_text("[tool.pytest.ini_options]\n")
 
@@ -420,7 +420,7 @@ class TestEvaluateProjectScriptCondition:
         condition.script = "run-tests"
 
         with patch(
-            "octopoid.scheduler.subprocess.run",
+            "octopoid.housekeeping.subprocess.run",
             side_effect=subprocess_mod.TimeoutExpired("pytest", 300),
         ):
             result = _evaluate_project_script_condition(condition, tmp_path, "PROJ-1")

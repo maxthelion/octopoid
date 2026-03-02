@@ -56,9 +56,9 @@ class TestCheckAndUpdateFinishedAgents:
         (agents_dir / "implementer").mkdir()  # no running_pids.json
 
         with (
-            patch("octopoid.scheduler.get_agents_runtime_dir", return_value=agents_dir),
-            patch("octopoid.scheduler.get_agents", return_value=[]),
-            patch("octopoid.scheduler.handle_agent_result") as mock_handle,
+            patch("octopoid.housekeeping.get_agents_runtime_dir", return_value=agents_dir),
+            patch("octopoid.housekeeping.get_agents", return_value=[]),
+            patch("octopoid.housekeeping.handle_agent_result") as mock_handle,
         ):
             check_and_update_finished_agents()
 
@@ -74,16 +74,16 @@ class TestCheckAndUpdateFinishedAgents:
         pids_data = self._make_pids_dict(12345, task_id, "implementer-1")
 
         with (
-            patch("octopoid.scheduler.get_agents_runtime_dir", return_value=agents_dir),
-            patch("octopoid.scheduler.get_agents", return_value=[
+            patch("octopoid.housekeeping.get_agents_runtime_dir", return_value=agents_dir),
+            patch("octopoid.housekeeping.get_agents", return_value=[
                 {"blueprint_name": "implementer", "claim_from": "incoming"}
             ]),
-            patch("octopoid.scheduler.get_tasks_dir", return_value=tasks_dir),
-            patch("octopoid.scheduler.load_blueprint_pids", return_value=pids_data),
-            patch("octopoid.scheduler.save_blueprint_pids"),
-            patch("octopoid.scheduler.is_process_running", return_value=False),
-            patch("octopoid.scheduler.handle_agent_result") as mock_handle,
-            patch("octopoid.scheduler.handle_agent_result_via_flow") as mock_flow,
+            patch("octopoid.housekeeping.get_tasks_dir", return_value=tasks_dir),
+            patch("octopoid.housekeeping.load_blueprint_pids", return_value=pids_data),
+            patch("octopoid.housekeeping.save_blueprint_pids"),
+            patch("octopoid.housekeeping.is_process_running", return_value=False),
+            patch("octopoid.housekeeping.handle_agent_result") as mock_handle,
+            patch("octopoid.housekeeping.handle_agent_result_via_flow") as mock_flow,
         ):
             check_and_update_finished_agents()
 
@@ -100,16 +100,16 @@ class TestCheckAndUpdateFinishedAgents:
         pids_data = self._make_pids_dict(99999, task_id, "gatekeeper-1")
 
         with (
-            patch("octopoid.scheduler.get_agents_runtime_dir", return_value=agents_dir),
-            patch("octopoid.scheduler.get_agents", return_value=[
+            patch("octopoid.housekeeping.get_agents_runtime_dir", return_value=agents_dir),
+            patch("octopoid.housekeeping.get_agents", return_value=[
                 {"blueprint_name": "gatekeeper", "claim_from": "provisional"}
             ]),
-            patch("octopoid.scheduler.get_tasks_dir", return_value=tasks_dir),
-            patch("octopoid.scheduler.load_blueprint_pids", return_value=pids_data),
-            patch("octopoid.scheduler.save_blueprint_pids"),
-            patch("octopoid.scheduler.is_process_running", return_value=False),
-            patch("octopoid.scheduler.handle_agent_result") as mock_handle,
-            patch("octopoid.scheduler.handle_agent_result_via_flow") as mock_flow,
+            patch("octopoid.housekeeping.get_tasks_dir", return_value=tasks_dir),
+            patch("octopoid.housekeeping.load_blueprint_pids", return_value=pids_data),
+            patch("octopoid.housekeeping.save_blueprint_pids"),
+            patch("octopoid.housekeeping.is_process_running", return_value=False),
+            patch("octopoid.housekeeping.handle_agent_result") as mock_handle,
+            patch("octopoid.housekeeping.handle_agent_result_via_flow") as mock_flow,
         ):
             check_and_update_finished_agents()
 
@@ -127,16 +127,16 @@ class TestCheckAndUpdateFinishedAgents:
         saved_args: list[tuple] = []
 
         with (
-            patch("octopoid.scheduler.get_agents_runtime_dir", return_value=agents_dir),
-            patch("octopoid.scheduler.get_agents", return_value=[
+            patch("octopoid.housekeeping.get_agents_runtime_dir", return_value=agents_dir),
+            patch("octopoid.housekeeping.get_agents", return_value=[
                 {"blueprint_name": "implementer", "claim_from": "incoming"}
             ]),
-            patch("octopoid.scheduler.get_tasks_dir", return_value=tasks_dir),
-            patch("octopoid.scheduler.load_blueprint_pids", return_value=pids_data),
-            patch("octopoid.scheduler.save_blueprint_pids",
+            patch("octopoid.housekeeping.get_tasks_dir", return_value=tasks_dir),
+            patch("octopoid.housekeeping.load_blueprint_pids", return_value=pids_data),
+            patch("octopoid.housekeeping.save_blueprint_pids",
                   side_effect=lambda name, p: saved_args.append((name, p))),
-            patch("octopoid.scheduler.is_process_running", return_value=False),
-            patch("octopoid.scheduler.handle_agent_result"),
+            patch("octopoid.housekeeping.is_process_running", return_value=False),
+            patch("octopoid.housekeeping.handle_agent_result"),
         ):
             check_and_update_finished_agents()
 
@@ -151,14 +151,14 @@ class TestCheckAndUpdateFinishedAgents:
         pids_data = self._make_pids_dict(12345, "TASK-alive", "implementer-1")
 
         with (
-            patch("octopoid.scheduler.get_agents_runtime_dir", return_value=agents_dir),
-            patch("octopoid.scheduler.get_agents", return_value=[
+            patch("octopoid.housekeeping.get_agents_runtime_dir", return_value=agents_dir),
+            patch("octopoid.housekeeping.get_agents", return_value=[
                 {"blueprint_name": "implementer", "claim_from": "incoming"}
             ]),
-            patch("octopoid.scheduler.load_blueprint_pids", return_value=pids_data),
-            patch("octopoid.scheduler.save_blueprint_pids") as mock_save,
-            patch("octopoid.scheduler.is_process_running", return_value=True),
-            patch("octopoid.scheduler.handle_agent_result") as mock_handle,
+            patch("octopoid.housekeeping.load_blueprint_pids", return_value=pids_data),
+            patch("octopoid.housekeeping.save_blueprint_pids") as mock_save,
+            patch("octopoid.housekeeping.is_process_running", return_value=True),
+            patch("octopoid.housekeeping.handle_agent_result") as mock_handle,
         ):
             check_and_update_finished_agents()
 
@@ -172,14 +172,14 @@ class TestCheckAndUpdateFinishedAgents:
         pids_data = {12345: {"task_id": "", "started_at": "...", "instance_name": "proposer-1"}}
 
         with (
-            patch("octopoid.scheduler.get_agents_runtime_dir", return_value=agents_dir),
-            patch("octopoid.scheduler.get_agents", return_value=[
+            patch("octopoid.housekeeping.get_agents_runtime_dir", return_value=agents_dir),
+            patch("octopoid.housekeeping.get_agents", return_value=[
                 {"blueprint_name": "proposer", "claim_from": "incoming"}
             ]),
-            patch("octopoid.scheduler.load_blueprint_pids", return_value=pids_data),
-            patch("octopoid.scheduler.save_blueprint_pids"),
-            patch("octopoid.scheduler.is_process_running", return_value=False),
-            patch("octopoid.scheduler.handle_agent_result") as mock_handle,
+            patch("octopoid.housekeeping.load_blueprint_pids", return_value=pids_data),
+            patch("octopoid.housekeeping.save_blueprint_pids"),
+            patch("octopoid.housekeeping.is_process_running", return_value=False),
+            patch("octopoid.housekeeping.handle_agent_result") as mock_handle,
         ):
             check_and_update_finished_agents()
 
