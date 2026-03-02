@@ -248,10 +248,13 @@ class TestJobIntervalManagement:
             "sweep_stale_resources",
             "poll_github_issues",
             "send_heartbeat",
-            "codebase_analyst",
+            "complexity_analyst",
+            "duplication_analyst",
+            "coverage_analyst",
+            "dead_code_analyst",
+            "maintainability_analyst",
             "dispatch_action_messages",
             "testing_analyst",
-            "architecture_analyst",
             "renew_active_leases",
         }
         intervals = _get_job_intervals()

@@ -103,18 +103,9 @@ jobs:
     type: script
     group: remote
 
-  # Daily codebase analyst: scans for large/complex files and proposes refactoring.
-  # Guard script runs first inside the agent — skips if a pending proposal already exists.
-  # Agent config loaded from .octopoid/agents/codebase-analyst/agent.yaml.
-  - name: codebase_analyst
-    interval: 600
-    type: agent
-    group: remote
-    max_instances: 1
-
-  # Daily testing analyst: scans for test coverage gaps and proposes specific tests.
-  # Focuses on outside-in gaps — features that shipped with no tests, or only over-mocked
-  # unit tests with no integration coverage. Guard skips if a proposal already exists.
+  # Testing analyst: scans for test coverage gaps using a custom scanner that checks
+  # recently completed tasks for missing test files. Proposes specific outside-in tests.
+  # Hard pre_check guard (exit code) enforced by scheduler before spawn.
   # Agent config loaded from .octopoid/agents/testing-analyst/agent.yaml.
   - name: testing_analyst
     interval: 600
@@ -122,12 +113,48 @@ jobs:
     group: remote
     max_instances: 1
 
-  # Daily architecture analyst: scans for architectural quality issues using Lizard
-  # (function complexity metrics) and jscpd (copy-paste detection). Proposes concrete
-  # refactorings with named design patterns and before/after sketches. Guard skips if
-  # a proposal already exists.
-  # Agent config loaded from .octopoid/agents/architecture-analyst/agent.yaml.
-  - name: architecture_analyst
+  # Complexity analyst: runs Lizard to find high-CCN functions and proposes concrete
+  # refactorings using named design patterns. Hard pre_check guard enforced by scheduler.
+  # Agent config loaded from .octopoid/agents/complexity-analyst/agent.yaml.
+  - name: complexity_analyst
+    interval: 600
+    type: agent
+    group: remote
+    max_instances: 1
+
+  # Duplication analyst: runs jscpd to find copy-paste blocks and proposes shared utility
+  # extractions. Hard pre_check guard enforced by scheduler.
+  # Agent config loaded from .octopoid/agents/duplication-analyst/agent.yaml.
+  - name: duplication_analyst
+    interval: 600
+    type: agent
+    group: remote
+    max_instances: 1
+
+  # Coverage analyst: runs pytest-cov to find files with lowest test coverage and proposes
+  # specific outside-in tests. Hard pre_check guard enforced by scheduler.
+  # Agent config loaded from .octopoid/agents/coverage-analyst/agent.yaml.
+  - name: coverage_analyst
+    interval: 600
+    type: agent
+    group: remote
+    max_instances: 1
+
+  # Dead code analyst: runs vulture to find unused symbols. Enqueues mechanical cleanup
+  # tasks directly for unambiguous findings; drafts ambiguous ones for human review.
+  # Hard pre_check guard enforced by scheduler.
+  # Agent config loaded from .octopoid/agents/dead-code-analyst/agent.yaml.
+  - name: dead_code_analyst
+    interval: 600
+    type: agent
+    group: remote
+    max_instances: 1
+
+  # Maintainability analyst: runs wily to find files with the worst Maintainability Index
+  # and proposes structural improvements (module splits, responsibility extraction).
+  # Hard pre_check guard enforced by scheduler.
+  # Agent config loaded from .octopoid/agents/maintainability-analyst/agent.yaml.
+  - name: maintainability_analyst
     interval: 600
     type: agent
     group: remote
