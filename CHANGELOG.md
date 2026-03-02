@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Fixed `tests/integration/test_sdk_client.py` to pass against the current server:
+  - Added `scope` parameter to `_register_orchestrator()` — server now requires scope on all orchestrator registrations
+  - Registered orchestrator before claiming in `test_claim_returns_task_when_available` — claim endpoint enforces FK constraint on `orchestrator_id`
+  - Replaced end-to-end max_claimed test with a mock: server does not enforce `max_claimed` server-side (that guard lives in `backpressure.can_claim_task()`), so the 429→None SDK contract is verified by mocking the HTTP response
+### Fixed
+
 - **Fixer circuit breaker skips done tasks**: `guard_claim_task()` now skips tasks in the `done` queue (previously only skipped `failed`). When a done task has a stale `needs_intervention=True` flag, the flag is cleared and the task is skipped — no fixer is spawned against a correctly-completed task.
 
 - **Circuit breaker distinguishes outcome types**: The fixer circuit breaker now treats outcome types differently:
