@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `prepare_task_directory()` now archives `stdout.log` as `stdout-{blueprint}-{attempt}.log` (e.g. `stdout-implementer-0.log`, `stdout-fixer-1.log`) before each agent run, preserving diagnostic output across all attempts. The `prev_stdout.log` continuation mechanism is unchanged.
 ### Fixed
 
 - `request_intervention()` in `octopoid/tasks.py` now sets `queue="requires-intervention"` on the server so failing tasks are visible in the fixer queue (previously only set `needs_intervention=True` without moving the task)
