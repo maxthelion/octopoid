@@ -317,7 +317,7 @@ def _extract_staging_url(pr_number: int) -> str | None:
         return None
 
 
-def _store_staging_url(pr_number: int, staging_url: str, *, branch_name: str | None = None, sdk: Optional["OctopoidSDK"] = None) -> None:
+def _store_staging_url(pr_number: int, _staging_url: str, *, branch_name: str | None = None, sdk: Optional["OctopoidSDK"] = None) -> None:
     """Store a staging URL on the task associated with a PR number.
 
     Looks up the task by pr_number first. If that fails and a branch_name
@@ -326,7 +326,7 @@ def _store_staging_url(pr_number: int, staging_url: str, *, branch_name: str | N
 
     Args:
         pr_number: PR number to look up
-        staging_url: URL to store
+        _staging_url: URL to store (currently unused — SDK update not yet implemented)
         branch_name: Optional branch name for fallback lookup
         sdk: Optional SDK for v2.0 API mode
     """
