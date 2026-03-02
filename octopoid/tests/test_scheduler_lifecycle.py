@@ -10,6 +10,7 @@ Tests that:
 7. After 3 consecutive step failures, task is moved to failed
 """
 
+import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -754,3 +755,134 @@ class TestGuardTaskDescriptionNonempty:
         # Guard still blocks even though SDK threw
         assert proceed is False
         assert "empty_description" in reason
+
+
+# ---------------------------------------------------------------------------
+# Test: systemic failure counter and auto-pause
+# ---------------------------------------------------------------------------
+
+class TestSystemicFailureCounter:
+    """Verify systemic failure counter tracks spawn failures and auto-pauses."""
+
+    def test_load_system_health_returns_defaults_when_missing(self, tmp_path):
+        """_load_system_health returns zero-state when file doesn't exist."""
+        from octopoid.scheduler import _load_system_health
+        with patch("octopoid.scheduler._get_system_health_path", return_value=tmp_path / "system_health.json"):
+            health = _load_system_health()
+        assert health["consecutive_systemic_failures"] == 0
+        assert health["auto_paused"] is False
+
+    def test_record_systemic_failure_increments_counter(self, tmp_path):
+        """_record_systemic_failure increments the counter and saves to disk."""
+        from octopoid.scheduler import _record_systemic_failure, _load_system_health
+
+        health_path = tmp_path / "system_health.json"
+        with patch("octopoid.scheduler._get_system_health_path", return_value=health_path), \
+             patch("octopoid.scheduler.get_orchestrator_dir", return_value=tmp_path):
+            _record_systemic_failure("docker daemon not running")
+
+        health = json.loads(health_path.read_text())
+        assert health["consecutive_systemic_failures"] == 1
+        assert health["auto_paused"] is False
+        assert health["last_systemic_failure"] is not None
+
+    def test_two_consecutive_failures_trigger_auto_pause(self, tmp_path):
+        """Two consecutive spawn failures write PAUSE file and update system_health.json."""
+        from octopoid.scheduler import _record_systemic_failure
+
+        health_path = tmp_path / "system_health.json"
+        pause_file = tmp_path / "PAUSE"
+
+        with patch("octopoid.scheduler._get_system_health_path", return_value=health_path), \
+             patch("octopoid.scheduler.get_orchestrator_dir", return_value=tmp_path):
+            _record_systemic_failure("worktree creation failed")
+            _record_systemic_failure("git clone failed")
+
+        assert pause_file.exists(), "PAUSE file should be written after 2 failures"
+        health = json.loads(health_path.read_text())
+        assert health["consecutive_systemic_failures"] == 2
+        assert health["auto_paused"] is True
+        assert health["auto_pause_reason"] is not None
+        assert "2 consecutive systemic failures" in health["auto_pause_reason"]
+        assert "git clone failed" in health["auto_pause_reason"]
+
+    def test_reset_clears_counter(self, tmp_path):
+        """_reset_systemic_failure_counter zeroes out the counter."""
+        from octopoid.scheduler import _reset_systemic_failure_counter
+
+        health_path = tmp_path / "system_health.json"
+        # Pre-seed with 1 failure
+        health_path.write_text(json.dumps({"consecutive_systemic_failures": 1}))
+
+        with patch("octopoid.scheduler._get_system_health_path", return_value=health_path):
+            _reset_systemic_failure_counter()
+
+        health = json.loads(health_path.read_text())
+        assert health["consecutive_systemic_failures"] == 0
+
+    def test_blameless_requeue_does_not_increment_attempt_count(self, tmp_path):
+        """_requeue_task_blameless calls sdk.tasks.update without attempt_count."""
+        from octopoid.scheduler import _requeue_task_blameless
+
+        mock_sdk = MagicMock()
+        with patch("octopoid.scheduler.queue_utils") as mock_qu:
+            mock_qu.get_sdk.return_value = mock_sdk
+            # Patch the local import inside the function
+            with patch("octopoid.queue_utils.get_sdk", return_value=mock_sdk):
+                _requeue_task_blameless("abc123", source_queue="incoming")
+
+        # The update should NOT include attempt_count
+        call_kwargs = mock_sdk.tasks.update.call_args
+        assert call_kwargs is not None
+        assert "attempt_count" not in (call_kwargs.kwargs or {})
+        assert call_kwargs.args[0] == "abc123"
+
+    def test_spawn_failure_calls_blameless_requeue_and_records_failure(self, tmp_path):
+        """Spawn failure requeues task blameless and records systemic failure."""
+        from octopoid.scheduler import _run_agent_evaluation_loop
+        from octopoid.state_utils import AgentState
+
+        health_path = tmp_path / "system_health.json"
+        pause_file = tmp_path / "PAUSE"
+
+        state_path = tmp_path / "state.json"
+        state = AgentState()
+
+        agent_config = {
+            "name": "implementer-1",
+            "role": "implement",
+            "claim_from": "incoming",
+        }
+        claimed_task = {"id": "abc123", "title": "test task", "attempt_count": 0}
+
+        with patch("octopoid.scheduler.get_agents", return_value=[agent_config]), \
+             patch("octopoid.scheduler.get_agent_lock_path", return_value=tmp_path / "lock"), \
+             patch("octopoid.scheduler.get_agent_state_path", return_value=state_path), \
+             patch("octopoid.scheduler.load_state", return_value=state), \
+             patch("octopoid.scheduler.evaluate_agent", return_value=True), \
+             patch("octopoid.scheduler.get_spawn_strategy") as mock_strategy, \
+             patch("octopoid.scheduler._requeue_task_blameless") as mock_blameless_requeue, \
+             patch("octopoid.scheduler._record_systemic_failure") as mock_record, \
+             patch("octopoid.scheduler._reset_systemic_failure_counter") as mock_reset:
+
+            # Attach the claimed task to context via evaluate_agent side effect
+            def set_claimed_task(ctx):
+                ctx.claimed_task = claimed_task
+                return True
+            mock_strategy_fn = MagicMock(side_effect=RuntimeError("docker not available"))
+            mock_strategy.return_value = mock_strategy_fn
+
+            # Patch evaluate_agent to set claimed_task on ctx
+            def fake_evaluate(ctx):
+                ctx.claimed_task = claimed_task
+                return True
+
+            with patch("octopoid.scheduler.evaluate_agent", side_effect=fake_evaluate):
+                _run_agent_evaluation_loop(queue_counts={})
+
+        # Blameless requeue called, not regular requeue
+        mock_blameless_requeue.assert_called_once_with("abc123", source_queue="incoming")
+        # Systemic failure recorded
+        mock_record.assert_called_once()
+        # Counter NOT reset (spawn failed)
+        mock_reset.assert_not_called()
