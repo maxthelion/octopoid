@@ -47,6 +47,15 @@ jobs:
     type: script
     group: remote
 
+  # Proactively extend leases for tasks with live agent processes.
+  # Runs BEFORE check_and_requeue_expired_leases so that post-sleep wake events
+  # renew active leases before the expiry check kills the agent process.
+  # Handles laptop sleep: process survives sleep but lease expires while suspended.
+  - name: renew_active_leases
+    interval: 60
+    type: script
+    group: remote
+
   # Requeue tasks whose claim lease has expired (server-side fallback).
   - name: check_and_requeue_expired_leases
     interval: 60

@@ -11,7 +11,7 @@ import subprocess
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
@@ -2930,10 +2930,28 @@ def run_scheduler() -> None:
     # Load per-job scheduler state (persists last_run across launchd invocations)
     scheduler_state = load_scheduler_state()
 
+    # Sleep detection: if gap since last tick exceeds threshold, laptop likely slept.
+    # renew_active_leases (which runs first in jobs.yaml) handles recovery automatically.
+    _SLEEP_DETECTION_THRESHOLD_SECONDS = 300  # 5 minutes
+    last_tick_str = scheduler_state.get("last_tick")
+    if last_tick_str:
+        try:
+            last_tick = datetime.fromisoformat(last_tick_str)
+            gap_seconds = (datetime.now() - last_tick).total_seconds()
+            if gap_seconds > _SLEEP_DETECTION_THRESHOLD_SECONDS:
+                logger.info(
+                    f"Wake-from-sleep detected: scheduler gap was {gap_seconds:.0f}s "
+                    f"(>{_SLEEP_DETECTION_THRESHOLD_SECONDS}s). "
+                    "renew_active_leases will extend any active agent leases."
+                )
+        except (ValueError, TypeError):
+            pass
+    scheduler_state["last_tick"] = datetime.now().isoformat()
+
     # Dispatch all due jobs (declarative — intervals defined in .octopoid/jobs.yaml)
     poll_data = run_due_jobs(scheduler_state)
 
-    # Persist updated last_run timestamps
+    # Persist updated last_run timestamps (including last_tick set above)
     save_scheduler_state(scheduler_state)
 
     queue_counts: dict = (poll_data or {}).get("queue_counts") or {}

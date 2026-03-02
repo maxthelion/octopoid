@@ -56,15 +56,15 @@ def claim_task(
     orchestrator_id = get_orchestrator_id()
     limits = get_queue_limits()
 
-    # 1-hour lease (agents take 5-30 min). The scheduler's renew_active_leases()
-    # job extends this automatically for tasks with live agent processes.
+    # 4-hour lease. renew_active_leases() extends it when expiring so agents
+    # that survive laptop sleep or run long never hit a stale lease.
     claim_kwargs: dict[str, Any] = dict(
         orchestrator_id=orchestrator_id,
         agent_name=agent_name or "unknown",
         role_filter=role_filter,
         type_filter=type_filter,
         max_claimed=limits.get("max_claimed"),
-        lease_duration_seconds=3600,
+        lease_duration_seconds=14400,
     )
     if from_queue != "incoming":
         claim_kwargs["queue"] = from_queue
