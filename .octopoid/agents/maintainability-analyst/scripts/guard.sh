@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Guard: exit 1 (block spawn) when testing-analyst drafts with status=idea or in_progress exist.
+# Guard: exit 1 (block spawn) when maintainability-analyst drafts with status=idea or in_progress exist.
 # exit 0 (allow spawn) when no pending proposals exist.
 # This is the hard gate enforced by the scheduler before spawning — prevents duplicate proposals.
 
@@ -17,8 +17,8 @@ try:
     from octopoid.queue_utils import get_sdk
     sdk = get_sdk()
     for status in ('idea', 'in_progress'):
-        if sdk.drafts.list(status=status, author='testing-analyst'):
-            print('Pending testing-analyst draft found — blocking spawn', file=sys.stderr)
+        if sdk.drafts.list(status=status, author='maintainability-analyst'):
+            print('Pending maintainability-analyst draft found — blocking spawn', file=sys.stderr)
             sys.exit(1)
     sys.exit(0)
 except Exception as e:
