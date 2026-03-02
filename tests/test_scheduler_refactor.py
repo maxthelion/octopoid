@@ -1336,3 +1336,198 @@ class TestCreateTaskWorktreeDetachedHead:
             # Currently does NOT raise (no assertion exists) — so this test fails.
             with pytest.raises(AssertionError, match="detached"):
                 create_task_worktree(task)
+
+
+# =============================================================================
+# _task_past_grace Tests
+# =============================================================================
+
+
+class TestTaskPastGrace:
+    """Tests for the _task_past_grace pure helper."""
+
+    from octopoid.scheduler import _task_past_grace
+
+    def _now(self) -> datetime:
+        from datetime import timezone
+        return datetime.now(timezone.utc)
+
+    def test_done_task_past_grace(self):
+        from datetime import timezone
+        from octopoid.scheduler import _task_past_grace
+        now = datetime.now(timezone.utc)
+        ts = (now - timedelta(seconds=3601)).isoformat()
+        task = {"id": "t1", "queue": "done", "updated_at": ts}
+        assert _task_past_grace(task, now) is True
+
+    def test_done_task_within_grace(self):
+        from datetime import timezone
+        from octopoid.scheduler import _task_past_grace
+        now = datetime.now(timezone.utc)
+        ts = (now - timedelta(seconds=1800)).isoformat()
+        task = {"id": "t1", "queue": "done", "updated_at": ts}
+        assert _task_past_grace(task, now) is False
+
+    def test_failed_task_past_grace(self):
+        from datetime import timezone
+        from octopoid.scheduler import _task_past_grace
+        now = datetime.now(timezone.utc)
+        ts = (now - timedelta(seconds=86401)).isoformat()
+        task = {"id": "t2", "queue": "failed", "updated_at": ts}
+        assert _task_past_grace(task, now) is True
+
+    def test_failed_task_within_done_grace_but_not_failed_grace(self):
+        from datetime import timezone
+        from octopoid.scheduler import _task_past_grace
+        now = datetime.now(timezone.utc)
+        # 2 hours past done grace but within failed 24h grace
+        ts = (now - timedelta(seconds=7200)).isoformat()
+        task = {"id": "t2", "queue": "failed", "updated_at": ts}
+        assert _task_past_grace(task, now) is False
+
+    def test_missing_timestamp_returns_false(self):
+        from datetime import timezone
+        from octopoid.scheduler import _task_past_grace
+        now = datetime.now(timezone.utc)
+        task = {"id": "t3", "queue": "done"}
+        assert _task_past_grace(task, now) is False
+
+    def test_invalid_timestamp_returns_false(self):
+        from datetime import timezone
+        from octopoid.scheduler import _task_past_grace
+        now = datetime.now(timezone.utc)
+        task = {"id": "t4", "queue": "done", "updated_at": "not-a-date"}
+        assert _task_past_grace(task, now) is False
+
+    def test_z_suffix_timestamp_parsed(self):
+        from datetime import timezone
+        from octopoid.scheduler import _task_past_grace
+        now = datetime.now(timezone.utc)
+        ts = (now - timedelta(seconds=3700)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        task = {"id": "t5", "queue": "done", "updated_at": ts}
+        assert _task_past_grace(task, now) is True
+
+    def test_falls_back_to_completed_at(self):
+        from datetime import timezone
+        from octopoid.scheduler import _task_past_grace
+        now = datetime.now(timezone.utc)
+        ts = (now - timedelta(seconds=3700)).isoformat()
+        task = {"id": "t6", "queue": "done", "completed_at": ts}
+        assert _task_past_grace(task, now) is True
+
+    def test_exactly_at_grace_boundary_returns_true(self):
+        from datetime import timezone
+        from octopoid.scheduler import _task_past_grace
+        now = datetime.now(timezone.utc)
+        ts = (now - timedelta(seconds=3600)).isoformat()
+        task = {"id": "t7", "queue": "done", "updated_at": ts}
+        assert _task_past_grace(task, now) is True
+
+
+# =============================================================================
+# _sweep_task_resources Tests
+# =============================================================================
+
+
+class TestSweepTaskResources:
+    """Tests for the _sweep_task_resources side-effectful helper."""
+
+    def _make_task(self, task_id: str, queue: str = "done") -> dict:
+        return {"id": task_id, "queue": queue}
+
+    def test_archives_logs_and_removes_worktree(self, tmp_path):
+        from unittest.mock import MagicMock
+        from octopoid.scheduler import _sweep_task_resources
+
+        task_id = "abc123"
+        task = self._make_task(task_id, queue="done")
+        tasks_dir = tmp_path / "tasks"
+        logs_dir = tmp_path / "logs"
+        parent_repo = tmp_path / "repo"
+
+        task_dir = tasks_dir / task_id
+        worktree = task_dir / "worktree"
+        worktree.mkdir(parents=True)
+        (task_dir / "stdout.log").write_text("output")
+        (task_dir / "stderr.log").write_text("errors")
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stderr = ""
+
+        with patch("octopoid.scheduler.run_git", return_value=mock_result) as mock_git:
+            result = _sweep_task_resources(task, tasks_dir, logs_dir, parent_repo)
+
+        assert result is True
+        assert (logs_dir / task_id / "stdout.log").read_text() == "output"
+        assert (logs_dir / task_id / "stderr.log").read_text() == "errors"
+        # worktree_remove was called
+        mock_git.assert_any_call(
+            ["worktree", "remove", "--force", str(worktree)],
+            cwd=parent_repo,
+            check=False,
+        )
+
+    def test_returns_false_when_no_worktree(self, tmp_path):
+        from octopoid.scheduler import _sweep_task_resources
+
+        task_id = "noworktree"
+        task = self._make_task(task_id, queue="done")
+        tasks_dir = tmp_path / "tasks"
+        logs_dir = tmp_path / "logs"
+        parent_repo = tmp_path / "repo"
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stderr = ""
+
+        with patch("octopoid.scheduler.run_git", return_value=mock_result):
+            result = _sweep_task_resources(task, tasks_dir, logs_dir, parent_repo)
+
+        assert result is False
+
+    def test_deletes_remote_branch_for_done_queue(self, tmp_path):
+        from unittest.mock import call as mock_call
+        from octopoid.scheduler import _sweep_task_resources
+
+        task_id = "xyz789"
+        task = self._make_task(task_id, queue="done")
+        tasks_dir = tmp_path / "tasks"
+        logs_dir = tmp_path / "logs"
+        parent_repo = tmp_path / "repo"
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stderr = ""
+
+        with patch("octopoid.scheduler.run_git", return_value=mock_result) as mock_git:
+            _sweep_task_resources(task, tasks_dir, logs_dir, parent_repo)
+
+        branch_delete_call = mock_call(
+            ["push", "origin", "--delete", f"agent/{task_id}"],
+            cwd=parent_repo,
+            check=False,
+        )
+        mock_git.assert_any_call(*branch_delete_call.args, **branch_delete_call.kwargs)
+
+    def test_skips_remote_branch_deletion_for_failed_queue(self, tmp_path):
+        from octopoid.scheduler import _sweep_task_resources
+
+        task_id = "failedtask"
+        task = self._make_task(task_id, queue="failed")
+        tasks_dir = tmp_path / "tasks"
+        logs_dir = tmp_path / "logs"
+        parent_repo = tmp_path / "repo"
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stderr = ""
+
+        with patch("octopoid.scheduler.run_git", return_value=mock_result) as mock_git:
+            _sweep_task_resources(task, tasks_dir, logs_dir, parent_repo)
+
+        # No git push --delete call
+        for call_args in mock_git.call_args_list:
+            args = call_args[0][0] if call_args[0] else []
+            assert not (len(args) >= 2 and args[0] == "push" and "--delete" in args), \
+                "Should not delete remote branch for failed tasks"
