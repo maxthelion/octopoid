@@ -376,11 +376,24 @@ class TestJsonStdoutParsing:
         assert captured[0] == result_text
 
     def test_json_max_turns_exceeded_returns_max_turns_outcome(self, tmp_path):
-        """JSON stdout with subtype='error_max_turns_exceeded' returns max_turns_exceeded outcome."""
+        """JSON stdout with subtype='error_max_turns' returns max_turns_exceeded outcome."""
         from octopoid.result_handler import infer_result_from_stdout
 
         (tmp_path / "stdout.log").write_text(
-            self._json_stdout("error_max_turns_exceeded", "Partial work done.")
+            self._json_stdout("error_max_turns", "Partial work done.")
+        )
+
+        result = infer_result_from_stdout(tmp_path / "stdout.log", "implement")
+
+        assert result["outcome"] == "max_turns_exceeded"
+        assert result["outcome"] != "unknown"
+
+    def test_json_max_turns_with_empty_result_returns_max_turns_outcome(self, tmp_path):
+        """JSON stdout with subtype='error_max_turns' and empty result still returns max_turns_exceeded."""
+        from octopoid.result_handler import infer_result_from_stdout
+
+        (tmp_path / "stdout.log").write_text(
+            self._json_stdout("error_max_turns", "")
         )
 
         result = infer_result_from_stdout(tmp_path / "stdout.log", "implement")
@@ -389,17 +402,69 @@ class TestJsonStdoutParsing:
         assert result["outcome"] != "unknown"
 
     def test_json_max_turns_gatekeeper_returns_failure(self, tmp_path):
-        """JSON max_turns_exceeded for gatekeeper role returns status=failure."""
+        """JSON error_max_turns for gatekeeper role returns status=failure."""
         from octopoid.result_handler import infer_result_from_stdout
 
         (tmp_path / "stdout.log").write_text(
-            self._json_stdout("error_max_turns_exceeded")
+            self._json_stdout("error_max_turns")
         )
 
         result = infer_result_from_stdout(tmp_path / "stdout.log", "gatekeeper")
 
         assert result["status"] == "failure"
         assert "max turns" in result.get("message", "").lower()
+
+    def test_json_is_error_with_empty_result_returns_failed(self, tmp_path):
+        """JSON stdout with is_error=True and empty result returns outcome=failed (not unknown)."""
+        import json
+        from octopoid.result_handler import infer_result_from_stdout
+
+        payload = json.dumps({
+            "type": "result",
+            "subtype": "error_api_error",
+            "is_error": True,
+            "result": "",
+        })
+        (tmp_path / "stdout.log").write_text(payload)
+
+        result = infer_result_from_stdout(tmp_path / "stdout.log", "implement")
+
+        assert result["outcome"] == "failed"
+        assert result["outcome"] != "unknown"
+
+    def test_json_is_error_with_empty_result_gatekeeper_returns_failure(self, tmp_path):
+        """JSON stdout with is_error=True and empty result for gatekeeper returns status=failure."""
+        import json
+        from octopoid.result_handler import infer_result_from_stdout
+
+        payload = json.dumps({
+            "type": "result",
+            "subtype": "error_api_error",
+            "is_error": True,
+            "result": "",
+        })
+        (tmp_path / "stdout.log").write_text(payload)
+
+        result = infer_result_from_stdout(tmp_path / "stdout.log", "gatekeeper")
+
+        assert result["status"] == "failure"
+
+    def test_json_non_error_empty_result_returns_unknown(self, tmp_path):
+        """JSON stdout with is_error=False and empty result returns outcome=unknown."""
+        import json
+        from octopoid.result_handler import infer_result_from_stdout
+
+        payload = json.dumps({
+            "type": "result",
+            "subtype": "success",
+            "is_error": False,
+            "result": "",
+        })
+        (tmp_path / "stdout.log").write_text(payload)
+
+        result = infer_result_from_stdout(tmp_path / "stdout.log", "implement")
+
+        assert result["outcome"] == "unknown"
 
     def test_plain_text_stdout_still_works(self, tmp_path):
         """Plain-text stdout (pre-json agents) still classifies correctly (backwards compat)."""

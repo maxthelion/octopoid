@@ -251,14 +251,20 @@ def infer_result_from_stdout(stdout_path: Path, agent_role: str) -> dict:
     if parsed_json is not None:
         subtype = parsed_json.get("subtype", "")
         logger.debug(f"infer_result_from_stdout: JSON stdout detected, subtype={subtype!r}")
-        if subtype == "error_max_turns_exceeded":
+        if subtype == "error_max_turns":
             if agent_role in ("gatekeeper", "sanity-check-gatekeeper"):
                 return {"status": "failure", "message": "Agent hit max turns limit"}
             return {"outcome": "max_turns_exceeded", "reason": "Agent hit max turns limit"}
         # For other subtypes (success, other errors) use the extracted text
-        # as the inference payload.  If text is empty, fall through to the
-        # empty-stdout path handled below.
+        # as the inference payload.  If text is empty, classify from subtype
+        # and is_error rather than returning unknown blindly.
         if not text.strip():
+            is_error = parsed_json.get("is_error", False)
+            if is_error:
+                if agent_role in ("gatekeeper", "sanity-check-gatekeeper"):
+                    return {"status": "failure", "message": f"Agent error with empty result (subtype={subtype!r})"}
+                return {"outcome": "failed", "reason": f"Agent error with empty result (subtype={subtype!r})"}
+            # Non-error with empty result — cannot verify success without text
             if agent_role in ("gatekeeper", "sanity-check-gatekeeper"):
                 return {"status": "failure", "message": "Empty result in JSON stdout"}
             return {"outcome": "unknown", "reason": "Empty result in JSON stdout"}
