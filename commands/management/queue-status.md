@@ -16,9 +16,55 @@ from datetime import datetime, timezone
 
 sdk = get_sdk()
 now = datetime.now(timezone.utc)
-data = {"heartbeat": None, "heartbeat_stale": False, "queues": {}, "problems": []}
+data = {"heartbeat": None, "heartbeat_stale": False, "queues": {}, "problems": [], "system_health": {}}
 
-# Get last heartbeat from orchestrator
+# --- SYSTEM HEALTH DATA COLLECTION ---
+
+# 1. Pause state
+pause_path = Path(".octopoid/PAUSE")
+pause_info = {"paused": False, "reason": None, "timestamp": None}
+if pause_path.exists():
+    content = pause_path.read_text().strip()
+    pause_info["paused"] = True
+    try:
+        parsed = json.loads(content)
+        pause_info["reason"] = parsed.get("reason")
+        pause_info["timestamp"] = parsed.get("timestamp")
+    except (json.JSONDecodeError, ValueError):
+        pause_info["reason"] = content or None
+data["system_health"]["pause"] = pause_info
+
+# 2. Systemic failures
+health_path = Path(".octopoid/runtime/system_health.json")
+health_info = {"consecutive_failures": 0, "last_failure": None}
+if health_path.exists():
+    try:
+        health_data = json.loads(health_path.read_text())
+        health_info["consecutive_failures"] = health_data.get("consecutive_failures", 0)
+        health_info["last_failure"] = health_data.get("last_failure")
+    except (json.JSONDecodeError, OSError):
+        pass
+data["system_health"]["health"] = health_info
+
+# 3. Orphan PIDs: collect all running PIDs from all agent blueprints
+all_pids = {}  # pid -> {"task_id": ..., "instance_name": ...}
+agents_dir = Path(".octopoid/runtime/agents")
+if agents_dir.exists():
+    for pids_file in agents_dir.glob("*/running_pids.json"):
+        try:
+            pids_data = json.loads(pids_file.read_text())
+            for pid_str, info in pids_data.items():
+                try:
+                    pid = int(pid_str)
+                    os.kill(pid, 0)  # signal 0 = check alive
+                    all_pids[pid] = info
+                except (ValueError, ProcessLookupError, PermissionError):
+                    pass  # not running, skip
+        except (json.JSONDecodeError, OSError):
+            pass
+data["system_health"]["running_pids"] = all_pids
+
+# --- HEARTBEAT (last tick) ---
 try:
     orchs = sdk._request('GET', '/api/v1/orchestrators')
     if orchs.get('orchestrators'):
@@ -59,6 +105,49 @@ for queue in ['incoming', 'claimed', 'provisional', 'requires-intervention', 'do
             "detail": f"Failed to list {queue}: {e}",
             "suggestion": "Server may be down or auth may be failing."
         })
+
+# Orphan PIDs: cross-reference running PIDs against claimed task IDs
+claimed_task_ids = {t.get("id") for t in data["queues"].get("claimed", [])}
+orphan_pids = {
+    pid: info for pid, info in all_pids.items()
+    if info.get("task_id") and info["task_id"] not in claimed_task_ids
+}
+data["system_health"]["orphan_pids"] = orphan_pids
+
+# --- PROBLEM DETECTION ---
+
+# system_paused problem (insert at front so it's most prominent)
+if pause_info["paused"]:
+    reason_str = ""
+    if pause_info["timestamp"]:
+        reason_str += f" auto-paused at {pause_info['timestamp']}"
+    if pause_info["reason"]:
+        reason_str += f" — reason: {pause_info['reason']}"
+    data["problems"].insert(0, {
+        "type": "system_paused",
+        "detail": f"System is paused.{reason_str}",
+        "suggestion": "Run /pause-system to unpause manually, or investigate the root cause first."
+    })
+
+# systemic_failures problem
+if health_info["consecutive_failures"] > 0:
+    last_str = ""
+    if health_info["last_failure"]:
+        last_str = f" — last: {health_info['last_failure']}"
+    data["problems"].append({
+        "type": "systemic_failures",
+        "detail": f"{health_info['consecutive_failures']} consecutive systemic failures detected{last_str}. System may auto-pause soon.",
+        "suggestion": "Investigate the scheduler logs in .octopoid/runtime/logs/octopoid.log for the root cause."
+    })
+
+# orphan_pids problem
+if orphan_pids:
+    pid_list = ", ".join(str(p) for p in list(orphan_pids.keys())[:5])
+    data["problems"].append({
+        "type": "orphan_pids",
+        "detail": f"{len(orphan_pids)} orphan PID(s) found with no matching claimed task — PIDs: {pid_list}",
+        "suggestion": "These processes may be stuck or their tasks were moved. Check running_pids.json in .octopoid/runtime/agents/*/."
+    })
 
 # Diagnose claimed tasks that look stuck (claimed > 30 min ago)
 for t in data["queues"].get("claimed", []):
@@ -110,13 +199,6 @@ if failed_tasks:
             "task_ids": [t.get("id") for t in no_stdout],
             "suggestion": "These tasks were never completed. Review what the agent did in .octopoid/runtime/tasks/<id>/worktree, then requeue or rewrite the task."
         })
-    if rejected:
-        data["problems"].append({
-            "type": "rejected_by_gatekeeper",
-            "detail": f"{len(rejected)} failed task(s) completed but were rejected by the gatekeeper.",
-            "task_ids": [t.get("id") for t in rejected],
-            "suggestion": "Check PR review comments for rejection reasons. Rewrite the task file to address feedback, then requeue."
-        })
     if errored:
         data["problems"].append({
             "type": "agent_reported_failure",
@@ -125,9 +207,39 @@ if failed_tasks:
             "suggestion": "Check .octopoid/runtime/tasks/<id>/stdout.log and task messages for failure details, then requeue or rewrite the task."
         })
 
-# Print queue summary
+# --- OUTPUT ---
+
+# System health section (shown before queue counts)
+print("--- SYSTEM HEALTH ---")
+pause = data["system_health"]["pause"]
+if pause["paused"]:
+    pause_str = "YES"
+    if pause["timestamp"]:
+        pause_str += f" — auto-paused at {pause['timestamp']}"
+    if pause["reason"]:
+        pause_str += f" — reason: {pause['reason']}"
+    print(f"Paused: {pause_str}")
+else:
+    print("Paused: no")
+
+consecutive = data["system_health"]["health"]["consecutive_failures"]
+last_failure = data["system_health"]["health"]["last_failure"]
+if consecutive > 0:
+    last_str = f" — last: {last_failure}" if last_failure else ""
+    print(f"Systemic failures: {consecutive} consecutive{last_str}")
+else:
+    print("Systemic failures: 0 consecutive")
+
 print(f"Last tick: {data['heartbeat'] or 'unknown'}")
 
+orphan_count = len(data["system_health"]["orphan_pids"])
+if orphan_count > 0:
+    orphan_pid_list = ", ".join(str(p) for p in list(data["system_health"]["orphan_pids"].keys())[:5])
+    print(f"Orphan PIDs: {orphan_count} — PIDs {orphan_pid_list} have no matching claimed task")
+else:
+    print("Orphan PIDs: 0")
+
+# Queue summary
 for queue in ['incoming', 'claimed', 'provisional', 'requires-intervention', 'done', 'failed']:
     tasks = data["queues"].get(queue, [])
     print(f"\n{queue.upper()} ({len(tasks)} tasks)")
@@ -205,6 +317,9 @@ After displaying the script output, review the problems list. **Look for pattern
 
 **Per-problem guidance** (but always look for the bigger picture first):
 
+- **System paused**: The system is paused — this is the top priority. Determine if the pause was automatic (systemic failure counter) or manual. Offer to run `/pause-system` to resume, but suggest investigating the root cause first.
+- **Systemic failures**: N consecutive failures detected — investigate what type of failure is recurring (spawn, step, transition). Look at scheduler logs and recent failed tasks.
+- **Orphan PIDs**: Processes running with no matching claimed task — check if these are stuck processes. They may be consuming resources or holding locks.
 - **Stale heartbeat**: Offer to check scheduler logs or restart it
 - **Stuck claimed tasks**: Investigate *why* — check step_progress.json, intervention_context.json, and stderr.log. Is the error handling swallowing exceptions? Is a flow transition being rejected by the server?
 - **Ran out of turns**: Check what the agent accomplished and whether to cherry-pick or requeue with a simpler scope
