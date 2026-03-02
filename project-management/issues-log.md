@@ -8,7 +8,7 @@ Known symptoms and their root causes. **Consult this first when diagnosing a pro
 |---|---|---|
 | Fixer agent crashes with empty stdout | Fixer session CWD is the task worktree, which was deleted before the fixer ran. Bash/Glob/Grep tools all fail. | Edit/Read/Write tools still work via absolute paths. Use those to make file changes. Cannot commit — human must `git add` + `git commit` manually in the main repo. |
 | Gatekeeper says files were "deleted" but they don't exist | Agent renamed files (e.g. 183-... → 0183-...) in a prior commit; gatekeeper referenced old unpadded names that never existed in that form on main. | Verify with `git log --all -- path/to/file`. If file truly never existed by that name, the gatekeeper was wrong — no action needed. |
-| `if rejected:` NameError in queue-status.md | Out-of-scope change added a `rejected_by_gatekeeper` problem type but never populated the `rejected` list. | Remove the `if rejected:` block (lines 113-119). Fixed in task 72ff0d4e. |
+| `if rejected:` NameError in queue-status.md | Out-of-scope change added a `rejected_by_gatekeeper` problem type but never populated the `rejected` list. | Remove the `if rejected:` block (lines 113-119). Fixed in tasks 72ff0d4e and 7818ecfa. |
 
 ## Rebase conflict: parallel systemic-failure work in scheduler.py
 
